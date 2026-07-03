@@ -880,6 +880,7 @@ function refresh() {
     allSpaceChildIds.value = all
   }
   rooms.value = listRooms().filter((r) => r.id !== aiRoom.value)
+  maybeAcceptInvites()   // 在线期间收到的邀请也实时接受(不用重新登录)
   if (currentRoom.value) {
     msgs.value = listMessages(currentRoom.value)
     channelMembers.value = listRoomMembers(currentRoom.value)
@@ -935,6 +936,19 @@ function refreshTyping() {
   botTyping.value = t
 }
 
+// 实时自动接受频道邀请:邀请可能在**在线期间**到达(AI 拉人),不能只在登录那一刻查一次——
+// 否则被邀成员必须重新登录才能进群。refresh 由 sync 驱动,邀请一到就会走到这里。
+// 防重入:join 是网络调用,sync 密集触发时别叠加并发。
+let acceptingInvites = false
+function maybeAcceptInvites() {
+  if (acceptingInvites) return
+  acceptingInvites = true
+  acceptPendingInvites()
+    .then((n) => { if (n > 0) refresh() })   // 有新入群 → 刷新列表让频道立即出现
+    .catch(() => {})
+    .finally(() => { acceptingInvites = false })
+}
+
 async function afterLogin(uid: string) {
   me.value = uid
   loggedIn.value = true
@@ -958,9 +972,9 @@ async function afterLogin(uid: string) {
     // （否则光被邀请发不了 state event，权限会比所有者差一点）。幂等、失败静默。
     if (ok) ensureControlRoomMembership()
   }).catch(() => { isAdmin.value = false })
-  // 自动接受待接受的频道邀请(join):CosMac 邀请即入群的工作台模型(修 bug 9/10/11)。
-  // best-effort;有新加入的房就刷新列表让它出现。
-  acceptPendingInvites().then((n) => { if (n > 0) refresh() }).catch(() => {})
+  // 自动接受待接受的频道邀请(登录时清一次存量;在线期间的实时邀请由 refresh 里的
+  // maybeAcceptInvites 处理,修 bug 9/10/11)。
+  maybeAcceptInvites()
   loadStats() // 数据看板真实指标（best-effort）
   refresh()
   // 若是从"社区服务器邀请链接"进来的，登录后执行加入

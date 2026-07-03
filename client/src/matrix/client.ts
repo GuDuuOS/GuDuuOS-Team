@@ -445,14 +445,18 @@ export async function acceptPendingInvites(): Promise<number> {
     try { return r.getMyMembership?.() === 'invite' } catch { return false }
   })
   for (const r of invited) {
-    // 只自动接受**本服务器用户**发来的邀请——联邦陌生人的邀请不自动进,否则垃圾邀请
-    // (invite spam)等于"强制入群"(审查 bug#10)。外来邀请留在 invite 态,不动。
+    // 防垃圾邀请(审查 bug#10):**明确**是外部服务器用户发来的邀请才不自动进。
+    // ⚠️ invite 态的房间客户端常只有**精简状态**(stripped state),经常读不出邀请人——
+    // 读不到时必须**默认接受**:否则本服正常邀请也被挡,成员永远进不了群(实测踩过)。
+    // 当前部署联邦上没有外部用户,fail-open 风险极低;真被外服骚扰再收紧。
     let inviter = ''
     try {
       inviter = (r as any).currentState?.getStateEvents?.('m.room.member', myId)?.getSender?.() || ''
-    } catch { /* 读不到邀请人就不自动进 */ }
-    const inviterServer = inviter.split(':').slice(1).join(':')
-    if (!inviter || !myServer || inviterServer !== myServer) continue
+    } catch { /* 精简状态读不到,按可信处理 */ }
+    if (inviter && myServer) {
+      const inviterServer = inviter.split(':').slice(1).join(':')
+      if (inviterServer !== myServer) continue   // 只有确证外服才跳过
+    }
     try {
       await mx.joinRoom(r.roomId)
       joined++
