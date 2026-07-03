@@ -806,16 +806,41 @@ async function doInvite() {
   } finally { memberBusy.value = false }
 }
 
-// 频道列表：按当前工作区过滤 + 关键词筛选
+// 频道列表：按当前工作区过滤 + 关键词筛选。
+// 孤儿房(不属于任何工作区)**不再混进这里**——此前混着放行导致"不同工作区群都一样"(QA):
+// AI 建的专班/别人拉我进的群一多,每个工作区的频道列表就长一个样。现在它们单独进「未归类」组。
 const filteredRooms = computed(() =>
   rooms.value.filter(
     (r) =>
-      // 当前工作区的子频道 + **孤儿房**(不属于任何工作区,如 AI 建的专班/被邀请加入的群)。
-      // 孤儿房必须放行:否则有工作区的成员被邀进群后左侧没有任何入口、进不了群(bug)。
-      (!activeSpace.value || spaceChildIds.value.has(r.id) || !allSpaceChildIds.value.has(r.id)) &&
+      (!activeSpace.value || spaceChildIds.value.has(r.id)) &&
       (!filterText.value || r.name.includes(filterText.value)),
   ),
 )
+// 未归类 = 孤儿房。必须有入口(否则被邀成员进不了群——历史 bug),但集中一组、明确标注,
+// 且可一键「归入」当前工作区(写 m.space.child),归入后就只在那个工作区显示。
+const orphanRooms = computed(() =>
+  !activeSpace.value ? [] : rooms.value.filter(
+    (r) =>
+      !allSpaceChildIds.value.has(r.id) &&
+      (!filterText.value || r.name.includes(filterText.value)),
+  ),
+)
+const orphanOpen = ref(true)
+const adoptBusy = ref('')
+async function adoptOrphan(r: { id: string; name: string }) {
+  if (!activeSpace.value || adoptBusy.value) return
+  adoptBusy.value = r.id
+  try {
+    if (await linkRoomToSpace(activeSpace.value, r.id)) {
+      // 本地立即把它算进本工作区(sync 稍后也会带来),频道从「未归类」挪进「频道」组
+      spaceChildIds.value = new Set([...spaceChildIds.value, r.id])
+      allSpaceChildIds.value = new Set([...allSpaceChildIds.value, r.id])
+      toast('已归入本工作区', r.name)
+    } else {
+      toast('归入失败', '你可能没有本工作区的管理权限')
+    }
+  } finally { adoptBusy.value = '' }
+}
 
 // ── 粉丝社区分组：把面向粉丝的房间（后援会/歌迷会/粉丝群/应援会/社区/fans）从「频道」里
 //    拆出来单列一组。纯前端名称启发式，零后端——房间名带这些关键词即归此组，其余留「频道」。
@@ -1612,6 +1637,31 @@ onBeforeUnmount(() => {
               <div class="cs-item cs-add-row" @click="openNewChannel">
                 <span class="cs-ic-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14" /></svg></span>
                 <span class="cs-label">添加粉丝频道</span>
+              </div>
+            </template>
+          </div>
+
+          <!-- 未归类 group（不属于任何工作区的孤儿房：AI 建的专班/别人拉我进的群。
+               每个工作区下都显示这一组（它们本来就没归属）；点「归入」挂进当前工作区后就只在那里出现。）-->
+          <div v-if="orphanRooms.length" class="cs-group">
+            <button class="cs-group-head" @click="orphanOpen = !orphanOpen" title="不属于任何工作区的频道；点频道右侧「归入」可挂进当前工作区">
+              <svg class="caret" :class="{ open: orphanOpen }" width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M9 6 15 12 9 18z" /></svg>
+              <span>未归类</span>
+              <span class="cs-orphan-n">{{ orphanRooms.length }}</span>
+            </button>
+            <template v-if="orphanOpen">
+              <div
+                v-for="r in orphanRooms"
+                :key="r.id"
+                class="cs-item ch-row"
+                :class="{ active: r.id === currentRoom }"
+                @click="openRoom(r.id)"
+              >
+                <span class="cs-chan-av" :style="{ background: colorOf(r.name) }">{{ iconChar(r.name) }}</span>
+                <span class="cs-label">{{ r.name }}</span>
+                <button class="cs-adopt" :disabled="!!adoptBusy" title="归入当前工作区" @click.stop="adoptOrphan(r)">
+                  {{ adoptBusy === r.id ? '…' : '归入' }}
+                </button>
               </div>
             </template>
           </div>
@@ -2544,6 +2594,11 @@ onBeforeUnmount(() => {
 .cs-item.archived:hover { opacity: 0.72; }
 .cs-item.archived.active { opacity: 0.85; }
 .cs-archived-tag { flex-shrink: 0; font-size: 12px; opacity: 0.8; }
+/* 未归类组:计数小标 + 悬浮出现的「归入」按钮 */
+.cs-orphan-n { margin-left: auto; font-size: 11px; color: var(--text-3); background: var(--bg-soft); border-radius: 999px; padding: 0 7px; }
+.cs-adopt { flex-shrink: 0; display: none; border: 1px solid var(--border); background: var(--bg-panel); color: var(--text-2); font-size: 11px; padding: 1px 8px; border-radius: 6px; cursor: pointer; }
+.ch-row:hover .cs-adopt { display: inline-block; }
+.cs-adopt:hover { color: var(--accent); border-color: var(--accent); }
 /* 看板头数据源按钮（带数量角标）*/
 .bs-srcbtn { position: relative; }
 .bs-badge { position: absolute; top: -3px; right: -3px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: var(--accent); color: #fff; font-size: 9px; line-height: 14px; text-align: center; font-weight: 700; }
