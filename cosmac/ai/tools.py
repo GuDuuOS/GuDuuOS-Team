@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from cosmac.ai.base import ToolCall, ToolSpec
 from cosmac.bots.matrix_client import MatrixClient
@@ -72,6 +72,8 @@ class Toolbox:
         # 用量配额**消费**钩子：由 bot 注入。签名 (sender, tool_name) -> None。工具在真正
         # 做成事的那一刻调用（如专班房建成、工作流真正提交），失败路径不扣。
         self.quota_consume: Optional[Callable[[str, str], None]] = None
+        # 「群名→room_id」解析用的房名缓存(room_id → (名字, 时间戳);5 分钟 TTL,见 _resolve_room_by_name)
+        self._room_name_cache: Dict[str, tuple] = {}
         # 知识库检索回调：由 bot 注入 self._kb_search_for_tool。签名 (query, ctx) -> 结果文本。
         # 让 search_knowledge 工具的检索逻辑(embedder/DB/作用域)留在 bot 一侧，Toolbox 保持薄。
         # None（如单测/未注入）→ search_knowledge 工具返回"暂不可用"，绝不报错。
@@ -223,6 +225,13 @@ class Toolbox:
                     "room_id": {
                         "type": "string",
                         "description": "目标房间 id；不填则邀进当前房间。",
+                    },
+                    "room_name": {
+                        "type": "string",
+                        "description": (
+                            "目标群的**名字**(如『暑期研学活动』)。不知道 room_id 时用它,"
+                            "我会在我加入的群里按名字找;重名时会把候选列出来。"
+                        ),
                     },
                 },
                 "required": ["user_id"],
@@ -623,18 +632,69 @@ class Toolbox:
             f"并已邀请：{', '.join(invitees)}。"
         )
 
+    def _resolve_room_by_name(self, name: str) -> "Tuple[str, Optional[str]]":
+        """把群名解析成 room_id。返回 (room_id, None) 或 ("", 错误/引导文案)。
+
+        在 bot 已加入的所有房间里按 m.room.name 匹配:精确命中唯一 → 用它;
+        多个命中 → 列出候选让用户挑(重名群正是历史 bug 的产物);没精确命中再试包含匹配。
+        房名带 5 分钟缓存,避免每次邀人都全量拉一遍 state。
+        """
+        import time as _time
+        now = _time.time()
+        rooms = self.client.joined_rooms()
+        if not rooms:
+            return "", "我这边拿不到群列表(服务波动?),请稍后再试,或直接到目标群里@我操作。"
+        # 刷新缓存(逐房读 m.room.name;5 分钟内复用)
+        names: Dict[str, str] = {}
+        for rid in rooms:
+            cached = self._room_name_cache.get(rid)
+            if cached and now - cached[1] < 300:
+                names[rid] = cached[0]
+                continue
+            try:
+                ev = self.client.get_state_event(rid, "m.room.name")
+                nm = str((ev or {}).get("name") or "")
+            except Exception:
+                nm = ""
+            names[rid] = nm
+            self._room_name_cache[rid] = (nm, now)
+        exact = [rid for rid, nm in names.items() if nm == name]
+        if len(exact) == 1:
+            return exact[0], None
+        if len(exact) > 1:
+            listing = "\n".join(f"  · {names[r]}（{r}）" for r in exact[:6])
+            return "", (
+                f"有 {len(exact)} 个群都叫「{name}」,请告诉我用哪个(给 room_id):\n{listing}\n"
+                "(重名群建议清理掉多余的。)"
+            )
+        part = [rid for rid, nm in names.items() if nm and name in nm]
+        if len(part) == 1:
+            return part[0], None
+        if len(part) > 1:
+            listing = "\n".join(f"  · {names[r]}（{r}）" for r in part[:6])
+            return "", f"找到多个名字包含「{name}」的群,请说全名或给 room_id:\n{listing}"
+        return "", f"没找到叫「{name}」的群(我不在里面的群我看不到)。确认群名,或到目标群里@我操作。"
+
     def _tool_invite_to_room(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         """邀请用户进已有房间。默认当前房间；指定别的房间要过 _check_room_access 防越权。"""
         user_id = str(args.get("user_id") or "").strip()
         if not user_id.startswith("@") or ":" not in user_id:
             return "请给出完整用户 id（如 @bob:cosmac.cc）。"
+        # 按群名找 room_id:用户在私人会话里通常只知道群名(如"邀请xx加入暑期研学活动")。
+        room_name = str(args.get("room_name") or "").strip()
+        if not args.get("room_id") and room_name:
+            resolved, err = self._resolve_room_by_name(room_name)
+            if err:
+                return err
+            args = dict(args)
+            args["room_id"] = resolved
         # 防语义事故:私聊/AI会话房里说"邀请xx进本群",「本群」= 用户与我的私人会话——
         # 把人邀进来会闯进用户的私人对话(实测踩过:三位成员被邀进了群主的AI私聊)。
-        # 私聊里必须显式给 room_id(群 id 在 create_room 的结果里/上下文里有)。
+        # 私聊里必须显式给 room_id 或群名(群 id 在 create_room 的结果里/上下文里有)。
         if ctx.is_dm and not args.get("room_id"):
             return (
                 "当前是你与我的私聊会话，「本群」指的是这个私人对话——不能把别人邀进来。"
-                "请告诉我要邀请到哪个群（给出群名或 room_id，比如刚创建的那个群），"
+                "请告诉我要邀请到哪个群（说出**群名**即可，比如『邀请 @xx 加入暑期研学活动』），"
                 "或者直接到目标群里 @我 再说一次邀请。"
             )
         room_id = args.get("room_id") or ctx.room_id

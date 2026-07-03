@@ -446,6 +446,21 @@ class MatrixClient:
             logger.warning("查消息异常: %s", exc)
             return []
 
+    def joined_rooms(self) -> list:
+        """列出 bot 已加入的所有房间 id。失败返回空列表、不抛(调用方按"没找到"优雅降级)。
+
+        给「按群名邀人」用:AI 在私人会话里收到"邀请 xx 加入某某群"时,需要把群名解析成
+        room_id——bot 是 appservice、加入了所有它服务的群,遍历它的房间找名字即可。
+        """
+        url = self._url("/_matrix/client/v3/joined_rooms")
+        try:
+            resp = self._session.get(url, timeout=10)
+            if resp.status_code == 200:
+                return list(resp.json().get("joined_rooms") or [])
+        except requests.RequestException:
+            logger.debug("查已加入房间列表失败", exc_info=True)
+        return []
+
     def joined_member_count(self, room_id: str) -> int:
         """查房间当前已加入的成员数（用于区分"私聊"和"群聊"）。
 
