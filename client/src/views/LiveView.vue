@@ -44,6 +44,8 @@ import {
   spaceJoinRule,
   setSpaceOpenJoin,
   spaceJoinLink,
+  createDirectMessage,
+  listDirectMessages,
   joinSpaceByLink,
   listChannelMembers,
   myPowerIn,
@@ -254,6 +256,30 @@ const aiOpen = ref(true)
 // ── 多会话（放大态左栏 Recents）：每个会话 = 一个与主 AI 的独立私聊房 ──
 const aiSessions = ref<AiSession[]>([])
 function refreshAiSessions() { aiSessions.value = listAiSessions() }
+
+// ── 真人私信(DM):渲染在侧栏"私信"区,点开在主区聊天(复用频道渲染) ──
+const dms = ref<{ id: string; name: string; avatar: string }[]>([])
+function refreshDms() { dms.value = listDirectMessages() }
+const dmDialogOpen = ref(false)     // "发起私信"弹窗
+const dmUserInput = ref('')
+const dmBusy = ref(false)
+function openStartDm() { dmUserInput.value = ''; dmDialogOpen.value = true }
+async function doStartDm() {
+  const v = dmUserInput.value.trim()
+  if (!v || dmBusy.value) return
+  dmBusy.value = true
+  try {
+    const roomId = await createDirectMessage(v)   // 已有则复用,不重复建
+    dmDialogOpen.value = false
+    // 邀请刚发出,房可能还没 sync 完;稍等再刷新列表并打开
+    setTimeout(() => { refresh(); openRoom(roomId) }, 500)
+    toast('已发起私信', '对方接受后即可开始聊天')
+  } catch (e: any) {
+    toast('发起私信失败', e?.message || String(e))
+  } finally {
+    dmBusy.value = false
+  }
+}
 // 新建会话：建房 → 切过去 → 清空当前对话区（AI 从零开始）
 async function newAiSession() {
   try {
@@ -261,6 +287,7 @@ async function newAiSession() {
     aiRoom.value = rid
     aiMsgs.value = []
     refreshAiSessions()
+    refreshDms()
     refresh()               // 让频道列表把新会话房排除掉
     nextTick(scrollAiToBottom)
   } catch { /* 建会话失败静默，保持当前会话 */ }
@@ -1570,7 +1597,12 @@ onBeforeUnmount(() => {
                 <span class="cs-dm-av bot">智<span class="dot-online" /></span>
                 <span class="cs-label">中枢 AI</span>
               </div>
-              <div class="cs-item cs-add-row" @click="openMembers">
+              <!-- 真人私信列表:点开在主区聊天 -->
+              <div v-for="d in dms" :key="d.id" class="cs-item dm-row" :class="{ active: currentRoom === d.id }" @click="openRoom(d.id)">
+                <span class="cs-dm-av">{{ initials(d.name) }}</span>
+                <span class="cs-label">{{ d.name }}</span>
+              </div>
+              <div class="cs-item cs-add-row" @click="openStartDm">
                 <span class="cs-ic-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14" /></svg></span>
                 <span class="cs-label">邀请成员</span>
               </div>
@@ -2250,6 +2282,23 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 成员管理：邀请已有用户进当前频道/工作区（真功能 · Matrix invite）-->
+    <!-- 发起真人私信(DM):一对一,与"邀请进频道"彻底分开 -->
+    <div v-if="dmDialogOpen" class="nw-overlay" @click.self="dmDialogOpen = false">
+      <div class="nw-modal">
+        <div class="nw-title">发起私信</div>
+        <div class="nw-sub">和某个人开一个<b>一对一私聊</b>,聊天出现在左侧「私信」区。<br>这不是邀请进频道——邀请进频道请到目标频道里操作。</div>
+        <div class="nw-field-label">对方用户名</div>
+        <div class="nw-inline">
+          <input v-model="dmUserInput" class="nw-input" placeholder="用户名 或 @用户:cosmac.cc" @keyup.enter="doStartDm" />
+          <button class="nw-btn primary" :disabled="!dmUserInput.trim() || dmBusy" @click="doStartDm">{{ dmBusy ? '发起中…' : '发起私信' }}</button>
+        </div>
+        <div class="nw-note">💡 对方需已有账号。发起后对方会收到私信邀请,接受即可开始聊天。</div>
+        <div class="nw-foot">
+          <button class="nw-btn" :disabled="dmBusy" @click="dmDialogOpen = false">关闭</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="memberOpen" class="nw-overlay" @click.self="memberOpen = false">
       <div class="nw-modal">
         <div class="nw-title">邀请成员</div>

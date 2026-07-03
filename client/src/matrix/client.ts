@@ -381,6 +381,8 @@ export function listRooms(): LiveRoom[] {
     .filter((r) => !(r as any).isSpaceRoom?.())
     // 排除全部主 AI 会话房（多会话后可能有多个，统一按标记排除）
     .filter((r) => !aiIds.has(r.roomId))
+    // 排除真人私信(DM):它们渲染在"私信"区,不是频道
+    .filter((r) => { try { return !r.currentState?.getStateEvents?.('cosmac.dm', '') } catch { return true } })
     // 排除 CosMac 控制室：它是平台的"配置数据库"(AI配置/会员/门控/套餐等 state event 都存这),
     // 不是聊天频道。出现在列表里会被管理员当普通频道误删(实测发生过——退出后后台配置读写全断)。
     // 按 canonical alias 判定(#cosmac-ctrl),改名也藏得住。
@@ -2762,6 +2764,7 @@ export function findBotDm(): string | null {
 // 为什么这样设计：bot 端的对话历史/上下文/记忆本就**按 room_id 隔离**，所以「一个房间
 // = 一段独立会话」是天然映射——新会话 AI 从零开始、互不串味，历史会话随时切回继续。
 const AI_SESSION_STATE = 'cosmac.ai_session' // 会话房标记 state event（稳定识别，不依赖房名）
+const DM_STATE = 'cosmac.dm'                 // 真人一对一私信房标记(与 AI 会话房、普通频道区分)
 const AI_SESSION_NAME = '中枢 AI'
 
 /** 是否「主 AI 会话房」：认标记 state；兼容旧的仅靠房名叫「中枢 AI」的历史房。 */
@@ -2810,6 +2813,51 @@ export async function createAiSession(): Promise<string> {
     initial_state: [{ type: AI_SESSION_STATE, state_key: '', content: { v: 1 } }],
   })
   return res.room_id
+}
+
+/** 与某个用户开一个一对一私信(DM)。已有和 TA 的 DM 就复用,不重复建;返回 room_id。 */
+export async function createDirectMessage(userId: string): Promise<string> {
+  if (!mx) throw new Error('未登录')
+  const uid = normalizeUserId(userId)
+  if (!uid) throw new Error('请填写有效的用户名或用户 id')
+  if (uid === (mx as any).getUserId?.()) throw new Error('不能和自己私信')
+  // 复用已存在的 DM:避免同一个人建出一堆重复私信房
+  for (const r of mx.getRooms()) {
+    try {
+      if (!r.currentState?.getStateEvents?.(DM_STATE, '')) continue
+      const members = r.getJoinedMembers?.() || []
+      const invited = (r as any).getMembersWithMembership?.('invite') || []
+      if ([...members, ...invited].some((m: any) => m.userId === uid)) return r.roomId
+    } catch { /* 读不到就当没有,继续建 */ }
+  }
+  const res: any = await mx.createRoom({
+    preset: 'trusted_private_chat' as any,
+    invite: [uid],
+    is_direct: true,
+    // 标记这是真人 DM(稳定识别,不依赖房名);渲染在"私信"区、并从"频道"列表排除
+    initial_state: [{ type: DM_STATE, state_key: '', content: { v: 1 } }],
+  })
+  return res.room_id
+}
+
+/** 列出我的真人私信(DM)。排除主 AI 会话房。每项含对方的显示名/头像用于列表展示。 */
+export function listDirectMessages(): { id: string; name: string; avatar: string }[] {
+  if (!mx) return []
+  const myId = (mx as any).getUserId?.() || ''
+  const out: { id: string; name: string; avatar: string; ts: number }[] = []
+  for (const r of mx.getRooms()) {
+    try {
+      if (!r.currentState?.getStateEvents?.(DM_STATE, '')) continue
+      // 对方 = 房里除我之外的第一个成员(DM 只有两人)
+      const others = (r.getJoinedMembers?.() || []).filter((m: any) => m.userId !== myId)
+      const invited = ((r as any).getMembersWithMembership?.('invite') || []).filter((m: any) => m.userId !== myId)
+      const peer = others[0] || invited[0]
+      const name = peer?.name || peer?.userId || r.name || '私信'
+      // 头像列表里用首字母渲染,这里不取 avatar url(SDK 签名各版本不一,省依赖)
+      out.push({ id: r.roomId, name, avatar: '', ts: r.getLastActiveTimestamp?.() || 0 })
+    } catch { /* 跳过读不出的房 */ }
+  }
+  return out.sort((a, b) => b.ts - a.ts).map(({ ts, ...rest }) => rest)
 }
 
 /** 删除（离开并遗忘）一个主 AI 会话房。 */
