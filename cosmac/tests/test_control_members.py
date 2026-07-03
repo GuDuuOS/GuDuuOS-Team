@@ -52,6 +52,15 @@ class FakeClient:
         self.kicks.append((user_id, reason))
         return self.kick_ok
 
+    # —— 「添加」方向（新管理员补齐）用到 ——
+    def is_joined_member(self, _room_id: str, _user_id: str) -> bool:
+        return False  # 测试里新管理员一律视为未入房 → 应补邀请
+
+    def invite_user(self, _room_id: str, user_id: str) -> bool:
+        self.invites = getattr(self, "invites", [])
+        self.invites.append(user_id)
+        return True
+
 
 def _bot(alias_room, power_users) -> CosmacBot:
     bot = CosmacBot(CosmacConfig(llm_provider="echo"))
@@ -60,6 +69,18 @@ def _bot(alias_room, power_users) -> CosmacBot:
 
 
 class TestControlMembers(unittest.TestCase):
+    def test_new_admin_granted_and_invited(self) -> None:
+        # QA 根因回归:B 刚被设为服务器管理员(进了期望集),但控制室里没有 TA 的 power——
+        # 旧对齐只删不加,B 永远拿不到控制室写权限(接管频道 403 → 频道技能保存失败)。
+        # 现在:对齐要把 B 提到 50 并补邀请;已有成员/owner/bot 都不动、没人被踢。
+        bot = _bot(CTRL, {OWNER: 100, BOT: 100, A: 50})
+        bot._reconcile_control_members(CTRL, {"admins": [OWNER, A, B]})
+        self.assertEqual(len(bot.client.set_pl_calls), 1)
+        self.assertEqual(bot.client.set_pl_calls[0]["users"][B], 50)
+        self.assertEqual(bot.client.set_pl_calls[0]["users"][A], 50)
+        self.assertEqual(getattr(bot.client, "invites", []), [B])
+        self.assertEqual(bot.client.kicks, [])
+
     def test_revoked_admin_removed(self) -> None:
         # B 不在期望集 → 被降权(从 users 删掉) + 踢出；A 保留；owner/bot 不动
         # （owner 本身也是服务器管理员，故在期望集里——真实不变式）

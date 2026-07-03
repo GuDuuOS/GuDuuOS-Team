@@ -93,7 +93,7 @@ class TestPersonGating(unittest.TestCase):
         bot = _bot()
         bot.client.whoami = lambda t: "@free:h" if t == "f" else None  # type: ignore
         bot._gate_allows = lambda u, c: c != "people_manage"  # type: ignore
-        bot._gate_denied_text = lambda c: "需升级会员"  # type: ignore
+        bot._gate_denied_text = lambda c, ui=False: "需升级会员"  # type: ignore
         code, p = bot.handle_people_add("f", {"person_id": "@x:h"})
         self.assertEqual(code, 403)
         self.assertIn("升级", p["error"])

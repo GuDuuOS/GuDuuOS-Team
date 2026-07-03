@@ -176,7 +176,7 @@ class TestKbHttpHandlers(unittest.TestCase):
     def test_add_gate_denied(self) -> None:
         bot = self._bot()
         bot._gate_allows = lambda u, c: False  # type: ignore
-        bot._gate_denied_text = lambda c: "需升级会员"  # type: ignore
+        bot._gate_denied_text = lambda c, ui=False: "需升级会员"  # type: ignore
         code, p = bot.handle_kb_add("alice", {"title": "t", "content": "正文"})
         self.assertEqual(code, 403)
         self.assertIn("升级", p["error"])

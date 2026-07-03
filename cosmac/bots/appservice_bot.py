@@ -1302,17 +1302,41 @@ class CosmacBot:
             and lvl < 100
             and uid not in desired
         ]
-        if not to_remove:
+        # 待补齐：期望集里的**新管理员**（在控制室 power<50 或根本不在）。
+        # 为什么必须 bot 做"添加"：浏览器里的操作者自己只有 power=50，而发 m.room.power_levels
+        # 事件默认要 100——前端"尽力提权"必然静默失败。此前对齐只做移除不做添加，新设的
+        # 管理员永远拿不到控制室写权限（QA 实测：新管理员接管频道 403 → 频道技能保存失败）。
+        to_add = [
+            uid
+            for uid in desired
+            if uid != bot and int(users.get(uid, 0) or 0) < 50
+        ]
+        if not to_remove and not to_add:
             return
 
-        # ① 降权：从 users 里删掉这些人（回落 users_default=0），保留 power_levels 其它字段。
-        #    #2：检查写入结果——失败说明被撤销者**仍有写权限**，是安全问题，必须报错。
+        # ① 一次性写回 power_levels：移除的降权（回落 users_default=0）+ 新增的提到 50。
+        #    #2：检查写入结果——失败说明权限没对齐（被撤销者仍能写/新管理员仍写不了），必须报错。
         new_users = {u: lv for u, lv in users.items() if u not in to_remove}
+        for uid in to_add:
+            new_users[uid] = 50
         new_pl = {**pl, "users": new_users}
         if not self.client.set_power_levels(room_id, new_pl):
             logger.error(
-                "控制室对齐：降权写入失败，被撤销者可能仍能写 AI 配置：%s", to_remove
+                "控制室对齐：power_levels 写入失败（移除 %s / 新增 %s 均未生效）",
+                to_remove, to_add,
             )
+        elif to_add:
+            logger.info("控制室对齐：已给新管理员授权 power=50：%s", to_add)
+        # ①b 新管理员若还不在控制室，补一张邀请（已在房的会被 Synapse 拒绝，忽略即可；
+        #    即便不接受邀请，_is_platform_admin 只看 power_levels，授权已生效）。
+        for uid in to_add:
+            try:
+                if not self.client.is_joined_member(room_id, uid):
+                    self.client.invite_user(room_id, uid)
+            except Exception:
+                logger.debug("控制室对齐：邀请 %s 失败（忽略）", uid, exc_info=True)
+        if not to_remove:
+            return
         # ② 踢出控制室——逐个检查结果，**只对真正踢成功的报成功**，失败的明确报错
         removed, failed = [], []
         for uid in to_remove:
@@ -3868,6 +3892,17 @@ def run(config: CosmacConfig) -> None:
     bot.recover_interrupted_runs()
     # #3：预热门控策略缓存——避免"首读失败→暂用默认→付费门控被绕过"的窗口（best-effort）
     bot.gating.warm()
+    # #4：启动时按控制室「期望管理员集」对齐一次成员权限。对齐平时只在期望集**事件到达时**
+    # 触发——若当时 bot 没收到(掉线/旧版只删不加的缺口)，新管理员会一直卡在"控制室 power<50、
+    # 接管频道 403"。启动兜底一次，重启即自愈（best-effort，失败不阻断启动）。
+    try:
+        ctrl = bot.client.resolve_alias(config.control_room_alias)
+        if ctrl:
+            ev = bot.client.get_state_event(ctrl, CONTROL_ADMINS_EVENT_TYPE) or {}
+            if ev.get("admins"):
+                bot._reconcile_control_members(ctrl, ev)
+    except Exception:
+        logger.debug("启动时对齐控制室成员失败（忽略）", exc_info=True)
     # 生产红线：manual(测试/线下确认)支付通道一旦开启，浏览器即可触发开通会员。启动时大声告警，
     # 避免误把 COSMAC_PAY_ALLOW_MANUAL 带上生产（上线前必须关）。
     if os.environ.get("COSMAC_PAY_ALLOW_MANUAL", "").lower() in ("1", "true", "yes"):
