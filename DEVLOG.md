@@ -7,6 +7,17 @@
 
 ---
 
+## 2026-07-04 — 修:频道成员数里外不对应 + 登录提示友好化 + 两条QA缓存误报澄清
+- 成员数: 频道头(listRoomMembers=仅joined) vs 频道管理(listChannelMembers=joined+invite)两套口径,
+  有待接受邀请时数字对不上。统一: listRoomMembers 也计入 invite(带 pending 标),成员管理弹窗
+  给待接受成员标"待接受"黄标。
+- 登录提示(d612477): 空输入本地拦("请输入用户名和密码");无中文/MatrixError/带URL的报错一律
+  收敛成友好中文,原始英文错误永不裸奔。
+- QA误报澄清(浏览器实测): ①MatrixError裸奔=旧缓存(直连登录代码已删,新版中文提示);
+  ②登录/注册表单跨页残留=旧缓存(switchAuthMode清全字段,线上实测全空)。已建议QA用无痕窗口测试。
+- 顺带实测: Turnstile 线上正常渲染并自动通过。
+- **部署: 仅前端 dist。**
+
 ## 2026-07-04 — AI执行过程可见(Claude Code式交互:在调取什么/在干什么)
 - 负责人需求: AI干活时像 Claude Code 一样展示过程,而不是长时间沉默后突然蹦结果。
 - 实现: ①matrix_client.edit_text(m.replace,wire格式与前端 editMessage 一致,前端 listMessages

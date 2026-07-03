@@ -768,7 +768,7 @@ async function createChannel() {
 const memberOpen = ref(false)
 const inviteUserInput = ref('')
 const memberBusy = ref(false)
-const memberList = ref<{ id: string; name: string; isBot: boolean }[]>([])
+const memberList = ref<{ id: string; name: string; isBot: boolean; pending?: boolean }[]>([])
 // 邀请目标：优先当前打开的频道，否则当前工作区(Space)
 const memberTarget = computed(() => {
   if (currentRoom.value) return { id: currentRoom.value, name: `#${currentName.value}` }
@@ -1119,7 +1119,7 @@ function startReply(m: { id: string; senderName: string; body: string }) {
 function cancelReply() { replyTo.value = null }
 
 // 当前频道的真实成员（频道头显示数量+头像）
-const channelMembers = ref<{ id: string; name: string; isBot: boolean }[]>([])
+const channelMembers = ref<{ id: string; name: string; isBot: boolean; pending?: boolean }[]>([])
 function openRoom(id: string) {
   board.value = false
   tasks.value = false
@@ -2340,6 +2340,7 @@ onBeforeUnmount(() => {
             <span class="nw-mem-av" :class="{ bot: m.isBot }">{{ m.isBot ? '智' : initials(m.name) }}</span>
             <span class="nw-mem-name">{{ m.name }}</span>
             <span v-if="m.isBot" class="nw-mem-tag">AI</span>
+            <span v-else-if="m.pending" class="nw-mem-tag pending">待接受</span>
           </div>
           <p v-if="!memberList.length" class="nw-mem-empty">还没有成员</p>
         </div>
@@ -3072,6 +3073,7 @@ onBeforeUnmount(() => {
 .nw-mem-av.bot { background: var(--text); }
 .nw-mem-name { flex: 1; font-size: 14px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nw-mem-tag { font-size: 10px; font-family: var(--mono); color: var(--accent); background: var(--accent-soft); border-radius: 8px; padding: 1px 7px; }
+.nw-mem-tag.pending { background: #f4e9d0; color: #8a6d1a; }
 .nw-mem-empty { font-size: 13px; color: var(--text-3); padding: 14px; text-align: center; }
 .nw-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 .nw-btn { height: 36px; padding: 0 16px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-panel); color: var(--text-2); font-size: 14px; cursor: pointer; }

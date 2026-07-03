@@ -800,14 +800,23 @@ export async function setFavourite(roomId: string, on: boolean): Promise<void> {
 }
 
 /** 读某个房间的真实成员（已加入的）。返回 {id, name, isBot}。 */
-export function listRoomMembers(roomId: string): { id: string; name: string; isBot: boolean }[] {
+export function listRoomMembers(roomId: string): { id: string; name: string; isBot: boolean; pending?: boolean }[] {
   const room = mx?.getRoom(roomId)
   if (!room) return []
-  return room.getJoinedMembers().map((m: any) => ({
+  // 口径与「频道管理」一致:已加入 + 待接受邀请 都算成员——否则频道头显示 1、
+  // 管理面板显示 3,里外数字对不上(QA 实测报过)。待接受的带 pending 标记,列表可标注。
+  const joined = (room.getJoinedMembers() || []).map((m: any) => ({
     id: m.userId,
     name: m.name || m.userId,
     isBot: m.userId === botId(),
   }))
+  const invited = ((room as any).getMembersWithMembership?.('invite') || []).map((m: any) => ({
+    id: m.userId,
+    name: m.name || m.userId,
+    isBot: m.userId === botId(),
+    pending: true,
+  }))
+  return [...joined, ...invited]
 }
 
 /** 我的联系人 = 跟我共享了房间/私信的所有人（去重，排除自己和中枢AI）。
