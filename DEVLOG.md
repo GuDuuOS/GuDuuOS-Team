@@ -7,6 +7,16 @@
 
 ---
 
+## 2026-07-04 — AI执行过程可见(Claude Code式交互:在调取什么/在干什么)
+- 负责人需求: AI干活时像 Claude Code 一样展示过程,而不是长时间沉默后突然蹦结果。
+- 实现: ①matrix_client.edit_text(m.replace,wire格式与前端 editMessage 一致,前端 listMessages
+  已支持编辑聚合渲染);②两引擎(legacy Agent.run + ClaudeSdkEngine)加 progress_cb(tool_name,args)
+  回调,每次工具调用前触发;③bot _ProgressReporter:首个工具调用发一条"🤖 正在执行"状态消息,
+  后续**原地编辑**追加步骤(已完成✅/当前⏳),回复发出后定格为"执行过程(N步)"小结——一条消息
+  不刷屏;纯聊天(无工具)不发任何过程消息;进度失败静默忽略绝不影响主回复。
+- 工具名→中文动作映射(_TOOL_ACTION_LABELS 16个)+参数摘要(如 组建专班「暑期招生」)。
+- 测试 ProgressVisibilityTest 3用例;全量367过+ruff过。**部署: 重启 guduu-bot(纯后端)。**
+
 ## 2026-07-04 — 技能库试点(ECC移植第1件)+ 后台按钮竖排错位修复
 - 试点: ECC 的 marketing-campaign 技能完成中文译写+本土化(渠道换成公众号/朋友圈/小红书/抖音,
   依赖内联,压至~950字),经 AS token 直写生产控制室 cosmac.skills(安全合并,同slug覆盖)。

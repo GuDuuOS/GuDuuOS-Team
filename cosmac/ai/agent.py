@@ -44,6 +44,7 @@ class Agent:
         ctx: ToolContext,
         extra_system: str = "",
         history: Optional[List[Message]] = None,
+        progress_cb=None,
     ) -> str:
         """处理一句用户输入，返回要发回群里的最终文本回复。
 
@@ -87,6 +88,13 @@ class Agent:
             )
             # 逐个执行工具，把结果作为 tool 消息回灌
             for call in turn.tool_calls:
+                # 过程可见:执行前把"正在调用什么"报给回调(bot 用它滚动更新状态消息)。
+                # 回调任何异常都不影响执行——它只是给用户看的过场。
+                if progress_cb:
+                    try:
+                        progress_cb(call.name, call.arguments or {})
+                    except Exception:
+                        pass
                 result = self.toolbox.execute(call, ctx)
                 logger.info("工具 %s 结果: %s", call.name, result)
                 messages.append(

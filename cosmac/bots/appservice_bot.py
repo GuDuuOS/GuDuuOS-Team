@@ -57,6 +57,79 @@ from cosmac.skills_text import render_skills  # 纯渲染、不依赖 DB
 
 logger = logging.getLogger("cosmac.appservice_bot")
 
+# 「AI 执行过程可见」:工具名 → 用户能看懂的中文动作(Claude Code 式交互,负责人点名要的)。
+_TOOL_ACTION_LABELS: Dict[str, str] = {
+    "create_room": "创建频道",
+    "invite_to_room": "发出邀请",
+    "send_message_to_room": "发送消息",
+    "list_room_members": "查看成员",
+    "get_recent_messages": "调取聊天记录",
+    "run_workflow": "运行工作流",
+    "create_tasks": "登记任务",
+    "search_knowledge": "检索知识库",
+    "web_search": "联网搜索",
+    "list_capabilities": "查阅能力名册",
+    "assemble_team": "组建专班",
+    "list_room_tasks": "查看任务进度",
+    "update_task": "更新任务",
+    "ask_user_choice": "征询选择",
+    "archive_project": "归档项目",
+    "list_my_rooms": "查看频道清单",
+}
+# 从工具参数里挑一个最有信息量的值,拼进动作描述(如 组建专班「暑期招生」)
+_TOOL_ARG_HINT_KEYS = ("project", "name", "room_name", "user_id", "query", "goal", "slug")
+
+
+class _ProgressReporter:
+    """AI 执行过程的滚动状态消息:第一次工具调用时发一条,之后**原地编辑**追加步骤。
+
+    像 Claude Code 那样让用户看到"在调取什么、在干什么",而不是几十秒的沉默后
+    突然蹦出结果。一条消息反复编辑,绝不刷屏;纯聊天(没调工具)不发任何过程消息。
+    进度展示是"过场",任何失败都静默忽略,绝不影响主回复。
+    """
+
+    def __init__(self, client, room_id: str) -> None:
+        self.client = client
+        self.room_id = room_id
+        self.event_id: Optional[str] = None
+        self.steps: List[str] = []
+
+    def __call__(self, tool_name: str, args: Dict[str, Any]) -> None:
+        label = _TOOL_ACTION_LABELS.get(tool_name, tool_name)
+        hint = ""
+        for k in _TOOL_ARG_HINT_KEYS:
+            v = str((args or {}).get(k) or "").strip()
+            if v:
+                hint = f"「{v[:24]}」"
+                break
+        self.steps.append(label + hint)
+        # 已完成的步骤打勾,当前步骤沙漏
+        lines = [
+            ("  ✅ " if i < len(self.steps) - 1 else "  ⏳ ") + s
+            for i, s in enumerate(self.steps)
+        ]
+        text = "🤖 正在执行:\n" + "\n".join(lines)
+        try:
+            if self.event_id is None:
+                self.event_id = self.client.send_text(self.room_id, text)
+            else:
+                self.client.edit_text(self.room_id, self.event_id, text)
+        except Exception:
+            logger.debug("更新执行进度失败(忽略)", exc_info=True)
+
+    def finish(self) -> None:
+        """回复发出后,把状态消息定格成全部完成的过程小结。"""
+        if not self.event_id or not self.steps:
+            return
+        text = f"🤖 执行过程({len(self.steps)} 步):\n" + "\n".join(
+            f"  ✅ {s}" for s in self.steps
+        )
+        try:
+            self.client.edit_text(self.room_id, self.event_id, text)
+        except Exception:
+            logger.debug("定格执行进度失败(忽略)", exc_info=True)
+
+
 # 公开回调端点（外部工作流平台调）允许的最大请求体（防无认证内存 DoS）。
 # 工作流结果文本不大、下游还会截断，512KB 绰绰有余。
 _MAX_CALLBACK_BODY = 512 * 1024
@@ -894,20 +967,28 @@ class CosmacBot:
         每次新建引擎实例(无状态轻对象):避免并发线程间 system_prompt 串味。
         """
         from cosmac.ai.engine import ClaudeSdkEngine, sdk_engine_enabled
+        # 执行过程可见(Claude Code 式):工具调用滚动展示在一条可编辑的状态消息里。
+        reporter = _ProgressReporter(self.client, tool_ctx.room_id)
         if sdk_engine_enabled():
             try:
                 eng = ClaudeSdkEngine(self.toolbox, lambda: agent.system_prompt)
-                return eng.run(
+                reply = eng.run(
                     user_text, tool_ctx, extra_system=extra_system, history=history,
+                    progress_cb=reporter,
                 )
+                reporter.finish()
+                return reply
             except Exception as exc:
                 logger.exception("Claude SDK 引擎执行失败,本条回退 legacy 引擎")
                 # 回退不能是无声的:欠费/CLI 坏了会让引擎一直默默回退,没人发现"高级引擎"
                 # 早就没在跑。向控制室发告警(1 小时最多一条),管理员能第一时间看到。
                 self._alert_engine_fallback(exc)
-        return agent.run(
+        reply = agent.run(
             user_text, tool_ctx, extra_system=extra_system, history=history,
+            progress_cb=reporter,
         )
+        reporter.finish()
+        return reply
 
     def _alert_engine_fallback(self, exc: Exception) -> None:
         """SDK 引擎回退时向控制室发告警(节流:1 小时最多一条)。

@@ -385,5 +385,59 @@ class RoomAccessScopeTest(unittest.TestCase):
         self.assertIn("成员", msg)
 
 
+class ProgressVisibilityTest(unittest.TestCase):
+    """AI 执行过程可见:legacy 引擎回调触发 + 进度报告器 发送→编辑→定格。"""
+
+    def test_agent_run_fires_progress_cb(self) -> None:
+        script = [
+            TurnResult(tool_calls=[ToolCall(id="1", name="create_room", arguments={"name": "群A"})]),
+            TurnResult(text="建好了"),
+        ]
+        client = FakeClient()
+        toolbox = Toolbox(client)
+        llm = FakeLLM(script)
+        agent = Agent(llm=llm, toolbox=toolbox, system_prompt="sys")
+        seen = []
+        agent.run("建群A", ToolContext("!cur:test", "@alice:test"),
+                  progress_cb=lambda n, a: seen.append((n, a)))
+        self.assertEqual(seen, [("create_room", {"name": "群A"})])
+
+    def test_reporter_send_then_edit_then_finish(self) -> None:
+        from cosmac.bots.appservice_bot import _ProgressReporter
+
+        class _Cli:
+            def __init__(self):
+                self.sent, self.edits = [], []
+            def send_text(self, room, text):
+                self.sent.append(text); return "$ev1"
+            def edit_text(self, room, ev, text):
+                self.edits.append((ev, text)); return True
+
+        cli = _Cli()
+        rep = _ProgressReporter(cli, "!r:test")
+        rep("assemble_team", {"project": "暑期招生"})
+        rep("create_tasks", {"goal": "招生"})
+        rep.finish()
+        # 第一步:发新消息;后续+定格:编辑同一条
+        self.assertEqual(len(cli.sent), 1)
+        self.assertIn("组建专班「暑期招生」", cli.sent[0])
+        self.assertEqual(len(cli.edits), 2)
+        self.assertTrue(all(ev == "$ev1" for ev, _ in cli.edits))
+        self.assertIn("执行过程（2 步）", cli.edits[-1][1].replace("(", "（").replace(")", "）"))
+
+    def test_reporter_silent_without_tools(self) -> None:
+        from cosmac.bots.appservice_bot import _ProgressReporter
+
+        class _Cli:
+            def __init__(self): self.sent = []
+            def send_text(self, room, text): self.sent.append(text); return "$e"
+            def edit_text(self, room, ev, text): return True
+
+        cli = _Cli()
+        rep = _ProgressReporter(cli, "!r:test")
+        rep.finish()   # 没有任何工具调用 → 不发过程消息
+        self.assertEqual(cli.sent, [])
+
+
 if __name__ == "__main__":
     unittest.main()

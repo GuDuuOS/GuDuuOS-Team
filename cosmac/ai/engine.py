@@ -97,11 +97,13 @@ class ClaudeSdkEngine:
         ctx: ToolContext,
         extra_system: str = "",
         history: Optional[List[Message]] = None,
+        progress_cb=None,
     ) -> str:
-        """处理一句用户输入,返回最终文本回复。失败**抛异常**——由 bot 回退 legacy。"""
+        """处理一句用户输入,返回最终文本回复。失败**抛异常**——由 bot 回退 legacy。
+        progress_cb(tool_name, args):每次工具调用前回调,给用户滚动展示"正在干什么"。"""
         import asyncio  # 局部 import:引擎未启用时本模块零依赖负担
 
-        return asyncio.run(self._arun(user_text, ctx, extra_system, history))
+        return asyncio.run(self._arun(user_text, ctx, extra_system, history, progress_cb))
 
     # ── 真正干活(async;SDK 是异步接口) ────────────────────────────────────
     async def _arun(
@@ -110,6 +112,7 @@ class ClaudeSdkEngine:
         ctx: ToolContext,
         extra_system: str,
         history: Optional[List[Message]],
+        progress_cb=None,
     ) -> str:
         # 懒 import:claude-agent-sdk 只在 3.10+ 且已安装时存在;3.9 环境 import 会
         # ModuleNotFoundError → 抛给 bot 回退 legacy,不影响现有功能。
@@ -119,6 +122,7 @@ class ClaudeSdkEngine:
             AssistantMessage,
             ClaudeAgentOptions,
             TextBlock,
+            ToolUseBlock,
             create_sdk_mcp_server,
             query,
             tool,
@@ -191,6 +195,13 @@ class ClaudeSdkEngine:
         async for message in query(prompt=prompt, options=options):
             if isinstance(message, AssistantMessage):
                 for block in message.content:
+                    if isinstance(block, ToolUseBlock) and progress_cb:
+                        # 过程可见:引擎每发起一次工具调用就报给回调(工具名去掉 mcp 前缀)。
+                        try:
+                            name = str(block.name or "").split("__")[-1]
+                            progress_cb(name, dict(block.input or {}))
+                        except Exception:
+                            pass
                     if isinstance(block, TextBlock) and block.text.strip():
                         final_text = block.text.strip()  # 取最后一段非空文本 = 最终回复
 

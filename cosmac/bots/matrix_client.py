@@ -81,6 +81,29 @@ class MatrixClient:
         logger.warning("向房间 %s 发消息失败: %s %s", room_id, resp.status_code, resp.text)
         return None
 
+    def edit_text(self, room_id: str, event_id: str, new_text: str) -> bool:
+        """编辑自己发过的一条消息(m.replace)。给「AI 执行过程」状态消息原地滚动更新用——
+        一条消息反复编辑,而不是每步刷一条新消息把群刷屏。
+
+        wire 格式与前端 editMessage 完全一致(fallback body 带 "* " 前缀,新内容在
+        m.new_content),客户端(含我们自己的 listMessages)按编辑聚合渲染。失败返回 False。
+        """
+        url = self._url(
+            f"/_matrix/client/v3/rooms/{quote(room_id)}/send/m.room.message/{self._txn_id()}"
+        )
+        body = {
+            "msgtype": "m.text",
+            "body": f"* {new_text}",
+            "m.new_content": {"msgtype": "m.text", "body": new_text},
+            "m.relates_to": {"rel_type": "m.replace", "event_id": event_id},
+        }
+        try:
+            resp = self._session.put(url, json=body, timeout=10)
+            return resp.status_code == 200
+        except requests.RequestException:
+            logger.debug("编辑消息失败 room=%s", room_id, exc_info=True)
+            return False
+
     def set_typing(self, room_id: str, typing: bool, timeout_ms: int = 30000) -> None:
         """设置主 AI 在房间里的"正在输入…"状态（③ 流式体感）。
 
