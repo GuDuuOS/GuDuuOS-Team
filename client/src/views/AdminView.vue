@@ -2765,6 +2765,10 @@ onMounted(check)
 
 /* AI 配置表单 */
 .adm-form { max-width: 640px; display: flex; flex-direction: column; gap: 18px; }
+/* 真凶修复(浏览器实测定位):技能库等面板把「列表表格」也包进了 adm-form,表格被 640px
+   限宽压扁(表格 width:100% = 640 的 100%,右侧大片空白)。含表格的 adm-form 解除限宽,
+   纯表单面板(AI配置等)维持 640 的舒适阅读宽。 */
+.adm-form:has(.adm-table) { max-width: none; }
 .adm-form .adm-field textarea,
 .adm-form .adm-field input,
 .adm-form .adm-field select {
