@@ -209,12 +209,24 @@ function friendlyLoginError(e: any): string {
   if (code === 'M_LIMIT_EXCEEDED' || /429|too many|limit/i.test(msg)) return '尝试过于频繁，请稍后再试'
   if (code === 'M_FORBIDDEN' || /invalid|forbidden|password|unknown|not found|403/i.test(msg)) return '用户名或密码错误'
   if (/network|fetch|timeout|failed to fetch/i.test(msg)) return '网络异常，请检查网络后重试'
-  return msg || '登录失败，请重试'
+  // 兜底:凡是没有中文的消息(英文原始错误/MatrixError/带URL技术细节)一律收敛成友好中文
+  // ——原始报错对用户没意义只会吓人(实测出现过 MatrixError: [400] ... 裸奔)。
+  if (!msg || !/[\u4e00-\u9fa5]/.test(msg) || /matrixerror|https?:\/\//i.test(msg)) {
+    return '登录失败，请检查账号和密码后重试'
+  }
+  return msg
 }
 
 /** 登录：账号走 Synapse，邮箱走 cosmac 后端；都用「只认证不启动」，成功后路由进主应用。 */
 async function doLogin() {
-  error.value = ''; loading.value = true
+  error.value = ''
+  // 空输入本地先拦:别发一个注定失败的请求、拿一句语义模糊的「用户名或密码错误」
+  if (loginBy.value === 'email') {
+    if (!email.value.trim() || !password.value) { error.value = '请输入邮箱和密码'; return }
+  } else {
+    if (!user.value.trim() || !password.value) { error.value = '请输入用户名和密码'; return }
+  }
+  loading.value = true
   try {
     const code = stepUp.value ? stepUpCode.value.trim() : ''
     if (stepUp.value && !code) { error.value = '请输入邮件里的 6 位验证码'; loading.value = false; return }
