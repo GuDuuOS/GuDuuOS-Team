@@ -365,6 +365,13 @@ const currentName = computed(
 const currentTopic = computed(
   () => rooms.value.find((r) => r.id === currentRoom.value)?.topic || '',
 )
+// 当前频道类型角标:公开(任何人可自行加入)/私密(仅邀请可进)。直接读房间的 m.room.join_rules
+// (spaceJoinRule 对任意房间通用)。来由:用户分不清"我在私聊还是群里/这群外人进得来吗",
+// 曾把邀请发错地方——头部亮出类型,一眼可辨。
+const currentVis = computed(() => {
+  if (!currentRoom.value) return ''
+  return spaceJoinRule(currentRoom.value) === 'public' ? '公开' : '私密'
+})
 // 当前频道即「当前群」：切频道时让「频道管理」面板跟着切到对应群的配置（每个群一份、互不影响）
 // 传 currentRoom（真实 room id）→「人员」标签走真实 Matrix 成员
 watch([currentName, currentRoom], ([n, id]) => { if (n) setAdminChannel(n, id) }, { immediate: true })
@@ -1822,6 +1829,8 @@ onBeforeUnmount(() => {
           </button>
           <span class="ch-av" :style="{ background: colorOf(currentName) }">{{ iconChar(currentName) }}</span>
           <button class="title title-btn" :title="'频道设置'" @click="openChannelSettings">{{ currentName }}<svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg></button>
+          <span v-if="currentVis" class="ch-vis" :class="currentVis === '公开' ? 'pub' : 'pri'"
+                :title="currentVis === '公开' ? '公开频道：本服务器任何人可自行加入' : '私密频道：仅受邀成员可进'">{{ currentVis }}</span>
           <div v-if="currentTopic" class="ch-topic">{{ currentTopic }}</div>
           <div class="ch-actions">
             <button class="ch-members-btn" title="频道管理 · 成员 / 技能 / 知识库 / 规则" @click="openAdmin(currentName, currentRoom)">
@@ -1981,7 +1990,7 @@ onBeforeUnmount(() => {
         <!-- 顶栏（放大态作为弹窗标题栏，横跨三栏）-->
         <div class="ai-head">
           <span class="ai-dot" />
-          <span class="ai-title">中枢 AI · CosMac Star</span>
+          <span class="ai-title">中枢 AI · CosMac Star</span><span class="ai-dm-badge" title="这是你与中枢 AI 的一对一私人会话，内容仅你们可见；邀请成员请到目标频道里 @AI 操作">私人会话</span>
           <div class="ai-head-actions">
             <!-- 放大 / 还原 -->
             <button class="ai-ic-btn" :title="aiMax ? '还原' : '放大'" @click="aiMax = !aiMax">
@@ -2402,6 +2411,12 @@ onBeforeUnmount(() => {
 .auth-switch a:hover { text-decoration: underline; }
 .err { color: var(--danger); font-size: 13px; }
 .live-splash { height: 100vh; display: flex; align-items: center; justify-content: center; color: var(--text-3); font-size: 14px; background: linear-gradient(180deg, var(--bg-panel), var(--bg-soft)); }
+/* 频道类型角标:私密(灰)/公开(绿),挂在频道名旁 */
+.ch-vis { flex-shrink: 0; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; line-height: 1.4; }
+.ch-vis.pri { background: var(--bg, #f1efe9); color: var(--text-3); border: 1px solid var(--border); }
+.ch-vis.pub { background: #e8f2e6; color: #4c7a4f; border: 1px solid #cfe3cd; }
+/* AI 面板"私人会话"角标 */
+.ai-dm-badge { flex-shrink: 0; margin-left: 8px; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--bg, #f1efe9); color: var(--text-3); border: 1px solid var(--border); }
 .hint { color: var(--text-3); font-size: 12px; }
 .hint.pad { padding: 16px; }
 
