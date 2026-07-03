@@ -72,6 +72,11 @@ class Toolbox:
         # 用量配额**消费**钩子：由 bot 注入。签名 (sender, tool_name) -> None。工具在真正
         # 做成事的那一刻调用（如专班房建成、工作流真正提交），失败路径不扣。
         self.quota_consume: Optional[Callable[[str, str], None]] = None
+        # 资源存在性校验回调(bot 注入):返回库里现有的 Agent/Skill slug 集合。
+        # assemble_team 用它识别"库里没有的资源"并**提醒用户缺口**,而不是静默写进配置后失效
+        # (负责人设计:组班资源必须来自库;没有的要提醒,可能需要先到后台添加)。None=跳过校验。
+        self.known_agents: Optional[Callable[[], Set[str]]] = None
+        self.known_skills: Optional[Callable[[], Set[str]]] = None
         # 「群名→room_id」解析用的房名缓存(room_id → (名字, 时间戳);5 分钟 TTL,见 _resolve_room_by_name)
         self._room_name_cache: Dict[str, tuple] = {}
         # 房间类型缓存(room_id → 'ai'/'dm'/'channel';建房标记不变,永久缓存,见 _room_kind)
@@ -469,7 +474,9 @@ class Toolbox:
                 "要拉团队干活的目标就**直接用本工具**（先调 list_capabilities 看有谁可用），"
                 "**在 tasks 里一并把子任务带上**——它会把任务直接派进新专班。"
                 "⚠️ 对同一目标**不要再单独调 create_tasks**（否则任务重复成两份、一份还留在原对话里）。"
-                "成员/Agent/技能都应来自 list_capabilities；项目主AI 会被任务 RULE 约束、只围绕本项目分配与审核。"
+                "成员/Agent/技能**必须来自 list_capabilities 名册,绝不要编造名册里没有的**——"
+                "库里没有的资源会被剔除并向用户提示缺口。"
+                "项目主AI 会被任务 RULE 约束、只围绕本项目分配与审核。"
             ),
             parameters={
                 "type": "object",
@@ -489,7 +496,10 @@ class Toolbox:
                     },
                     "task_rule": {
                         "type": "string",
-                        "description": "本专班的任务 RULE/约束：项目主AI 据此分配与审核（可空）。",
+                        "description": (
+                            "本专班的任务 RULE/约束：目标、交付标准、审核要求、节奏——它是频道里"
+                            "项目主AI 的行为宪法,请**尽量根据任务内容定制**;留空会自动生成基础版。"
+                        ),
                     },
                     "skills": {
                         "type": "array", "items": {"type": "string"},
@@ -1276,6 +1286,49 @@ class Toolbox:
         workers = [str(a).strip() for a in (args.get("worker_agents") or []) if str(a).strip()]
         skills = [str(s).strip() for s in (args.get("skills") or []) if str(s).strip()]
         task_rule = (args.get("task_rule") or "").strip()
+
+        # —— 资源存在性校验(不能静默失效):模型给的 Agent/Skill 必须真在库里 ——
+        # 不在库里的:从绑定清单剔除(防写进配置后查无此物、悄悄不生效),并收集进 missing
+        # 提醒用户"缺什么、去哪补"。校验回调未注入/失败 → 跳过校验(优雅降级,绝不挡组班)。
+        missing: List[str] = []
+        try:
+            known_a = self.known_agents() if self.known_agents else None
+        except Exception:
+            known_a = None
+        if known_a is not None:
+            if lead and lead not in known_a:
+                missing.append(f"项目主AI人设「{lead}」(已回退内置编排人设)")
+                lead = ""
+            bad_w = [w for w in workers if w not in known_a]
+            if bad_w:
+                missing.append("协作AI:" + "、".join(bad_w))
+                workers = [w for w in workers if w in known_a]
+        try:
+            known_s = self.known_skills() if self.known_skills else None
+        except Exception:
+            known_s = None
+        if known_s is not None:
+            bad_s = [s for s in skills if s not in known_s]
+            if bad_s:
+                missing.append("技能:" + "、".join(bad_s))
+                skills = [s for s in skills if s in known_s]
+
+        # —— 任务 RULE 保底:模型没给约束时自动生成基础版,专班绝不"裸奔" ——
+        # (负责人设计:到了频道后,频道主AI要受本专班任务约束——RULE 是频道自治的宪法,不能缺。)
+        auto_rule = False
+        if not task_rule:
+            titles: List[str] = []
+            for it in (args.get("tasks") or [])[:8]:
+                title = str((it or {}).get("title") if isinstance(it, dict) else it).strip()
+                if title:
+                    titles.append(title)
+            task_rule = (
+                f"本专班目标：{project}。"
+                + (f"任务节点：{'、'.join(titles)}。" if titles else "任务节点见任务看板。")
+                + "约束：只围绕本项目工作；每个节点完成后必须由项目主AI审核（不合格打回并写明原因）；"
+                "全部节点完成并审核通过后，征询用户同意再归档关闭本专班。"
+            )
+            auto_rule = True
         # 组装频道配置：项目主AI 人设 + 任务RULE + 协作Agent + 技能
         persona: Dict[str, Any] = {}
         if lead:
@@ -1325,7 +1378,15 @@ class Toolbox:
         if workers:
             parts.append("AI 协作：" + "、".join(workers))
         if task_rule:
-            parts.append("已设本专班任务约束（RULE）。")
+            parts.append(
+                "已设本专班任务约束（RULE，自动生成的基础版——要调整随时告诉我）。"
+                if auto_rule else "已按你的要求设定本专班任务约束（RULE）。"
+            )
+        if missing:
+            parts.append(
+                "⚠️ 以下资源库里没有、未能绑定：" + "；".join(missing)
+                + "。可让管理员到「管理后台 → 智能体/技能」先添加，再对我说重新绑定。"
+            )
         if n_tasks:
             parts.append(f"已派 {n_tasks} 个任务，详见任务看板。")
         self.client.send_text(room_id, "\n".join(parts))
@@ -1350,8 +1411,16 @@ class Toolbox:
             summary.append(f"协作Agent {len(workers)} 个")
         if skills:
             summary.append(f"技能 {len(skills)} 个")
-        summary.append("已设任务RULE" if task_rule else "无任务RULE")
+        summary.append(
+            ("已设任务RULE（自动生成的基础版，可按需修改）" if auto_rule else "已按你的要求设任务RULE")
+            if task_rule else "无任务RULE"
+        )
         summary.append(f"派 {n_tasks} 个任务" if n_tasks else "暂未派任务")
+        if missing:
+            summary.append(
+                "⚠️ 以下资源库里没有、未绑定：" + "；".join(missing)
+                + "（请如实转告用户：可到管理后台→智能体/技能添加后再让我补绑）"
+            )
         return "；".join(summary) + "。"
 
     def _record_workflow_run(self, slug, platform, ctx, user_input, result) -> None:

@@ -56,6 +56,17 @@ class FakeClient:
         # bot 在两个房:用户 alice 只在 !allowed:test(见 is_joined_member)
         return ["!allowed:test", "!secret:test"]
 
+    def invite_user(self, room_id, user_id):
+        return True
+
+    def set_state_event(self, room_id, etype, content, state_key=""):
+        self.states = getattr(self, "states", [])
+        self.states.append((room_id, etype, content))
+        return "$stateevent"
+
+    def send_card(self, room_id, text, data):
+        return "$cardevent"
+
 
 class FakeLLM(LLMProvider):
     """假大脑：按预设脚本逐轮返回 TurnResult（先调工具，再给最终文本）。"""
@@ -276,6 +287,53 @@ class TestAgentTools(unittest.TestCase):
         agent = Agent(FakeLLM([loop] * 10), Toolbox(client), max_steps=3)
         reply = agent.run("看看谁在", ToolContext("!c:test", "@a:test"))
         self.assertIn("没能完成", reply)
+
+
+class AssembleTeamGapsTest(unittest.TestCase):
+    """组班链路完善:库里没有的资源要提醒缺口;没给任务RULE要自动生成保底。"""
+
+    def setUp(self) -> None:
+        self.client = FakeClient()
+        self.tb = Toolbox(self.client)
+        # 库里只有这些资源
+        self.tb.known_agents = lambda: {"planner"}
+        self.tb.known_skills = lambda: {"copywriter"}
+
+    def _assemble(self, **kw):
+        args = {"project": "测试专班"}
+        args.update(kw)
+        return self.tb.execute(
+            ToolCall(id="x", name="assemble_team", arguments=args),
+            ToolContext("!cur:test", "@alice:test", is_dm=True),
+        )
+
+    def test_missing_resources_reported(self) -> None:
+        out = self._assemble(
+            lead_agent="不存在的AI", worker_agents=["planner", "幽灵"], skills=["copywriter", "剪辑"],
+        )
+        self.assertIn("资源库里没有", out)
+        self.assertIn("不存在的AI", out)
+        self.assertIn("幽灵", out)
+        self.assertIn("剪辑", out)
+        # 存在的资源正常绑定:检查写进 state 的配置
+        cfg = next(c for (_r, et, c) in self.client.states if et.endswith("config") or "persona" in c)
+        self.assertEqual(cfg.get("agentSlugs"), ["planner"])
+        self.assertEqual(cfg.get("persona", {}).get("skill_slugs"), ["copywriter"])
+        # lead 回退内置人设(prompt 而非 agentSlug)
+        self.assertIn("prompt", cfg.get("persona", {}))
+
+    def test_rule_auto_generated_when_absent(self) -> None:
+        out = self._assemble(tasks=[{"title": "写脚本"}, {"title": "拍摄"}])
+        self.assertIn("自动生成的基础版", out)
+        cfg = next(c for (_r, _et, c) in self.client.states if "taskRule" in c)
+        self.assertIn("测试专班", cfg["taskRule"])
+        self.assertIn("写脚本", cfg["taskRule"])
+
+    def test_rule_kept_when_given(self) -> None:
+        out = self._assemble(task_rule="只做A不做B")
+        self.assertIn("按你的要求", out)
+        cfg = next(c for (_r, _et, c) in self.client.states if "taskRule" in c)
+        self.assertEqual(cfg["taskRule"], "只做A不做B")
 
 
 class RoomAccessScopeTest(unittest.TestCase):

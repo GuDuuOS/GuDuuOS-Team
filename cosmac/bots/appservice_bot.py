@@ -137,6 +137,13 @@ class CosmacBot:
         self.toolbox.kb_search = self._kb_search_for_tool
         # 能力名册（模块3.5 档1）：注入"列出可调配资源"的回调，让主AI 拆任务时知道找谁。
         self.toolbox.list_capabilities = self._list_capabilities_for_tool
+        # 资源存在性校验(组班链路完善):assemble_team 据此识别"库里没有的 Agent/Skill"并提醒缺口
+        self.toolbox.known_agents = lambda: {
+            str(a.get("slug") or "") for a in self._global_agent_items() if a.get("slug")
+        }
+        self.toolbox.known_skills = lambda: {
+            str(s.get("slug") or "") for s in self._global_skill_items() if s.get("slug")
+        }
         self.agent = Agent(
             llm=self.llm,
             toolbox=self.toolbox,
@@ -547,6 +554,10 @@ class CosmacBot:
                 "(带 room_id) 操作目标频道。用户问『XX频道最近聊了什么/汇总一下各频道进展』这类问题时,"
                 "主动用这些工具去调取,不要说你看不到。"
                 "跨频道操作时以用户本人的成员身份为界——不替 TA 访问 TA 不在的频道。"
+                "接到要组队执行的目标时的正确链路:先 list_capabilities 看库里有哪些人/AI/技能/知识库,"
+                "拆解任务后用 assemble_team 一键建专班(把成员/AI/技能/任务/定制的任务RULE一并带上);"
+                "库里没有的资源**不要编造**,组班结果里会提示缺口——把缺口如实转告用户,"
+                "建议 TA 到管理后台补充后再完善专班。"
             )
         return (
             "【你的身份：本频道专属 AI】你正在某个频道里服务。你的记忆、知识、可派单的人、"
