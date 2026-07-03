@@ -2614,7 +2614,9 @@ onMounted(check)
 .adm-rule-row input[type=checkbox] { margin-top: 10px; flex-shrink: 0; }
 .adm-rule-text { flex: 1; resize: vertical; }
 .adm-rule-row .adm-btn { flex-shrink: 0; margin-top: 4px; }
-.adm-skill-desc { color: var(--text-2); max-width: 640px; min-width: 280px; }
+.adm-skill-desc { color: var(--text-2); }
+.adm-skill-desc, .adm-table { /* 说明列吃满剩余宽;表格强制满宽 */ }
+.adm-table { table-layout: auto; }
 /* 短内容列(标识/名称等)禁折行——两三个字/带连字符的 slug 不许竖排 */
 .adm-nowrap { white-space: nowrap; }
 /* 入驻模板表单：两列网格 + 知识库文档行 */
