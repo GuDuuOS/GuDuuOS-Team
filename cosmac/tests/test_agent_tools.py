@@ -116,25 +116,28 @@ class TestAgentTools(unittest.TestCase):
         self.assertIn("群A", out)
 
     def test_cross_room_tools_require_sender_membership(self) -> None:
-        # 模型可以编造/指定 room_id，但工具必须确认发起人也是目标房成员，不能只凭 bot 高权访问。
+        # 双层作用域后:跨房只在**全局模式(私聊,is_dm=True)**才谈成员身份;频道模式一律锁本房。
         client = FakeClient()
         toolbox = Toolbox(client)
+        # 全局模式:非成员房被拒(不越权)
         denied = toolbox.execute(
-            ToolCall(
-                id="x", name="get_recent_messages",
-                arguments={"room_id": "!secret:test"},
-            ),
-            ToolContext("!cur:test", "@alice:test"),
+            ToolCall(id="x", name="get_recent_messages", arguments={"room_id": "!secret:test"}),
+            ToolContext("!cur:test", "@alice:test", is_dm=True),
         )
         self.assertIn("不能替你读写", denied)
+        # 全局模式:成员房放行
         allowed = toolbox.execute(
-            ToolCall(
-                id="x", name="get_recent_messages",
-                arguments={"room_id": "!allowed:test", "limit": 999},
-            ),
-            ToolContext("!cur:test", "@alice:test"),
+            ToolCall(id="x", name="get_recent_messages",
+                     arguments={"room_id": "!allowed:test", "limit": 999}),
+            ToolContext("!cur:test", "@alice:test", is_dm=True),
         )
         self.assertIn("最近聊天记录", allowed)
+        # 频道模式:即便是成员房也锁死(频道分身只看本频道)
+        locked = toolbox.execute(
+            ToolCall(id="x", name="get_recent_messages", arguments={"room_id": "!allowed:test"}),
+            ToolContext("!cur:test", "@alice:test", is_dm=False),
+        )
+        self.assertIn("专属 AI", locked)
 
     def test_no_tool_calls_returns_text(self) -> None:
         # 模型不调工具时，直接返回文本
@@ -266,6 +269,37 @@ class TestAgentTools(unittest.TestCase):
         agent = Agent(FakeLLM([loop] * 10), Toolbox(client), max_steps=3)
         reply = agent.run("看看谁在", ToolContext("!c:test", "@a:test"))
         self.assertIn("没能完成", reply)
+
+
+class RoomAccessScopeTest(unittest.TestCase):
+    """双层作用域:频道模式锁本频道、全局模式按成员放行(cosmac.ai_session 隔离墙)。"""
+
+    def setUp(self) -> None:
+        self.tb = Toolbox(FakeClient())
+
+    def test_current_room_always_ok(self) -> None:
+        # 目标=当前房,两种模式都放行
+        ctx_ch = ToolContext("!cur:test", "@alice:test", is_dm=False)
+        self.assertEqual(self.tb._check_room_access("!cur:test", ctx_ch), "")
+
+    def test_channel_mode_blocks_other_room(self) -> None:
+        # 频道模式:即便用户是那房间成员(!allowed),也拒绝跨房
+        ctx = ToolContext("!cur:test", "@alice:test", is_dm=False)
+        msg = self.tb._check_room_access("!allowed:test", ctx)
+        self.assertNotEqual(msg, "")
+        self.assertIn("频道", msg)
+
+    def test_global_mode_allows_member_room(self) -> None:
+        # 全局模式(私聊):用户是成员的房放行
+        ctx = ToolContext("!cur:test", "@alice:test", is_dm=True)
+        self.assertEqual(self.tb._check_room_access("!allowed:test", ctx), "")
+
+    def test_global_mode_blocks_non_member_room(self) -> None:
+        # 全局模式:用户不在的房仍拒绝(不越权)
+        ctx = ToolContext("!cur:test", "@alice:test", is_dm=True)
+        msg = self.tb._check_room_access("!secret:test", ctx)
+        self.assertNotEqual(msg, "")
+        self.assertIn("成员", msg)
 
 
 if __name__ == "__main__":

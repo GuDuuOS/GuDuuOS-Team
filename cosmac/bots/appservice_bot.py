@@ -375,6 +375,11 @@ class CosmacBot:
                 extra_system = self._skill_addendum(
                     room_id, sender, query=text or user_text, gctx=gctx,
                 )
+                # 双层作用域指令(频道分身 vs 全局助理):告诉 AI 它现在是哪种身份、边界在哪。
+                # 智能水平两种模式相同(同一引擎/能同样拆任务建专班),只是"能拿到的原料"不同。
+                extra_system = self._scope_directive(is_dm) + (
+                    ("\n\n" + extra_system) if extra_system else ""
+                )
                 # 短期记忆：把本房间最近的对话(不含当前这条)喂给模型，主 AI 才"记得"上文。
                 history = self._recent_history(room_id, sender, user_text)
                 # 本群若绑定的智能体指定了模型 → 用该模型的 Agent 回这条（否则用默认 Agent）。
@@ -530,6 +535,21 @@ class CosmacBot:
             role = "assistant" if s == self.config.bot_user_id else "user"
             out.append(Message(role=role, content=body))
         return out[-self._HISTORY_LIMIT:]
+
+    def _scope_directive(self, is_dm: bool) -> str:
+        """按对话模式给主 AI 的作用域指令。频道模式=频道分身(只服务本频道);全局模式=全局助理。"""
+        if is_dm:
+            return (
+                "【你的身份：全局助理】你正在与用户的私人会话里对话。你能纵观用户所在的各个频道,"
+                "可跨频道调取资料、拆解任务、调配全平台的人/AI/技能/知识库来帮 TA 统筹。"
+                "跨频道操作时以用户本人的成员身份为界——不替 TA 访问 TA 不在的频道。"
+            )
+        return (
+            "【你的身份：本频道专属 AI】你正在某个频道里服务。你的记忆、知识、可派单的人、"
+            "可用的技能都**只限于这个频道**——只看本频道的对话与资料,派单只派给本频道成员。"
+            "你和全局助理一样聪明(能拆任务/建专班/跑工作流),但原料只取本频道。"
+            "**不要**去读或操作别的频道;用户要跨频道统筹时,引导 TA 到右侧「私人会话」里找你。"
+        )
 
     def _skill_addendum(
         self,
@@ -992,6 +1012,18 @@ class CosmacBot:
                     people.append(p)
         except Exception:
             people = []
+        # 频道模式(在频道里@AI，非私聊):名册的"真人"只保留**本频道成员**——频道分身只调本群的人。
+        # 全局模式(右侧私人会话)不过滤,给全局名册。
+        if not ctx.is_dm and ctx.room_id and people:
+            try:
+                member_ids = {
+                    str(m.get("user_id") or "")
+                    for m in (self.client.get_members(ctx.room_id) or [])
+                }
+                if member_ids:
+                    people = [p for p in people if str(p.get("user_id") or "") in member_ids]
+            except Exception:
+                logger.debug("按频道成员过滤名册失败,退回全量", exc_info=True)
         if people:
             lines.append("— 真人（可派单给 TA）—")
             for p in people[:50]:
