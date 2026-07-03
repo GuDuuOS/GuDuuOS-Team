@@ -7,6 +7,17 @@
 
 ---
 
+## 2026-07-04 — 修:全局 toast 从未被渲染(协作人403等报错全静默) + 门控文案 UI 化
+- QA: 普通用户「我的协作人」保存报 403,界面毫无提示。排查发现**根因是横切 bug**:
+  useToast(协作人/知识库/后台/主页在用)注释里假想的 <ToastHost/> 挂在 App.vue,但真实根组件
+  是 LiveView——组件从没建过,所有 success/warn 反馈进了黑洞。修:LiveView 的 toast-host 一并
+  渲染全局队列(warn红边/success绿边),z-index 200→400(原来低于弹窗 210,会被盖住)。
+- 门控 403 文案 UI 化: _gate_denied_text 加 ui 参数——浏览器端点(people_add/kb_add/doc_tree/
+  doc_page)返回「个人协作人名册」是付费会员功能,请开通会员后使用(右上角「升级会员」);
+  聊天场景保留原文案("发「会员」查看")。目录全称太长,UI 取括号前短名。
+- 协作人弹窗补内联红字报错(toast 2.6s 即逝,"去开会员"这类引导要钉在表单里)。
+- **部署: 前端 dist + 重启 bot(改了 appservice_bot.py)。**
+
 ## 2026-07-04 — 修:频道成员数里外不对应 + 登录提示友好化 + 两条QA缓存误报澄清
 - 成员数: 频道头(listRoomMembers=仅joined) vs 频道管理(listChannelMembers=joined+invite)两套口径,
   有待接受邀请时数字对不上。统一: listRoomMembers 也计入 invite(带 pending 标),成员管理弹窗

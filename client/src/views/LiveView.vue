@@ -95,6 +95,7 @@ import MyPeopleModal from '@/components/chat/MyPeopleModal.vue'
 import MyUsageModal from '@/components/layout/MyUsageModal.vue'
 import { useKnowledge } from '@/composables/useKnowledge'
 import { useMyPeople } from '@/composables/useMyPeople'
+import { useToast } from '@/composables/useToast'
 import { useMyUsage } from '@/composables/useMyUsage'
 import RightPanel from '@/components/layout/RightPanel.vue'
 import { useRightPanel } from '@/composables/useRightPanel'
@@ -912,6 +913,10 @@ function toast(title: string, msg?: string) {
     toasts.value = toasts.value.filter((t) => t.id !== id)
   }, 2600)
 }
+// 全局 useToast(协作人/知识库/后台等 composable 在用)此前从没被渲染过——它假想的
+// <ToastHost /> 挂在 App.vue,但真实根组件是 LiveView。在这里把它的队列一并渲染,
+// 否则那些页面的成功/报错反馈(含"需要会员"403)全部静默丢失。
+const { items: globalToasts } = useToast()
 
 // ── 真实数据刷新 ────────────────────────────────────────
 function refresh() {
@@ -2355,11 +2360,15 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- toast -->
+    <!-- toast(本地队列 + 全局 useToast 队列;后者供协作人/知识库/后台等 composable 使用) -->
     <div class="toast-host">
       <div v-for="t in toasts" :key="t.id" class="toast">
         <div class="toast-title">{{ t.title }}</div>
         <div v-if="t.msg" class="toast-msg">{{ t.msg }}</div>
+      </div>
+      <div v-for="t in globalToasts" :key="'g' + t.id" class="toast" :class="t.kind">
+        <div class="toast-title">{{ t.text }}</div>
+        <div v-if="t.desc" class="toast-msg">{{ t.desc }}</div>
       </div>
     </div>
   </div>
@@ -3092,8 +3101,11 @@ onBeforeUnmount(() => {
 .nw-avatar-prev img { width: 100%; height: 100%; object-fit: cover; }
 
 /* ──── toast ──── */
-.toast-host { position: fixed; right: 18px; bottom: 18px; z-index: 200; display: flex; flex-direction: column; gap: 10px; }
+/* z-index 400:必须盖过各弹窗 overlay(协作人 210 等),否则弹窗里操作的报错被盖住看不见 */
+.toast-host { position: fixed; right: 18px; bottom: 18px; z-index: 400; display: flex; flex-direction: column; gap: 10px; }
 .toast { min-width: 220px; max-width: 320px; padding: 12px 14px; background: var(--bg-panel); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.12); animation: toast-in .18s ease; }
+.toast.warn { border-left-color: #c0392b; }
+.toast.success { border-left-color: #2f7d4f; }
 .toast-title { font-size: 14px; font-weight: 700; color: var(--text); }
 .toast-msg { font-size: 12px; color: var(--text-3); margin-top: 3px; }
 @keyframes toast-in { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: none; } }

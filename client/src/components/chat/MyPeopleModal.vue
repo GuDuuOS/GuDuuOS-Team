@@ -23,6 +23,7 @@
             placeholder="擅长什么（主 AI 据此匹配），如：小红书种草文案、爆款标题…" />
           <input v-model.trim="form.note" class="mp-input" placeholder="补充备注（可空）" />
           <label class="mp-chk"><input type="checkbox" v-model="form.enabled" /> 启用（参与 AI 派单）</label>
+          <p v-if="errText" class="mp-err">{{ errText }}</p>
           <div class="mp-bar">
             <button class="mp-btn ghost" :disabled="busy" @click="editing = false">取消</button>
             <button class="mp-btn" :disabled="busy" @click="save">{{ busy ? '保存中…' : '保存' }}</button>
@@ -63,7 +64,7 @@
 
 <script setup lang="ts">
 import { useMyPeople } from '@/composables/useMyPeople'
-const { visible, rows, loading, busy, editing, adding, form, close, startEdit, startAdd, save, remove } = useMyPeople()
+const { visible, rows, loading, busy, editing, adding, errText, form, close, startEdit, startAdd, save, remove } = useMyPeople()
 </script>
 
 <style scoped>
@@ -84,6 +85,7 @@ const { visible, rows, loading, busy, editing, adding, form, close, startEdit, s
 .mp-textarea { resize: vertical; line-height: 1.5; }
 .mp-input:focus, .mp-textarea:focus { outline: none; border-color: var(--accent); }
 .mp-chk { font-size: var(--fs-75); color: var(--text-2); display: flex; align-items: center; gap: 6px; }
+.mp-err { margin: 0; padding: 8px 12px; border-radius: 8px; background: rgba(192,57,43,0.08); color: #c0392b; font-size: var(--fs-75); line-height: 1.5; }
 .mp-bar { display: flex; justify-content: flex-end; gap: 8px; }
 .mp-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .mp-hint { font-size: var(--fs-75); color: var(--text-3); }

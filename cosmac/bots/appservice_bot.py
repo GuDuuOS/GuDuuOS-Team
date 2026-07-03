@@ -2158,7 +2158,7 @@ class CosmacBot:
         if not user_id:
             return 401, {"error": "登录已失效，请重新登录"}
         if not self._doc_can_read(user_id):
-            return 403, {"error": self._gate_denied_text("doc_read"), "locked": True}
+            return 403, {"error": self._gate_denied_text("doc_read", ui=True), "locked": True}
         can_write = self._doc_can_write(user_id)
         try:
             from cosmac.db import session_scope
@@ -2183,7 +2183,7 @@ class CosmacBot:
         if not user_id:
             return 401, {"error": "登录已失效，请重新登录"}
         if not self._doc_can_read(user_id):
-            return 403, {"error": self._gate_denied_text("doc_read"), "locked": True}
+            return 403, {"error": self._gate_denied_text("doc_read", ui=True), "locked": True}
         can_write = self._doc_can_write(user_id)
         try:
             from cosmac.db import session_scope
@@ -2563,7 +2563,7 @@ class CosmacBot:
             return 401, {"error": "登录已失效，请重新登录"}
         # 知识库门控：与「知识」命令、RAG 同一道 knowledge 闸（低等级用户被挡时给升级提示）
         if not self._gate_allows(user_id, "knowledge"):
-            return 403, {"error": self._gate_denied_text("knowledge")}
+            return 403, {"error": self._gate_denied_text("knowledge", ui=True)}
         title = str((body or {}).get("title") or "").strip()
         content = str((body or {}).get("content") or "").strip()
         if not content:
@@ -2650,7 +2650,7 @@ class CosmacBot:
         if not user_id:
             return 401, {"error": "登录已失效，请重新登录"}
         if not self._gate_allows(user_id, "people_manage"):
-            return 403, {"error": self._gate_denied_text("people_manage")}
+            return 403, {"error": self._gate_denied_text("people_manage", ui=True)}
         person_id = str((body or {}).get("person_id") or "").strip()
         if not person_id.startswith("@") or ":" not in person_id:
             return 400, {"error": "请填写完整的用户 ID（如 @bob:cosmac.cc）"}
@@ -3029,10 +3029,19 @@ class CosmacBot:
             return True
         return gate_rank(self.members.get_tier(sender)) >= gate_rank(req)
 
-    def _gate_denied_text(self, capability: str) -> str:
-        """被门控拦下时给用户的友好提示（点名所需等级，引导查/升级会员）。"""
+    def _gate_denied_text(self, capability: str, ui: bool = False) -> str:
+        """被门控拦下时给用户的友好提示（点名所需等级，引导查/升级会员）。
+
+        ui=True 给**浏览器 HTTP 端点**用（403 的 error 文案直接弹在界面上）：
+        label 取括号前的短名（目录里的全称带长解释，弹窗里太啰嗦），引导语改成
+        界面动线「右上角升级会员」——聊天场景那句"发「会员」查看"在网页 UI 里不成立。"""
         label = gate_capability_label(capability)
         req = self.gating.required(capability)
+        if ui:
+            short = label.split("（")[0].split("(")[0].strip() or label
+            if req == GATE_ADMIN:
+                return f"「{short}」仅平台管理员可用。"
+            return f"「{short}」是{tier_label(req)}功能，请开通会员后使用（右上角「升级会员」）。"
         if req == GATE_ADMIN:
             return f"「{label}」仅平台管理员可用。"
         return (

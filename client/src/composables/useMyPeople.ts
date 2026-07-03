@@ -17,6 +17,7 @@ const loading = ref(false)
 const busy = ref(false)
 const editing = ref(false)
 const adding = ref(false)   // true=手动添加新人(user_id 可编辑)；false=给已有联系人设能力(user_id 固定)
+const errText = ref('')     // 保存失败的内联提示(会员门槛这类要"去做别的事"的错误,toast 一闪即逝不够)
 const form = reactive<MyPerson>({ user_id: '', name: '', role: '', expertise: '', note: '', enabled: true })
 
 export function useMyPeople() {
@@ -69,6 +70,7 @@ export function useMyPeople() {
     })
     adding.value = false
     editing.value = true
+    errText.value = ''
   }
 
   // 手动添加一个还不是联系人的新人（user_id 可编辑）
@@ -76,6 +78,7 @@ export function useMyPeople() {
     Object.assign(form, { user_id: '', name: '', role: '', expertise: '', note: '', enabled: true })
     adding.value = true
     editing.value = true
+    errText.value = ''
   }
 
   async function save() {
@@ -84,6 +87,7 @@ export function useMyPeople() {
     const pid = adding.value ? normalizeUserId(form.user_id) : form.user_id
     if (!pid || !pid.includes(':')) { warn('请填写用户名（如 bob 或 @bob:cosmac.cc）'); return }
     busy.value = true
+    errText.value = ''
     try {
       await myPeopleAdd({
         person_id: pid, name: form.name.trim(), role: form.role.trim(),
@@ -93,6 +97,8 @@ export function useMyPeople() {
       await load()
       success('已保存能力')
     } catch (e: any) {
+      // 弹 toast + 表单内联双提示:403 会员门槛这类要引导用户去升级,内联的不会一闪而过
+      errText.value = e?.message || '保存失败'
       warn(e?.message || '保存失败')
     } finally { busy.value = false }
   }
@@ -106,5 +112,5 @@ export function useMyPeople() {
     finally { busy.value = false }
   }
 
-  return { visible, rows, loading, busy, editing, adding, form, open, close, load, startEdit, startAdd, save, remove }
+  return { visible, rows, loading, busy, editing, adding, errText, form, open, close, load, startEdit, startAdd, save, remove }
 }
