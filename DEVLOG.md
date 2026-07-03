@@ -7,6 +7,16 @@
 
 ---
 
+## 2026-07-03 — AI引擎·生产部署完成(SDK+DeepSeek 已在线上运行)
+- 生产服务器(Ubuntu24.04/py3.12)装齐: Node v22.23.1 + Claude Code CLI 2.1.199(npm -g)+
+  claude-agent-sdk(装进 /opt/guduu/bot-venv);drop-in agent-engine.conf 配 COSMAC_AGENT_ENGINE=
+  claude_sdk + SDK_BASE_URL(DeepSeek anthropic端点)+ SDK_API_KEY(已轮换的新key)+ SDK_MODEL。
+- 线上实测: "建一个叫『引擎测试』的群"→ 6秒完成 create_room,无回退日志 → SDK 引擎实锤生效。
+- 观察项: 回复延迟+3~8s(子进程冷启动);内存3.8G偏小,并发多时留意;DeepSeek官方账户余额。
+  关闭=删 agent-engine.conf 里 COSMAC_AGENT_ENGINE 行(或整个文件)+ daemon-reload + 重启。
+- 遗留小项: 主service文件27行 COSMAC_SMTP_FROM_NAME=CosMac Star 没加引号,systemd 丢弃"Star",
+  邮件发件人名一直是"CosMac"——已给负责人修复命令,待确认执行。
+
 ## 2026-07-03 — AI引擎升级P0+P1:Claude Agent SDK 引擎(可插拔,DeepSeek驱动实测通过)
 - 目标"更聪明/更像Claude Code"。评估否决 ruflo(宣称与实际严重不符,300+工具290个是壳);选
   **官方 Claude Agent SDK**(=Claude Code 同款 harness)。关键洞察:SDK 认的是 Anthropic **协议**
