@@ -46,6 +46,8 @@ import {
   spaceJoinLink,
   createDirectMessage,
   listDirectMessages,
+  isDirectRoom,
+  acceptRoomInvite,
   joinSpaceByLink,
   listChannelMembers,
   myPowerIn,
@@ -266,8 +268,8 @@ const aiOpen = ref(true)
 const aiSessions = ref<AiSession[]>([])
 function refreshAiSessions() { aiSessions.value = listAiSessions() }
 
-// ── 真人私信(DM):渲染在侧栏"私信"区,点开在主区聊天(复用频道渲染) ──
-const dms = ref<{ id: string; name: string; avatar: string }[]>([])
+// ── 真人私信(DM):渲染在侧栏"私信"区,点开在主区聊天(头部/输入框走简化私聊样式) ──
+const dms = ref<{ id: string; name: string; avatar: string; pending?: boolean }[]>([])
 function refreshDms() { dms.value = listDirectMessages() }
 const dmDialogOpen = ref(false)     // "发起私信"弹窗
 const dmUserInput = ref('')
@@ -977,6 +979,7 @@ function refresh() {
   }
   if (aiRoom.value) aiMsgs.value = listMessages(aiRoom.value)
   refreshAiSessions() // 会话列表（标题随首条消息、排序随最近活跃）跟着每次刷新更新
+  refreshDms() // 私信列表也随 sync 刷新——否则别人发起的私信,接收方侧栏永远不出现(QA)
   // bot 建专班后发来的 team_created 信号卡：把新专班挂进当前工作区（bot 没权限、客户端来补）
   processTeamCards()
 
@@ -1171,7 +1174,20 @@ function openRoom(id: string) {
   reactions.value = listReactions(id)
   replyTo.value = null
   editingId.value = null
+  // 被邀请的房(别人发起的私信/群邀请)点开即自动接受——否则读不到历史也发不了消息。
+  // join 完成后 sync 会补历史,稍等再刷一次消息区。
+  acceptRoomInvite(id).then(() => {
+    if (currentRoom.value !== id) return
+    setTimeout(() => {
+      if (currentRoom.value !== id) return
+      msgs.value = listMessages(id)
+      channelMembers.value = listRoomMembers(id)
+      refreshDms()
+    }, 600)
+  })
 }
+// 当前打开的房是不是"真人私信":私信头部不显示 频道设置/私密角标/成员管理(那是频道的东西)
+const currentIsDm = computed(() => (currentRoom.value ? isDirectRoom(currentRoom.value) : false))
 // 收藏当前频道（真实 Matrix m.favourite 标签，按频道独立、跨设备同步）
 async function toggleFav() {
   const id = currentRoom.value
@@ -1678,9 +1694,10 @@ onBeforeUnmount(() => {
                 <span class="cs-label">中枢 AI</span>
               </div>
               <!-- 真人私信列表:点开在主区聊天 -->
-              <div v-for="d in dms" :key="d.id" class="cs-item dm-row" :class="{ active: currentRoom === d.id }" @click="openRoom(d.id)">
+              <div v-for="d in dms" :key="d.id" class="cs-item dm-row" :class="{ active: currentRoom === d.id }" @click="openRoom(d.id)" :title="d.pending ? '新私信邀请,点开即接受' : ''">
                 <span class="cs-dm-av">{{ initials(d.name) }}</span>
                 <span class="cs-label">{{ d.name }}</span>
+                <span v-if="d.pending" class="cs-dm-new">新</span>
               </div>
               <div class="cs-item cs-add-row" @click="openStartDm">
                 <span class="cs-ic-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14" /></svg></span>
@@ -1848,13 +1865,16 @@ onBeforeUnmount(() => {
           <button class="ch-fav" :class="{ active: fav }" :title="fav ? '取消收藏' : '收藏'" @click="toggleFav">
             <svg width="16" height="16" viewBox="0 0 24 24" :fill="fav ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" /></svg>
           </button>
-          <span class="ch-av" :style="{ background: colorOf(currentName) }">{{ iconChar(currentName) }}</span>
-          <button class="title title-btn" :title="'频道设置'" @click="openChannelSettings">{{ currentName }}<svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg></button>
-          <span v-if="currentVis" class="ch-vis" :class="currentVis === '公开' ? 'pub' : 'pri'"
+          <span class="ch-av" :style="{ background: colorOf(currentName) }">{{ currentIsDm ? initials(currentName) : iconChar(currentName) }}</span>
+          <!-- 私信:标题就是对方名字,没有"频道设置"下拉;频道:可点开频道设置 -->
+          <span v-if="currentIsDm" class="title">{{ currentName }}</span>
+          <button v-else class="title title-btn" :title="'频道设置'" @click="openChannelSettings">{{ currentName }}<svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg></button>
+          <span v-if="currentIsDm" class="ch-vis dm" title="一对一私信：内容仅你们两人可见">私信</span>
+          <span v-else-if="currentVis" class="ch-vis" :class="currentVis === '公开' ? 'pub' : 'pri'"
                 :title="currentVis === '公开' ? '公开频道：本服务器任何人可自行加入' : '私密频道：仅受邀成员可进'">{{ currentVis }}</span>
-          <div v-if="currentTopic" class="ch-topic">{{ currentTopic }}</div>
+          <div v-if="currentTopic && !currentIsDm" class="ch-topic">{{ currentTopic }}</div>
           <div class="ch-actions">
-            <button class="ch-members-btn" title="频道管理 · 成员 / 技能 / 知识库 / 规则" @click="openAdmin(currentName, currentRoom)">
+            <button v-if="!currentIsDm" class="ch-members-btn" title="频道管理 · 成员 / 技能 / 知识库 / 规则" @click="openAdmin(currentName, currentRoom)">
               <div class="ava-stack">
                 <div v-for="m in channelMembers.slice(0, 3)" :key="m.id" class="a" :class="{ bot: m.isBot }">{{ m.isBot ? '智' : initials(m.name) }}</div>
               </div>
@@ -1963,7 +1983,7 @@ onBeforeUnmount(() => {
             <textarea
               ref="taRef"
               v-model="draft"
-              :placeholder="`发送到 #${currentName}；叫主 AI 试：CosMac 建专班 测试专班`"
+              :placeholder="currentIsDm ? `发消息给 ${currentName}` : `发送到 #${currentName}；叫主 AI 试：CosMac 建专班 测试专班`"
               @keydown.enter.exact.prevent="send"
               @keydown.esc="editingId ? cancelEdit() : cancelReply()"
             />
@@ -2477,6 +2497,9 @@ onBeforeUnmount(() => {
 .ch-vis { flex-shrink: 0; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; line-height: 1.4; }
 .ch-vis.pri { background: var(--bg, #f1efe9); color: var(--text-3); border: 1px solid var(--border); }
 .ch-vis.pub { background: #e8f2e6; color: #4c7a4f; border: 1px solid #cfe3cd; }
+.ch-vis.dm { background: #fdf1e3; color: var(--accent); border: 1px solid #f0ddc2; }
+/* 私信列表"新邀请"红标 */
+.cs-dm-new { flex-shrink: 0; font-size: 10px; font-weight: 700; color: #fff; background: #c0392b; border-radius: 999px; padding: 1px 6px; }
 /* AI 面板"私人会话"角标 */
 .ai-dm-badge { flex-shrink: 0; margin-left: 8px; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--bg, #f1efe9); color: var(--text-3); border: 1px solid var(--border); }
 .hint { color: var(--text-3); font-size: 12px; }

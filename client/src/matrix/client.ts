@@ -381,8 +381,8 @@ export function listRooms(): LiveRoom[] {
     .filter((r) => !(r as any).isSpaceRoom?.())
     // 排除全部主 AI 会话房（多会话后可能有多个，统一按标记排除）
     .filter((r) => !aiIds.has(r.roomId))
-    // 排除真人私信(DM):它们渲染在"私信"区,不是频道
-    .filter((r) => { try { return !r.currentState?.getStateEvents?.('cosmac.dm', '') } catch { return true } })
+    // 排除真人私信(DM):它们渲染在"私信"区,不是频道(含被邀请阶段的,靠 is_direct 识别)
+    .filter((r) => !isDmRoom(r))
     // 排除 CosMac 控制室：它是平台的"配置数据库"(AI配置/会员/门控/套餐等 state event 都存这),
     // 不是聊天频道。出现在列表里会被管理员当普通频道误删(实测发生过——退出后后台配置读写全断)。
     // 按 canonical alias 判定(#cosmac-ctrl),改名也藏得住。
@@ -2776,6 +2776,34 @@ export function findBotDm(): string | null {
 // = 一段独立会话」是天然映射——新会话 AI 从零开始、互不串味，历史会话随时切回继续。
 const AI_SESSION_STATE = 'cosmac.ai_session' // 会话房标记 state event（稳定识别，不依赖房名）
 const DM_STATE = 'cosmac.dm'                 // 真人一对一私信房标记(与 AI 会话房、普通频道区分)
+
+/** 判定某房间是否「真人私信(DM)」。已加入的房认 cosmac.dm 标记;**被邀请阶段**读不到
+ * 自定义 state(Matrix 邀请只下发 stripped state 白名单,自定义事件不在内),退回原生
+ * is_direct 判定——createRoom({is_direct:true}) 会把它写进被邀者的 membership 事件,
+ * SDK 的 getDMInviter 据此识别。缺这层曾导致:接收方私信列表看不到新私信、该房还被
+ * 误当频道漏进频道列表(QA)。 */
+function isDmRoom(r: any): boolean {
+  try {
+    if (r?.currentState?.getStateEvents?.(DM_STATE, '')) return true
+    if (typeof r?.getDMInviter === 'function' && r.getDMInviter()) return true
+  } catch { /* 读不出一律当非 DM */ }
+  return false
+}
+
+/** 供视图判定"当前打开的房是不是私信"(私信头部/输入框走简化样式,不按频道渲染)。 */
+export function isDirectRoom(roomId: string): boolean {
+  const r = mx?.getRoom(roomId)
+  return r ? isDmRoom(r) : false
+}
+
+/** 点开被邀请的房间时先接受邀请(join)——否则读不到历史、发不了消息。已加入则无操作。 */
+export async function acceptRoomInvite(roomId: string): Promise<void> {
+  if (!mx) return
+  const r = mx.getRoom(roomId)
+  if (r && (r as any).getMyMembership?.() === 'invite') {
+    try { await mx.joinRoom(roomId) } catch { /* 已加入/权限问题都不阻断打开 */ }
+  }
+}
 const AI_SESSION_NAME = '中枢 AI'
 
 /** 是否「主 AI 会话房」：认标记 state；兼容旧的仅靠房名叫「中枢 AI」的历史房。 */
@@ -2851,21 +2879,29 @@ export async function createDirectMessage(userId: string): Promise<string> {
   return res.room_id
 }
 
-/** 列出我的真人私信(DM)。排除主 AI 会话房。每项含对方的显示名/头像用于列表展示。 */
-export function listDirectMessages(): { id: string; name: string; avatar: string }[] {
+/** 列出我的真人私信(DM)。排除主 AI 会话房。每项含对方的显示名/头像用于列表展示。
+ * pending=true 表示这是**别人发起、我还没接受**的私信邀请(点开即自动接受)。 */
+export function listDirectMessages(): { id: string; name: string; avatar: string; pending?: boolean }[] {
   if (!mx) return []
   const myId = (mx as any).getUserId?.() || ''
-  const out: { id: string; name: string; avatar: string; ts: number }[] = []
+  const out: { id: string; name: string; avatar: string; pending?: boolean; ts: number }[] = []
   for (const r of mx.getRooms()) {
     try {
-      if (!r.currentState?.getStateEvents?.(DM_STATE, '')) continue
-      // 对方 = 房里除我之外的第一个成员(DM 只有两人)
+      // 用统一判定(含被邀请阶段的 is_direct):否则接收方在接受邀请前根本看不到新私信
+      if (!isDmRoom(r)) continue
+      const myMembership = (r as any).getMyMembership?.() || ''
+      if (myMembership !== 'join' && myMembership !== 'invite') continue // 已退出的不列
+      // 对方 = 房里除我之外的第一个成员(DM 只有两人;被邀阶段"已加入的"就是发起者)
       const others = (r.getJoinedMembers?.() || []).filter((m: any) => m.userId !== myId)
       const invited = ((r as any).getMembersWithMembership?.('invite') || []).filter((m: any) => m.userId !== myId)
       const peer = others[0] || invited[0]
       const name = peer?.name || peer?.userId || r.name || '私信'
       // 头像列表里用首字母渲染,这里不取 avatar url(SDK 签名各版本不一,省依赖)
-      out.push({ id: r.roomId, name, avatar: '', ts: r.getLastActiveTimestamp?.() || 0 })
+      out.push({
+        id: r.roomId, name, avatar: '',
+        pending: myMembership === 'invite' || undefined,
+        ts: r.getLastActiveTimestamp?.() || 0,
+      })
     } catch { /* 跳过读不出的房 */ }
   }
   return out.sort((a, b) => b.ts - a.ts).map(({ ts, ...rest }) => rest)

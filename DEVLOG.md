@@ -7,6 +7,17 @@
 
 ---
 
+## 2026-07-04 — 修:私信像频道+对方看不到私信(DM 判定/刷新/头部三连修)
+- QA #12: 发起私信后以频道形式聊天;对方侧栏"私信"没出现新私信。
+- 三个根因: ①refresh()(sync 主刷新)从不调 refreshDms——私信列表两侧都不更新(主因);
+  ②被邀阶段读不到自定义 cosmac.dm state(Matrix 邀请只给 stripped state 白名单),DM 判定失败
+  ——补原生 is_direct(getDMInviter)双重判定;③主区打开 DM 用的是频道头(#/私密角标/频道
+  设置/建专班 placeholder)。
+- 修: refresh() 补 refreshDms;isDmRoom 统一判定(listRooms 排除/listDirectMessages 都用);
+  私信头部简化(对方名+「私信」角标,无频道设置/成员管理/话题),输入框改"发消息给 XX";
+  pending 邀请带「新」红标,点开自动接受(openRoom 补 acceptRoomInvite)。
+- **部署: 仅前端 dist。**
+
 ## 2026-07-04 — 修:不同工作区群都一样(孤儿房拆出「未归类」组+一键归入)
 - QA #9: 孤儿房(不属任何工作区:AI 建的专班/别人拉我进的群)此前混进每个工作区的
   「频道」组放行显示(为修"被邀成员进不了群"),专班一多每个工作区列表长一个样。
