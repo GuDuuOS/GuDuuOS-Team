@@ -43,6 +43,11 @@ const loading = ref(false)
 // 「添加账号」模式：从主应用点「添加账号」跳来时带 ?add=1，给个「返回当前账号」出口。
 const isAdd = computed(() => route.query.add === '1')
 
+// —— 异地登录二次验证(阶段2):登录密码对了但换了新地点 → 后端发邮箱码,这里输码完成验证 ——
+const stepUp = ref(false)
+const stepUpHint = ref('')          // 打码后的邮箱(g***@gmail.com),提示码发哪了
+const stepUpCode = ref('')          // 用户输入的 6 位验证码
+
 // —— Turnstile 人机验证（阶段1；env 可插拔:后端没配 secret 就整段跳过）——
 const tsEnabled = ref(false)          // 后端是否启用了 Turnstile
 const tsSiteKey = ref('')
@@ -211,8 +216,18 @@ function friendlyLoginError(e: any): string {
 async function doLogin() {
   error.value = ''; loading.value = true
   try {
-    if (loginBy.value === 'email') await loginWithEmailNoStart(HS, email.value.trim(), password.value)
-    else await loginNoStart(HS, user.value.trim(), password.value)
+    const code = stepUp.value ? stepUpCode.value.trim() : ''
+    if (stepUp.value && !code) { error.value = '请输入邮件里的 6 位验证码'; loading.value = false; return }
+    const res = loginBy.value === 'email'
+      ? await loginWithEmailNoStart(HS, email.value.trim(), password.value, code)
+      : await loginNoStart(HS, user.value.trim(), password.value, code)
+    if (res?.stepUp) {
+      // 异地登录:后端已发验证码到绑定邮箱,切到"输码"状态,输完再点登录(带 code 重试)
+      stepUp.value = true
+      stepUpHint.value = res.emailHint || '你的绑定邮箱'
+      stepUpCode.value = ''
+      return
+    }
     proceed()
   } catch (e: any) {
     error.value = friendlyLoginError(e)
@@ -272,6 +287,9 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
   authMode.value = m
   error.value = ''
   info.value = ''
+  stepUp.value = false
+  stepUpHint.value = ''
+  stepUpCode.value = ''
   user.value = ''
   password.value = ''
   password2.value = ''
@@ -306,6 +324,12 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
           <input v-if="loginBy === 'account'" v-model="user" name="login-username" autocomplete="username" placeholder="用户名" @keyup.enter="doLogin" />
           <input v-else v-model="email" type="email" name="login-email" autocomplete="email" placeholder="邮箱" @keyup.enter="doLogin" />
           <input v-model="password" type="password" autocomplete="current-password" placeholder="密码" @keyup.enter="doLogin" />
+          <!-- 异地登录二次验证(阶段2):密码对了但新地点,输邮箱码完成验证 -->
+          <div v-if="stepUp" class="stepup-box">
+            <div class="stepup-tip">🔒 检测到新设备/新地点登录，验证码已发送至 <b>{{ stepUpHint }}</b></div>
+            <input v-model="stepUpCode" name="login-otp" autocomplete="one-time-code" inputmode="numeric" maxlength="6"
+                   placeholder="邮件里的 6 位验证码" @keyup.enter="doLogin" />
+          </div>
         </template>
 
         <!-- ===== 注册 / 找回密码 ===== -->
@@ -393,5 +417,7 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
 .pw-label { font-size: 12px; color: var(--text-3); }
 .pw-label.warn { color: #d9534f; }
 .ts-box { min-height: 0; }
+.stepup-box { display: flex; flex-direction: column; gap: 10px; padding: 12px; background: var(--bg, #f7f5ef); border: 1px solid var(--border); border-radius: 10px; }
+.stepup-tip { font-size: 13px; color: var(--text-2, #55504a); line-height: 1.6; }
 .add-acct-back { align-self: flex-start; border: none; background: transparent; color: var(--text-3); font-size: 13px; cursor: pointer; padding: 0; }
 </style>

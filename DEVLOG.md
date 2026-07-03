@@ -7,6 +7,22 @@
 
 ---
 
+## 2026-07-03 — auth 安全增强阶段2:异地登录检测 + 邮箱验证码二次验证(step-up)
+- 流程: 登录密码验证成功后,比对当前IP与该用户历史成功登录IP(阶段0审计表 recent_success_ips)。
+  网段级比对(_ip_bucket: IPv4取/16、IPv6取前4组,近似"地区"粒度——手机换IP不误报;将来换GeoIP只动
+  此函数)。命中历史网段/无历史(冷启动)→放行;换了地区→**不发token**(刚拿的token立即撤销):给绑定
+  邮箱发登录验证码(新邮件模板kind=login,含"若非本人请立即改密码"),前端提示"新设备/新地点登录,
+  码已发至 g***@gmail.com",输码后带code重试→验码通过才真正登录。没绑邮箱的老账号→放行+审计留痕
+  (stepup_skipped_no_email),不锁死。
+- **env 开关 COSMAC_LOGIN_STEPUP=1,默认关**(部署零风险,同Turnstile模式;想开在bot服务env加一行)。
+- 实现: registration(_stepup_enabled/_ip_bucket/_login_risky/_email_for_login/_mask_email/_revoke_token/
+  _stepup_gate;login_account/login_email加code参数,验码在Synapse登录之前);email_repo加
+  get_email_by_username;bot透传code;前端 LoginResult{stepUp,emailHint}+AuthView输码UI(切页清态)。
+- 安全要点: 挑战时token绝不给前端且尽力撤销;验证码purpose=login独立分桶;审计全链路
+  (stepup_challenge/stepup_bad_code/ok_stepup)。
+- 测试 StepUpTest 6用例(桶判定/冷启动/挑战验码全流程/错码/无邮箱放行/默认关);全量348过+ruff+build过。
+- **部署: 前端dist+重启bot;启用还需 env COSMAC_LOGIN_STEPUP=1(建议开Turnstile时一起配)。**
+
 ## 2026-07-03 — 二轮审查(阶段0/1新代码):修8项(2高)
 - 2代理审阶段0/1新增auth代码,逐条核实后修。
 - 【高①·我上步收口引入的回归】登录收口后所有登录从bot(127.0.0.1)打Synapse,Synapse rc_login按来源IP

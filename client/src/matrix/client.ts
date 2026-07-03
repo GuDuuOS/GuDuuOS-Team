@@ -243,23 +243,28 @@ export async function loginWithEmail(
  * 给独立登录页 AuthView 用:认证成功后直接路由进主应用,由 LiveView 挂载时 restoreSession
  * 做**唯一一次**同步——避免"登录页同步一次、进主应用又同步一次"的双同步拖慢。
  */
+/** 登录结果:正常成功返回 { ok: true };触发异地二次验证返回 { stepUp: true, emailHint }。 */
+export interface LoginResult { ok?: boolean; stepUp?: boolean; emailHint?: string }
+
 export async function loginNoStart(
   baseUrl: string,
   user: string,
   password: string,
-): Promise<void> {
+  code = '',
+): Promise<LoginResult> {
   // 账号登录**收口到后端**(安全阶段0)：不再前端直连 Synapse，改走 cosmac 后端
-  // /cosmac/login/account —— 让后端能对账号登录做 IP 限频、记审计（异地检测的地基）。
-  // 后端代理 Synapse 登录后原样返回 access_token/user_id/device_id，前端据此存会话。
+  // /cosmac/login/account。阶段2:异地登录时后端回 step_up,前端引导输邮箱验证码后带 code 重试。
   const base = baseUrl.replace(/\/$/, '')
   const r = await fetch(`${base}/cosmac/login/account`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: user, password }),
+    body: JSON.stringify({ username: user, password, code }),
   })
   const j = await r.json().catch(() => ({}))
+  if (r.ok && j?.step_up) return { stepUp: true, emailHint: j.email_hint || '' }
   if (!r.ok || !j?.access_token) throw new Error(j?.error || '登录失败')
   saveSession(baseUrl, j)
+  return { ok: true }
 }
 
 /** 邮箱+密码「只认证不启动」（走 cosmac 后端反查账号,同 loginNoStart 的语义）。 */
@@ -267,16 +272,19 @@ export async function loginWithEmailNoStart(
   baseUrl: string,
   email: string,
   password: string,
-): Promise<void> {
+  code = '',
+): Promise<LoginResult> {
   const base = baseUrl.replace(/\/$/, '')
   const r = await fetch(`${base}/cosmac/login/email`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, code }),
   })
   const j = await r.json().catch(() => ({}))
+  if (r.ok && j?.step_up) return { stepUp: true, emailHint: j.email_hint || '' }
   if (!r.ok || !j?.access_token) throw new Error(j?.error || '登录失败')
   saveSession(baseUrl, j)
+  return { ok: true }
 }
 
 // 允许的 homeserver host 白名单：localStorage 可被同源脚本/扩展篡改，若不校验 baseUrl，

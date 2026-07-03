@@ -234,7 +234,17 @@ def _build_email(code: str, kind: str = "register") -> Tuple[str, str, str]:
     外链图会拉低投递评分（更易进垃圾箱），所以不放 logo 图。
     """
     mins = _CODE_TTL // 60
-    if kind == "reset":
+    if kind == "login":
+        subject = f"【CosMac Star】登录安全验证码 {code}"
+        heading = "验证是你本人在登录"
+        intro = "检测到你的账号在**新设备/新地点**尝试登录。请在登录页输入下面的验证码完成验证："
+        plain = (
+            f"检测到你的账号在新设备/新地点尝试登录。\n\n"
+            f"验证码：{code}\n\n"
+            f"{mins} 分钟内有效。如果这不是你本人的操作，说明有人知道了你的密码——请立即修改密码。"
+        )
+        note = "如果这不是你本人的操作，说明有人可能知道了你的密码，请立即用「忘记密码」修改密码。"
+    elif kind == "reset":
         subject = f"【CosMac Star】重置密码验证码 {code}"
         heading = "重置你的密码"
         intro = "你正在重置 CosMac Star 的登录密码。请在页面输入下面的验证码："
@@ -568,6 +578,114 @@ _rl_audit_seen: Dict[str, float] = {}
 _rl_audit_lock = threading.Lock()
 
 
+def _stepup_enabled() -> bool:
+    """异地登录二次验证的总开关(env COSMAC_LOGIN_STEPUP=1 才启用;默认关,部署零风险)。"""
+    return (_env("LOGIN_STEPUP", "") or "").lower() in ("1", "true", "yes")
+
+
+def _ip_bucket(ip: str) -> str:
+    """把 IP 归并到「地区级」网段桶:IPv4 取前两段(/16)、IPv6 取前 4 组(/64 级)。
+
+    为什么不用精确 IP:手机/家庭宽带的出口 IP 经常变,精确比对会天天误报;/16 近似
+    「同运营商同地区」,误报和漏报的折中。将来要更准就换 GeoIP 城市库,这里只动此函数。
+    """
+    ip = (ip or "").strip().lower()
+    if ":" in ip:
+        return ":".join(ip.split(":")[:4])
+    return ".".join(ip.split(".")[:2])
+
+
+def _login_risky(username: str, client_ip: str) -> bool:
+    """异地判定:当前 IP 网段与该用户**所有**历史成功登录网段都不同 → 可疑。
+
+    无历史(新用户/审计刚上线的老用户)或查询失败 → 不可疑(fail-open:step-up 是增强,
+    数据不足/DB 故障时绝不把人锁在门外)。数据来源=阶段0 的认证审计表。
+    """
+    if not client_ip:
+        return False
+    try:
+        from cosmac.db import session_scope
+        from cosmac.db.auth_event_repo import recent_success_ips
+        with session_scope() as s:
+            ips = recent_success_ips(s, username)
+    except Exception:
+        logger.debug("读历史登录 IP 失败(按不可疑处理)", exc_info=True)
+        return False
+    if not ips:
+        return False
+    cur = _ip_bucket(client_ip)
+    return all(_ip_bucket(x) != cur for x in ips)
+
+
+def _email_for_login(username: str) -> Optional[str]:
+    """按用户名反查绑定邮箱(step-up 发码用)。没有/出错返回 None。"""
+    try:
+        from cosmac.db import session_scope
+        from cosmac.db.email_repo import get_email_by_username
+        with session_scope() as s:
+            return get_email_by_username(s, username)
+    except Exception:
+        return None
+
+
+def _mask_email(email: str) -> str:
+    """邮箱打码展示(g***@gmail.com):提示发到哪了,又不把完整邮箱亮给可能的攻击者。"""
+    try:
+        local, dom = email.split("@", 1)
+        return f"{local[0]}***@{dom}"
+    except Exception:
+        return "你的绑定邮箱"
+
+
+def _revoke_token(hs_url: str, token: str) -> None:
+    """尽力撤销一个 Synapse access token(step-up 挑战时,刚登出来的 token 不能留)。失败仅记日志。"""
+    if not token:
+        return
+    try:
+        requests.post(
+            f"{hs_url.rstrip('/')}/_matrix/client/v3/logout",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=_HS_TIMEOUT,
+        )
+    except Exception:
+        logger.debug("撤销 step-up 暂扣 token 失败(该 token 未外泄,仅 Synapse 多一个 device)", exc_info=True)
+
+
+def _send_login_email(to_addr: str, code: str) -> None:
+    """发**登录二次验证**验证码邮件。"""
+    _smtp_send(to_addr, *_build_email(code, "login"))
+
+
+def _stepup_gate(
+    username: str, email: Optional[str], code: str, *,
+    hs_url: str, client_ip: str, token: str,
+) -> Optional[Tuple[int, Dict[str, Any]]]:
+    """密码验证通过后的异地二次验证闸。返回 None=放行;返回 (状态,body)=拦截(挑战/发码失败)。
+
+    调用方约定:code 非空时**必须已在登录前验过码**(这里不再验),此闸只处理"要不要发起挑战"。
+    ⚠️ token 是刚从 Synapse 拿到的:发起挑战=不把它交给前端,还要尽力撤销(不留悬空凭据)。
+    """
+    if not _stepup_enabled() or code:
+        return None                      # 未启用,或本次已带码验过(第二步) → 放行
+    if not _login_risky(username, client_ip):
+        return None                      # 常用地区 → 放行
+    if not email:
+        # 没绑邮箱(老账号)无法二次验证 → 放行但审计留痕,别把人锁死
+        _audit("login", subject=username, ip=client_ip, ok=True, detail="stepup_skipped_no_email")
+        return None
+    _revoke_token(hs_url, token)         # 挑战:先撤刚发的 token
+    sc, _sb = _issue_code(_key("login", email), lambda c: _send_login_email(email, c))
+    if sc not in (200, 429):             # 429=冷却中,说明码刚发过、仍有效 → 照样进入挑战
+        _audit("login", subject=username, ip=client_ip, ok=False, detail="stepup_send_fail")
+        return 502, {"error": "安全验证码发送失败，请稍后重试"}
+    _audit("login", subject=username, ip=client_ip, ok=False, detail="stepup_challenge")
+    return 200, {
+        "step_up": True,
+        "email_hint": _mask_email(email),
+        "error": "",  # 占位:前端统一按 step_up 分支处理
+    }
+
+
 def _audit(kind: str, *, subject: str = "", ip: str = "", ok: bool = False, detail: str = "") -> None:
     """记一条认证审计事件（登录/注册/找回）。best-effort——记日志失败绝不影响认证主流程。
 
@@ -638,7 +756,7 @@ def _proxy_synapse_login(
 
 
 def login_account(
-    username: str, password: str, *, hs_url: str, client_ip: str = ""
+    username: str, password: str, *, hs_url: str, client_ip: str = "", code: str = ""
 ) -> Tuple[int, Dict[str, Any]]:
     """账号（用户名+密码）登录**收口到后端**：限频 + 代理 Synapse 登录 + 记审计。
 
@@ -654,14 +772,31 @@ def login_account(
     if not _ip_rate_ok("attempt", client_ip, _IP_ATTEMPT_MAX, _IP_ATTEMPT_WINDOW):
         _audit("login", subject=username, ip=client_ip, ok=False, detail="rate_limited")
         return 429, {"error": "尝试过于频繁，请稍后再试"}
+    # 第二步(带码回来):先验码——通过=确实持有绑定邮箱,再走 Synapse 登录。
+    # 验码在登录前:码是一次性的,若先登录后验码,码错还得撤 token,顺序反而复杂。
+    email = _email_for_login(username)
+    if code and email:
+        ok2, msg = _check_code(email, code, purpose="login")
+        if not ok2:
+            _audit("login", subject=username, ip=client_ip, ok=False, detail="stepup_bad_code")
+            return 403, {"error": msg}
     st, payload = _proxy_synapse_login(hs_url, username, password, client_ip)
-    _audit("login", subject=username, ip=client_ip, ok=(st == 200),
-           detail="ok" if st == 200 else {403: "bad_credentials", 429: "hs_rate_limited"}.get(st, "hs_error"))
-    return st, payload
+    if st != 200:
+        _audit("login", subject=username, ip=client_ip, ok=False,
+               detail={403: "bad_credentials", 429: "hs_rate_limited"}.get(st, "hs_error"))
+        return st, payload
+    # 密码对了 → 异地二次验证闸(阶段2):可疑且未带码 → 撤 token、发码、要求验证。
+    gate = _stepup_gate(username, email, code, hs_url=hs_url, client_ip=client_ip,
+                        token=str(payload.get("access_token") or ""))
+    if gate is not None:
+        return gate
+    _audit("login", subject=username, ip=client_ip, ok=True,
+           detail="ok_stepup" if code else "ok")
+    return 200, payload
 
 
 def login_email(
-    email: str, password: str, *, hs_url: str, client_ip: str = ""
+    email: str, password: str, *, hs_url: str, client_ip: str = "", code: str = ""
 ) -> Tuple[int, Dict[str, Any]]:
     """邮箱+密码登录：按邮箱反查用户名 → 用账号密码登 Synapse → 原样返回 Synapse 登录响应
     （含 access_token/user_id/device_id，前端据此存会话）。
@@ -680,11 +815,23 @@ def login_email(
     if not username:
         _audit("login", subject=email, ip=client_ip, ok=False, detail="unknown_email")
         return 403, {"error": "邮箱或密码错误"}
+    # 第二步(带码回来):先验码再登录(与 login_account 同序)。
+    if code:
+        ok2, msg = _check_code(email, code, purpose="login")
+        if not ok2:
+            _audit("login", subject=username, ip=client_ip, ok=False, detail="stepup_bad_code")
+            return 403, {"error": msg}
     st, payload = _proxy_synapse_login(hs_url, username, password, client_ip)
     # 审计 subject 统一用 username(localpart):邮箱登录与账号登录归到同一主体,recent_success_ips
     # 按 username 聚合、异地检测不会把同一人当三个主体(审查证伪C的小瑕疵①)。
     if st == 200:
-        _audit("login", subject=username, ip=client_ip, ok=True, detail="ok_email")
+        # 异地二次验证闸(阶段2):邮箱登录场景邮箱已知,直接用。
+        gate = _stepup_gate(username, email, code, hs_url=hs_url, client_ip=client_ip,
+                            token=str(payload.get("access_token") or ""))
+        if gate is not None:
+            return gate
+        _audit("login", subject=username, ip=client_ip, ok=True,
+               detail="ok_email_stepup" if code else "ok_email")
         return 200, payload
     if st == 429:
         _audit("login", subject=username, ip=client_ip, ok=False, detail="hs_rate_limited")

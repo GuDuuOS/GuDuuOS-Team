@@ -347,5 +347,96 @@ class TurnstileTest(unittest.TestCase):
         self.assertIn("人机验证", payload["error"])
 
 
+class StepUpTest(unittest.TestCase):
+    """阶段2 异地登录二次验证:risky 判定 + 挑战→验码→放行 全流程(全打桩)。"""
+
+    # 类定义时捕获真函数:用例里会打 _login_risky 桩,tearDown 还原,防止污染后续用例
+    _ORIG_RISKY = staticmethod(reg._login_risky)
+
+    def setUp(self) -> None:
+        import os
+        os.environ["COSMAC_LOGIN_STEPUP"] = "1"
+        reg._store.clear()
+        reg._ip_store.clear()
+        self._audits: list = []
+        reg._audit = (  # type: ignore
+            lambda kind, **kw: self._audits.append(kw.get("detail")))
+        self._sent: list = []
+        reg._send_login_email = lambda to, code: self._sent.append((to, code))  # type: ignore
+        self._revoked: list = []
+        reg._revoke_token = lambda hs, tok: self._revoked.append(tok)  # type: ignore
+        reg._email_for_login = lambda u: "a@b.com" if u == "alice" else None  # type: ignore
+        # Synapse 登录桩:密码一律正确
+        import cosmac.registration as _r
+
+        class _Resp:
+            status_code = 200
+            @staticmethod
+            def json():
+                return {"access_token": "tok1", "user_id": "@alice:h", "device_id": "d"}
+        _r.requests.post = lambda *a, **k: _Resp()  # type: ignore
+
+    def tearDown(self) -> None:
+        import os
+        os.environ.pop("COSMAC_LOGIN_STEPUP", None)
+        reg._login_risky = self._ORIG_RISKY  # type: ignore  # 还原桩
+
+    def test_ip_bucket(self) -> None:
+        self.assertEqual(reg._ip_bucket("1.2.3.4"), "1.2")
+        self.assertEqual(reg._ip_bucket("2001:db8:1:2:3:4:5:6"), "2001:db8:1:2")
+
+    def test_first_login_not_risky(self) -> None:
+        reg_recent = lambda s, u: []  # noqa: E731
+        import cosmac.db.auth_event_repo as repo
+        old = repo.recent_success_ips
+        repo.recent_success_ips = reg_recent  # type: ignore
+        try:
+            self.assertFalse(reg._login_risky("alice", "9.9.9.9"))
+        finally:
+            repo.recent_success_ips = old  # type: ignore
+
+    def test_challenge_then_verify(self) -> None:
+        # 判定可疑 → 第一步:不发 token、撤销 token、发码、回 step_up
+        reg._login_risky = lambda u, ip: True  # type: ignore
+        st, payload = reg.login_account("alice", "pw", hs_url="http://hs", client_ip="9.9.9.9")
+        self.assertEqual(st, 200)
+        self.assertTrue(payload.get("step_up"))
+        self.assertNotIn("access_token", payload)          # token 绝不能漏给前端
+        self.assertEqual(self._revoked, ["tok1"])          # 暂扣 token 已撤销
+        self.assertEqual(len(self._sent), 1)               # 码已发
+        self.assertIn("stepup_challenge", self._audits)
+        # 第二步:带正确码 → 验码通过 → 正常发 token
+        code = self._sent[-1][1]
+        st2, payload2 = reg.login_account(
+            "alice", "pw", hs_url="http://hs", client_ip="9.9.9.9", code=code)
+        self.assertEqual(st2, 200)
+        self.assertEqual(payload2.get("access_token"), "tok1")
+        self.assertIn("ok_stepup", self._audits)
+
+    def test_wrong_code_rejected(self) -> None:
+        reg._login_risky = lambda u, ip: True  # type: ignore
+        reg.login_account("alice", "pw", hs_url="http://hs", client_ip="9.9.9.9")
+        st, _ = reg.login_account(
+            "alice", "pw", hs_url="http://hs", client_ip="9.9.9.9", code="000000")
+        self.assertEqual(st, 403)
+        self.assertIn("stepup_bad_code", self._audits)
+
+    def test_no_email_passes_through(self) -> None:
+        # 没绑邮箱的账号:可疑也放行(别锁死),审计留痕
+        reg._login_risky = lambda u, ip: True  # type: ignore
+        st, payload = reg.login_account("bob", "pw", hs_url="http://hs", client_ip="9.9.9.9")
+        self.assertEqual(st, 200)
+        self.assertEqual(payload.get("access_token"), "tok1")
+        self.assertIn("stepup_skipped_no_email", self._audits)
+
+    def test_disabled_by_default(self) -> None:
+        import os
+        os.environ.pop("COSMAC_LOGIN_STEPUP", None)
+        reg._login_risky = lambda u, ip: True  # type: ignore
+        st, payload = reg.login_account("alice", "pw", hs_url="http://hs", client_ip="9.9.9.9")
+        self.assertEqual(st, 200)
+        self.assertEqual(payload.get("access_token"), "tok1")  # 开关关:直接放行
+
+
 if __name__ == "__main__":
     unittest.main()

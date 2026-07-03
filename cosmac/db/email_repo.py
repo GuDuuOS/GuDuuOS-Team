@@ -82,6 +82,20 @@ def clear_email(session: Session, *, email: str, username: str = "") -> bool:
     return True
 
 
+def get_email_by_username(session: Session, username: str) -> Optional[str]:
+    """按用户名 localpart 反查邮箱（登录二次验证给绑定邮箱发码用）。没有返回 None。
+
+    注：username 列没建索引（表小、注册时才写），全表扫描在当前量级可忽略；上量再补索引。
+    """
+    username = (username or "").strip().lower()
+    if not username:
+        return None
+    row = session.execute(
+        select(RegisteredEmail).where(RegisteredEmail.username == username)
+    ).scalar_one_or_none()
+    return row.email if row else None
+
+
 def get_username_by_email(session: Session, email: str) -> Optional[str]:
     """按邮箱反查用户名 localpart；没有返回 None。"""
     email = (email or "").strip().lower()
