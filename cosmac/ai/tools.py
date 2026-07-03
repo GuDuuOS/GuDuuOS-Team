@@ -74,6 +74,8 @@ class Toolbox:
         self.quota_consume: Optional[Callable[[str, str], None]] = None
         # 「群名→room_id」解析用的房名缓存(room_id → (名字, 时间戳);5 分钟 TTL,见 _resolve_room_by_name)
         self._room_name_cache: Dict[str, tuple] = {}
+        # 房间类型缓存(room_id → 'ai'/'dm'/'channel';建房标记不变,永久缓存,见 _room_kind)
+        self._room_kind_cache: Dict[str, str] = {}
         # 知识库检索回调：由 bot 注入 self._kb_search_for_tool。签名 (query, ctx) -> 结果文本。
         # 让 search_knowledge 工具的检索逻辑(embedder/DB/作用域)留在 bot 一侧，Toolbox 保持薄。
         # None（如单测/未注入）→ search_knowledge 工具返回"暂不可用"，绝不报错。
@@ -116,6 +118,8 @@ class Toolbox:
         # 邀请进已有群:低风险(有 _check_room_access 防越权)且是修 bug 的关键工具——不在
         # 旧配置白名单里,不放这会被当"未勾选"禁用,模型又会退回误用 create_room 建同名群。
         "invite_to_room",
+        # 全局助理的"眼睛"(双层作用域第二步):只读、频道模式自动拒绝,同理常开防旧配置禁用。
+        "list_my_rooms",
     }
 
     def _is_enabled(self, name: str) -> bool:
@@ -237,6 +241,19 @@ class Toolbox:
                 "required": ["user_id"],
             },
             fn=self._tool_invite_to_room,
+        )
+
+        # 1c) 列出发起人所在的频道(双层作用域·第二步:全局助理跨频道统筹的"眼睛")。
+        self._register(
+            name="list_my_rooms",
+            description=(
+                "列出**发起人**所在的所有频道(名字+room_id)。只在与用户的私人会话(全局助理"
+                "模式)可用。跨频道统筹的第一步:先用它拿到频道清单,再用 get_recent_messages"
+                "(room_id=...) 调取某个频道的最近讨论、或用 invite_to_room/send_message_to_room"
+                " 操作目标频道。"
+            ),
+            parameters={"type": "object", "properties": {}},
+            fn=self._tool_list_my_rooms,
         )
 
         # 2) 往某房间发消息
@@ -630,6 +647,69 @@ class Toolbox:
         return (
             f"已成功创建群「{name}」（room_id={room_id}），"
             f"并已邀请：{', '.join(invitees)}。"
+        )
+
+    def _room_kind(self, room_id: str) -> str:
+        """房间类型:'ai'(AI会话房)/'dm'(真人私信)/'channel'(普通频道)。
+
+        按建房时打的 state 标记判定,结果永久缓存(标记不会变)——list_my_rooms 每次要过
+        全部房间,不缓存会打出成倍的 state 查询。读失败按 channel 处理且不缓存(下次重试)。
+        """
+        cached = self._room_kind_cache.get(room_id)
+        if cached is not None:
+            return cached
+        try:
+            if self.client.get_state_event(room_id, "cosmac.ai_session") is not None:
+                kind = "ai"
+            elif self.client.get_state_event(room_id, "cosmac.dm") is not None:
+                kind = "dm"
+            else:
+                kind = "channel"
+        except Exception:
+            return "channel"  # 读失败:按频道处理,不缓存
+        self._room_kind_cache[room_id] = kind
+        return kind
+
+    def _tool_list_my_rooms(self, args: Dict[str, Any], ctx: ToolContext) -> str:
+        """列出发起人所在的频道。全局模式(私聊)专用;频道模式拒绝(分身只看本频道)。"""
+        if not ctx.is_dm:
+            return (
+                "我现在是这个频道的专属 AI，不提供跨频道清单。"
+                "要跨频道统筹，请到右侧「私人会话」里找我。"
+            )
+        try:
+            room_ids = self.client.joined_rooms()
+        except Exception:
+            room_ids = []
+        if not room_ids:
+            return "暂时拿不到频道列表(服务波动?),请稍后再试。"
+        import time as _time
+        now = _time.time()
+        out: List[str] = []
+        for rid in room_ids[:100]:
+            try:
+                if self._room_kind(rid) != "channel":
+                    continue  # AI 会话房/私信不算频道
+                # 全局模式的边界:只列**发起人自己在**的房——不暴露 TA 不在的群
+                if not self.client.is_joined_member(rid, ctx.sender):
+                    continue
+                cached = self._room_name_cache.get(rid)
+                if cached and now - cached[1] < 300:
+                    name = cached[0]
+                else:
+                    ev = self.client.get_state_event(rid, "m.room.name")
+                    name = str((ev or {}).get("name") or "")
+                    self._room_name_cache[rid] = (name, now)
+                if "控制室" in name:
+                    continue  # 平台配置房,不是聊天频道
+                out.append(f"· {name or '(未命名频道)'} — {rid}")
+            except Exception:
+                continue  # 单个房读不出不影响整体
+        if not out:
+            return "没有找到你所在的频道。"
+        return (
+            f"你所在的频道({len(out)} 个):\n" + "\n".join(out)
+            + "\n\n(要看某个频道最近聊了什么,我可以用 get_recent_messages 调取。)"
         )
 
     def _resolve_room_by_name(self, name: str) -> "Tuple[str, Optional[str]]":

@@ -47,7 +47,14 @@ class FakeClient:
         return 2
 
     def get_state_event(self, room_id, etype, state_key=""):
+        # !named:test 房有名字(给 list_my_rooms 测试);其余无 state
+        if etype == "m.room.name" and room_id == "!allowed:test":
+            return {"name": "测试频道"}
         return None
+
+    def joined_rooms(self):
+        # bot 在两个房:用户 alice 只在 !allowed:test(见 is_joined_member)
+        return ["!allowed:test", "!secret:test"]
 
 
 class FakeLLM(LLMProvider):
@@ -293,6 +300,24 @@ class RoomAccessScopeTest(unittest.TestCase):
         # 全局模式(私聊):用户是成员的房放行
         ctx = ToolContext("!cur:test", "@alice:test", is_dm=True)
         self.assertEqual(self.tb._check_room_access("!allowed:test", ctx), "")
+
+    def test_list_my_rooms_channel_mode_refused(self) -> None:
+        # 频道模式:分身不提供跨频道清单
+        out = self.tb.execute(
+            ToolCall(id="x", name="list_my_rooms", arguments={}),
+            ToolContext("!cur:test", "@alice:test", is_dm=False),
+        )
+        self.assertIn("专属 AI", out)
+
+    def test_list_my_rooms_global_mode_lists_member_rooms_only(self) -> None:
+        # 全局模式:只列发起人在的房(!allowed),不暴露 TA 不在的(!secret)
+        out = self.tb.execute(
+            ToolCall(id="x", name="list_my_rooms", arguments={}),
+            ToolContext("!cur:test", "@alice:test", is_dm=True),
+        )
+        self.assertIn("!allowed:test", out)
+        self.assertIn("测试频道", out)
+        self.assertNotIn("!secret:test", out)
 
     def test_global_mode_blocks_non_member_room(self) -> None:
         # 全局模式:用户不在的房仍拒绝(不越权)
