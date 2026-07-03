@@ -180,7 +180,7 @@ function openDocs() {
 import { getTasks, updateTask, type TaskItem } from '@/matrix/client'
 const taskList = ref<TaskItem[]>([])
 // AI 侧栏放大态右栏：进度=真实任务完成数，项目文件=真实个人知识库文档
-const doneCount = computed(() => taskList.value.filter((t) => t.status === 'done').length)
+const doneCount = computed(() => scopedTasks.value.filter((t) => t.status === 'done').length)
 // 个人知识库文档：与「知识库管理」弹窗共用同一份单例（增删后两处同步刷新）
 const { docs: kbDocsMine, load: loadKb, open: openKnowledge } = useKnowledge()
 // 「我的协作人」弹窗（普通用户维护个人能力名册）
@@ -193,11 +193,19 @@ const TASK_COLS = [
   { key: 'done', label: '已完成' },
 ]
 async function loadTasks() { taskList.value = await getTasks() }
+// 按当前工作区过滤任务(QA:不同工作区任务看板全一样)。口径与左侧频道列表完全一致:
+// 任务所在频道属于本工作区 → 显示;属于**别的**工作区 → 隐藏;不属于任何工作区(孤儿专班/
+// 旧任务无 room_id) → 各工作区都显示,避免"任务凭空消失"。
+const scopedTasks = computed(() => taskList.value.filter((t) => {
+  const rid = t.room_id || ''
+  if (!activeSpace.value || !rid) return true
+  return spaceChildIds.value.has(rid) || !allSpaceChildIds.value.has(rid)
+}))
 // 按"项目/剧集"(任务的 goal=拆解时的总目标)分组，算每个项目的完成进度
 const activeGoal = ref('')   // '' = 全部项目
 const projects = computed(() => {
   const m = new Map<string, TaskItem[]>()
-  for (const t of taskList.value) {
+  for (const t of scopedTasks.value) {
     const g = t.goal || '未归类'
     if (!m.has(g)) m.set(g, [])
     m.get(g)!.push(t)
@@ -210,7 +218,7 @@ const projects = computed(() => {
   })
 })
 const visibleTasks = computed(() =>
-  activeGoal.value ? taskList.value.filter((t) => (t.goal || '未归类') === activeGoal.value) : taskList.value)
+  activeGoal.value ? scopedTasks.value.filter((t) => (t.goal || '未归类') === activeGoal.value) : scopedTasks.value)
 function tasksByStatus(s: string) { return visibleTasks.value.filter((t) => t.status === s) }
 // 档2 类型化执行者 → 看板小标签（人/AI/工作流）；none 或无 ref 返回空、不显示
 function execLabel(t: TaskItem): string {
@@ -415,6 +423,8 @@ function selectSpace(id: string) {
   spaceChildIds.value = roomIdsInSpace(id)
   // 切了工作区，若当前频道不属于它，回到频道空态
   if (currentRoom.value && !spaceChildIds.value.has(currentRoom.value)) currentRoom.value = ''
+  // 任务看板选中的"项目"是上个工作区的,清掉回到「全部项目」
+  activeGoal.value = ''
 }
 
 // ── 工作区设置（点工作区名打开，改名称 / 简称）──
@@ -1713,7 +1723,7 @@ onBeforeUnmount(() => {
           <div class="ch-header">
             <div class="title">📋 任务看板</div>
             <div class="ch-actions">
-              <span class="board-sub">{{ taskList.length }} 个任务 · 主 AI 拆解</span>
+              <span class="board-sub">{{ scopedTasks.length }} 个任务 · 主 AI 拆解</span>
               <button class="ch-ic-btn" title="刷新" @click="loadTasks">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" /></svg>
               </button>
@@ -1727,7 +1737,7 @@ onBeforeUnmount(() => {
             <div v-if="projects.length" class="proj-strip">
               <button class="proj-card all" :class="{ active: activeGoal === '' }" @click="activeGoal = ''">
                 <div class="proj-name">📁 全部项目</div>
-                <div class="proj-meta">{{ taskList.length }} 个任务 · {{ projects.length }} 个项目</div>
+                <div class="proj-meta">{{ scopedTasks.length }} 个任务 · {{ projects.length }} 个项目</div>
               </button>
               <button
                 v-for="p in projects" :key="p.goal"
@@ -2030,9 +2040,9 @@ onBeforeUnmount(() => {
           <!-- 右栏（仅放大态）：进度=真实任务看板 / 项目文件=真实知识库文档 -->
           <div v-if="aiMax" class="ai-cw-right">
             <div class="ai-cw-sec">
-              <div class="ai-cw-sec-h with-meta"><span>进度</span><span class="ai-cw-meta">{{ doneCount }}/{{ taskList.length }}</span></div>
-              <ul v-if="taskList.length" class="ai-cw-progress">
-                <li v-for="t in taskList.slice(0, 9)" :key="t.id"
+              <div class="ai-cw-sec-h with-meta"><span>进度</span><span class="ai-cw-meta">{{ doneCount }}/{{ scopedTasks.length }}</span></div>
+              <ul v-if="scopedTasks.length" class="ai-cw-progress">
+                <li v-for="t in scopedTasks.slice(0, 9)" :key="t.id"
                     :class="{ done: t.status === 'done', in: t.status === 'doing' }">
                   {{ t.title }}<template v-if="t.status === 'doing' && t.progress"> · {{ t.progress }}%</template>
                 </li>
