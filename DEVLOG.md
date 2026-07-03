@@ -7,6 +7,17 @@
 
 ---
 
+## 2026-07-03 — 清理三连:控制室隐藏 + LiveView旧登录死代码删除(含直连Synapse旧路径本体)
+- **控制室误删事故**: 负责人把「CosMac 控制室」当普通频道从列表删除(孤儿房放行的副作用暴露了它)。
+  房间与配置数据无损(bot仍是成员),已给 AS token 邀请回归命令。**根治**: listRooms 按 canonical
+  alias(#cosmac-ctrl)把控制室从频道列表排除——它是配置数据库不是聊天频道,不该被看见。
+- **LiveView 旧认证死代码删除**(审查遗留): 删 doLogin/sendCode/doRegister/doResetPassword/
+  switchAuthMode 函数块(~93行)+ 8个死refs + 6个死import;**连根拔掉 client.ts 的 login()/
+  loginWithEmail() 函数本体**——它们直连Synapse绕过登录收口(限频/审计/异地检测),是被审查点名
+  的风险路径。全仓确认零调用后删除。build过。
+- 重复「新品发布会专班」群: 负责人已手动删除。TODO.md 三项勾销。
+- **部署: 仅前端 dist。**
+
 ## 2026-07-03 — 引擎回退告警(欠费/CLI坏不再无声)
 - 问题: SDK引擎失败自动回退 legacy 是无声的——DeepSeek 欠费/CLI 坏了没人发现"高级引擎"早停了。
 - 修: bot._alert_engine_fallback——回退发生时向控制室发告警(错误摘要+常见原因+排查命令),

@@ -187,56 +187,13 @@ async function startFrom(opts: {
   return opts.userId
 }
 
-/** 用用户名+密码登录，成功后记住会话。返回完整用户 id。 */
-export async function login(
-  baseUrl: string,
-  user: string,
-  password: string,
-): Promise<string> {
-  const tmp = createClient({ baseUrl })
-  const res: any = await tmp.login('m.login.password', {
-    identifier: { type: 'm.id.user', user },
-    password,
-    initial_device_display_name: 'CosMac Web',
-  })
-  saveSession(baseUrl, res)
-  return startFrom({
-    baseUrl,
-    accessToken: res.access_token,
-    userId: res.user_id,
-    deviceId: res.device_id,
-  })
-}
+// (旧的「登录+立即启动客户端」函数 login()/loginWithEmail() 已删除:它们直连 Synapse、
+//  绕过后端的限频/审计/异地检测(登录收口)。现行路径=AuthView 用 loginNoStart/
+//  loginWithEmailNoStart(经 cosmac 后端),LiveView 挂载时 restoreSession 统一启动。)
 
 // 注：注册不走 Matrix 原生开放注册（那只能发验证链接、且要服务端开放注册）。
 // CosMac 用「自建邮箱验证码」注册：见下方 registerRequestCode/registerVerify（调 cosmac 后端）。
 
-/**
- * 邮箱+密码登录：走 cosmac 后端（/cosmac/login/email），它按邮箱反查账号后登 Synapse，
- * 返回登录响应；前端据此存会话、启动客户端（与 login() 相同的后半程）。
- * 登录前 mx 还没建，故由调用方传入 homeserver 基址。
- */
-export async function loginWithEmail(
-  baseUrl: string,
-  email: string,
-  password: string,
-): Promise<string> {
-  const base = baseUrl.replace(/\/$/, '')
-  const r = await fetch(`${base}/cosmac/login/email`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  })
-  const j = await r.json().catch(() => ({}))
-  if (!r.ok || !j?.access_token) throw new Error(j?.error || '登录失败')
-  saveSession(baseUrl, j)
-  return startFrom({
-    baseUrl,
-    accessToken: j.access_token,
-    userId: j.user_id,
-    deviceId: j.device_id,
-  })
-}
 
 /**
  * 只「认证 + 存会话」，**不启动 Matrix 客户端**（不 startFrom、不首次同步）。
@@ -424,6 +381,10 @@ export function listRooms(): LiveRoom[] {
     .filter((r) => !(r as any).isSpaceRoom?.())
     // 排除全部主 AI 会话房（多会话后可能有多个，统一按标记排除）
     .filter((r) => !aiIds.has(r.roomId))
+    // 排除 CosMac 控制室：它是平台的"配置数据库"(AI配置/会员/门控/套餐等 state event 都存这),
+    // 不是聊天频道。出现在列表里会被管理员当普通频道误删(实测发生过——退出后后台配置读写全断)。
+    // 按 canonical alias 判定(#cosmac-ctrl),改名也藏得住。
+    .filter((r) => !((r as any).getCanonicalAlias?.() || '').startsWith('#cosmac-ctrl:'))
     .map((r) => ({ id: r.roomId, name: r.name || r.roomId, topic: roomTopic(r) }))
     // 无名 DM 的 name 会回退成对方 mxid（以 @ 开头），不进频道列表
     .filter((r) => !r.name.startsWith('@'))

@@ -16,14 +16,8 @@
 import { ref, computed, reactive, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  login,
-  loginWithEmail,
   listCachedAccounts,
   switchToAccount,
-  registerRequestCode,
-  registerVerify,
-  resetRequestCode,
-  resetVerify,
   restoreSession,
   logout,
   onUpdate,
@@ -237,17 +231,8 @@ const HS = 'https://hs.cosmac.cc'
 
 // ── 登录态 ──────────────────────────────────────────────
 const user = ref('')
-const password = ref('')
-const password2 = ref('')               // 注册时的「确认密码」
-const email = ref('')                   // 注册邮箱
-const emailCode = ref('')               // 邮箱验证码
-const codeCooldown = ref(0)             // 「发送验证码」倒计时（秒），>0 时按钮禁用
-const sendingCode = ref(false)
-const authMode = ref<'login' | 'register' | 'reset'>('login') // 鉴权页：登录 / 注册 / 找回密码
-const loginBy = ref<'account' | 'email'>('account') // 登录方式：账号 / 邮箱（二选一）
 const loggedIn = ref(false)
 const me = ref('')
-const error = ref('')
 const loading = ref(false)
 
 // ── 频道 / 消息 ─────────────────────────────────────────
@@ -1008,99 +993,8 @@ async function doJoinSpace(spaceId: string) {
   }, 800)
 }
 
-async function doLogin() {
-  error.value = ''
-  loading.value = true
-  try {
-    // 账号登录走 Synapse 标准登录；邮箱登录走 cosmac 后端（反查账号后再登）
-    if (loginBy.value === 'email') {
-      await afterLogin(await loginWithEmail(HS, email.value.trim(), password.value))
-    } else {
-      await afterLogin(await login(HS, user.value.trim(), password.value))
-    }
-  } catch (e: any) {
-    error.value = e?.message || String(e)
-  } finally {
-    loading.value = false
-  }
-}
-
-/** 发送邮箱验证码（带 60s 倒计时防连点）。 */
-async function sendCode() {
-  error.value = ''
-  const e = email.value.trim()
-  if (!e) { error.value = '请先填邮箱'; return }
-  if (codeCooldown.value > 0 || sendingCode.value) return
-  sendingCode.value = true
-  try {
-    // 注册和找回密码用各自的发码端点
-    if (authMode.value === 'reset') await resetRequestCode(HS, e)
-    else await registerRequestCode(HS, e)
-    toast('验证码已发送', `请查收 ${e}（含垃圾箱）`)
-    // 启动 60s 倒计时
-    codeCooldown.value = 60
-    const t = setInterval(() => {
-      codeCooldown.value -= 1
-      if (codeCooldown.value <= 0) clearInterval(t)
-    }, 1000)
-  } catch (err: any) {
-    error.value = err?.message || '发送验证码失败'
-  } finally {
-    sendingCode.value = false
-  }
-}
-
-/** 注册：校验 → 验码建号 → 用同一套用户名/密码登录（随后自动触发首次引导）。 */
-async function doRegister() {
-  error.value = ''
-  const u = user.value.trim()
-  const e = email.value.trim()
-  if (!e) { error.value = '请填邮箱'; return }
-  if (!emailCode.value.trim()) { error.value = '请填邮箱验证码'; return }
-  if (!u || !password.value) { error.value = '请填用户名和密码'; return }
-  if (password.value.length < 8) { error.value = '密码至少 8 位'; return }
-  if (password.value !== password2.value) { error.value = '两次输入的密码不一致'; return }
-  loading.value = true
-  try {
-    // 1) 验码 + 建号（走 cosmac 后端）
-    await registerVerify(HS, { email: e, code: emailCode.value.trim(), username: u, password: password.value })
-    // 2) 用刚注册的账号登录，建立会话（复用正常登录流程 → 触发首次引导）
-    await afterLogin(await login(HS, u, password.value))
-  } catch (err: any) {
-    error.value = err?.message || String(err)
-  } finally {
-    loading.value = false
-  }
-}
-
-/** 找回密码：验码 → 重置密码 → 回登录页用新密码登录。 */
-async function doResetPassword() {
-  error.value = ''
-  const e = email.value.trim()
-  if (!e) { error.value = '请填邮箱'; return }
-  if (!emailCode.value.trim()) { error.value = '请填邮箱验证码'; return }
-  if (password.value.length < 8) { error.value = '新密码至少 8 位'; return }
-  if (password.value !== password2.value) { error.value = '两次输入的密码不一致'; return }
-  loading.value = true
-  try {
-    await resetVerify(HS, { email: e, code: emailCode.value.trim(), password: password.value })
-    toast('密码已重置', '请用新密码登录')
-    switchAuthMode('login')
-    password.value = ''
-  } catch (err: any) {
-    error.value = err?.message || String(err)
-  } finally {
-    loading.value = false
-  }
-}
-
-/** 切换登录/注册/找回密码，清掉上次的错误和相关字段 */
-function switchAuthMode(m: 'login' | 'register' | 'reset') {
-  authMode.value = m
-  error.value = ''
-  password2.value = ''
-  emailCode.value = ''
-}
+// (旧内嵌登录/注册/找回代码已删除:认证已迁移到独立的 AuthView 页面。
+//  旧代码保活着「直连 Synapse 登录」「不带人机验证的发码」两条已被收口的路径,留着有被误接回的风险。)
 
 // ── Discord 化：反应 / 回复 / 消息分组 ──
 import type { ReactionAgg } from '@/matrix/client'
