@@ -2626,7 +2626,14 @@ class CosmacBot:
     # —— 个人协作人能力名册（模块3.5：普通用户在前台维护，按 owner=本人 隔离）——
 
     def handle_people_list_mine(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
-        """列本人维护的协作人能力名册。需登录。"""
+        """列本人维护的协作人能力名册。需登录。
+
+        返回 = 本人 DB 名册 + **admin 后台的全局能力名册**(控制室 cosmac.people)叠加。
+        AI 派单时两份本就合并(_list_capabilities_for_tool 同口径);这里若不叠加,就会出现
+        QA 报的"管理员后台给用户设了能力,用户打开『我的协作人』全是未设能力"——功能其实
+        生效了,但 UI 看不见。同一 user_id 以**本人记录优先**(用户可自己覆盖平台预设);
+        全局来的条目带 source='global',前端标「平台已设」。
+        """
         user_id = self.client.whoami(access_token)
         if not user_id:
             return 401, {"error": "登录已失效，请重新登录"}
@@ -2639,6 +2646,23 @@ class CosmacBot:
                 out = [to_dict(p) for p in list_people(s, user_id)]
         except Exception:
             logger.debug("列个人协作人失败", exc_info=True)
+        try:
+            mine_ids = {str(p.get("user_id") or "") for p in out}
+            for gp in self._people_items():
+                uid = str(gp.get("user_id") or "")
+                if not uid or uid in mine_ids:
+                    continue
+                out.append({
+                    "user_id": uid,
+                    "name": str(gp.get("name") or ""),
+                    "role": str(gp.get("role") or ""),
+                    "expertise": str(gp.get("expertise") or ""),
+                    "note": str(gp.get("note") or ""),
+                    "enabled": True,
+                    "source": "global",
+                })
+        except Exception:
+            logger.debug("叠加全局能力名册失败（忽略）", exc_info=True)
         return 200, {"people": out}
 
     def handle_people_add(

@@ -2302,6 +2302,7 @@ export async function kbDeleteMine(id: number): Promise<void> {
 /* ===== 个人协作人能力名册（模块3.5：普通用户在前台维护，主 AI 派单时合并进名册）===== */
 export interface MyPerson {
   user_id: string; name: string; role: string; expertise: string; note: string; enabled: boolean
+  source?: string   // 'global'=管理员后台全局名册叠加来的(平台预设,本人保存后转为个人记录)
 }
 
 /** 列本人维护的协作人；失败/未登录返回 []。 */

@@ -42,8 +42,8 @@
                 <div class="mp-item-top">
                   <b>{{ r.name }}</b>
                   <span v-if="r.role" class="mp-role">{{ r.role }}</span>
-                  <span class="mp-badge" :class="{ on: r.hasProfile && r.enabled }">
-                    {{ r.hasProfile ? (r.enabled ? '已设能力' : '停用') : '未设能力' }}
+                  <span class="mp-badge" :class="{ on: r.hasProfile && r.enabled, global: r.isGlobal }">
+                    {{ r.hasProfile ? (r.isGlobal ? '平台已设' : r.enabled ? '已设能力' : '停用') : '未设能力' }}
                   </span>
                 </div>
                 <div class="mp-item-uid">{{ r.id }}</div>
@@ -99,6 +99,7 @@ const { visible, rows, loading, busy, editing, adding, errText, form, close, sta
 .mp-role { font-size: var(--fs-75); color: var(--accent); background: var(--bg-panel); border-radius: 999px; padding: 1px 8px; }
 .mp-badge { font-size: var(--fs-75); color: var(--text-3); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
 .mp-badge.on { color: #2f7d4f; border-color: #2f7d4f; }
+.mp-badge.global { color: var(--accent); border-color: var(--accent); }
 .mp-item-uid { font-size: var(--fs-75); color: var(--text-3); margin-top: 2px; }
 .mp-item-exp { font-size: var(--fs-75); color: var(--text-2); margin-top: 4px; line-height: 1.4; }
 .mp-item-act { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }

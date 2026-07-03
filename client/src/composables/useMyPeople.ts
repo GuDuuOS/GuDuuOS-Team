@@ -54,6 +54,7 @@ export function useMyPeople() {
         expertise: p?.expertise || '',
         enabled: p ? p.enabled : true,
         hasProfile: !!p,
+        isGlobal: p?.source === 'global',  // 管理员后台设的平台预设(用户保存即覆盖为个人记录)
       }
     })
   })
