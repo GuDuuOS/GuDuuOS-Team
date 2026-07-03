@@ -155,7 +155,9 @@ class CosmacBot:
         self._control_room: Optional[str] = None  # 控制室 room_id（别名解析一次后缓存）
         self._cfg_cache: Dict[str, Any] = {}
         # 「AI 会话房」判定缓存(room_id → 是否带 cosmac.ai_session 标记;标记不变,永久缓存)
-        self._ai_session_room_cache: Dict[str, bool] = {}        # 上次读到的配置覆盖
+        self._ai_session_room_cache: Dict[str, bool] = {}
+        # SDK 引擎回退告警的节流时间戳(1小时最多向控制室发一条,防刷屏)
+        self._engine_alert_ts: float = 0.0        # 上次读到的配置覆盖
         # 上次读取时间（缓存 20s，别每条消息都打服务器）。
         # 用 -inf 当"从未读过"的哨兵：保证首次必读（monotonic 起点不定，别用 0）。
         self._cfg_cache_ts: float = float("-inf")
@@ -863,11 +865,39 @@ class CosmacBot:
                 return eng.run(
                     user_text, tool_ctx, extra_system=extra_system, history=history,
                 )
-            except Exception:
+            except Exception as exc:
                 logger.exception("Claude SDK 引擎执行失败,本条回退 legacy 引擎")
+                # 回退不能是无声的:欠费/CLI 坏了会让引擎一直默默回退,没人发现"高级引擎"
+                # 早就没在跑。向控制室发告警(1 小时最多一条),管理员能第一时间看到。
+                self._alert_engine_fallback(exc)
         return agent.run(
             user_text, tool_ctx, extra_system=extra_system, history=history,
         )
+
+    def _alert_engine_fallback(self, exc: Exception) -> None:
+        """SDK 引擎回退时向控制室发告警(节流:1 小时最多一条)。
+
+        best-effort:告警本身失败(控制室不在/网络抖动)只记日志,绝不影响用户那条回复。
+        常见根因提示直接写进消息,管理员不用翻文档。
+        """
+        import time as _time
+        now = _time.time()
+        if now - self._engine_alert_ts < 3600:
+            return
+        self._engine_alert_ts = now
+        try:
+            room = self.client.resolve_alias(self.config.control_room_alias)
+            if not room:
+                return
+            self.client.send_text(
+                room,
+                "⚠️ AI 高级引擎(Claude SDK)执行失败,已自动回退旧引擎,用户无感但请尽快排查。\n"
+                f"错误摘要: {type(exc).__name__}: {str(exc)[:180]}\n"
+                "常见原因: ① DeepSeek 账户余额不足 ② 服务器 claude CLI/Node 异常 ③ 端点网络不通。\n"
+                "排查: journalctl -u guduu-bot | grep 引擎。(本提醒 1 小时内不再重复)",
+            )
+        except Exception:
+            logger.debug("发送引擎回退告警失败(忽略)", exc_info=True)
 
     def _find_global_agent(self, slug: str) -> Optional[Dict[str, Any]]:
         """按 slug 找一个**启用**的全局智能体（含内置预置库 + 控制室配置）；找不到返回 None。

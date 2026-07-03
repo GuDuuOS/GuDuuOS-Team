@@ -7,6 +7,12 @@
 
 ---
 
+## 2026-07-03 — 引擎回退告警(欠费/CLI坏不再无声)
+- 问题: SDK引擎失败自动回退 legacy 是无声的——DeepSeek 欠费/CLI 坏了没人发现"高级引擎"早停了。
+- 修: bot._alert_engine_fallback——回退发生时向控制室发告警(错误摘要+常见原因+排查命令),
+  1小时节流防刷屏;告警本身 best-effort 绝不影响用户回复。355测试+ruff过。
+- **部署: 重启 guduu-bot(纯后端)。**
+
 ## 2026-07-03 — AI引擎·生产部署完成(SDK+DeepSeek 已在线上运行)
 - 生产服务器(Ubuntu24.04/py3.12)装齐: Node v22.23.1 + Claude Code CLI 2.1.199(npm -g)+
   claude-agent-sdk(装进 /opt/guduu/bot-venv);drop-in agent-engine.conf 配 COSMAC_AGENT_ENGINE=
