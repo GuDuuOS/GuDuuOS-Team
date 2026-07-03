@@ -265,7 +265,10 @@ class Toolbox:
         self._register(
             name="send_message_to_room",
             description=(
-                "往指定房间发一条文本消息。如果用户没指定房间，就用当前房间。"
+                "往指定的**群/频道**发一条文本消息(公告、通知、任务说明等)。"
+                "⚠️ 在与用户的私人会话里用它时**必须**指定目标群(room_id 或 room_name)"
+                "——不指定会被拒绝,因为发到私聊里其他成员根本看不到。"
+                "刚 create_room 建的群,其 room_id 就在建群结果里,直接用它。"
             ),
             parameters={
                 "type": "object",
@@ -273,7 +276,11 @@ class Toolbox:
                     "text": {"type": "string", "description": "要发送的消息正文。"},
                     "room_id": {
                         "type": "string",
-                        "description": "目标房间 id；不填则发到当前房间。",
+                        "description": "目标房间 id(优先用它,最精确)。",
+                    },
+                    "room_name": {
+                        "type": "string",
+                        "description": "目标群名;不知道 room_id 时用群名,我会解析。",
                     },
                 },
                 "required": ["text"],
@@ -803,6 +810,24 @@ class Toolbox:
         text = args.get("text") or ""
         if not text.strip():
             return "没有可发送的内容。"
+        # 按群名找 room_id(与 invite_to_room 同款):用户说"往暑期托管班群发个公告",
+        # 模型往往只有群名没有 id。
+        room_name = str(args.get("room_name") or "").strip()
+        if not args.get("room_id") and room_name:
+            resolved, err = self._resolve_room_by_name(room_name)
+            if err:
+                return err
+            args = dict(args)
+            args["room_id"] = resolved
+        # 防语义事故(QA 实测踩过):私聊里让 AI"给群里发公告",模型不带 room_id 调用 →
+        # 公告落在用户与 AI 的私聊里,AI 报"已发送",目标群其他成员什么都收不到。
+        # 私聊里发消息给用户=直接回复即可,不需要这个工具;所以没有目标群一律拦下。
+        if ctx.is_dm and not args.get("room_id"):
+            return (
+                "当前是你与我的私聊会话——在这里发消息其他成员看不到。"
+                "请告诉我要发到哪个群（给**群名**或 room_id，比如『把公告发到暑期托管班群』），"
+                "我再发送。"
+            )
         room_id = args.get("room_id") or ctx.room_id
         denial = self._check_room_access(room_id, ctx)
         if denial:

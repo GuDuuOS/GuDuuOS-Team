@@ -385,6 +385,44 @@ class RoomAccessScopeTest(unittest.TestCase):
         self.assertIn("成员", msg)
 
 
+class SendMessageTargetTest(unittest.TestCase):
+    """send_message 目标房防呆(QA 实测:私聊里让 AI 发公告,消息落进私聊,群成员收不到)。"""
+
+    def setUp(self) -> None:
+        self.client = FakeClient()
+        self.tb = Toolbox(self.client)
+
+    def test_dm_without_target_refused(self) -> None:
+        # 私聊里不指定目标群 → 拦下并引导给群名,一条消息都不真发
+        out = self.tb.execute(
+            ToolCall(id="x", name="send_message_to_room", arguments={"text": "公告"}),
+            ToolContext("!cur:test", "@alice:test", is_dm=True),
+        )
+        self.assertIn("私聊", out)
+        self.assertEqual(self.client.sent, [])
+
+    def test_dm_room_name_resolved_and_sent(self) -> None:
+        # 私聊里给群名 → 解析成 room_id 并真的发进那个群
+        out = self.tb.execute(
+            ToolCall(
+                id="x", name="send_message_to_room",
+                arguments={"text": "公告", "room_name": "测试频道"},
+            ),
+            ToolContext("!cur:test", "@alice:test", is_dm=True),
+        )
+        self.assertIn("已往房间", out)
+        self.assertEqual(self.client.sent, [("!allowed:test", "公告")])
+
+    def test_channel_mode_defaults_to_current_room(self) -> None:
+        # 频道里 @AI 发消息不带目标 → 发到本频道(原有行为不变)
+        out = self.tb.execute(
+            ToolCall(id="x", name="send_message_to_room", arguments={"text": "hi"}),
+            ToolContext("!cur:test", "@alice:test", is_dm=False),
+        )
+        self.assertIn("已往房间", out)
+        self.assertEqual(self.client.sent, [("!cur:test", "hi")])
+
+
 class ProgressVisibilityTest(unittest.TestCase):
     """AI 执行过程可见:legacy 引擎回调触发 + 进度报告器 发送→编辑→定格。"""
 
