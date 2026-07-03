@@ -2241,7 +2241,7 @@ class CosmacBot:
         from cosmac import registration
         b0 = body or {}
         return registration.request_code(
-            b0.get("email", ""), client_ip=client_ip, turnstile=b0.get("turnstile", ""),
+            str(b0.get("email") or ""), client_ip=client_ip, turnstile=str(b0.get("turnstile") or ""),
         )
 
     def handle_register_verify(
@@ -2295,8 +2295,10 @@ class CosmacBot:
         原来前端直连 Synapse，后端看不到登录；收口后账号登录与邮箱登录同一道防线。"""
         from cosmac import registration
         b = body or {}
+        # str() 归一:JSON 里 username 传成数字/对象时,registration 端的 .strip() 会 AttributeError
+        # → 连接被掐(无响应)。这里统一成字符串(低⑤)。
         return registration.login_account(
-            b.get("username", ""), b.get("password", ""),
+            str(b.get("username") or ""), str(b.get("password") or ""),
             hs_url=self.config.homeserver_url, client_ip=client_ip,
         )
 
@@ -3157,11 +3159,11 @@ class _Handler(BaseHTTPRequestHandler):
         # 公开读「认证前端配置」：前端据此决定登录/注册页要不要挂 Turnstile 人机验证。
         # 只回 site_key(本就是公开的)+ 开关;secret 绝不出现。无需鉴权、可跨源。
         if self.path.split("?", 1)[0] == "/cosmac/auth/config":
-            import os
             from cosmac import registration
+            from cosmac.config import _env
             self._send_json(200, {
                 "turnstile": registration.turnstile_enabled(),
-                "turnstile_site_key": os.environ.get("COSMAC_TURNSTILE_SITE_KEY", ""),
+                "turnstile_site_key": _env("TURNSTILE_SITE_KEY", ""),  # 与 secret 同走 _env(支持前缀回退,低⑦)
             }, cors=True)
             return
         # 模块4：公开读上架套餐（给前端「升级会员」展示；无密钥、可跨源）

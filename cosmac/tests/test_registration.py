@@ -244,6 +244,50 @@ class LoginAccountTest(unittest.TestCase):
         st, _ = reg.login_account("", "", hs_url="http://hs")
         self.assertEqual(st, 403)
 
+    def test_synapse_429_not_mapped_to_bad_credentials(self) -> None:
+        # 高①:Synapse 限频(429)不能被当成"用户名或密码错误",要透传 429
+        import cosmac.registration as _r
+
+        class _Resp:
+            status_code = 429
+            @staticmethod
+            def json():
+                return {}
+        _r.requests.post = lambda *a, **k: _Resp()  # type: ignore
+        st, _ = reg.login_account("alice", "pw", hs_url="http://hs", client_ip="1.2.3.4")
+        self.assertEqual(st, 429)
+        self.assertIn(("login", False, "hs_rate_limited"), self._audits)
+
+    def test_synapse_5xx_maps_to_502(self) -> None:
+        import cosmac.registration as _r
+
+        class _Resp:
+            status_code = 503
+            @staticmethod
+            def json():
+                return {}
+        _r.requests.post = lambda *a, **k: _Resp()  # type: ignore
+        st, _ = reg.login_account("alice", "pw", hs_url="http://hs", client_ip="1.2.3.4")
+        self.assertEqual(st, 502)
+
+    def test_forwards_real_ip_to_synapse(self) -> None:
+        # 高①:代理登录必须带 X-Forwarded-For(真实IP),否则 Synapse 按 bot IP 全局限频
+        import cosmac.registration as _r
+        seen = {}
+
+        class _Resp:
+            status_code = 200
+            @staticmethod
+            def json():
+                return {"access_token": "t", "user_id": "@a:h", "device_id": "d"}
+
+        def _post(url, **k):
+            seen["xff"] = (k.get("headers") or {}).get("X-Forwarded-For")
+            return _Resp()
+        _r.requests.post = _post  # type: ignore
+        reg.login_account("alice", "pw", hs_url="http://hs", client_ip="9.9.9.9")
+        self.assertEqual(seen["xff"], "9.9.9.9")
+
 
 class PasswordStrengthTest(unittest.TestCase):
     """password_problem 规则 + 注册/重置弱密码拦截(阶段1)。纯计算,无桩。"""

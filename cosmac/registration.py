@@ -77,6 +77,8 @@ def password_problem(password: str, username: str = "") -> Optional[str]:
     pw = password or ""
     if len(pw) < 8:
         return "密码至少 8 位"
+    if len(pw) > 512:  # Synapse 硬上限 512;提前拦,别让超长密码走完流程再被英文原文拒(低⑥)
+        return "密码过长（最多 512 位）"
     low = pw.lower()
     kinds = sum((
         any(ch.isalpha() for ch in pw),
@@ -360,14 +362,15 @@ def request_code(
     """发**注册**验证码到邮箱。返回 (http状态, 响应体)。turnstile=前端人机验证令牌。"""
     if not registration_enabled():
         return 503, {"error": "服务器未开启邮箱注册"}
-    if not _verify_turnstile(turnstile, client_ip):
-        return 400, {"error": "人机验证未通过，请重试"}
     email = (email or "").strip().lower()
     if not _EMAIL_RE.match(email):
         return 400, {"error": "邮箱格式不正确"}
-    # 先过 IP 限频（堵换邮箱绕过），再走邮箱维度限频。
+    # 先过 IP 限频、再打 Cloudflare——否则带假 token 的请求能无限速触发出站 siteverify、占共享线程池
+    # (审查中④)。校验/限频都放在 _verify_turnstile 之前。
     if not _ip_rate_ok("send", client_ip, _IP_SEND_MAX, _IP_SEND_WINDOW):
         return 429, {"error": "请求过于频繁，请稍后再试"}
+    if not _verify_turnstile(turnstile, client_ip):
+        return 400, {"error": "人机验证未通过，请重试"}
     return _issue_code(_key("register", email), lambda c: _send_email(email, c))
 
 
@@ -558,12 +561,31 @@ def _lookup_username(email: str) -> Optional[str]:
         return None
 
 
+# 「限频命中」的审计采样:同一 IP 在窗口内只入库第一条 rate_limited,其余只走日志。
+# 否则超限请求(不消耗限频计数、可无限打)每条一次 DB 写 → 表/索引无限膨胀(审查中③)。
+_RL_AUDIT_WINDOW = 600
+_rl_audit_seen: Dict[str, float] = {}
+_rl_audit_lock = threading.Lock()
+
+
 def _audit(kind: str, *, subject: str = "", ip: str = "", ok: bool = False, detail: str = "") -> None:
     """记一条认证审计事件（登录/注册/找回）。best-effort——记日志失败绝不影响认证主流程。
 
     收口后所有认证都经后端，故这里能拿到可信 IP、成败、主体，为异地检测/风控攒数据。
     绝不记密码/验证码/token（只记 kind/subject/ip/ok/detail）。
+    「限频命中」事件按 IP 在 _RL_AUDIT_WINDOW 秒内去重入库（防超限请求刷爆审计表）。
     """
+    if detail == "rate_limited" and ip:
+        now = time.time()
+        with _rl_audit_lock:
+            last = _rl_audit_seen.get(ip, 0.0)
+            if now - last < _RL_AUDIT_WINDOW:
+                logger.info("认证限频命中(已采样,不入库) ip=%s kind=%s", ip, kind)
+                return
+            _rl_audit_seen[ip] = now
+            if len(_rl_audit_seen) > 10000:  # 偶发清理,防字典膨胀
+                for k in [k for k, t in _rl_audit_seen.items() if now - t > _RL_AUDIT_WINDOW]:
+                    _rl_audit_seen.pop(k, None)
     try:
         from cosmac.db import session_scope
         from cosmac.db.auth_event_repo import record
@@ -571,6 +593,48 @@ def _audit(kind: str, *, subject: str = "", ip: str = "", ok: bool = False, deta
             record(s, kind=kind, subject=subject, ip=ip, ok=ok, detail=detail)
     except Exception:
         logger.debug("写认证审计失败（忽略）：kind=%s", kind, exc_info=True)
+
+
+def _proxy_synapse_login(
+    hs_url: str, username: str, password: str, client_ip: str
+) -> Tuple[int, Dict[str, Any]]:
+    """经 bot 代理向 Synapse 做密码登录,返回 (对外状态, 对外body)。收口的公共实现。
+
+    ⚠️ 关键(审查高①):收口后所有登录都从 bot(127.0.0.1)打向 Synapse,若不转发真实客户端 IP,
+    Synapse 的 rc_login 会按"bot 单一 IP"给**全平台**共享限频(默认 burst 5)→ 几个用户同时登录
+    第 N 个就被 Synapse 429。这里带 X-Forwarded-For 让 Synapse 按真实客户端 IP 限频
+    (需 Synapse 监听器 x_forwarded: true,本部署 client 监听已开)。
+    并**区分状态码**:Synapse 429→回 429、5xx/网络→回 502,只有 401/403 才回"用户名或密码错误"——
+    否则被限频的用户会看到"密码错误"、改密码也没用(审查高①)。
+    """
+    base = hs_url.rstrip("/")
+    headers = {}
+    if client_ip:
+        headers["X-Forwarded-For"] = client_ip
+    try:
+        resp = requests.post(
+            f"{base}/_matrix/client/v3/login",
+            json={
+                "type": "m.login.password",
+                "identifier": {"type": "m.id.user", "user": username},
+                "password": password,
+                "initial_device_display_name": "CosMac Web",
+            },
+            headers=headers,
+            timeout=_HS_TIMEOUT,
+        )
+    except requests.RequestException:
+        logger.exception("代理 Synapse 登录失败")
+        return 502, {"error": "登录服务暂不可用，请稍后重试"}
+    if resp.status_code == 200:
+        return 200, resp.json()
+    if resp.status_code == 429:
+        # 透传"太频繁",别误报密码错
+        return 429, {"error": "尝试过于频繁，请稍后再试"}
+    if resp.status_code >= 500:
+        return 502, {"error": "登录服务暂不可用，请稍后重试"}
+    # 401/403 等 → 凭据错(通用文案,不泄露账号是否存在)
+    return 403, {"error": "用户名或密码错误"}
 
 
 def login_account(
@@ -590,27 +654,10 @@ def login_account(
     if not _ip_rate_ok("attempt", client_ip, _IP_ATTEMPT_MAX, _IP_ATTEMPT_WINDOW):
         _audit("login", subject=username, ip=client_ip, ok=False, detail="rate_limited")
         return 429, {"error": "尝试过于频繁，请稍后再试"}
-    base = hs_url.rstrip("/")
-    try:
-        resp = requests.post(
-            f"{base}/_matrix/client/v3/login",
-            json={
-                "type": "m.login.password",
-                "identifier": {"type": "m.id.user", "user": username},
-                "password": password,
-                "initial_device_display_name": "CosMac Web",
-            },
-            timeout=_HS_TIMEOUT,
-        )
-        if resp.status_code == 200:
-            _audit("login", subject=username, ip=client_ip, ok=True, detail="ok")
-            return 200, resp.json()
-        _audit("login", subject=username, ip=client_ip, ok=False, detail="bad_credentials")
-        return 403, {"error": "用户名或密码错误"}
-    except requests.RequestException:
-        logger.exception("账号登录调用 Synapse 失败")
-        _audit("login", subject=username, ip=client_ip, ok=False, detail="hs_unreachable")
-        return 502, {"error": "登录服务暂不可用，请稍后重试"}
+    st, payload = _proxy_synapse_login(hs_url, username, password, client_ip)
+    _audit("login", subject=username, ip=client_ip, ok=(st == 200),
+           detail="ok" if st == 200 else {403: "bad_credentials", 429: "hs_rate_limited"}.get(st, "hs_error"))
+    return st, payload
 
 
 def login_email(
@@ -633,27 +680,20 @@ def login_email(
     if not username:
         _audit("login", subject=email, ip=client_ip, ok=False, detail="unknown_email")
         return 403, {"error": "邮箱或密码错误"}
-    base = hs_url.rstrip("/")
-    try:
-        r = requests.post(
-            f"{base}/_matrix/client/v3/login",
-            json={
-                "type": "m.login.password",
-                "identifier": {"type": "m.id.user", "user": username},
-                "password": password,
-                "initial_device_display_name": "CosMac Web",
-            },
-            timeout=_HS_TIMEOUT,
-        )
-        if r.status_code == 200:
-            _audit("login", subject=username, ip=client_ip, ok=True, detail="ok_email")
-            return 200, r.json()
-        _audit("login", subject=email, ip=client_ip, ok=False, detail="bad_credentials")
-        return 403, {"error": "邮箱或密码错误"}
-    except requests.RequestException:
-        logger.exception("邮箱登录调用 Synapse 失败")
-        _audit("login", subject=email, ip=client_ip, ok=False, detail="hs_unreachable")
-        return 502, {"error": "登录服务暂不可用，请稍后重试"}
+    st, payload = _proxy_synapse_login(hs_url, username, password, client_ip)
+    # 审计 subject 统一用 username(localpart):邮箱登录与账号登录归到同一主体,recent_success_ips
+    # 按 username 聚合、异地检测不会把同一人当三个主体(审查证伪C的小瑕疵①)。
+    if st == 200:
+        _audit("login", subject=username, ip=client_ip, ok=True, detail="ok_email")
+        return 200, payload
+    if st == 429:
+        _audit("login", subject=username, ip=client_ip, ok=False, detail="hs_rate_limited")
+        return 429, {"error": "尝试过于频繁，请稍后再试"}
+    if st == 502:
+        _audit("login", subject=username, ip=client_ip, ok=False, detail="hs_error")
+        return 502, payload
+    _audit("login", subject=username, ip=client_ip, ok=False, detail="bad_credentials")
+    return 403, {"error": "邮箱或密码错误"}
 
 
 def _admin_reset_password(hs_url: str, user_id: str, new_password: str) -> Tuple[int, Dict[str, Any]]:
@@ -726,14 +766,15 @@ def reset_request_code(
     """
     if not reset_enabled():
         return 503, {"error": "服务器未开启密码找回"}
-    if not _verify_turnstile(turnstile, client_ip):
-        return 400, {"error": "人机验证未通过，请重试"}
     email = (email or "").strip().lower()
     if not _EMAIL_RE.match(email):
         return 400, {"error": "邮箱格式不正确"}
     # IP 限频在查邮箱是否注册之前——返回 429 不泄露邮箱是否存在。
+    # 限频/邮箱校验都在 _verify_turnstile 之前:假 token 请求先被限频挡下,不空耗 Cloudflare 调用(中④)。
     if not _ip_rate_ok("send", client_ip, _IP_SEND_MAX, _IP_SEND_WINDOW):
         return 429, {"error": "请求过于频繁，请稍后再试"}
+    if not _verify_turnstile(turnstile, client_ip):
+        return 400, {"error": "人机验证未通过，请重试"}
     if not _lookup_username(email):
         # 不泄露"该邮箱有没有注册"，不发信但照样回成功
         return 200, {"ok": True, "cooldown": _RESEND_COOLDOWN}

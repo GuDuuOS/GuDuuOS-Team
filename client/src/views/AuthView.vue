@@ -11,7 +11,7 @@
  *     做**唯一一次**同步。既不双同步、也无需整页 reload。
  *   - 视觉与原登录块保持一致（同一套 class + 样式），只改架构不改观感。
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import logoUrl from '@/assets/cosmac-logo.png'
 import {
@@ -49,19 +49,26 @@ const tsSiteKey = ref('')
 const tsToken = ref('')               // 挂件回调拿到的一次性令牌;发码时带上
 const tsBoxRef = ref<HTMLElement>()   // 挂件容器
 let tsWidgetId: string | null = null
+let tsScriptFailed = false            // 脚本加载失败标志:给用户明确提示,并允许重试
 declare global { interface Window { turnstile?: any; onTurnstileLoad?: () => void } }
 
-/** 按需注入 Cloudflare Turnstile 脚本（只注一次）。 */
+/** 按需注入 Cloudflare Turnstile 脚本（只注一次;失败移除标签、下次调用可重试）。 */
 function loadTurnstileScript(): Promise<void> {
   return new Promise((resolve) => {
-    if (window.turnstile) { resolve(); return }
+    if (window.turnstile) { tsScriptFailed = false; resolve(); return }
     const existing = document.querySelector('script[data-turnstile]')
-    if (existing) { existing.addEventListener('load', () => resolve()); return }
+    if (existing) {
+      // 已在加载中:同时挂 load/error——只挂 load 的话,加载失败这个 Promise 永不 resolve(悬挂)
+      existing.addEventListener('load', () => { tsScriptFailed = false; resolve() })
+      existing.addEventListener('error', () => { tsScriptFailed = true; existing.remove(); resolve() })
+      return
+    }
     const s = document.createElement('script')
     s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js'
     s.async = true; s.defer = true; s.setAttribute('data-turnstile', '1')
-    s.onload = () => resolve()
-    s.onerror = () => resolve()   // 加载失败也 resolve:后端会拦,不因脚本挂了卡死前端
+    s.onload = () => { tsScriptFailed = false; resolve() }
+    // 失败:移除标签(否则残留的死标签让后续 existing 分支永远等不到 load)+ 记标志给可见提示
+    s.onerror = () => { tsScriptFailed = true; s.remove(); resolve() }
     document.head.appendChild(s)
   })
 }
@@ -70,6 +77,9 @@ function loadTurnstileScript(): Promise<void> {
 async function renderTurnstile() {
   if (!tsEnabled.value || !tsSiteKey.value) return
   await loadTurnstileScript()
+  // 显式等一帧:watch(authMode) 是 pre 回调,容器 <div ref="tsBoxRef"> 的 v-if 分支此刻可能
+  // 还没挂载。当前靠 await 垫微任务碰巧不踩坑,但那是隐式约定——nextTick 零成本、防回归。
+  await nextTick()
   if (!window.turnstile || !tsBoxRef.value) return
   if (tsWidgetId !== null) { try { window.turnstile.remove(tsWidgetId) } catch { /* ignore */ } tsWidgetId = null }
   tsToken.value = ''
@@ -88,7 +98,10 @@ onMounted(async () => {
   // 若一进来就在需要验证码的模式(注册/找回),渲染挂件
   if (tsEnabled.value && authMode.value !== 'login') renderTurnstile()
 })
-onBeforeUnmount(() => { if (tsWidgetId !== null && window.turnstile) { try { window.turnstile.remove(tsWidgetId) } catch { /* ignore */ } } })
+onBeforeUnmount(() => {
+  if (tsWidgetId !== null && window.turnstile) { try { window.turnstile.remove(tsWidgetId) } catch { /* ignore */ } }
+  if (cdTimer) { clearInterval(cdTimer); cdTimer = null }   // 倒计时中离开页面,别让 interval 空转
+})
 // 切到注册/找回时渲染;切回登录时不需要
 watch(authMode, (m) => { if (tsEnabled.value && m !== 'login') renderTurnstile() })
 
@@ -105,7 +118,9 @@ const pwStrength = computed(() => {
   const pw = password.value
   if (!pw) return { level: 0, label: '', warn: '' }
   if (pw.length < 8) return { level: 0, label: '太短', warn: '至少 8 位' }
-  const kinds = (/[a-zA-Z]/.test(pw) ? 1 : 0) + (/[0-9]/.test(pw) ? 1 : 0) + (/[^a-zA-Z0-9]/.test(pw) ? 1 : 0)
+  // 用 Unicode 类别对齐后端(Python isalpha/isdigit):否则含非 ASCII 字母的密码前后端分类相反,
+  // 出现"强度条说合格、提交却被后端拒"的断裂(如 'abcdefg中' 前端算字母+符号,后端算全字母)。
+  const kinds = (/\p{L}/u.test(pw) ? 1 : 0) + (/\p{N}/u.test(pw) ? 1 : 0) + (/[^\p{L}\p{N}]/u.test(pw) ? 1 : 0)
   if (kinds < 2) return { level: 1, label: '弱', warn: '请混用字母、数字或符号中的至少两类' }
   if (WEAK_SET.has(pw.toLowerCase())) return { level: 1, label: '弱', warn: '这个密码太常见、极易被猜中' }
   const u = user.value.trim().toLowerCase()
@@ -124,11 +139,13 @@ function proceed() {
 }
 
 /** 启动"发送验证码"按钮的倒计时（秒）。成功发码用后端给的 cooldown；被限频时用后端剩余秒数。 */
+let cdTimer: ReturnType<typeof setInterval> | null = null
 function startCodeCooldown(sec: number) {
+  if (cdTimer) clearInterval(cdTimer)   // 防叠加:任何时刻只有一个倒计时在跑
   codeCooldown.value = Math.max(1, Math.round(sec))
-  const t = setInterval(() => {
+  cdTimer = setInterval(() => {
     codeCooldown.value -= 1
-    if (codeCooldown.value <= 0) clearInterval(t)
+    if (codeCooldown.value <= 0 && cdTimer) { clearInterval(cdTimer); cdTimer = null }
   }, 1000)
 }
 
@@ -138,8 +155,16 @@ async function sendCode() {
   const e = email.value.trim()
   if (!e) { error.value = '请先填邮箱'; return }
   if (codeCooldown.value > 0 || sendingCode.value) return
-  // 启用了 Turnstile 但用户还没过验证 → 先别发
-  if (tsEnabled.value && !tsToken.value) { error.value = '请先完成下方人机验证'; return }
+  // 启用了 Turnstile 但用户还没过验证 → 先别发;脚本加载失败时给能行动的提示(而非无声卡死)
+  if (tsEnabled.value && !tsToken.value) {
+    if (tsScriptFailed) {
+      error.value = '人机验证组件加载失败，请检查网络后刷新页面重试'
+      renderTurnstile()   // 顺手重试一次(onerror 已移除死标签,可重新注入)
+    } else {
+      error.value = '请先完成下方人机验证'
+    }
+    return
+  }
   sendingCode.value = true
   try {
     const cd = authMode.value === 'reset'
@@ -151,8 +176,22 @@ async function sendCode() {
     error.value = err?.message || '发送验证码失败'
     // 后端返回了剩余冷却秒数（如"发送太频繁，请 X 秒后再试"）→ 按钮也走倒计时，别让用户空点再撞
     if (typeof err?.cooldown === 'number' && err.cooldown > 0) startCodeCooldown(err.cooldown)
+    // 后端说"人机验证未通过"但本地以为没启用(多半是挂载时拉 /cosmac/auth/config 失败) →
+    // 重拉配置并渲染挂件,让用户有验证可做,而不是对着报错干瞪眼。
+    if (!tsEnabled.value && /人机验证/.test(String(err?.message || ''))) {
+      const cfg = await getAuthConfig(HS)
+      tsEnabled.value = cfg.turnstile
+      tsSiteKey.value = cfg.siteKey
+      if (tsEnabled.value) renderTurnstile()
+    }
   } finally {
     sendingCode.value = false
+    // Turnstile token 是**一次性**的:后端 siteverify 校验过(无论成败)即作废。不重置挂件的话,
+    // 用户 60s 后点"重发验证码"会带着废 token 被 400 拒、挂件还显示已通过、无从重验(高危体验断裂)。
+    if (tsEnabled.value && tsWidgetId !== null && window.turnstile) {
+      try { window.turnstile.reset(tsWidgetId) } catch { /* ignore */ }
+      tsToken.value = ''
+    }
   }
 }
 
@@ -191,6 +230,8 @@ async function doRegister() {
   if (!emailCode.value.trim()) { error.value = '请填邮箱验证码'; return }
   if (!u || !password.value) { error.value = '请填用户名和密码'; return }
   if (password.value.length < 8) { error.value = '密码至少 8 位'; return }
+  // 提交前用强度结果拦一道(与后端同规则):弱密码别白跑一次后端再被拒
+  if (pwStrength.value.level <= 1) { error.value = pwStrength.value.warn || '密码太弱，请换一个'; return }
   if (password.value !== password2.value) { error.value = '两次输入的密码不一致'; return }
   loading.value = true
   try {

@@ -7,6 +7,24 @@
 
 ---
 
+## 2026-07-03 — 二轮审查(阶段0/1新代码):修8项(2高)
+- 2代理审阶段0/1新增auth代码,逐条核实后修。
+- 【高①·我上步收口引入的回归】登录收口后所有登录从bot(127.0.0.1)打Synapse,Synapse rc_login按来源IP
+  限频→全平台共享bot单IP额度(默认burst5),几个用户同时登录第N个就被429;且 login_account 把
+  Synapse 非200一律误报"用户名或密码错误"。修:抽 _proxy_synapse_login——带 X-Forwarded-For 转发真实IP
+  (Synapse client监听已开x_forwarded)让Synapse按真实IP限频;区分状态码(429→429/5xx→502,只401/403→凭据错)。
+  login_email 同修 + 审计subject统一用username(异地检测不把同一人当多主体)。
+- 【前端高①】Turnstile token一次性:首次发码后token作废,60s后重发必失败且挂件仍显示已通过。修:每次
+  请求后 turnstile.reset+清token。【前端高②】脚本加载失败→发码永久死锁+existing分支永久悬挂。修:
+  onerror移除死标签+标失败,给可行动提示并重试;existing分支同挂error。
+- 中③ 限频命中审计写放大(超限请求不消耗计数却每条入库)→按IP窗口采样,同IP 600s只入库首条。
+  中④ Turnstile校验挪到IP限频/邮箱校验之后(假token不再空耗Cloudflare调用+占共享线程池)。
+- 前端:密码强度用Unicode类别对齐后端(修"前端说合格后端拒");doRegister提交前用强度拦;倒计时interval
+  统一管理+卸载清理;getAuthConfig失败时按后端报错自愈重拉+渲染挂件;nextTick显式保证挂件容器就位。
+- 低⑤类型归一(username传非字符串不再掐连接) 低⑥超长密码(>512提前拦) 低⑦site key走_env(前缀回退)。
+- 证伪:X-Real-IP(生产已核实有)、审计敏感信息、/auth/config泄露面。测试+3高①用例;全量342过+ruff+build过。
+- **部署: 前端dist + 重启bot。** ⚠️高①的X-Forwarded-For生效前提: Synapse client监听 x_forwarded:true(需确认homeserver.yaml)。
+
 ## 2026-07-03 — 修:发验证码"太频繁"时前端按钮不走倒计时
 - 现象: 点发码被后端限频拦(429"发送太频繁请X秒后再试"),前端只显示错误、按钮仍"发送验证码"可点,
   再点又撞。根因: 发码函数丢了后端返回的 cooldown 字段,倒计时只在发码成功后才启动。
