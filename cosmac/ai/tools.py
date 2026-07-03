@@ -38,6 +38,9 @@ class ToolContext:
     room_id: str
     sender: str
     source_key: str = ""
+    # 当前对话是否「私聊/AI 会话房」(用户与主AI的一对一会话)。工具用它防语义事故:
+    # 用户在私聊里说"邀请xx进本群","本群"其实是私聊房——把人拉进用户的私人对话是灾难。
+    is_dm: bool = False
 
 
 class Toolbox:
@@ -206,7 +209,9 @@ class Toolbox:
             name="invite_to_room",
             description=(
                 "把某个用户邀请进一个**已有**的群/频道。当用户说『把 @xx 拉进群 / 邀请 xx 加入』时"
-                "用这个。不指定 room_id 就邀进当前对话所在的群。被邀请的人下次打开客户端会自动入群。"
+                "用这个。在**群聊**里不指定 room_id 就邀进当前群;在**与用户的私聊**里必须显式给"
+                " room_id(用之前 create_room 返回的群 id)——私聊房绝不能拉人进来。"
+                "被邀请的人下次打开客户端会自动入群。"
             ),
             parameters={
                 "type": "object",
@@ -623,6 +628,15 @@ class Toolbox:
         user_id = str(args.get("user_id") or "").strip()
         if not user_id.startswith("@") or ":" not in user_id:
             return "请给出完整用户 id（如 @bob:cosmac.cc）。"
+        # 防语义事故:私聊/AI会话房里说"邀请xx进本群",「本群」= 用户与我的私人会话——
+        # 把人邀进来会闯进用户的私人对话(实测踩过:三位成员被邀进了群主的AI私聊)。
+        # 私聊里必须显式给 room_id(群 id 在 create_room 的结果里/上下文里有)。
+        if ctx.is_dm and not args.get("room_id"):
+            return (
+                "当前是你与我的私聊会话，「本群」指的是这个私人对话——不能把别人邀进来。"
+                "请告诉我要邀请到哪个群（给出群名或 room_id，比如刚创建的那个群），"
+                "或者直接到目标群里 @我 再说一次邀请。"
+            )
         room_id = args.get("room_id") or ctx.room_id
         denial = self._check_room_access(room_id, ctx)
         if denial:
