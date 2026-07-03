@@ -636,20 +636,35 @@ function openChannelSettings() {
   chSetName.value = currentName.value
   chSetTopic.value = currentTopic.value
   chDeleteArm.value = false
+  chDeleteTaskWarn.value = 0
   chSetOpen.value = true
 }
+const chDeleteTaskWarn = ref(0)   // 本频道未完成任务数(>0 时删除前多一道确认)
 async function deleteChannel() {
   const id = currentRoom.value
   if (!id || chSetBusy.value) return
+  // 软提醒(方案1):删除前查本频道未完成任务(非 done)。有则先弹一次"知情确认",不硬拦——
+  // 给知情权,又不因一条遗留任务把想删废弃频道的人锁死。已经确认过(warn>0)则放行。
+  if (chDeleteTaskWarn.value === 0) {
+    try {
+      const tasks = await getTasks()
+      const pending = tasks.filter((t) => t.room_id === id && t.status !== 'done').length
+      if (pending > 0) {
+        chDeleteTaskWarn.value = pending
+        return   // 停在设置面板,模板会显示黄色提醒 + "仍要删除"按钮
+      }
+    } catch { /* 查任务失败不阻断删除,退化为无提醒 */ }
+  }
   chSetBusy.value = true
   try {
     await leaveAndForget(id)
-    toast('已删除频道', chSetName.value)
+    toast('已退出频道', `${chSetName.value}（频道本身仍在，其他成员不受影响）`)
     chSetOpen.value = false
     currentRoom.value = ''
+    chDeleteTaskWarn.value = 0
     setTimeout(refresh, 800)
   } catch (e: any) {
-    toast('删除失败', e?.message || String(e))
+    toast('操作失败', e?.message || String(e))
   } finally {
     chSetBusy.value = false
   }
@@ -2146,12 +2161,18 @@ onBeforeUnmount(() => {
         <input v-model="chSetName" class="nw-input" placeholder="频道名称" @keyup.enter="saveChannelSettings" />
         <div class="nw-field-label">简介</div>
         <textarea v-model="chSetTopic" class="nw-input nw-textarea" rows="2" placeholder="一句话说明这个频道是干嘛的" />
+        <div v-if="chDeleteArm && chDeleteTaskWarn > 0" class="ch-del-warn">
+          ⚠️ 本频道还有 <b>{{ chDeleteTaskWarn }}</b> 个未完成任务。退出后这些任务仍在任务看板里，
+          但你将失去从这个频道跟进它们的入口。确认要退出吗？
+        </div>
         <div class="nw-foot nw-foot-split">
           <div class="nw-foot-left">
-            <button v-if="!chDeleteArm" class="nw-btn danger-outline" :disabled="chSetBusy" @click="chDeleteArm = true">删除频道</button>
+            <button v-if="!chDeleteArm" class="nw-btn danger-outline" :disabled="chSetBusy" @click="chDeleteArm = true" title="从你的列表移除此频道（频道本身仍在，其他成员不受影响）">退出频道</button>
             <template v-else>
-              <button class="nw-btn danger" :disabled="chSetBusy" @click="deleteChannel">{{ chSetBusy ? '删除中…' : '确认删除' }}</button>
-              <button class="nw-btn" :disabled="chSetBusy" title="取消删除" @click="chDeleteArm = false">×</button>
+              <button class="nw-btn danger" :disabled="chSetBusy" @click="deleteChannel">
+                {{ chSetBusy ? '处理中…' : (chDeleteTaskWarn > 0 ? '仍要退出' : '确认退出') }}
+              </button>
+              <button class="nw-btn" :disabled="chSetBusy" title="取消" @click="chDeleteArm = false; chDeleteTaskWarn = 0">×</button>
             </template>
           </div>
           <div class="nw-foot-right">
@@ -3010,6 +3031,7 @@ onBeforeUnmount(() => {
 /* 社区服务器：开放加入 + 邀请链接 */
 .ws-join { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 14px; }
 .ws-join-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ch-del-warn { margin: 4px 0 10px; padding: 10px 12px; border: 1px solid #e6c34d; background: #fdf8e8; border-radius: 8px; font-size: 12.5px; line-height: 1.7; color: #6b5a1e; }
 .ws-join-warn { margin-top: 10px; padding: 12px 14px; border: 1px solid #e3b6b0; background: #fdf3f1; border-radius: 10px; }
 .ws-join-warn-title { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
 .ws-join-warn-list { margin: 0 0 10px; padding-left: 18px; font-size: 12.5px; line-height: 1.8; color: var(--text-2, #55504a); }

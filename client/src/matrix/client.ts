@@ -2405,6 +2405,7 @@ export interface TaskItem {
   id: number; title: string; assignee: string
   status: string; progress: number; goal: string; result: string
   executor_kind?: string; executor_ref?: string
+  room_id?: string   // 所属频道(删频道前统计未完成任务用)
 }
 
 export async function getTasks(): Promise<TaskItem[]> {

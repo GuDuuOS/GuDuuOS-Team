@@ -1971,6 +1971,8 @@ class CosmacBot:
                         "goal": t.goal, "result": t.result,
                         # 类型化执行者（档2）：看板据此显示"派给谁/什么"
                         "executor_kind": t.executor_kind, "executor_ref": t.executor_ref,
+                        # 所属频道：前端"删频道前提醒未完成任务"用它按房间统计
+                        "room_id": t.room_id or "",
                     })
         except Exception:
             logger.debug("读取任务失败", exc_info=True)
