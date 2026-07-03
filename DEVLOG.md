@@ -7,6 +7,18 @@
 
 ---
 
+## 2026-07-03 — 修两个群问题:AI邀人重复建同名群 + 孤儿群在有工作区的账号下不可见
+- 问题1(重复建群): 主AI工具清单里**没有**"邀请进已有群"的工具,用户说"把xx拉进群"时模型只能误用
+  create_room(带invitees) → 生成同名新群。修: 注册 invite_to_room 工具(user_id必填/room_id默认当前房,
+  过 _check_room_access 防越权,底层复用 client.invite_user);create_room 描述加"邀请人绝不要再建新群"
+  警告;加进 _ALWAYS_ON(否则线上旧AI配置白名单会把新工具当未勾选禁用,模型又退回误用 create_room)。
+- 问题2(孤儿群不可见): 左侧频道列表按当前工作区过滤(spaceChildIds),AI建的群/被邀进的群不挂任何
+  Space → 有工作区的成员在任何工作区下都看不到入口、进不了群(没工作区的账号显示全部所以能看到)。
+  修: refresh 时重算**所有工作区子频道并集**(allSpaceChildIds),filteredRooms 放行"不属于任何工作区
+  的孤儿房"——任何工作区下都可见。
+- 测试: test_runtime_config 3处工具白名单断言+计数更新(新工具进列表);全量348过+ruff+build过。
+- **部署两步: 前端dist + 重启bot。**
+
 ## 2026-07-03 — auth 安全增强阶段2:异地登录检测 + 邮箱验证码二次验证(step-up)
 - 流程: 登录密码验证成功后,比对当前IP与该用户历史成功登录IP(阶段0审计表 recent_success_ips)。
   网段级比对(_ip_bucket: IPv4取/16、IPv6取前4组,近似"地区"粒度——手机换IP不误报;将来换GeoIP只动

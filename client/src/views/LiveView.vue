@@ -378,6 +378,9 @@ watch(boardPanelOpen, (v) => { if (v) { aiOpen.value = false; hideRightPanel() }
 const spaces = ref<LiveSpace[]>([])
 const activeSpace = ref('')                       // 当前工作区 id
 const spaceChildIds = ref<Set<string>>(new Set()) // 当前工作区下的频道 id
+// 所有工作区子频道的**并集**:用来识别"不属于任何工作区的孤儿房"(AI 建的专班/被邀请加入的群)。
+// 孤儿房在任何工作区下都显示——否则有工作区的成员被邀进 AI 群后,左侧永远没有入口(bug)。
+const allSpaceChildIds = ref<Set<string>>(new Set())
 const activeSpaceName = computed(
   // 没有工作区/尚未 sync 时用中性名，别拿具体租户名(安其影视)兜底、误当成用户自己的工作区
   () => spaces.value.find((s) => s.id === activeSpace.value)?.name || '我的工作区',
@@ -747,7 +750,9 @@ async function doInvite() {
 const filteredRooms = computed(() =>
   rooms.value.filter(
     (r) =>
-      (!activeSpace.value || spaceChildIds.value.has(r.id)) &&
+      // 当前工作区的子频道 + **孤儿房**(不属于任何工作区,如 AI 建的专班/被邀请加入的群)。
+      // 孤儿房必须放行:否则有工作区的成员被邀进群后左侧没有任何入口、进不了群(bug)。
+      (!activeSpace.value || spaceChildIds.value.has(r.id) || !allSpaceChildIds.value.has(r.id)) &&
       (!filterText.value || r.name.includes(filterText.value)),
   ),
 )
@@ -868,6 +873,12 @@ function refresh() {
     activeSpace.value = spaces.value[0]?.id || ''
   }
   spaceChildIds.value = activeSpace.value ? roomIdsInSpace(activeSpace.value) : new Set()
+  // 重算"所有工作区子频道并集"(识别孤儿房用;每次刷新重算,新挂接的频道自动归位)
+  {
+    const all = new Set<string>()
+    for (const sp of spaces.value) for (const id of roomIdsInSpace(sp.id)) all.add(id)
+    allSpaceChildIds.value = all
+  }
   rooms.value = listRooms().filter((r) => r.id !== aiRoom.value)
   if (currentRoom.value) {
     msgs.value = listMessages(currentRoom.value)

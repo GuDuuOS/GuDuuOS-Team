@@ -108,6 +108,9 @@ class Toolbox:
         "create_tasks", "search_knowledge", "web_search", "list_capabilities",
         "assemble_team", "list_room_tasks", "update_task", "ask_user_choice",
         "archive_project",
+        # 邀请进已有群:低风险(有 _check_room_access 防越权)且是修 bug 的关键工具——不在
+        # 旧配置白名单里,不放这会被当"未勾选"禁用,模型又会退回误用 create_room 建同名群。
+        "invite_to_room",
     }
 
     def _is_enabled(self, name: str) -> bool:
@@ -171,8 +174,10 @@ class Toolbox:
         self._register(
             name="create_room",
             description=(
-                "创建一个新的群聊/房间，并自动把当前请求人拉进去。"
-                "当用户想要『建群/开个专班/拉个群/新建一个频道』时调用。"
+                "创建一个**新的**群聊/房间，并自动把当前请求人拉进去。"
+                "当用户想要『建群/开个专班/新建一个频道』时调用。"
+                "⚠️ 只用于**从零新建**：想把人拉进**已有**的群（含当前群）必须用 invite_to_room，"
+                "绝不要为了邀请人而再建一个同名新群。"
             ),
             parameters={
                 "type": "object",
@@ -193,6 +198,31 @@ class Toolbox:
                 "required": ["name"],
             },
             fn=self._tool_create_room,
+        )
+
+        # 1b) 邀请进已有群（修「AI 邀人却重复建同名群」：以前没有这个工具，模型想邀请人
+        #     只能误用 create_room(带 invitees)，结果生成一个同名新群）。
+        self._register(
+            name="invite_to_room",
+            description=(
+                "把某个用户邀请进一个**已有**的群/频道。当用户说『把 @xx 拉进群 / 邀请 xx 加入』时"
+                "用这个。不指定 room_id 就邀进当前对话所在的群。被邀请的人下次打开客户端会自动入群。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "user_id": {
+                        "type": "string",
+                        "description": "要邀请的完整用户 id，如 @bob:cosmac.cc。",
+                    },
+                    "room_id": {
+                        "type": "string",
+                        "description": "目标房间 id；不填则邀进当前房间。",
+                    },
+                },
+                "required": ["user_id"],
+            },
+            fn=self._tool_invite_to_room,
         )
 
         # 2) 往某房间发消息
@@ -587,6 +617,23 @@ class Toolbox:
             f"已成功创建群「{name}」（room_id={room_id}），"
             f"并已邀请：{', '.join(invitees)}。"
         )
+
+    def _tool_invite_to_room(self, args: Dict[str, Any], ctx: ToolContext) -> str:
+        """邀请用户进已有房间。默认当前房间；指定别的房间要过 _check_room_access 防越权。"""
+        user_id = str(args.get("user_id") or "").strip()
+        if not user_id.startswith("@") or ":" not in user_id:
+            return "请给出完整用户 id（如 @bob:cosmac.cc）。"
+        room_id = args.get("room_id") or ctx.room_id
+        denial = self._check_room_access(room_id, ctx)
+        if denial:
+            return denial
+        ok = self.client.invite_user(room_id, user_id)
+        if ok:
+            return (
+                f"已邀请 {user_id} 加入房间 {room_id}。"
+                "对方下次打开客户端会自动入群（本服务器账号）。"
+            )
+        return f"邀请 {user_id} 失败（账号可能不存在，或我在该房间没有邀请权限）。"
 
     def _tool_send_message(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         text = args.get("text") or ""
