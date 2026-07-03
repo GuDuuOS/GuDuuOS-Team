@@ -2596,6 +2596,7 @@ onMounted(check)
 
 .adm-btn {
   border: none; border-radius: 8px; cursor: pointer;
+  white-space: nowrap; flex-shrink: 0;
   padding: 8px 14px; font-size: var(--fs-100);
   background: var(--accent); color: #fff; font-weight: var(--fw-bold);
   transition: opacity 0.1s ease;
@@ -2608,7 +2609,7 @@ onMounted(check)
 .adm-btn.danger:hover:not(:disabled) { background: #fee2e2; opacity: 1; }
 
 /* 技能库 */
-.adm-row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.adm-row-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: nowrap; white-space: nowrap; }
 .adm-rule-row { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
 .adm-rule-row input[type=checkbox] { margin-top: 10px; flex-shrink: 0; }
 .adm-rule-text { flex: 1; resize: vertical; }
@@ -2631,6 +2632,8 @@ onMounted(check)
 .adm-badge {
   font-size: var(--fs-75);
   padding: 2px 9px;
+  white-space: nowrap;
+  display: inline-block;
   border-radius: 999px;
   background: var(--bg-soft);
   color: var(--text-3);
