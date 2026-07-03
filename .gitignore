@@ -12,6 +12,7 @@ secrets*
 
 # 本地运行产物，不提交
 .venv/
+.venv312/
 run/
 
 # Python 缓存

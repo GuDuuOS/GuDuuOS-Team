@@ -7,6 +7,27 @@
 
 ---
 
+## 2026-07-03 — AI引擎升级P0+P1:Claude Agent SDK 引擎(可插拔,DeepSeek驱动实测通过)
+- 目标"更聪明/更像Claude Code"。评估否决 ruflo(宣称与实际严重不符,300+工具290个是壳);选
+  **官方 Claude Agent SDK**(=Claude Code 同款 harness)。关键洞察:SDK 认的是 Anthropic **协议**
+  而非 Claude 本尊——DeepSeek 官方有 Anthropic 兼容端点(api.deepseek.com/anthropic),测试环境
+  DeepSeek 驱动、生产改两个 env 即切 Claude。
+- **P0 验证**(全通过): CLI+DeepSeek端点纯对话✓;多步工具链(Bash算数→Write写文件)✓。
+  坑1: 本机已登录的 Claude OAuth 凭据优先级盖过 env → 401;解法=隔离 HOME(引擎固定用
+  /tmp/cosmac-sdk-home)。坑2: 本地 venv 是 py3.9,SDK 要 3.10+ → brew 装 python3.12,建 .venv312
+  (已 gitignore;装了 claude-agent-sdk 0.2.110 + cosmac requirements)。
+- **P1 落地**: cosmac/ai/engine.py——ClaudeSdkEngine 与 legacy Agent.run 同签名;Toolbox 全部工具
+  自动桥接成 SDK in-process MCP 工具(执行仍走 Toolbox.execute,**门控/配额/越权/私聊防呆全复用**);
+  history 拼文本注入;env 组装(BASE_URL/KEY/MODEL);每 run 新建实例防并发串味。bot 接线
+  _run_agent_engine:开关开→SDK引擎,**任何失败自动回退 legacy**(增强绝不搞挂问答)。
+- 配置(默认关,零部署风险): COSMAC_AGENT_ENGINE=claude_sdk + COSMAC_SDK_BASE_URL/API_KEY/MODEL/MAX_TURNS。
+- **E2E 冒烟**(正式引擎代码+真DeepSeek): 工具调用参数精确;history 上下文推断("这个群"→从历史
+  推出群名)✓。单测 test_engine.py(开关/历史转换/无SDK失败路径);全量 355 过+ruff 过。
+- **生产启用要求**(暂不部署,本地已验证): 服务器 Python3.10+、Node+claude CLI
+  (npm i -g @anthropic-ai/claude-code)、pip 装 claude-agent-sdk、配 COSMAC_SDK_* env。
+- 已知取舍: SDK 每请求拉 CLI 子进程,冷启动 3~8 秒(比 legacy 慢;换完整 harness);cost 字段按
+  Claude 牌价估算不可信;DeepSeek 驱动下工具调用可靠性略逊 Claude 驱动(协议兼容、为Claude调优)。
+
 ## 2026-07-03 — AI 私人会话里可按**群名**邀人(invite_to_room 支持 room_name)
 - 现象: 频道里@AI邀人已通,但右侧私人会话里邀不了——防呆拒绝"本群"是对的,可用户就算说清
   "邀请xx加入暑期研学活动",AI 也办不到:工具只认 room_id,没有"按群名找群"的能力。

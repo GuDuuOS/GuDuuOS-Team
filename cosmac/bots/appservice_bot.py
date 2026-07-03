@@ -377,15 +377,13 @@ class CosmacBot:
                 history = self._recent_history(room_id, sender, user_text)
                 # 本群若绑定的智能体指定了模型 → 用该模型的 Agent 回这条（否则用默认 Agent）。
                 agent = self._agent_for_model(gctx.get("model", ""))
-                reply = agent.run(
-                    text or user_text,
-                    ToolContext(
-                        room_id=room_id, sender=sender,
-                        source_key=f"event:{event_id}:ai" if event_id else "",
-                        is_dm=is_dm,   # 工具层防"把人邀进私聊"等语义事故
-                    ),
-                    extra_system=extra_system,
-                    history=history,
+                tool_ctx = ToolContext(
+                    room_id=room_id, sender=sender,
+                    source_key=f"event:{event_id}:ai" if event_id else "",
+                    is_dm=is_dm,   # 工具层防"把人邀进私聊"等语义事故
+                )
+                reply = self._run_agent_engine(
+                    agent, text or user_text, tool_ctx, extra_system, history,
                 )
                 # 幂等发送：用 event_id 派生固定 txn_id，让 Synapse 据此去重。
                 # 场景：同一事务里若有别的事件失败，handle_transaction 会让 Synapse 重发**整批**，
@@ -847,6 +845,29 @@ class CosmacBot:
         except Exception:
             logger.exception("按群模型 %s 构建失败，回退默认模型", model)
             return self.agent
+
+    def _run_agent_engine(self, agent, user_text, tool_ctx, extra_system, history):
+        """按 COSMAC_AGENT_ENGINE 选执行引擎跑一条消息。
+
+        - claude_sdk:Claude Agent SDK(Claude Code 同款 harness),env 可插拔(P1,
+          见 cosmac/ai/engine.py 模块注释)。模型端点由 COSMAC_SDK_* 决定——测试用
+          DeepSeek 的 Anthropic 兼容端点,生产可一键切 Claude。
+        - 默认(开关没开):legacy 现有循环,行为与部署零变化。
+        SDK 引擎**任何失败都回退 legacy**:它是增强,绝不能把 AI 问答搞挂。
+        每次新建引擎实例(无状态轻对象):避免并发线程间 system_prompt 串味。
+        """
+        from cosmac.ai.engine import ClaudeSdkEngine, sdk_engine_enabled
+        if sdk_engine_enabled():
+            try:
+                eng = ClaudeSdkEngine(self.toolbox, lambda: agent.system_prompt)
+                return eng.run(
+                    user_text, tool_ctx, extra_system=extra_system, history=history,
+                )
+            except Exception:
+                logger.exception("Claude SDK 引擎执行失败,本条回退 legacy 引擎")
+        return agent.run(
+            user_text, tool_ctx, extra_system=extra_system, history=history,
+        )
 
     def _find_global_agent(self, slug: str) -> Optional[Dict[str, Any]]:
         """按 slug 找一个**启用**的全局智能体（含内置预置库 + 控制室配置）；找不到返回 None。
