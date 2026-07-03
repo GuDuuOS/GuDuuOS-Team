@@ -392,8 +392,8 @@
             </thead>
             <tbody>
               <tr v-for="s in skFiltered" :key="s.slug">
-                <td><code>{{ s.slug }}</code></td>
-                <td>{{ s.name || '—' }}</td>
+                <td class="adm-nowrap"><code>{{ s.slug }}</code></td>
+                <td class="adm-nowrap">{{ s.name || '—' }}</td>
                 <td class="adm-skill-desc">{{ s.description || '—' }}</td>
                 <td>
                   <span class="adm-badge" :class="{ on: s.enabled }">{{ s.enabled ? '启用' : '停用' }}</span>
@@ -2614,7 +2614,9 @@ onMounted(check)
 .adm-rule-row input[type=checkbox] { margin-top: 10px; flex-shrink: 0; }
 .adm-rule-text { flex: 1; resize: vertical; }
 .adm-rule-row .adm-btn { flex-shrink: 0; margin-top: 4px; }
-.adm-skill-desc { color: var(--text-2); max-width: 320px; }
+.adm-skill-desc { color: var(--text-2); max-width: 640px; min-width: 280px; }
+/* 短内容列(标识/名称等)禁折行——两三个字/带连字符的 slug 不许竖排 */
+.adm-nowrap { white-space: nowrap; }
 /* 入驻模板表单：两列网格 + 知识库文档行 */
 .adm-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .adm-kbdoc { display: grid; grid-template-columns: 1fr; gap: 6px; padding: 10px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-panel, #fff); }
