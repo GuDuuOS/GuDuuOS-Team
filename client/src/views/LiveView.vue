@@ -414,17 +414,32 @@ function openWsSettings() {
   wsSetAvatarPreview.value = s?.avatarUrl || ''
   wsDeleteArm.value = false
   wsOpenJoin.value = spaceJoinRule(activeSpace.value) === 'public'
+  wsOpenConfirm.value = false
   wsLinkCopied.value = false
   wsSetOpen.value = true
 }
+const wsOpenConfirm = ref(false)       // 开启公开前的确认态(公开=高风险动作,必须看清后果再点)
 async function toggleWsOpenJoin() {
   if (!activeSpace.value || wsJoinBusy.value) return
-  const next = !wsOpenJoin.value
+  if (!wsOpenJoin.value) {
+    // 关→开:公开意味着"谁拿到链接谁就能进全部频道、无审批"——先弹确认,看清后果再执行
+    wsOpenConfirm.value = true
+    return
+  }
+  // 开→关:收紧动作,低风险,直接执行
+  await applyWsOpenJoin(false)
+}
+async function applyWsOpenJoin(next: boolean) {
+  if (!activeSpace.value || wsJoinBusy.value) return
   wsJoinBusy.value = true
   try {
     await setSpaceOpenJoin(activeSpace.value, next)
     wsOpenJoin.value = next
-    toast(next ? '已开放加入' : '已关闭加入', next ? '任何人凭邀请链接都能加入' : '恢复仅邀请')
+    wsOpenConfirm.value = false
+    toast(
+      next ? '已公开工作区' : '已恢复私密',
+      next ? '任何人凭邀请链接都能加入本工作区的全部频道' : '链接已失效;已加入的成员不会被自动移除',
+    )
   } catch (e: any) {
     toast('操作失败', e?.message || '可能没有权限')
   } finally {
@@ -2149,12 +2164,25 @@ onBeforeUnmount(() => {
         <div class="ws-join">
           <div class="ws-join-row">
             <div>
-              <div class="ws-join-title">🌐 开放加入（社区服务器）</div>
-              <div class="ws-join-sub">开启后，任何人凭下面的邀请链接就能加入这个服务器及其频道</div>
+              <div class="ws-join-title">🌐 公开分享（社区服务器）</div>
+              <div class="ws-join-sub">{{ wsOpenJoin ? '已公开：任何人凭下面的链接可加入本工作区的全部频道' : '当前私密：要生成分享链接，需先公开本工作区（精确控制请改用「成员与角色管理」逐个邀请）' }}</div>
             </div>
             <button class="ws-toggle" :class="{ on: wsOpenJoin }" :disabled="wsJoinBusy" @click="toggleWsOpenJoin">
               <span class="ws-toggle-dot" />
             </button>
+          </div>
+          <!-- 公开前的后果确认:公开=无审批+全部频道,必须看清再点(防误开) -->
+          <div v-if="wsOpenConfirm && !wsOpenJoin" class="ws-join-warn">
+            <div class="ws-join-warn-title">⚠️ 确认要公开「{{ wsSetName }}」吗？</div>
+            <ul class="ws-join-warn-list">
+              <li>任何拿到链接的人都能<b>直接加入，没有审批环节</b></li>
+              <li>对方将进入本工作区的<b>全部频道</b>（无法只分享部分频道）</li>
+              <li>之后关闭公开，链接会失效，但<b>已加入的成员不会被自动移除</b></li>
+            </ul>
+            <div class="ws-join-warn-actions">
+              <button class="nw-btn danger" :disabled="wsJoinBusy" @click="applyWsOpenJoin(true)">{{ wsJoinBusy ? '开启中…' : '我已了解，公开并生成链接' }}</button>
+              <button class="nw-btn" :disabled="wsJoinBusy" @click="wsOpenConfirm = false">取消</button>
+            </div>
           </div>
           <div v-if="wsOpenJoin" class="ws-join-link">
             <input class="nw-input" :value="wsJoinLink" readonly @focus="($event.target as HTMLInputElement).select()" />
@@ -2933,6 +2961,10 @@ onBeforeUnmount(() => {
 /* 社区服务器：开放加入 + 邀请链接 */
 .ws-join { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 14px; }
 .ws-join-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ws-join-warn { margin-top: 10px; padding: 12px 14px; border: 1px solid #e3b6b0; background: #fdf3f1; border-radius: 10px; }
+.ws-join-warn-title { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+.ws-join-warn-list { margin: 0 0 10px; padding-left: 18px; font-size: 12.5px; line-height: 1.8; color: var(--text-2, #55504a); }
+.ws-join-warn-actions { display: flex; gap: 8px; }
 .ws-join-title { font-size: 13px; font-weight: 600; color: var(--text); }
 .ws-join-sub { font-size: 12px; color: var(--text-3); margin-top: 2px; max-width: 340px; }
 .ws-toggle { flex-shrink: 0; width: 42px; height: 24px; border-radius: 999px; border: none; background: var(--border); cursor: pointer; position: relative; transition: background .15s; }
