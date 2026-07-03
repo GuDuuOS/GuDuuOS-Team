@@ -2860,10 +2860,12 @@ export async function createDirectMessage(userId: string): Promise<string> {
   const uid = normalizeUserId(userId)
   if (!uid) throw new Error('请填写有效的用户名或用户 id')
   if (uid === (mx as any).getUserId?.()) throw new Error('不能和自己私信')
-  // 复用已存在的 DM:避免同一个人建出一堆重复私信房
+  // 复用已存在的 DM:避免同一个人建出一堆重复私信房。
+  // 用统一判定(isDmRoom):对方发起、我还没接受的邀请房也要算——否则"TA 邀我未接受 +
+  // 我又主动发起"会建出第二个重复 DM。
   for (const r of mx.getRooms()) {
     try {
-      if (!r.currentState?.getStateEvents?.(DM_STATE, '')) continue
+      if (!isDmRoom(r) || isAiSessionRoom(r)) continue
       const members = r.getJoinedMembers?.() || []
       const invited = (r as any).getMembersWithMembership?.('invite') || []
       if ([...members, ...invited].some((m: any) => m.userId === uid)) return r.roomId
@@ -2889,6 +2891,8 @@ export function listDirectMessages(): { id: string; name: string; avatar: string
     try {
       // 用统一判定(含被邀请阶段的 is_direct):否则接收方在接受邀请前根本看不到新私信
       if (!isDmRoom(r)) continue
+      // 防御:主 AI 会话房也是 is_direct 建的(createAiSession),显式排除,绝不混进真人私信
+      if (isAiSessionRoom(r)) continue
       const myMembership = (r as any).getMyMembership?.() || ''
       if (myMembership !== 'join' && myMembership !== 'invite') continue // 已退出的不列
       // 对方 = 房里除我之外的第一个成员(DM 只有两人;被邀阶段"已加入的"就是发起者)

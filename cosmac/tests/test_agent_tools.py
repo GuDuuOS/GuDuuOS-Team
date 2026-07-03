@@ -447,9 +447,11 @@ class ProgressVisibilityTest(unittest.TestCase):
             def __init__(self):
                 self.sent, self.edits = [], []
             def send_text(self, room, text):
-                self.sent.append(text); return "$ev1"
+                self.sent.append(text)
+                return "$ev1"
             def edit_text(self, room, ev, text):
-                self.edits.append((ev, text)); return True
+                self.edits.append((ev, text))
+                return True
 
         cli = _Cli()
         rep = _ProgressReporter(cli, "!r:test")
@@ -468,7 +470,9 @@ class ProgressVisibilityTest(unittest.TestCase):
 
         class _Cli:
             def __init__(self): self.sent = []
-            def send_text(self, room, text): self.sent.append(text); return "$e"
+            def send_text(self, room, text):
+                self.sent.append(text)
+                return "$e"
             def edit_text(self, room, ev, text): return True
 
         cli = _Cli()

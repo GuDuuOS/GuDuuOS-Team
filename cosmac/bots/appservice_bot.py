@@ -1306,10 +1306,13 @@ class CosmacBot:
         # 为什么必须 bot 做"添加"：浏览器里的操作者自己只有 power=50，而发 m.room.power_levels
         # 事件默认要 100——前端"尽力提权"必然静默失败。此前对齐只做移除不做添加，新设的
         # 管理员永远拿不到控制室写权限（QA 实测：新管理员接管频道 403 → 频道技能保存失败）。
+        # 判定用 isinstance（与 to_remove 同风格）：power 值畸形(非 int)时按"需要补权"重写为
+        # 50 自愈，绝不因 int() 抛异常把整个事务打进重试循环。
         to_add = [
             uid
             for uid in desired
-            if uid != bot and int(users.get(uid, 0) or 0) < 50
+            if isinstance(uid, str) and uid and uid != bot
+            and not (isinstance(users.get(uid), int) and users[uid] >= 50)
         ]
         if not to_remove and not to_add:
             return
