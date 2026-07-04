@@ -465,6 +465,30 @@ class PayEndpointTests(unittest.TestCase):
         self.assertEqual(done["progress"], 100)  # done 自动补满进度
         self.assertEqual(bot.handle_tasks_list("bad")[0], 401)  # 无效 token
 
+    def test_tasks_visible_only_to_assignee(self):
+        # QA:被拉进专班的成员打开看板看到了所有人的任务——收紧后:
+        # 下达者看自己项目全部;执行者只看派给自己的;无关成员(即便同房间)看不到。
+        from cosmac.ai.tools import ToolContext
+
+        bot = self._paybot()
+        bot.toolbox._tool_create_tasks(
+            {"goal": "电影节活动", "tasks": [
+                {"title": "写文案", "assignee": "copywriter",
+                 "executor_kind": "agent", "executor_ref": "copywriter"},
+                {"title": "备物料", "assignee": "chengsp (后勤)",
+                 "executor_kind": "human", "executor_ref": "@chengsp:host"},
+                {"title": "复盘", "assignee": "planner"},
+            ]},
+            ToolContext(room_id="!team:host", sender=ALICE),
+        )
+        # 下达者:全部 3 条
+        self.assertEqual(len(bot.handle_tasks_list(ALICE)[1]["tasks"]), 3)
+        # 执行者:只有派给自己的那条(executor_ref 精确匹配)
+        _c, mine = bot.handle_tasks_list("@chengsp:host")
+        self.assertEqual([t["title"] for t in mine["tasks"]], ["备物料"])
+        # 无关用户:0 条(不再按"同房间"放行)
+        self.assertEqual(len(bot.handle_tasks_list("@stranger:host")[1]["tasks"]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

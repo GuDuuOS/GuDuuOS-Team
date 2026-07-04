@@ -2170,26 +2170,32 @@ class CosmacBot:
 
             is_admin = self._is_platform_admin(user_id)
             with session_scope() as s:
-                # 管理员看全部；普通用户从全量里只挑「本人下达」或「本人所在房间」的。
+                # 可见性(QA:成员看到了专班全部任务,应只看自己的):
+                #   管理员=全部;本人下达的(sender)=全部可见(项目负责人要看全貌);
+                #   其他人=只看**派给自己的**——executor_kind=human 且 executor_ref 是本人;
+                #   旧任务(无类型化执行者)按 assignee 首词==本人 localpart 兜底。
+                # 不再按"本人所在房间"放行——被拉进专班≠能看别人的任务。
                 candidates = list_tasks(s)
                 if is_admin:
                     visible = candidates
                 else:
+                    localpart = user_id.split(":", 1)[0].lstrip("@")
                     visible = []
-                    joined_cache: Dict[str, bool] = {}  # 同一房间只查一次成员身份
                     for t in candidates:
                         if t.sender and t.sender == user_id:
                             visible.append(t)
                             continue
-                        rid = t.room_id or ""
-                        if not rid:
-                            continue
-                        ok = joined_cache.get(rid)
-                        if ok is None:
-                            ok = self.client.is_joined_member(rid, user_id)
-                            joined_cache[rid] = ok
-                        if ok:
+                        ref = str(t.executor_ref or "").strip()
+                        if t.executor_kind == "human" and ref in (
+                            user_id, localpart, "@" + localpart,
+                        ):
                             visible.append(t)
+                            continue
+                        if not ref:
+                            a = str(t.assignee or "").strip()
+                            first = a.split()[0] if a else ""
+                            if first and first.lstrip("@").split(":")[0] == localpart:
+                                visible.append(t)
                 for t in visible:
                     out.append({
                         "id": t.id, "title": t.title, "assignee": t.assignee,
