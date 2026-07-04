@@ -236,6 +236,7 @@ class CosmacBot:
         self._cfg_cache: Dict[str, Any] = {}
         # 「AI 会话房」判定缓存(room_id → 是否带 cosmac.ai_session 标记;标记不变,永久缓存)
         self._ai_session_room_cache: Dict[str, bool] = {}
+        self._named_channel_cache: Dict[str, bool] = {}  # 房间是否"实名频道"(私聊/群聊判定用)
         # SDK 引擎回退告警的节流时间戳(1小时最多向控制室发一条,防刷屏)
         self._engine_alert_ts: float = 0.0        # 上次读到的配置覆盖
         # 上次读取时间（缓存 20s，别每条消息都打服务器）。
@@ -405,9 +406,12 @@ class CosmacBot:
             # ⚠️ AI 会话房(带 cosmac.ai_session 标记)**永远按私聊对待**——它可能被误拉进第三人
             # 而超过 2 人,若只按人数判定,bot 会突然要求 @ 才响应,用户在 AI 面板里莫名"无响应"
             # (实测踩过)。标记判定优先,人数是兜底。
-            is_dm = (
-                self._is_ai_session_room(room_id)
-                or self.client.joined_member_count(room_id) <= 2
+            # ⚠️ 人数兜底只对**无名房/「中枢 AI」房**生效(兼容无标记的旧私聊房)——实名频道
+            # 即使暂时只有 2 人也按群聊。否则新频道人少时每句必回、成员加入后突然要 @ 才回,
+            # 用户看到的就是"AI 在频道里时灵时不灵"(QA)。
+            is_dm = self._is_ai_session_room(room_id) or (
+                self.client.joined_member_count(room_id) <= 2
+                and not self._room_is_named_channel(room_id)
             )
             if not is_dm and not self._is_bot_mentioned(content):
                 return
@@ -3026,6 +3030,28 @@ class CosmacBot:
             return isinstance(level, int) and level >= 50
         except Exception:
             return False
+
+    def _room_is_named_channel(self, room_id: str) -> bool:
+        """房间有"实名"(非空、不是「中枢 AI」)→ 视为频道。
+
+        私聊/群聊判定的限定条件:实名频道即使只有 2 人也按群聊(只 @ 才回)。
+        真正的私聊房要么带 cosmac.ai_session 标记、要么叫「中枢 AI」/无名(旧房),
+        不会撞上。结果永久缓存(频道改名极少且只影响该判定);读失败按"非频道"处理
+        且不缓存——保守方向是维持私聊可用,下条消息再试。
+        """
+        cached = self._named_channel_cache.get(room_id)
+        if cached is not None:
+            return cached
+        try:
+            ev = self.client.get_state_event(room_id, "m.room.name") or {}
+            name = str(ev.get("name") or "").strip()
+        except Exception:
+            return False
+        val = bool(name) and "中枢 AI" not in name and "中枢AI" not in name
+        self._named_channel_cache[room_id] = val
+        if len(self._named_channel_cache) > 5000:  # 防长期运行字典膨胀
+            self._named_channel_cache.clear()
+        return val
 
     def _is_ai_session_room(self, room_id: str) -> bool:
         """判断房间是不是「AI 会话房」(前端建会话时打的 cosmac.ai_session state 标记)。
