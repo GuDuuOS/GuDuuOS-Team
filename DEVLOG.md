@@ -7,6 +7,15 @@
 
 ---
 
+## 2026-07-04 — feat:平台共享知识库(阶段2:后台上传管理)
+- 阶段1 已通检索地基(绑 'platform' 即可搜);阶段2 补后台维护。
+- 后端:平台库存 SCOPE_GLOBAL + 固定作用域 _PLATFORM_KB_SCOPE;三端点
+  /cosmac/platform-kb/list|add|delete,**仅平台管理员**(服务端强制);复用 kb.ingest/list/delete。
+- 前端:后台新增「📚 平台知识库」页——添加文档(标题+正文)/列表/删除;client 三函数
+  platformKbList/Add/Delete。与「图文教程」区分(那是给人读的文章,这是喂 AI 的资料)。
+- 至此三种知识库来源全通:个人库对全班(owner)/资料库频道(频道名)/平台库(platform)。
+- **部署: 前端 dist + 重启 bot。**
+
 ## 2026-07-04 — feat:组班把知识库"调进频道"(阶段1:个人库对全班/资料库频道挂专班)
 - 负责人设计:组班时从平台库调取的资源(技能/Agent/人/RULE)要绑进频道。核对现状——
   技能/Agent/人/RULE **已绑**(写 channel_config,频道分身读取生效);唯**知识库没绑**。

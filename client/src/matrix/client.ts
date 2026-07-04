@@ -2360,6 +2360,51 @@ export async function kbDeleteMine(id: number): Promise<void> {
   if (!r.ok || !j?.ok) throw new Error(j?.error || '删除失败')
 }
 
+/* ===== 平台共享知识库（阶段2：管理员后台维护，任何专班可绑 knowledge=['platform']）===== */
+
+/** 列平台共享知识库文档（仅管理员）。失败/无权返回 []。 */
+export async function platformKbList(): Promise<{ id: number; title: string; source: string }[]> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return []
+  try {
+    const r = await fetch(`${payBase()}/cosmac/platform-kb/list`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return []
+    const j = await r.json().catch(() => ({}))
+    return Array.isArray(j?.docs) ? j.docs : []
+  } catch {
+    return []
+  }
+}
+
+/** 给平台共享知识库添加一篇文档。成功返回切块数；失败抛出带文案的错误。 */
+export async function platformKbAdd(title: string, content: string): Promise<number> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) throw new Error('登录已失效，请重新登录')
+  const r = await fetch(`${payBase()}/cosmac/platform-kb/add`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ title, content }),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok || !j?.ok) throw new Error(j?.error || '入库失败')
+  return Number(j?.chunks) || 0
+}
+
+/** 删除平台共享知识库一篇文档（按 id）。失败抛出带文案的错误。 */
+export async function platformKbDelete(id: number): Promise<void> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) throw new Error('登录已失效，请重新登录')
+  const r = await fetch(`${payBase()}/cosmac/platform-kb/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ id }),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok || !j?.ok) throw new Error(j?.error || '删除失败')
+}
+
 /* ===== 个人协作人能力名册（模块3.5：普通用户在前台维护，主 AI 派单时合并进名册）===== */
 export interface MyPerson {
   user_id: string; name: string; role: string; expertise: string; note: string; enabled: boolean

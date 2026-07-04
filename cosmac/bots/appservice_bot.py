@@ -2823,6 +2823,90 @@ class CosmacBot:
             logger.exception("知识库删除失败（UI）")
             return 500, {"error": "删除失败"}
 
+    # —— 平台共享知识库（阶段2）：管理员后台维护，任何专班可绑(knowledge=['platform'])——
+    # 存 SCOPE_GLOBAL + 固定作用域 _PLATFORM_KB_SCOPE。读/写/删**仅平台管理员**(服务端强制)。
+
+    def handle_platform_kb_list(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """列平台共享知识库文档。仅平台管理员(后台页用)。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(user_id):
+            return 403, {"error": "仅平台管理员可管理平台知识库"}
+        docs: List[Dict[str, Any]] = []
+        try:
+            from cosmac.db import kb, session_scope
+            from cosmac.db.models import SCOPE_GLOBAL
+
+            with session_scope() as s:
+                for d in kb.list_docs(s, scope=SCOPE_GLOBAL, scope_id=self._PLATFORM_KB_SCOPE):
+                    docs.append({"id": d.id, "title": d.title, "source": d.source})
+        except Exception:
+            logger.debug("列平台知识库失败", exc_info=True)
+        return 200, {"docs": docs}
+
+    def handle_platform_kb_add(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """给平台共享知识库加一篇文档。仅平台管理员。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(user_id):
+            return 403, {"error": "仅平台管理员可管理平台知识库"}
+        title = str((body or {}).get("title") or "").strip()
+        content = str((body or {}).get("content") or "").strip()
+        if not content:
+            return 400, {"error": "正文不能为空"}
+        from cosmac.db.kb_cmd import MAX_DOC_CHARS, MAX_DOCS_PER_SCOPE
+
+        if len(content) > MAX_DOC_CHARS:
+            return 400, {"error": f"正文太长（{len(content)} 字），上限 {MAX_DOC_CHARS} 字，请拆成多篇"}
+        try:
+            from cosmac.db import kb, session_scope
+            from cosmac.db.models import SCOPE_GLOBAL
+
+            with session_scope() as s:
+                cur = len(kb.list_docs(s, scope=SCOPE_GLOBAL, scope_id=self._PLATFORM_KB_SCOPE))
+                if cur >= MAX_DOCS_PER_SCOPE:
+                    return 400, {"error": f"平台知识库已达上限（{MAX_DOCS_PER_SCOPE} 篇），先删一些"}
+                doc = kb.ingest_document(
+                    s, scope=SCOPE_GLOBAL, scope_id=self._PLATFORM_KB_SCOPE,
+                    title=title, source="platform", text=content,
+                )
+                return 200, {"ok": True, "id": doc.id, "title": doc.title, "chunks": len(doc.chunks)}
+        except Exception:
+            logger.exception("平台知识库入库失败")
+            return 500, {"error": "入库失败（数据库不可用？）"}
+
+    def handle_platform_kb_delete(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """删平台共享知识库一篇文档(按 id)。仅平台管理员;越权防护:只删本作用域的文档。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(user_id):
+            return 403, {"error": "仅平台管理员可管理平台知识库"}
+        try:
+            doc_id = int((body or {}).get("id"))
+        except (TypeError, ValueError):
+            return 400, {"error": "文档 id 无效"}
+        try:
+            from cosmac.db import kb, session_scope
+            from cosmac.db.models import SCOPE_GLOBAL, KnowledgeDoc
+
+            with session_scope() as s:
+                doc = s.get(KnowledgeDoc, doc_id)
+                if (doc is None or doc.scope != SCOPE_GLOBAL
+                        or doc.scope_id != self._PLATFORM_KB_SCOPE):
+                    return 404, {"error": "没找到该文档"}
+                kb.delete_doc(s, doc_id)
+                return 200, {"ok": True}
+        except Exception:
+            logger.exception("平台知识库删除失败")
+            return 500, {"error": "删除失败"}
+
     # —— 个人协作人能力名册（模块3.5：普通用户在前台维护，按 owner=本人 隔离）——
 
     def handle_onboarding_select(
@@ -3611,6 +3695,7 @@ class _Handler(BaseHTTPRequestHandler):
                 or p.startswith("/cosmac/onboarding/")
                 or p.startswith("/cosmac/skills/")
                 or p.startswith("/cosmac/kb/")
+                or p.startswith("/cosmac/platform-kb/")
                 or p.startswith("/cosmac/people/")
                 or p.startswith("/cosmac/profile/")
                 or p.startswith("/cosmac/usage/")
@@ -3752,6 +3837,13 @@ class _Handler(BaseHTTPRequestHandler):
             auth = self.headers.get("Authorization", "")
             token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
             code, payload = self.bot.handle_preset_skills(token)
+            self._send_json(code, payload, cors=True)
+            return
+        # 平台共享知识库列表（后台页，仅管理员）
+        if self.path.split("?", 1)[0] == "/cosmac/platform-kb/list":
+            auth = self.headers.get("Authorization", "")
+            token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
+            code, payload = self.bot.handle_platform_kb_list(token)
             self._send_json(code, payload, cors=True)
             return
         # 个人协作人能力名册：列本人维护的协作人（带本人 token）
@@ -3986,6 +4078,28 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "请求无效"}, cors=True)
                 return
             code, payload = self.bot.handle_kb_delete(token, body)
+            self._send_json(code, payload, cors=True)
+            return
+
+        # 平台共享知识库（阶段2，仅管理员）：加/删一篇文档。
+        if path == "/cosmac/platform-kb/add":
+            auth = self.headers.get("Authorization", "")
+            token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_platform_kb_add(token, body)
+            self._send_json(code, payload, cors=True)
+            return
+        if path == "/cosmac/platform-kb/delete":
+            auth = self.headers.get("Authorization", "")
+            token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_platform_kb_delete(token, body)
             self._send_json(code, payload, cors=True)
             return
 

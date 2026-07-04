@@ -51,6 +51,9 @@
         <button class="adm-mi" :class="{ active: tab === 'docs' }" @click="switchToDocs">
           <span class="adm-mi-ic">📰</span> 图文教程
         </button>
+        <button class="adm-mi" :class="{ active: tab === 'platformKb' }" @click="switchToPlatformKb">
+          <span class="adm-mi-ic">📚</span> 平台知识库
+        </button>
         <button class="adm-mi" :class="{ active: tab === 'overview' }" @click="switchToOverview">
           <span class="adm-mi-ic">📊</span> 数据概览
         </button>
@@ -1174,6 +1177,48 @@
         </div>
       </template>
 
+      <!-- 平台知识库面板：管理员维护的共享知识库；组班时任何专班可绑(knowledge=['platform']) -->
+      <template v-else-if="tab === 'platformKb'">
+        <header class="adm-head">
+          <div>
+            <h1 class="adm-h1">平台知识库</h1>
+            <p class="adm-hint">平台级共享知识库（喂给 AI 的资料，非「图文教程」那种给人读的文章）。组班时主 AI 可把它「调进专班」，让频道全体检索。仅平台管理员可管理。</p>
+          </div>
+          <button class="adm-btn" :disabled="pkbSaving" @click="pkbAdding = !pkbAdding">{{ pkbAdding ? '收起' : '＋ 添加文档' }}</button>
+        </header>
+        <div class="adm-form">
+          <div v-if="pkbAdding" class="adm-skill-edit">
+            <label class="adm-field">
+              <span>标题</span>
+              <input v-model.trim="pkbTitle" placeholder="如：公司产品手册 / 品牌调性规范" />
+            </label>
+            <label class="adm-field">
+              <span>正文（会切块建索引，供 AI 检索）</span>
+              <textarea v-model="pkbContent" rows="8" placeholder="粘贴资料正文…" />
+            </label>
+            <p v-if="pkbErr" class="adm-err-line">{{ pkbErr }}</p>
+            <div class="adm-actions">
+              <button class="adm-btn ghost" :disabled="pkbSaving" @click="pkbAdding = false">取消</button>
+              <button class="adm-btn" :disabled="pkbSaving || !pkbContent.trim()" @click="savePlatformKb">{{ pkbSaving ? '入库中…' : '入库' }}</button>
+            </div>
+          </div>
+          <p v-if="pkbLoading" class="adm-hint">加载中…</p>
+          <p v-else-if="!platformKbDocs.length" class="adm-hint">还没有平台知识库文档。点右上「添加文档」加一篇。</p>
+          <table v-else class="adm-table">
+            <thead><tr><th>标题</th><th>来源</th><th>操作</th></tr></thead>
+            <tbody>
+              <tr v-for="d in platformKbDocs" :key="d.id">
+                <td>{{ d.title || '(无标题)' }}</td>
+                <td class="adm-nowrap">{{ d.source || '—' }}</td>
+                <td class="adm-row-actions">
+                  <button class="adm-btn ghost sm danger" :disabled="pkbSaving" @click="deletePlatformKb(d.id)">删除</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
+
       <!-- 数据概览面板 -->
       <template v-else-if="tab === 'overview'">
         <header class="adm-head">
@@ -1317,6 +1362,9 @@ import {
   setAiConfig,
   getGlobalSkills,
   getPresetSkills,
+  platformKbList,
+  platformKbAdd,
+  platformKbDelete,
   setGlobalSkills,
   getGlobalAgents,
   setGlobalAgents,
@@ -1367,10 +1415,46 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 const { success, warn } = useToast()
 
 // 当前管理模块：用户/频道/AI配置/技能库/智能体/规则/工作流/数据概览
-const tab = ref<'users' | 'rooms' | 'ai' | 'skills' | 'agents' | 'people' | 'templates' | 'rules' | 'workflows' | 'gating' | 'quotas' | 'plans' | 'docs' | 'overview'>('users')
+const tab = ref<'users' | 'rooms' | 'ai' | 'skills' | 'agents' | 'people' | 'templates' | 'rules' | 'workflows' | 'gating' | 'quotas' | 'plans' | 'docs' | 'platformKb' | 'overview'>('users')
 
 /* —— 图文教程（后台编辑全平台图文；前台只读·付费可见）—— */
 function switchToDocs() { tab.value = 'docs' }
+
+// —— 平台共享知识库（管理员维护，组班可绑）——
+const platformKbDocs = ref<{ id: number; title: string; source: string }[]>([])
+const pkbLoading = ref(false)
+const pkbSaving = ref(false)
+const pkbAdding = ref(false)
+const pkbTitle = ref('')
+const pkbContent = ref('')
+const pkbErr = ref('')
+function switchToPlatformKb() {
+  tab.value = 'platformKb'
+  loadPlatformKb()
+}
+async function loadPlatformKb() {
+  pkbLoading.value = true
+  try { platformKbDocs.value = await platformKbList() } finally { pkbLoading.value = false }
+}
+async function savePlatformKb() {
+  if (pkbSaving.value || !pkbContent.value.trim()) return
+  pkbSaving.value = true; pkbErr.value = ''
+  try {
+    await platformKbAdd(pkbTitle.value.trim(), pkbContent.value.trim())
+    pkbTitle.value = ''; pkbContent.value = ''; pkbAdding.value = false
+    await loadPlatformKb()
+    success('已入库', '主 AI 在绑定了平台库的专班里即可检索到')
+  } catch (e: any) {
+    pkbErr.value = e?.message || '入库失败'
+  } finally { pkbSaving.value = false }
+}
+async function deletePlatformKb(id: number) {
+  if (pkbSaving.value || !confirm('删除这篇平台知识库文档？')) return
+  pkbSaving.value = true
+  try { await platformKbDelete(id); await loadPlatformKb(); success('已删除') }
+  catch (e: any) { warn('删除失败', e?.message || String(e)) }
+  finally { pkbSaving.value = false }
+}
 
 // 页面状态机：checking 校验中 / denied 无权限 / ok 已是管理员
 const state = ref<'checking' | 'denied' | 'ok'>('checking')
@@ -2739,6 +2823,7 @@ onMounted(check)
 .adm-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; padding-right: 44px; }
 .adm-h1 { font-size: 20px; font-weight: var(--fw-bold); }
 .adm-hint { font-size: var(--fs-75); color: var(--text-3); margin-top: 4px; }
+.adm-err-line { font-size: var(--fs-75); color: #c0392b; margin: 4px 0 0; }
 /* 技能库:预置区块标题 */
 .adm-preset-block { margin-bottom: 8px; }
 .adm-preset-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
