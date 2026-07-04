@@ -2914,11 +2914,17 @@ export async function createDirectMessage(userId: string): Promise<string> {
 }
 
 /** 列出我的真人私信(DM)。排除主 AI 会话房。每项含对方的显示名/头像用于列表展示。
- * pending=true 表示这是**别人发起、我还没接受**的私信邀请(点开即自动接受)。 */
-export function listDirectMessages(): { id: string; name: string; avatar: string; pending?: boolean }[] {
+ * pending=true 表示这是**别人发起、我还没接受**的私信邀请(点开即自动接受)。
+ * fromPeer=true 表示这间房是**对方发起**的(新私信通知据此只提醒接收方,不提醒发起方)。
+ * 同一个对方若有多间房(历史重复 DM 的存量),**按对方去重**只留最近活跃的那间——
+ * 否则列表出现两条同名项/点开旧空房,观感就是"对方发的消息我没收到"(QA 实测)。 */
+export function listDirectMessages(): { id: string; name: string; avatar: string; pending?: boolean; fromPeer?: boolean }[] {
   if (!mx) return []
   const myId = (mx as any).getUserId?.() || ''
-  const out: { id: string; name: string; avatar: string; pending?: boolean; ts: number }[] = []
+  const out: {
+    id: string; name: string; avatar: string
+    pending?: boolean; fromPeer?: boolean; peerId: string; ts: number
+  }[] = []
   for (const r of mx.getRooms()) {
     try {
       // 用统一判定(含被邀请阶段的 is_direct):否则接收方在接受邀请前根本看不到新私信
@@ -2932,15 +2938,33 @@ export function listDirectMessages(): { id: string; name: string; avatar: string
       const invited = ((r as any).getMembersWithMembership?.('invite') || []).filter((m: any) => m.userId !== myId)
       const peer = others[0] || invited[0]
       const name = peer?.name || peer?.userId || r.name || '私信'
+      // 发起方 = 房间创建者;不是我建的就是对方发起的(通知只发给接收方)
+      let fromPeer = false
+      try {
+        const cr = r.currentState?.getStateEvents?.('m.room.create', '')
+        const creator = cr?.getSender?.() || cr?.getContent?.()?.creator || ''
+        fromPeer = !!creator && creator !== myId
+      } catch { /* 读不出按我发起处理(不弹通知,保守) */ }
       // 头像列表里用首字母渲染,这里不取 avatar url(SDK 签名各版本不一,省依赖)
       out.push({
         id: r.roomId, name, avatar: '',
         pending: myMembership === 'invite' || undefined,
+        fromPeer: fromPeer || undefined,
+        peerId: peer?.userId || '',
         ts: r.getLastActiveTimestamp?.() || 0,
       })
     } catch { /* 跳过读不出的房 */ }
   }
-  return out.sort((a, b) => b.ts - a.ts).map(({ ts, ...rest }) => rest)
+  // 按对方去重:最近活跃优先(有新消息的房 ts 最大,自然赢过历史空房);无 peerId 的不去重
+  out.sort((a, b) => b.ts - a.ts)
+  const seen = new Set<string>()
+  const deduped = out.filter((d) => {
+    if (!d.peerId) return true
+    if (seen.has(d.peerId)) return false
+    seen.add(d.peerId)
+    return true
+  })
+  return deduped.map(({ ts, peerId, ...rest }) => rest)
 }
 
 /** 删除（离开并遗忘）一个主 AI 会话房。 */

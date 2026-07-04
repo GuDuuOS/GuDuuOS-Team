@@ -269,8 +269,27 @@ const aiSessions = ref<AiSession[]>([])
 function refreshAiSessions() { aiSessions.value = listAiSessions() }
 
 // ── 真人私信(DM):渲染在侧栏"私信"区,点开在主区聊天(头部/输入框走简化私聊样式) ──
-const dms = ref<{ id: string; name: string; avatar: string; pending?: boolean }[]>([])
-function refreshDms() { dms.value = listDirectMessages() }
+const dms = ref<{ id: string; name: string; avatar: string; pending?: boolean; fromPeer?: boolean }[]>([])
+// 新私信通知(QA:对方发起私信毫无提示,接收方不知道):首轮加载只记不弹(老私信不轰炸),
+// 之后 sync 里**新出现的、对方发起的**私信房弹一条通知;正打开着那间房的不弹。
+let dmSeeded = false
+const seenDmIds = new Set<string>()
+function refreshDms() {
+  const list = listDirectMessages()
+  if (!dmSeeded) {
+    for (const d of list) seenDmIds.add(d.id)
+    dmSeeded = true
+  } else {
+    for (const d of list) {
+      if (seenDmIds.has(d.id)) continue
+      seenDmIds.add(d.id)
+      if (d.fromPeer && currentRoom.value !== d.id) {
+        toast('📩 收到新私信', `${d.name} 向你发起了私信，点左侧「私信」分组查看`)
+      }
+    }
+  }
+  dms.value = list
+}
 const dmDialogOpen = ref(false)     // "发起私信"弹窗
 const dmUserInput = ref('')
 const dmBusy = ref(false)
@@ -1069,6 +1088,9 @@ async function afterLogin(uid: string) {
   addingAccount.value = false   // 加账号流程结束（若是）
   board.value = true // 登录后第一屏 = 数据看板
   tasks.value = false
+  // 新私信通知的种子重置:换账号重新登录时,别把新账号的存量私信当"新私信"轰炸一遍
+  dmSeeded = false
+  seenDmIds.clear()
   if (stopUpdates) stopUpdates()   // 若是重新登录，先解绑上一次的
   stopUpdates = onUpdate(refresh)
   if (stopTyping) stopTyping()
