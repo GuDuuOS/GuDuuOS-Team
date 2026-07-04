@@ -107,6 +107,17 @@ class TestAgentActivatesPresetSkill(unittest.TestCase):
         self.assertEqual(bot._global_skill_items(), [])
         self.assertEqual(bot._global_skill_items(for_user="@u:test"), [])
 
+    def test_inject_agent_skill_excluded_from_global(self) -> None:
+        # 控制室里 inject='agent' 的技能(如后台覆盖的预置)不全局注入,但仍在技能库(可绑定)。
+        bot = _bot([
+            {"slug": "g1", "instructions": "A", "enabled": True},                    # 默认=全局
+            {"slug": "a1", "instructions": "B", "enabled": True, "inject": "agent"},  # 随Agent激活
+        ])
+        gl = {s["slug"] for s in bot._global_skill_items()}
+        self.assertIn("g1", gl)
+        self.assertNotIn("a1", gl)                                   # 不全局注入
+        self.assertIn("a1", {s["slug"] for s in bot._skill_library()})  # 但可被 Agent 绑定
+
 
 if __name__ == "__main__":
     unittest.main()

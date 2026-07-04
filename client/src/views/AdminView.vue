@@ -390,6 +390,14 @@
               </label>
               <p v-if="!templates.length" class="adm-hint">还没有入驻模板——先到「入驻模板」页创建，再回来指定。</p>
             </div>
+            <label class="adm-field">
+              <span>生效方式（决定这个技能怎么被主 AI 用到）</span>
+              <select v-model="skForm.inject" class="adm-fsel">
+                <option value="agent">随绑定的 AI 同事激活（推荐 · 平时不占用上下文）</option>
+                <option value="">全局注入（每轮对话都带上 · 占 6000 字预算，慎用）</option>
+              </select>
+              <p class="adm-hint">「全局注入」会让每次对话都带上此技能，适合极通用的少数几个；方法论类建议「随 AI 同事激活」，绑到智能体后 @ 它才生效。</p>
+            </label>
             <label class="adm-tool">
               <input type="checkbox" v-model="skForm.enabled" />
               <span class="adm-tool-l">启用</span>
@@ -402,11 +410,44 @@
             </div>
           </div>
 
-          <!-- 技能列表 -->
-          <p v-if="!skills.length" class="adm-hint">还没有全局技能。点右上「新建技能」加一个。</p>
+          <!-- 预置技能库（平台内置，随对应 AI 同事激活；可覆盖为自定义）-->
+          <div v-if="presetSkills.length" class="adm-preset-block">
+            <div class="adm-preset-h">
+              <span>🧩 预置技能库</span>
+              <span class="adm-preset-sub">平台内置 · 已绑给对应 AI 同事，@ 或指派它时自动激活，不占每轮上下文</span>
+            </div>
+            <table class="adm-table">
+              <thead>
+                <tr><th>标识</th><th>名称</th><th>说明</th><th>随谁激活</th><th>操作</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="s in presetSkills" :key="'p-' + s.slug">
+                  <td class="adm-nowrap"><code>{{ s.slug }}</code></td>
+                  <td class="adm-nowrap">
+                    {{ s.name || '—' }}
+                    <span v-if="overriddenSlugs.has(s.slug)" class="adm-badge" title="已在下方自定义覆盖">已自定义</span>
+                  </td>
+                  <td class="adm-skill-desc">{{ s.description || '—' }}</td>
+                  <td class="adm-nowrap">{{ (s.agents && s.agents.length) ? s.agents.join('、') : '—' }}</td>
+                  <td class="adm-row-actions">
+                    <button class="adm-btn ghost sm" :disabled="skSaving || overriddenSlugs.has(s.slug)" @click="overridePreset(s)">
+                      {{ overriddenSlugs.has(s.slug) ? '已覆盖' : '覆盖为自定义' }}
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 自定义技能列表（控制室 state event，可编辑/删除）-->
+          <div class="adm-preset-h" style="margin-top:16px">
+            <span>✏️ 自定义技能</span>
+            <span class="adm-preset-sub">你在后台建的技能（覆盖预置或全新）</span>
+          </div>
+          <p v-if="!skills.length" class="adm-hint">还没有自定义技能。点右上「新建技能」加一个，或从上方预置技能「覆盖为自定义」。</p>
           <table v-else class="adm-table">
             <thead>
-              <tr><th>标识</th><th>名称</th><th>说明</th><th>可用范围</th><th>状态</th><th>操作</th></tr>
+              <tr><th>标识</th><th>名称</th><th>说明</th><th>可用范围</th><th>生效</th><th>状态</th><th>操作</th></tr>
             </thead>
             <tbody>
               <tr v-for="s in skFiltered" :key="s.slug">
@@ -414,6 +455,7 @@
                 <td class="adm-nowrap">{{ s.name || '—' }}</td>
                 <td class="adm-skill-desc">{{ s.description || '—' }}</td>
                 <td class="adm-nowrap">{{ accessLabel(s.access) }}</td>
+                <td class="adm-nowrap">{{ s.inject === 'agent' ? '随AI同事' : '全局' }}</td>
                 <td>
                   <span class="adm-badge" :class="{ on: s.enabled }">{{ s.enabled ? '启用' : '停用' }}</span>
                 </td>
@@ -1274,6 +1316,7 @@ import {
   getAiConfig,
   setAiConfig,
   getGlobalSkills,
+  getPresetSkills,
   setGlobalSkills,
   getGlobalAgents,
   setGlobalAgents,
@@ -1698,14 +1741,17 @@ async function saveAi() {
 
 /* —— 技能库（全局技能，写控制室 state event）—— */
 const skills = ref<GlobalSkill[]>([])
+const presetSkills = ref<GlobalSkill[]>([])  // 内置预置技能库(只读展示,可覆盖为自定义)
 const skLoading = ref(false)
 const skSaving = ref(false)
 const skLoaded = ref(false)
 const skEditing = ref(false)
 // _isEdit=true 表示编辑已有技能（slug 锁定不可改）
 const skForm = reactive<GlobalSkill & { _isEdit: boolean }>({
-  slug: '', name: '', description: '', instructions: '', enabled: true, _isEdit: false,
+  slug: '', name: '', description: '', instructions: '', enabled: true, inject: '', _isEdit: false,
 })
+// 预置技能里已被控制室"覆盖"的 slug（覆盖后以自定义那份为准，预置区标记"已自定义"）
+const overriddenSlugs = computed(() => new Set(skills.value.map((s) => s.slug)))
 
 function switchToSkills() {
   tab.value = 'skills'
@@ -1715,13 +1761,33 @@ function switchToSkills() {
 async function loadSkills() {
   skLoading.value = true
   try {
-    skills.value = await getGlobalSkills()
+    // 并行:控制室技能(可编辑) + 内置预置技能(只读展示)。预置失败不阻断主列表。
+    const [ctrl, preset] = await Promise.all([
+      getGlobalSkills(),
+      getPresetSkills().catch(() => [] as GlobalSkill[]),
+    ])
+    skills.value = ctrl
+    presetSkills.value = preset
     skLoaded.value = true
   } catch (e: any) {
     warn('加载失败', e?.message || '无法读取技能')
   } finally {
     skLoading.value = false
   }
+}
+
+// "覆盖为自定义":把预置技能复制进编辑表单(inject 默认保持 agent,不变全局注入),
+// 管理员改完保存到控制室后即以自定义那份为准(同 slug 覆盖预置)。
+function overridePreset(s: GlobalSkill) {
+  Object.assign(skForm, {
+    slug: s.slug, name: s.name, description: s.description,
+    instructions: s.instructions, enabled: true,
+    access: s.access || '', inject: 'agent', _isEdit: false,
+  })
+  skAccessKind.value = ''
+  skAccessTpls.value = []
+  if (!tpLoaded.value) loadTemplates()
+  skEditing.value = true
 }
 
 /* —— 资源「可用范围」(access)：技能/智能体共用的解析/构造/展示 ——
@@ -1758,7 +1824,7 @@ const agAccessTpls = ref<string[]>([])
 
 function startAddSkill() {
   Object.assign(skForm, {
-    slug: '', name: '', description: '', instructions: '', enabled: true, _isEdit: false,
+    slug: '', name: '', description: '', instructions: '', enabled: true, inject: '', _isEdit: false,
   })
   skAccessKind.value = ''
   skAccessTpls.value = []
@@ -1767,7 +1833,7 @@ function startAddSkill() {
 }
 
 function startEditSkill(s: GlobalSkill) {
-  Object.assign(skForm, { ...s, _isEdit: true })
+  Object.assign(skForm, { ...s, inject: s.inject || '', _isEdit: true })
   const p = parseAccess(s.access)
   skAccessKind.value = p.kind
   skAccessTpls.value = p.tpls
@@ -1805,6 +1871,7 @@ async function saveSkill() {
     instructions: skForm.instructions,
     enabled: skForm.enabled,
     access: buildAccess(skAccessKind.value, skAccessTpls.value),
+    inject: skForm.inject === 'agent' ? 'agent' : '',
   }
   // 已有同 slug → 覆盖；否则追加
   const next = skills.value.slice()
@@ -2672,6 +2739,11 @@ onMounted(check)
 .adm-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; padding-right: 44px; }
 .adm-h1 { font-size: 20px; font-weight: var(--fw-bold); }
 .adm-hint { font-size: var(--fs-75); color: var(--text-3); margin-top: 4px; }
+/* 技能库:预置区块标题 */
+.adm-preset-block { margin-bottom: 8px; }
+.adm-preset-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.adm-preset-h > span:first-child { font-weight: var(--fw-bold); font-size: var(--fs-100); color: var(--text); }
+.adm-preset-sub { font-size: var(--fs-75); color: var(--text-3); }
 /* 会员等级读取失败的警示条：橙黄底、不刺眼但明显，提示数据不可信 */
 .adm-warnbar {
   margin: 0 0 12px; padding: 10px 14px; border-radius: 8px;

@@ -1816,6 +1816,13 @@ export interface GlobalSkill {
   /** 可用范围(资源级权限,bot 服务端强制):''=所有人;paid/creator=该会员等级及以上;
    *  admin=仅平台管理员;'tpl:slugA,slugB'=仅选了这些入驻模板的用户。 */
   access?: string
+  /** 生效方式:'global'(默认)=每轮对话全局注入(慎用,占 6000 字符预算);
+   *  'agent'=只在被绑定的 AI 同事(Agent)激活时注入,平时零干扰。 */
+  inject?: string
+  /** 仅预置技能带:true=平台内置(代码里),后台展示但不可删,可"覆盖为自定义"。 */
+  preset?: boolean
+  /** 仅预置技能带:绑了这个技能的 AI 同事名(展示"随【文案】激活")。 */
+  agents?: string[]
 }
 
 /** 读全局技能列表（控制室 state event）；房间/事件不存在时返回 []。 */
@@ -1833,12 +1840,41 @@ export async function getGlobalSkills(): Promise<GlobalSkill[]> {
       instructions: String(s?.instructions || ''),
       enabled: s?.enabled !== false, // 缺省视为启用
       access: String(s?.access || ''),
+      inject: String(s?.inject || ''),
     })).filter((s: GlobalSkill) => s.slug)
   } catch (e: any) {
     // 事件不存在(404)=还没写过技能 → []（合法）。瞬时读失败必须抛——否则上层会在空列表上
     // 保存、把真实技能覆盖没了（同 gating/plans 的保护）。
     if (e?.errcode === 'M_NOT_FOUND') return []
     throw new Error('读取技能列表失败，请重试')
+  }
+}
+
+/** 读**内置预置技能库**（走 bot 端点；代码内置，控制室读不到）。失败/未登录返回 []。
+ *  这些技能标 preset=true / inject='agent'（随绑定的 AI 同事激活，不全局注入）。 */
+export async function getPresetSkills(): Promise<GlobalSkill[]> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return []
+  try {
+    const r = await fetch(`${payBase()}/cosmac/skills/presets`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return []
+    const j = await r.json().catch(() => ({}))
+    const arr = Array.isArray(j?.skills) ? j.skills : []
+    return arr.map((s: any) => ({
+      slug: String(s?.slug || ''),
+      name: String(s?.name || ''),
+      description: String(s?.description || ''),
+      instructions: String(s?.instructions || ''),
+      enabled: s?.enabled !== false,
+      access: String(s?.access || ''),
+      inject: String(s?.inject || 'agent'),
+      preset: true,
+      agents: Array.isArray(s?.agents) ? s.agents.map(String) : [],
+    })).filter((s: GlobalSkill) => s.slug)
+  } catch {
+    return []
   }
 }
 
@@ -1867,6 +1903,7 @@ export async function setGlobalSkills(skills: GlobalSkill[]): Promise<void> {
         `技能「${slug}」正文超长（最多 ${MAX_SKILL_INSTRUCTIONS} 字，当前 ${instructions.length}）`,
       )
     }
+    const inject = String(s.inject ?? '').trim()
     return {
       slug,
       name: String(s.name ?? '').trim().slice(0, MAX_SKILL_NAME),
@@ -1874,6 +1911,8 @@ export async function setGlobalSkills(skills: GlobalSkill[]): Promise<void> {
       instructions,
       enabled: s.enabled !== false,
       access: String(s.access ?? '').trim().slice(0, 256),
+      // 只存 'agent'(随AI同事激活);'global'/空都视为全局注入,存空省字节且兼容旧数据
+      inject: inject === 'agent' ? 'agent' : '',
     }
   })
   const rid = await ensureControlRoom()

@@ -1294,10 +1294,14 @@ class CosmacBot:
             return []
 
     def _global_skill_items(self, for_user: str = "") -> List[Dict[str, Any]]:
-        """读控制室「全局技能」state event，返回启用的技能字典列表（失败返回空）。
+        """读控制室「全局技能」= **每轮对话注入 system** 的技能(失败返回空)。
 
         for_user 非空时按「可用范围」(access)过滤——注入对话/能力名册等"以发起人身份用资源"
         的场景传它;资源存在性校验(known_skills)、绑定解析等配置场景不传(全量)。
+
+        ⚠️ **只返回 inject!='agent' 的**:控制室里标记「随 AI 同事激活」(inject='agent')的技能
+        (含后台覆盖的预置技能)不每轮全局注入,只在被绑定的 Agent 激活时进(见 _skill_library)——
+        否则一堆方法论每轮全塞会撑爆 6000 字符预算。缺省/'global'=全局注入(维持历史行为)。
         """
         try:
             ctrl = self.client.resolve_alias(self.config.control_room_alias)
@@ -1308,6 +1312,7 @@ class CosmacBot:
             out = [
                 s for s in skills
                 if isinstance(s, dict) and s.get("enabled", True)
+                and str(s.get("inject") or "global") != "agent"
             ]
             if for_user:
                 out = [s for s in out if self._resource_visible(s, for_user)]
@@ -2783,6 +2788,28 @@ class CosmacBot:
             logger.exception("记录用户入驻模板失败")
             return 500, {"error": "记录失败"}
 
+    def handle_preset_skills(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """列出**内置预置技能库**(给后台技能库页展示;代码内置,前端读控制室看不到它们)。
+
+        需登录(管理员后台用)。每项附:preset=true(标识来源)+ agents(绑了它的预置 AI 同事名,
+        前端显示"随【文案】激活")+ inject='agent'(它们不全局注入,只随 Agent 激活)。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        from cosmac.ai.preset_skills import preset_skills
+        from cosmac.ai.presets import preset_agents
+
+        by_skill: Dict[str, List[str]] = {}
+        for a in preset_agents():
+            for slug in a.get("skill_slugs", []):
+                by_skill.setdefault(slug, []).append(a.get("name") or a.get("slug"))
+        out = [
+            {**s, "preset": True, "inject": "agent", "agents": by_skill.get(s["slug"], [])}
+            for s in preset_skills()
+        ]
+        return 200, {"skills": out}
+
     def handle_people_list_mine(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """列本人维护的协作人能力名册。需登录。
 
@@ -3519,6 +3546,7 @@ class _Handler(BaseHTTPRequestHandler):
                 or p.startswith("/cosmac/login/")
                 or p.startswith("/cosmac/onboard/")
                 or p.startswith("/cosmac/onboarding/")
+                or p.startswith("/cosmac/skills/")
                 or p.startswith("/cosmac/kb/")
                 or p.startswith("/cosmac/people/")
                 or p.startswith("/cosmac/profile/")
@@ -3654,6 +3682,13 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "无效页面 id"}, cors=True)
                 return
             code, payload = self.bot.handle_doc_page(token, page_id)
+            self._send_json(code, payload, cors=True)
+            return
+        # 内置预置技能库（后台技能库页展示；代码内置，读控制室看不到）
+        if self.path.split("?", 1)[0] == "/cosmac/skills/presets":
+            auth = self.headers.get("Authorization", "")
+            token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
+            code, payload = self.bot.handle_preset_skills(token)
             self._send_json(code, payload, cors=True)
             return
         # 个人协作人能力名册：列本人维护的协作人（带本人 token）
