@@ -2829,6 +2829,16 @@ export function listAiSessions(): AiSession[] {
   const me = mx.getUserId() || ''
   return mx.getRooms()
     .filter(isAiSessionRoom)
+    // 只认**我自己建的**会话房。历史 bug 曾把成员误邀进别人的 AI 私聊(邀请又会被自动
+    // 接受),被邀者的面板若把那个房当自己的会话,多人的"私人会话"就汇进同一个房——
+    // 消息互串、AI 回复看着"时有时无"(QA 实测:A 发的指令,回复出现在 B 的面板里)。
+    .filter((r: any) => {
+      try {
+        const cr = r.currentState?.getStateEvents?.('m.room.create', '')
+        const creator = cr?.getSender?.() || cr?.getContent?.()?.creator || ''
+        return creator === me
+      } catch { return false }
+    })
     .map((r: any) => {
       const msgs = listMessages(r.roomId)
       // 标题取「我」发的第一句话的前 24 字（最能代表这段会话聊了啥）；没说过话就叫「新会话」
