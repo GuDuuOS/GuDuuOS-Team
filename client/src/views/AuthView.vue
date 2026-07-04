@@ -36,6 +36,14 @@ const codeCooldown = ref(0)        // 「发送验证码」倒计时（秒）
 const sendingCode = ref(false)
 const authMode = ref<'login' | 'register' | 'reset'>('login')
 const loginBy = ref<'account' | 'email'>('account')
+/** 切换 账号登录↔邮箱登录:两种方式共用密码框,切换时清掉——账号密码和邮箱对应的
+ *  密码未必相同,残留会被误提交(QA:表单数据跨页残留)。报错提示也一并清。 */
+function switchLoginBy(by: 'account' | 'email') {
+  if (loginBy.value === by) return
+  loginBy.value = by
+  password.value = ''
+  error.value = ''
+}
 const error = ref('')
 const info = ref('')               // 成功/提示的内联反馈（替代原 toast，保持自包含）
 const loading = ref(false)
@@ -330,8 +338,8 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
         <!-- ===== 登录：账号 / 邮箱 二选一 ===== -->
         <template v-if="authMode === 'login'">
           <div class="auth-subtabs">
-            <button class="auth-subtab" :class="{ active: loginBy === 'account' }" @click="loginBy = 'account'">账号登录</button>
-            <button class="auth-subtab" :class="{ active: loginBy === 'email' }" @click="loginBy = 'email'">邮箱登录</button>
+            <button class="auth-subtab" :class="{ active: loginBy === 'account' }" @click="switchLoginBy('account')">账号登录</button>
+            <button class="auth-subtab" :class="{ active: loginBy === 'email' }" @click="switchLoginBy('email')">邮箱登录</button>
           </div>
           <input v-if="loginBy === 'account'" v-model="user" name="login-username" autocomplete="username" placeholder="用户名" @keyup.enter="doLogin" />
           <input v-else v-model="email" type="email" name="login-email" autocomplete="email" placeholder="邮箱" @keyup.enter="doLogin" />
