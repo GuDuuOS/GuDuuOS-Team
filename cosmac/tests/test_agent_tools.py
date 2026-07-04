@@ -423,6 +423,59 @@ class SendMessageTargetTest(unittest.TestCase):
         self.assertEqual(self.client.sent, [("!cur:test", "hi")])
 
 
+class InvitePromoteRetryTest(unittest.TestCase):
+    """邀人 403(bot 在用户建的频道里无邀请权限)→ 自动提权(make_room_admin)→ 重试成功。"""
+
+    def test_invite_403_promotes_and_retries(self) -> None:
+        client = FakeClient()
+        calls = {"n": 0}
+
+        def inv_status(_room, _uid):
+            calls["n"] += 1
+            # 第一次 403(无权限),提权后的第二次成功
+            return (calls["n"] > 1, 200 if calls["n"] > 1 else 403,
+                    "" if calls["n"] > 1 else "no permission")
+
+        client.invite_user_status = inv_status  # type: ignore
+        client.homeserver_url = "http://fake"  # type: ignore
+        client.bot_user_id = "@bot:test"  # type: ignore
+        tb = Toolbox(client)
+        import cosmac.registration as reg
+        orig = reg.make_room_admin
+        reg.make_room_admin = lambda *_a, **_k: (200, {"ok": True})  # type: ignore
+        try:
+            out = tb.execute(
+                ToolCall(id="i", name="invite_to_room",
+                         arguments={"user_id": "@x:test", "room_id": "!cur:test"}),
+                ToolContext("!cur:test", "@alice:test"),
+            )
+        finally:
+            reg.make_room_admin = orig  # type: ignore
+        self.assertIn("已邀请", out)
+        self.assertEqual(calls["n"], 2)  # 403 后确实重试了一次
+
+    def test_invite_failure_reports_real_reason(self) -> None:
+        # 提权不可用(无 ADMIN_TOKEN)时,失败文案带上服务器真实报错,不再瞎猜
+        client = FakeClient()
+        client.invite_user_status = lambda _r, _u: (False, 403, "not allowed")  # type: ignore
+        client.homeserver_url = "http://fake"  # type: ignore
+        client.bot_user_id = "@bot:test"  # type: ignore
+        tb = Toolbox(client)
+        import cosmac.registration as reg
+        orig = reg.make_room_admin
+        reg.make_room_admin = lambda *_a, **_k: (503, {"error": "未配置"})  # type: ignore
+        try:
+            out = tb.execute(
+                ToolCall(id="i", name="invite_to_room",
+                         arguments={"user_id": "@x:test", "room_id": "!cur:test"}),
+                ToolContext("!cur:test", "@alice:test"),
+            )
+        finally:
+            reg.make_room_admin = orig  # type: ignore
+        self.assertIn("403", out)
+        self.assertIn("not allowed", out)
+
+
 class ProgressVisibilityTest(unittest.TestCase):
     """AI 执行过程可见:legacy 引擎回调触发 + 进度报告器 发送→编辑→定格。"""
 

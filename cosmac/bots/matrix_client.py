@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 import requests
@@ -219,19 +219,33 @@ class MatrixClient:
         返回布尔让调用方（如 assemble_team 逐个邀请成员）能"尽力而为"：某个 id 邀不到
         不影响其余流程，而不是让一个坏 id 把整件事搞崩。
         """
+        ok, _, _ = self.invite_user_status(room_id, user_id)
+        return ok
+
+    def invite_user_status(self, room_id: str, user_id: str) -> Tuple[bool, int, str]:
+        """邀请某用户并返回 (是否成功, HTTP 状态码, 服务器错误说明)。状态码 0=网络异常。
+
+        给需要"对症提示/自动补权重试"的调用方(AI 邀人工具)用——只回 bool 时,AI 只能
+        瞎猜"可能未注册/可能没权限"(QA 实测:两个猜测都误导用户,真实原因埋在日志里)。
+        """
         url = self._url(f"/_matrix/client/v3/rooms/{quote(room_id)}/invite")
         try:
             resp = self._session.post(url, json={"user_id": user_id}, timeout=10)
         except requests.RequestException as exc:
             logger.warning("邀请 %s 进 %s 异常: %s", user_id, room_id, exc)
-            return False
+            return False, 0, "网络异常"
         if resp.status_code == 200:
             logger.info("已邀请 %s 进 %s", user_id, room_id)
-            return True
+            return True, 200, ""
+        try:
+            j = resp.json()
+            err = str(j.get("error") or j.get("errcode") or "")[:160]
+        except Exception:
+            err = (resp.text or "")[:160]
         logger.warning(
-            "邀请 %s 进 %s 失败: %s %s", user_id, room_id, resp.status_code, resp.text
+            "邀请 %s 进 %s 失败: %s %s", user_id, room_id, resp.status_code, err
         )
-        return False
+        return False, resp.status_code, err
 
     def set_power_levels(self, room_id: str, content: Dict[str, Any]) -> bool:
         """整体覆盖某房间的 m.room.power_levels 状态事件（调用方负责传完整内容）。

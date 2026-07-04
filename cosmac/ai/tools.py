@@ -798,13 +798,43 @@ class Toolbox:
         denial = self._check_room_access(room_id, ctx)
         if denial:
             return denial
-        ok = self.client.invite_user(room_id, user_id)
+        # 带状态邀请:拿到真实失败原因,别让模型对用户瞎猜"可能未注册/可能没权限"
+        if hasattr(self.client, "invite_user_status"):
+            ok, status, err = self.client.invite_user_status(room_id, user_id)
+        else:  # 测试桩等只有 bool 口的客户端
+            ok, status, err = self.client.invite_user(room_id, user_id), 0, ""
+        # 403=bot 在该频道没邀请权限(用户建的频道里 bot 只是普通成员)。用服务器管理 API
+        # 给 bot 自己提成房管理员再重试一次——发起人已过 _check_room_access(必须是房内成员/
+        # 本频道内@),提权只补 bot 的执行力,不扩大用户权限。
+        if not ok and status == 403 and self._promote_bot_in_room(room_id):
+            ok, status, err = self.client.invite_user_status(room_id, user_id)
         if ok:
             return (
                 f"已邀请 {user_id} 加入房间 {room_id}。"
                 "对方下次打开客户端会自动入群（本服务器账号）。"
             )
-        return f"邀请 {user_id} 失败（账号可能不存在，或我在该房间没有邀请权限）。"
+        detail = f"（服务器返回 {status}: {err}）" if status else "（网络异常，请稍后重试）"
+        return (
+            f"邀请 {user_id} 失败{detail}。"
+            "请把括号里的真实原因原样转告用户,不要自行猜测别的原因;"
+            "若是权限类失败,建议用户请频道管理员在「频道管理→人员」里手动邀请。"
+        )
+
+    def _promote_bot_in_room(self, room_id: str) -> bool:
+        """bot 在目标房间权限不足时,用服务器管理 API(make_room_admin)把自己提成房管理员。
+
+        依赖服务端已配 COSMAC_ADMIN_TOKEN(与"平台管理员接管频道"同一条通道);未配/失败
+        都静默返回 False,调用方按原始错误提示。"""
+        try:
+            from cosmac import registration
+
+            code, _ = registration.make_room_admin(
+                self.client.homeserver_url, room_id, self.client.bot_user_id
+            )
+            return code == 200
+        except Exception:
+            logger.debug("bot 房间内自动提权失败（忽略）", exc_info=True)
+            return False
 
     def _tool_send_message(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         text = args.get("text") or ""
