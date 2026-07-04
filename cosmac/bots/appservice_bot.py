@@ -696,7 +696,11 @@ class CosmacBot:
             # 用户个人偏好（About me / Outputs）：跟人走（发起人），放在人设之后、优先级最低。
             user_pref_text = self._user_profile_text(sender)
             mem_text = self._memory_context(room_id, sender)
-            kb_text = self._kb_context(room_id, sender, query, extra_scopes)
+            # 频道绑定的知识库来源(组班"调进频道"的个人/资料库频道/平台库)一并纳入 RAG
+            kb_text = self._kb_context(
+                room_id, sender, query, extra_scopes,
+                bound_sources=gctx.get("kb_scopes"),
+            )
             wf_text = self._preset_workflows_text(gctx.get("workflow_slugs") or [])
             # 交互准则(内置基线) → 平台规则 → 任务RULE → 人设 → 用户偏好 → 长期记忆 → 技能 → 知识库 → 预置工作流
             return "\n\n".join(
@@ -753,8 +757,9 @@ class CosmacBot:
         self, room_id: str, sender: str, query: str,
         room_k: int = 3, user_k: int = 2,
         extra_scopes: Optional[List[str]] = None,
+        bound_sources: Optional[List[str]] = None,
     ) -> List[Tuple[str, str, float]]:
-        """检索本群+个人知识库，返回 [(标题, 片段, 相关度), ...] 降序。无命中/出错返回 []。
+        """检索本群+个人+**频道绑定的知识库**，返回 [(标题, 片段, 相关度), ...] 降序。无命中/出错返回 []。
 
         这是 RAG 的共享底座：自动注入(`_kb_context`)和 search_knowledge 工具(`_kb_search_for_tool`)
         都走它，避免两份检索逻辑漂移。**不在此做门控**——调用方各自负责(自动注入走 knowledge
@@ -763,20 +768,41 @@ class CosmacBot:
 
         ``extra_scopes``：额外要搜的 room 作用域（P2 文档答疑：中枢 AI 带上的「当前工作区」
         Space id），让全局 DM 也能基于某工作区的文档(按 Space 存)作答。
+        ``bound_sources``：**频道绑定的知识库来源**(channel_config.kbScopes)——组班时把平台/个人/
+        某资料库频道的知识库"调进"这个频道,对全频道成员生效。每项前缀化标识:
+          · ``user:<uid>`` = 某人的个人库(如发起人个人库对全班开放)
+          · ``room:<rid>`` = 某频道的知识库(把资料库频道挂给专班)
+          · ``platform``    = 平台级共享知识库(SCOPE_GLOBAL 固定作用域,后台维护)
         """
         q = (query or "").strip()
         if not q:
             return []
-        # 要搜的 room 作用域：本房间 + 额外传入的(去重、去空)
+        # 三类作用域各自去重收集:room / user / global(平台)
         room_scopes: List[str] = [room_id] if room_id else []
         for x in (extra_scopes or []):
             if x and x not in room_scopes:
                 room_scopes.append(x)
+        user_scopes: List[str] = [sender] if sender else []
+        global_scopes: List[str] = []
+        # 解析频道绑定的知识库来源,分派到对应作用域
+        for src in (bound_sources or []):
+            src = str(src).strip()
+            if src == "platform":
+                if self._PLATFORM_KB_SCOPE not in global_scopes:
+                    global_scopes.append(self._PLATFORM_KB_SCOPE)
+            elif src.startswith("user:"):
+                uid = src[5:].strip()
+                if uid and uid not in user_scopes:
+                    user_scopes.append(uid)
+            elif src.startswith("room:"):
+                rid = src[5:].strip()
+                if rid and rid not in room_scopes:
+                    room_scopes.append(rid)
         try:
             from cosmac.ai.embeddings import get_embedder
             from cosmac.db import session_scope
             from cosmac.db.kb import search
-            from cosmac.db.models import SCOPE_ROOM, SCOPE_USER
+            from cosmac.db.models import SCOPE_GLOBAL, SCOPE_ROOM, SCOPE_USER
 
             # 查询向量只算一次（embed_one 可能要打网络），各库共用，省请求
             emb = get_embedder()
@@ -786,8 +812,12 @@ class CosmacBot:
                 for rid in room_scopes:
                     hits += search(s, query=q, scope=SCOPE_ROOM, scope_id=rid, k=room_k,
                                    min_score=0.05, embedder=emb, qvec=qvec)
-                hits += search(s, query=q, scope=SCOPE_USER, scope_id=sender, k=user_k,
-                               min_score=0.05, embedder=emb, qvec=qvec)
+                for uid in user_scopes:
+                    hits += search(s, query=q, scope=SCOPE_USER, scope_id=uid, k=user_k,
+                                   min_score=0.05, embedder=emb, qvec=qvec)
+                for gid in global_scopes:
+                    hits += search(s, query=q, scope=SCOPE_GLOBAL, scope_id=gid, k=room_k,
+                                   min_score=0.05, embedder=emb, qvec=qvec)
                 hits.sort(key=lambda t: t[1], reverse=True)
                 # session 内就物化成普通值，避免关闭后惰性加载 ch.doc.title 报错
                 return [((ch.doc.title or "").strip(), ch.text, score) for ch, score in hits]
@@ -820,12 +850,14 @@ class CosmacBot:
     def _kb_context(
         self, room_id: str, sender: str, query: str,
         extra_scopes: Optional[List[str]] = None,
+        bound_sources: Optional[List[str]] = None,
     ) -> str:
         """RAG 自动注入：按 query 检索知识库 top-K 片段，渲染成「参考资料」块塞进 system。
 
         每轮都跑、给一条 baseline；模型若想深挖再自行调 search_knowledge 工具。
         min_score 过滤太不相关的（哈希兜底嵌入下尤其重要，避免硬塞无关内容）。
         ``extra_scopes``：额外搜的 room 作用域（文档答疑传当前工作区 Space id）。
+        ``bound_sources``：频道绑定的知识库来源(组班时"调进频道"的个人/资料库频道/平台库)。
         """
         if not (query or "").strip():
             return ""
@@ -837,7 +869,9 @@ class CosmacBot:
         scopes = list(extra_scopes or [])
         if self._doc_can_read(sender) and self._GLOBAL_DOC_ROOM not in scopes:
             scopes.append(self._GLOBAL_DOC_ROOM)
-        hits = self._kb_retrieve(room_id, sender, query, extra_scopes=scopes)
+        hits = self._kb_retrieve(
+            room_id, sender, query, extra_scopes=scopes, bound_sources=bound_sources,
+        )
         if not hits:
             return ""
         lines = ["参考以下「知识库」资料作答（与问题相关，未必完整）："]
@@ -868,7 +902,7 @@ class CosmacBot:
         """
         out: Dict[str, Any] = {
             "persona": "", "skill_slugs": [], "model": "", "task_rule": "",
-            "worker_slugs": [], "workflow_slugs": [],
+            "worker_slugs": [], "workflow_slugs": [], "kb_scopes": [],
         }
         try:
             cfg = self.client.get_state_event(room_id, CHANNEL_CONFIG_EVENT_TYPE) or {}
@@ -877,6 +911,8 @@ class CosmacBot:
             out["task_rule"] = str(cfg.get("taskRule") or "").strip()
             # 本专班绑定的协作 Agent slug（档3b @名路由用）；一并取出避免重复读 state。
             out["worker_slugs"] = [str(s) for s in (cfg.get("agentSlugs") or []) if s]
+            # 本频道绑定的知识库来源（组班时"调进频道"的个人/资料库频道/平台库）。
+            out["kb_scopes"] = [str(s) for s in (cfg.get("kbScopes") or []) if s]
             # 入驻模板预置的默认工作流 slug（P2）：让本工作区的 AI 知道有哪些现成工作流可跑。
             out["workflow_slugs"] = [str(s) for s in (cfg.get("workflowSlugs") or []) if s]
             persona = cfg.get("persona") or {}
@@ -1259,14 +1295,24 @@ class CosmacBot:
                 if desc:
                     seg += f"：{desc}"
                 lines.append(seg)
-        # — 知识库（本群 + 个人文档标题）—
+        # — 知识库（可"调进"专班,组班时用 assemble_team 的 knowledge 参数绑定）—
+        n_user, n_platform = self._kb_bindable_counts(ctx.sender)
+        kb_hint: List[str] = []
+        if n_user:
+            kb_hint.append(f"发起人个人知识库({n_user} 篇)→ 组班传 knowledge=['owner'] 对全班开放")
+        if n_platform:
+            kb_hint.append(f"平台共享知识库({n_platform} 篇)→ 组班传 knowledge=['platform']")
+        kb_hint.append("要把某个资料库频道的知识挂给专班 → knowledge 里给那个频道名")
         try:
             titles = self._kb_doc_titles(ctx.room_id, ctx.sender)
         except Exception:
             titles = []
-        if titles:
-            lines.append("— 知识库（可关联进专班）—")
-            lines.append("、".join(f"《{t}》" for t in titles[:30]))
+        if titles or kb_hint:
+            lines.append("— 知识库（组班时可「调进」专班,对全频道生效）—")
+            for h in kb_hint:
+                lines.append("· " + h)
+            if titles:
+                lines.append("当前可见文档:" + "、".join(f"《{t}》" for t in titles[:20]))
         if not lines:
             return (
                 "能力名册暂时是空的：管理员可在后台「人员能力」页登记成员；"
@@ -1275,6 +1321,20 @@ class CosmacBot:
         return (
             "【可调配资源名册（拆任务/分配时据此选谁来干）】\n" + "\n".join(lines)
         )
+
+    def _kb_bindable_counts(self, sender: str) -> Tuple[int, int]:
+        """返回(发起人个人库文档数, 平台共享库文档数)——给能力名册提示"有哪些库可绑进专班"。失败(0,0)。"""
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.kb import list_docs
+            from cosmac.db.models import SCOPE_GLOBAL, SCOPE_USER
+
+            with session_scope() as s:
+                n_user = len(list_docs(s, scope=SCOPE_USER, scope_id=sender))
+                n_plat = len(list_docs(s, scope=SCOPE_GLOBAL, scope_id=self._PLATFORM_KB_SCOPE))
+            return n_user, n_plat
+        except Exception:
+            return 0, 0
 
     def _kb_doc_titles(self, room_id: str, sender: str) -> List[str]:
         """列出本群 + 个人知识库的文档标题（给能力名册展示"有哪些库可用"）。失败空。"""
@@ -2280,6 +2340,9 @@ class CosmacBot:
     # 改版后是**全平台一份**(不分工作区)：所有页面存在固定的 _GLOBAL_DOC_ROOM 作用域下。
     # 鉴权：读 = 付费会员(门控 doc_read，默认 paid)；写 = 平台管理员(后台编辑)。服务端强制。
     _GLOBAL_DOC_ROOM = "__cosmac_global_docs__"
+    # 平台级共享知识库(阶段2)的固定作用域(SCOPE_GLOBAL)。管理员后台维护、任何专班可绑
+    # (channel_config.kbScopes 含 'platform')；与图文教程分开(那是"给人读的文章",这是"喂 AI 的资料")。
+    _PLATFORM_KB_SCOPE = "__cosmac_platform_kb__"
 
     def _doc_can_read(self, user_id: str) -> bool:
         """能否查看图文教程：过 doc_read 门控（默认付费会员；平台管理员永远放行）。"""

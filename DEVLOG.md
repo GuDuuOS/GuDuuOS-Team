@@ -7,6 +7,20 @@
 
 ---
 
+## 2026-07-04 — feat:组班把知识库"调进频道"(阶段1:个人库对全班/资料库频道挂专班)
+- 负责人设计:组班时从平台库调取的资源(技能/Agent/人/RULE)要绑进频道。核对现状——
+  技能/Agent/人/RULE **已绑**(写 channel_config,频道分身读取生效);唯**知识库没绑**。
+- 补:频道 channel_config 加 `kbScopes`(前缀化来源:user:<uid>/room:<rid>/platform);
+  _kb_retrieve 加 bound_sources 参数,解析三类来源分派到 SCOPE_USER/ROOM/GLOBAL 检索;
+  _group_context 读 kbScopes → gctx;_skill_addendum 把它传给 _kb_context——频道里**所有人**
+  对话都检索这些库(此前个人库只发起人自己搜得到)。
+- assemble_team 加 knowledge 参数:'owner'=发起人个人库对全班开放/'platform'=平台库/
+  频道名或room_id=挂某资料库频道;解析写 kbScopes,开班消息+summary 提及。
+- 能力名册列可绑知识库来源(个人库N篇/平台库N篇/资料库频道用频道名),引导主AI 填 knowledge。
+- 平台库作用域常量 _PLATFORM_KB_SCOPE 已定(阶段2后台上传管理 UI 再做)。
+- 测试:组班 knowledge 绑定 2 例,全量 391 过。
+- **部署: 仅重启 bot。阶段2(平台共享知识库后台管理)待做。**
+
 ## 2026-07-04 — feat:预置技能库进后台可见 + 技能「生效方式」字段
 - 负责人:预置技能得在**后台技能库页看得到、管得着**(上一版只代码内置、后台看不见)。
 - 后端:GET /cosmac/skills/presets 吐预置技能(含 preset/inject=agent/agents 绑定名);

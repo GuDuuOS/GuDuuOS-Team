@@ -87,6 +87,20 @@ class TestAssembleTeam(unittest.TestCase):
         self.assertEqual(len(tc), 1)
         self.assertEqual(tc[0]["team_room"], "!team:h")
 
+    def test_knowledge_bound_into_channel(self) -> None:
+        # 知识库"调进频道":owner→发起人个人库对全班开放;platform→平台共享库。
+        # 写进 channel_config.kbScopes,频道分身检索时纳入(见 _group_context/_kb_retrieve)。
+        self._run({"project": "招生班", "knowledge": ["owner", "platform"]})
+        _room, _etype, content = self.client.states[0]
+        self.assertIn("user:@owner:h", content["kbScopes"])
+        self.assertIn("platform", content["kbScopes"])
+
+    def test_no_knowledge_no_kbscopes(self) -> None:
+        # 不传 knowledge → 不写 kbScopes(不引入空字段)
+        self._run({"project": "空班"})
+        _room, _etype, content = self.client.states[0]
+        self.assertNotIn("kbScopes", content)
+
     def test_failed_invite_does_not_break_team(self) -> None:
         # 健壮性：某成员邀请失败（如账号不存在）→ 专班照样建成、配置照写、如实告知未邀到
         self.client.invite_user = lambda room, uid: uid != "@ghost:h"  # @ghost 邀不到

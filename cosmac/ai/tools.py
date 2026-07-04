@@ -512,6 +512,15 @@ class Toolbox:
                         "type": "array", "items": {"type": "string"},
                         "description": "装进专班的 Skill slug 列表（可空）。",
                     },
+                    "knowledge": {
+                        "type": "array", "items": {"type": "string"},
+                        "description": (
+                            "从库里**调进这个专班**的知识库来源(让频道全体成员/AI 检索时都用得上)。"
+                            "取值:'owner'=把发起人个人知识库对全班开放;"
+                            "'platform'=平台共享知识库;"
+                            "某**资料库频道的名字或 room_id**=把那个频道的知识挂给专班。可空。"
+                        ),
+                    },
                     "tasks": {
                         "type": "array",
                         "items": {
@@ -1404,6 +1413,36 @@ class Toolbox:
         content: Dict[str, Any] = {"persona": persona, "agentSlugs": workers}
         if task_rule:
             content["taskRule"] = task_rule
+
+        # —— 把知识库"调进"这个频道:解析成前缀化来源(user:/room:/platform),写进 kbScopes ——
+        # 频道里所有人对话时都会检索这些来源(见 _group_context/_kb_retrieve),知识库真正"放进频道"。
+        kb_raw = [str(k).strip() for k in (args.get("knowledge") or []) if str(k).strip()]
+        kb_scopes: List[str] = []
+        kb_labels: List[str] = []
+        for k in kb_raw:
+            low = k.lower()
+            if low in ("owner", "self", "me", ctx.sender.lower()):
+                scope = f"user:{ctx.sender}"
+                label = "发起人个人库"
+            elif low == "platform":
+                scope = "platform"
+                label = "平台共享库"
+            elif k.startswith("!"):  # 已是 room_id
+                scope = f"room:{k}"
+                label = k
+            else:  # 当作资料库频道名,解析成 room_id
+                rid, err = self._resolve_room_by_name(k)
+                if not rid:
+                    kb_labels.append(f"「{k}」(没找到这个知识库频道,已跳过)")
+                    continue
+                scope = f"room:{rid}"
+                label = k
+            if scope not in kb_scopes:
+                kb_scopes.append(scope)
+                kb_labels.append(label)
+        if kb_scopes:
+            content["kbScopes"] = kb_scopes
+
         self.client.set_state_event(room_id, CHANNEL_CONFIG_EVENT_TYPE, content)
 
         # 派任务卡进这个专班（作用域 = 新频道）
@@ -1432,6 +1471,8 @@ class Toolbox:
         parts.append(f"项目主AI：{lead}" if lead else "项目主AI：内置编排人设")
         if workers:
             parts.append("AI 协作：" + "、".join(workers))
+        if kb_labels:
+            parts.append("已把知识库调进本频道（全体成员/AI 可检索）：" + "、".join(kb_labels))
         if task_rule:
             parts.append(
                 "已设本专班任务约束（RULE，自动生成的基础版——要调整随时告诉我）。"
@@ -1466,6 +1507,8 @@ class Toolbox:
             summary.append(f"协作Agent {len(workers)} 个")
         if skills:
             summary.append(f"技能 {len(skills)} 个")
+        if kb_scopes:
+            summary.append(f"知识库 {len(kb_scopes)} 个已绑进频道")
         summary.append(
             ("已设任务RULE（自动生成的基础版，可按需修改）" if auto_rule else "已按你的要求设任务RULE")
             if task_rule else "无任务RULE"
