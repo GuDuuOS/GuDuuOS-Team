@@ -2045,7 +2045,11 @@ onBeforeUnmount(() => {
         <!-- 顶栏（放大态作为弹窗标题栏，横跨三栏）-->
         <div class="ai-head">
           <span class="ai-dot" />
-          <span class="ai-title">中枢 AI · CosMac Star</span><span class="ai-dm-badge" title="这是你与中枢 AI 的一对一私人会话，内容仅你们可见；邀请成员请到目标频道里 @AI 操作">私人会话</span>
+          <div class="ai-title-wrap">
+            <span class="ai-title">中枢 AI · CosMac Star</span><span class="ai-dm-badge" title="这是你与中枢 AI 的一对一私人会话，内容仅你们可见；邀请成员请到目标频道里 @AI 操作">私人会话</span>
+            <!-- 消除误解(QA:切频道后面板内容"都一样"):这是全局助理,不属于任何频道 -->
+            <span class="ai-scope-hint">全局助理 · 跨频道统筹｜要找本频道的 AI，请在频道消息框里 @ 它</span>
+          </div>
           <div class="ai-head-actions">
             <!-- 放大 / 还原 -->
             <button class="ai-ic-btn" :title="aiMax ? '还原' : '放大'" @click="aiMax = !aiMax">
@@ -2983,6 +2987,9 @@ onBeforeUnmount(() => {
 .ai-head { height: 50px; flex-shrink: 0; padding: 0 14px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border-soft); }
 .ai-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px rgba(22,163,74,.16); flex-shrink: 0; }
 .ai-title { font-family: var(--font-heading); font-size: var(--fs-200); line-height: var(--lh-200); font-weight: var(--fw-bold); color: var(--text); }
+/* 标题两行排布:第一行 名称+「私人会话」badge,第二行 作用域提示(全局助理,非本频道 AI) */
+.ai-title-wrap { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; }
+.ai-scope-hint { flex-basis: 100%; font-size: 10px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
 .ai-head-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .ai-ic-btn { width: 30px; height: 30px; background: transparent; border: none; color: var(--text-3); border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 .ai-ic-btn:hover { background: var(--bg-hover); color: var(--text); }
