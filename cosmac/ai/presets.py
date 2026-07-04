@@ -29,6 +29,8 @@ PRESET_AGENTS: List[Dict[str, Any]] = [
             "默认先问清/推断：平台(小红书/抖音/公众号/朋友圈等)、受众、卖点、字数与语气；"
             "信息不全就按最合理的假设先出一稿并标注假设。输出可直接用，必要时给 2~3 个备选标题。"
         ),
+        # 绑定预置方法论技能(被 @/指派时随人设一起激活;平时不注入,见 preset_skills.py)
+        "skill_slugs": ["xiaohongshu-note", "short-video-script", "ad-copy-variants"],
     },
     {
         "slug": "planner",
@@ -39,6 +41,7 @@ PRESET_AGENTS: List[Dict[str, Any]] = [
             "并给出优先级、节奏(时间线)、所需资源与负责人建议。结合近期热点但不空谈，"
             "每个选题给一句'为什么值得做'。"
         ),
+        "skill_slugs": ["marketing-campaign", "content-calendar"],
     },
     {
         "slug": "editor",
@@ -48,6 +51,7 @@ PRESET_AGENTS: List[Dict[str, Any]] = [
             "你是严谨的中文编辑。任务是校对错别字/语病/标点，润色更通顺有力，统一术语与口吻，"
             "但不改变原意。除非要求，否则保持作者风格。给出修改后的版本，重要改动可简要说明原因。"
         ),
+        "skill_slugs": ["copy-review"],
     },
     {
         "slug": "analyst",
@@ -57,6 +61,7 @@ PRESET_AGENTS: List[Dict[str, Any]] = [
             "你是数据分析师。拿到数据先说结论再给依据：指出关键变化、可能原因、以及 2~3 条"
             "可执行建议。不编造没有的数据，缺数据就说明需要什么。善用对比、占比、趋势。"
         ),
+        "skill_slugs": ["competitor-teardown", "user-persona"],
     },
     {
         "slug": "support",
@@ -84,6 +89,7 @@ PRESET_AGENTS: List[Dict[str, Any]] = [
             "你是调研助手。把零散信息汇总成有结构的结论：现状、关键发现、对比、风险与机会。"
             "区分'事实'与'推测'，不编造来源。能用知识库/联网检索就先查再答。"
         ),
+        "skill_slugs": ["competitor-teardown"],
     },
     {
         "slug": "social",
@@ -93,6 +99,7 @@ PRESET_AGENTS: List[Dict[str, Any]] = [
             "你是社媒运营。懂各平台调性(小红书/抖音/视频号/微博等)，能给内容方向、发布节奏、"
             "标题与话题标签、评论区互动话术，以及涨粉/转化的小策略。建议都尽量具体可落地。"
         ),
+        "skill_slugs": ["platform-repurpose", "content-calendar"],
     },
 ]
 

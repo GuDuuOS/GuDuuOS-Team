@@ -215,8 +215,9 @@ class CosmacBot:
         self.toolbox.known_agents = lambda: {
             str(a.get("slug") or "") for a in self._global_agent_items() if a.get("slug")
         }
+        # 用 _skill_library(含预置技能):否则主 AI 组班时绑预置技能会被误报"库里没有"
         self.toolbox.known_skills = lambda: {
-            str(s.get("slug") or "") for s in self._global_skill_items() if s.get("slug")
+            str(s.get("slug") or "") for s in self._skill_library() if s.get("slug")
         }
         self.agent = Agent(
             llm=self.llm,
@@ -1038,12 +1039,39 @@ class CosmacBot:
             logger.debug("查找全局智能体失败（忽略）：%s", e)
             return None  # 当作没找到
 
+    def _skill_library(self) -> List[Dict[str, Any]]:
+        """全部**可绑定**技能(启用的)= 内置预置技能库打底 + 控制室配置覆盖/追加。
+
+        与 _global_skill_items 的区别(关键):
+          · _global_skill_items(只读控制室)= **每轮全局注入**的技能,数量受 6000 字符预算约束,
+            所以预置技能**不进这里**,免得撑爆上下文;
+          · _skill_library(预置 + 控制室)= **供 Agent 绑定解析**的全集——预置技能靠对应预置
+            Agent 绑定、被 @/指派时才随该 Agent 激活(_agent_skill_items),平时零注入。
+        合并规则同 _global_agent_items:预置打底,控制室**同 slug 覆盖**、新 slug 追加。
+        """
+        from cosmac.ai.preset_skills import preset_skills
+
+        merged: Dict[str, Dict[str, Any]] = {s["slug"]: s for s in preset_skills()}
+        try:
+            ctrl = self.client.resolve_alias(self.config.control_room_alias)
+            if ctrl:
+                ev = self.client.get_state_event(ctrl, SKILLS_EVENT_TYPE) or {}
+                for s in (ev.get("skills") or []):
+                    if isinstance(s, dict) and s.get("slug"):
+                        merged[str(s["slug"])] = s
+        except Exception as e:
+            logger.debug("读取控制室技能失败(仅用预置技能库):%s", e)
+        return [s for s in merged.values() if s.get("enabled", True)]
+
     def _agent_skill_items(self, slugs: List[str]) -> List[Dict[str, Any]]:
-        """把「智能体绑定的技能 slug」解析成技能字典——取启用的全局技能里 slug 命中的。"""
+        """把「智能体绑定的技能 slug」解析成技能字典——从**技能库**(预置+控制室)里 slug 命中的启用项。
+
+        用 _skill_library 而非 _global_skill_items:让预置技能(不进全局注入)也能被 Agent 绑定激活。
+        """
         if not slugs:
             return []
         want = set(slugs)
-        return [s for s in self._global_skill_items() if str(s.get("slug")) in want]
+        return [s for s in self._skill_library() if str(s.get("slug")) in want]
 
     def _global_agent_items(self, for_user: str = "") -> List[Dict[str, Any]]:
         """全局智能体列表（启用的）= **内置预置库打底 + 控制室配置覆盖/追加**。给能力名册/绑群用。
