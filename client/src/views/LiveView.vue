@@ -336,6 +336,14 @@ watch(aiMax, async (v) => {
 
 // 中枢 AI 对话区：来新消息 / 打开面板时自动滚到底部（否则 bot 回复在视口下方看不到）
 const aiBodyRef = ref<HTMLElement | null>(null)
+// ── AI 面板作用域提示条:可关闭,localStorage 记住,不每次都弹 ──
+const AI_SCOPE_TIP_KEY = 'cosmac_ai_scope_tip_dismissed'
+const aiScopeTipDismissed = ref(localStorage.getItem(AI_SCOPE_TIP_KEY) === '1')
+function dismissAiScopeTip() {
+  aiScopeTipDismissed.value = true
+  try { localStorage.setItem(AI_SCOPE_TIP_KEY, '1') } catch { /* 隐私模式写不进也无妨 */ }
+}
+
 // ── 主区消息流滚动:进频道停在底部最新消息(QA:此前打开频道停在顶部历史) ──
 const streamRef = ref<HTMLElement | null>(null)
 function scrollStreamToBottom(force = false) {
@@ -2045,11 +2053,7 @@ onBeforeUnmount(() => {
         <!-- 顶栏（放大态作为弹窗标题栏，横跨三栏）-->
         <div class="ai-head">
           <span class="ai-dot" />
-          <div class="ai-title-wrap">
-            <span class="ai-title">中枢 AI · CosMac Star</span><span class="ai-dm-badge" title="这是你与中枢 AI 的一对一私人会话，内容仅你们可见；邀请成员请到目标频道里 @AI 操作">私人会话</span>
-            <!-- 消除误解(QA:切频道后面板内容"都一样"):这是全局助理,不属于任何频道 -->
-            <span class="ai-scope-hint">全局助理 · 跨频道统筹｜要找本频道的 AI，请在频道消息框里 @ 它</span>
-          </div>
+          <span class="ai-title">中枢 AI · CosMac Star</span><span class="ai-dm-badge" title="这是你与中枢 AI 的一对一私人会话，内容仅你们可见；邀请成员请到目标频道里 @AI 操作">私人会话</span>
           <div class="ai-head-actions">
             <!-- 放大 / 还原 -->
             <button class="ai-ic-btn" :title="aiMax ? '还原' : '放大'" @click="aiMax = !aiMax">
@@ -2115,6 +2119,11 @@ onBeforeUnmount(() => {
               <p v-if="!aiMsgs.length && !botTyping" class="hint pad">跟中枢 AI 说句话，比如"帮我建个爆款专班"</p>
             </div>
             <div class="ai-composer">
+              <!-- 作用域提示条(可关闭,关闭后记住):消除"每个频道打开面板内容都一样=数据未隔离"的误解 -->
+              <div v-if="!aiScopeTipDismissed" class="ai-scope-tip">
+                <span>💡 这里是<b>全局助理</b>·跨频道统筹，内容不随频道切换；要找<b>本频道的 AI</b>，请在频道消息框里 @ 它</span>
+                <button class="ai-scope-tip-x" title="知道了，不再提示" @click="dismissAiScopeTip">×</button>
+              </div>
               <div class="ai-input-box">
                 <input v-model="aiDraft" placeholder="一句话下达目标…" @keyup.enter="aiSend" />
                 <div class="ai-toolbar">
@@ -2987,9 +2996,10 @@ onBeforeUnmount(() => {
 .ai-head { height: 50px; flex-shrink: 0; padding: 0 14px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border-soft); }
 .ai-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px rgba(22,163,74,.16); flex-shrink: 0; }
 .ai-title { font-family: var(--font-heading); font-size: var(--fs-200); line-height: var(--lh-200); font-weight: var(--fw-bold); color: var(--text); }
-/* 标题两行排布:第一行 名称+「私人会话」badge,第二行 作用域提示(全局助理,非本频道 AI) */
-.ai-title-wrap { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; }
-.ai-scope-hint { flex-basis: 100%; font-size: 10px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+/* 输入框上方的作用域提示条(可关闭,关闭后记住):全局助理≠本频道 AI */
+.ai-scope-tip { display: flex; align-items: center; gap: 6px; margin: 0 12px 6px; padding: 6px 10px; border-radius: 8px; background: var(--bg-soft); border: 1px solid var(--border); font-size: 11px; color: var(--text-3); line-height: 1.4; }
+.ai-scope-tip-x { margin-left: auto; flex-shrink: 0; border: none; background: transparent; color: var(--text-3); font-size: 14px; cursor: pointer; padding: 0 2px; border-radius: 4px; }
+.ai-scope-tip-x:hover { color: var(--text); background: var(--bg-hover); }
 .ai-head-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .ai-ic-btn { width: 30px; height: 30px; background: transparent; border: none; color: var(--text-3); border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 .ai-ic-btn:hover { background: var(--bg-hover); color: var(--text); }
