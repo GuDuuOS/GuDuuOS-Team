@@ -336,6 +336,20 @@ watch(aiMax, async (v) => {
 
 // 中枢 AI 对话区：来新消息 / 打开面板时自动滚到底部（否则 bot 回复在视口下方看不到）
 const aiBodyRef = ref<HTMLElement | null>(null)
+// ── 主区消息流滚动:进频道停在底部最新消息(QA:此前打开频道停在顶部历史) ──
+const streamRef = ref<HTMLElement | null>(null)
+function scrollStreamToBottom(force = false) {
+  const el = streamRef.value
+  if (!el) return
+  // 非强制时只在"本就贴近底部"才跟随——用户上翻看历史时,sync 刷新/新消息不把 TA 拽回底部
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+  if (force || nearBottom) el.scrollTop = el.scrollHeight
+}
+// msgs 每次 sync 整体替换(引用变化即触发):贴底则跟随新消息
+watch(msgs, () => nextTick(() => scrollStreamToBottom()))
+// 切换频道:强制滚到底(等 DOM 渲染完这一帧)
+watch(currentRoom, (id) => { if (id) nextTick(() => scrollStreamToBottom(true)) })
+
 function scrollAiToBottom() {
   const el = aiBodyRef.value
   if (el) el.scrollTop = el.scrollHeight
@@ -1892,7 +1906,7 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- 消息流（Discord 风：分组 / 日期线 / 回复 / 反应 / 悬停工具条）-->
-        <div class="stream">
+        <div class="stream" ref="streamRef">
           <template v-for="m in groupedMsgs" :key="m.id">
           <!-- 日期分隔线 -->
           <div v-if="m.showDay" class="day-sep"><span>{{ dayLabel(m.ts) }}</span></div>
