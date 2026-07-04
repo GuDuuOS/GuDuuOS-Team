@@ -52,6 +52,7 @@ from cosmac.members import (
     gate_rank,
     is_valid_tier,
     tier_label,
+    tier_level,
 )
 from cosmac.skills_text import render_skills  # 纯渲染、不依赖 DB
 
@@ -237,6 +238,8 @@ class CosmacBot:
         # 「AI 会话房」判定缓存(room_id → 是否带 cosmac.ai_session 标记;标记不变,永久缓存)
         self._ai_session_room_cache: Dict[str, bool] = {}
         self._named_channel_cache: Dict[str, bool] = {}  # 房间是否"实名频道"(私聊/群聊判定用)
+        # 用户→入驻模板缓存(资源「可用范围」判定用;5 分钟 TTL,引导完成后很快生效)
+        self._user_template_cache: Dict[str, Tuple[str, float]] = {}
         # SDK 引擎回退告警的节流时间戳(1小时最多向控制室发一条,防刷屏)
         self._engine_alert_ts: float = 0.0        # 上次读到的配置覆盖
         # 上次读取时间（缓存 20s，别每条消息都打服务器）。
@@ -673,7 +676,9 @@ class CosmacBot:
             ) if task_rule else ""
             agent_slugs = gctx.get("skill_slugs", [])
             items = (
-                self._global_skill_items()
+                # 全局技能按发起人的「可用范围」过滤(资源级权限:等级/模板/仅管理员);
+                # 群绑定的(_agent_skill_items)不过滤——绑定是管理员显式配置,即授权。
+                self._global_skill_items(for_user=sender)
                 + self._db_skill_items(room_id, sender)
                 + self._agent_skill_items(agent_slugs)
             )
@@ -1040,11 +1045,13 @@ class CosmacBot:
         want = set(slugs)
         return [s for s in self._global_skill_items() if str(s.get("slug")) in want]
 
-    def _global_agent_items(self) -> List[Dict[str, Any]]:
+    def _global_agent_items(self, for_user: str = "") -> List[Dict[str, Any]]:
         """全局智能体列表（启用的）= **内置预置库打底 + 控制室配置覆盖/追加**。给能力名册/绑群用。
 
         内置预置 Agent（presets.preset_agents）让零配置租户也有一队"AI 同事"可派/可 @；管理员在
         后台配的同 slug 覆盖预置、新 slug 追加、把 enabled 设 false 可停用某个（含覆盖掉预置的）。
+        for_user 非空时按资源「可用范围」(access 字段)过滤——能力名册等"以发起人身份看资源"
+        的场景传它;绑群解析等"管理员显式配置"的场景不传(绑定即授权)。
         """
         from cosmac.ai.presets import preset_agents
 
@@ -1060,7 +1067,60 @@ class CosmacBot:
                         merged[str(a["slug"])] = a
         except Exception as e:
             logger.debug("读取全局智能体列表失败（仅用预置）：%s", e)
-        return [a for a in merged.values() if a.get("enabled", True)]
+        out = [a for a in merged.values() if a.get("enabled", True)]
+        if for_user:
+            out = [a for a in out if self._resource_visible(a, for_user)]
+        return out
+
+    def _user_template(self, user_id: str) -> str:
+        """查某用户注册引导时选的入驻模板 slug(资源「指定模板可用」据此判定)。
+
+        读 cosmac DB(引导完成时 /cosmac/onboarding/select 端点写入);带 5 分钟缓存——
+        名册/技能注入每条消息都要判,不能每次打 DB。没选过/无 DB 返回空串。
+        """
+        now = time.monotonic()
+        cached = self._user_template_cache.get(user_id)
+        if cached and now - cached[1] < 300:
+            return cached[0]
+        slug = ""
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.user_template_repo import get_user_template
+
+            with session_scope() as s:
+                slug = get_user_template(s, user_id) or ""
+        except Exception:
+            logger.debug("读取用户模板失败（忽略）", exc_info=True)
+        self._user_template_cache[user_id] = (slug, now)
+        if len(self._user_template_cache) > 5000:
+            self._user_template_cache.clear()
+        return slug
+
+    def _resource_visible(self, item: Dict[str, Any], user_id: str) -> bool:
+        """按资源的「可用范围」(access 字段)判定 user_id 是否可用该技能/智能体。
+
+        access 取值(后台「可用范围」下拉写入):
+          ''/缺省/'public' = 所有人;'paid'/'creator' = 该会员等级及以上;
+          'admin' = 仅平台管理员;'tpl:slugA,slugB' = 仅选了这些入驻模板的用户。
+        平台管理员永远可用(与功能门控同一原则);判定出错按可见处理(保守方向=不误伤功能)。
+        """
+        try:
+            access = str(item.get("access") or "").strip()
+            if not access or access == "public":
+                return True
+            if self._is_platform_admin(user_id):
+                return True
+            if access == "admin":
+                return False
+            if access.startswith("tpl:"):
+                slugs = {t.strip() for t in access[4:].split(",") if t.strip()}
+                return self._user_template(user_id) in slugs
+            if is_valid_tier(access):
+                return tier_level(self.members.get_tier(user_id)) >= tier_level(access)
+            return True  # 未知取值当所有人(容错:后台写坏一个值不至于全员失效)
+        except Exception:
+            logger.debug("资源可用范围判定失败（按可见处理）", exc_info=True)
+            return True
 
     def _people_items(self) -> List[Dict[str, Any]]:
         """读控制室「人员能力名册」(cosmac.people)，返回启用的人员画像列表（失败空）。
@@ -1138,9 +1198,9 @@ class CosmacBot:
                 )
                 head = uid + (f"（{name}）" if name else "")
                 lines.append(f"{head} {meta}".rstrip())
-        # — AI Agent —
+        # — AI Agent —（按发起人的「可用范围」过滤:名册里看不到=主AI 不会派给 TA 用）
         try:
-            agents = self._global_agent_items()
+            agents = self._global_agent_items(for_user=ctx.sender)
         except Exception:
             agents = []
         if agents:
@@ -1156,9 +1216,9 @@ class CosmacBot:
                 if skills:
                     seg += f"（技能:{','.join(str(s) for s in skills)}）"
                 lines.append(seg)
-        # — Skill —
+        # — Skill —（同 Agent:按发起人「可用范围」过滤）
         try:
-            skills_items = self._global_skill_items()
+            skills_items = self._global_skill_items(for_user=ctx.sender)
         except Exception:
             skills_items = []
         if skills_items:
@@ -1205,18 +1265,25 @@ class CosmacBot:
         except Exception:
             return []
 
-    def _global_skill_items(self) -> List[Dict[str, Any]]:
-        """读控制室「全局技能」state event，返回启用的技能字典列表（失败返回空）。"""
+    def _global_skill_items(self, for_user: str = "") -> List[Dict[str, Any]]:
+        """读控制室「全局技能」state event，返回启用的技能字典列表（失败返回空）。
+
+        for_user 非空时按「可用范围」(access)过滤——注入对话/能力名册等"以发起人身份用资源"
+        的场景传它;资源存在性校验(known_skills)、绑定解析等配置场景不传(全量)。
+        """
         try:
             ctrl = self.client.resolve_alias(self.config.control_room_alias)
             if not ctrl:
                 return []
             ev = self.client.get_state_event(ctrl, SKILLS_EVENT_TYPE) or {}
             skills = ev.get("skills") or []
-            return [
+            out = [
                 s for s in skills
                 if isinstance(s, dict) and s.get("enabled", True)
             ]
+            if for_user:
+                out = [s for s in out if self._resource_visible(s, for_user)]
+            return out
         except Exception as e:
             logger.debug("读取全局技能失败（忽略）：%s", e)
             return []
@@ -2656,6 +2723,32 @@ class CosmacBot:
 
     # —— 个人协作人能力名册（模块3.5：普通用户在前台维护，按 owner=本人 隔离）——
 
+    def handle_onboarding_select(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """记录本人注册引导选择的入驻模板(user→template 映射,资源「可用范围」判定用)。
+
+        需登录;只能写**自己的**映射(user_id 从 token 反查,body 里不收用户名——防替别人改)。
+        幂等:重复上报/换模板就地覆盖。失败不阻断引导流程(前端 best-effort 调用)。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        slug = str((body or {}).get("template") or "").strip()
+        if not slug or len(slug) > 128:
+            return 400, {"error": "模板标识无效"}
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.user_template_repo import set_user_template
+
+            with session_scope() as s:
+                set_user_template(s, user_id=user_id, template_slug=slug)
+            self._user_template_cache.pop(user_id, None)  # 立即生效,不等缓存过期
+            return 200, {"ok": True}
+        except Exception:
+            logger.exception("记录用户入驻模板失败")
+            return 500, {"error": "记录失败"}
+
     def handle_people_list_mine(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """列本人维护的协作人能力名册。需登录。
 
@@ -3391,6 +3484,7 @@ class _Handler(BaseHTTPRequestHandler):
                 or p.startswith("/cosmac/reset/")
                 or p.startswith("/cosmac/login/")
                 or p.startswith("/cosmac/onboard/")
+                or p.startswith("/cosmac/onboarding/")
                 or p.startswith("/cosmac/kb/")
                 or p.startswith("/cosmac/people/")
                 or p.startswith("/cosmac/profile/")
@@ -3760,6 +3854,18 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "请求无效"}, cors=True)
                 return
             code, payload = self.bot.handle_kb_delete(token, body)
+            self._send_json(code, payload, cors=True)
+            return
+
+        # 注册引导:记录本人选的入驻模板(资源「可用范围」的 tpl: 判定据此生效)。
+        if path == "/cosmac/onboarding/select":
+            auth = self.headers.get("Authorization", "")
+            token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_onboarding_select(token, body)
             self._send_json(code, payload, cors=True)
             return
 

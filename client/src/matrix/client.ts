@@ -731,6 +731,20 @@ export async function setOnboarded(done = true): Promise<void> {
   await (mx as any).setAccountData(ONBOARDING_ACCOUNT_DATA, { done, ts: Date.now() })
 }
 
+/** 把本人引导时选的入驻模板上报给 bot(记进 cosmac DB)——资源级权限「指定模板可用」
+ *  据此判定。best-effort:失败不阻断引导(最多该用户暂时用不上模板专属资源)。 */
+export async function reportOnboardingTemplate(templateSlug: string): Promise<void> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token || !templateSlug) return
+  try {
+    await fetch(`${payBase()}/cosmac/onboarding/select`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ template: templateSlug }),
+    })
+  } catch { /* 静默:引导主流程不受影响 */ }
+}
+
 /** 在某工作区(Space)下真建一个频道：建房间 + 邀请主 AI + 挂到 Space 下。返回 room_id。 */
 export async function createChannelInSpace(
   spaceId: string,
@@ -1799,6 +1813,9 @@ export interface GlobalSkill {
   description: string
   instructions: string
   enabled: boolean
+  /** 可用范围(资源级权限,bot 服务端强制):''=所有人;paid/creator=该会员等级及以上;
+   *  admin=仅平台管理员;'tpl:slugA,slugB'=仅选了这些入驻模板的用户。 */
+  access?: string
 }
 
 /** 读全局技能列表（控制室 state event）；房间/事件不存在时返回 []。 */
@@ -1815,6 +1832,7 @@ export async function getGlobalSkills(): Promise<GlobalSkill[]> {
       description: String(s?.description || ''),
       instructions: String(s?.instructions || ''),
       enabled: s?.enabled !== false, // 缺省视为启用
+      access: String(s?.access || ''),
     })).filter((s: GlobalSkill) => s.slug)
   } catch (e: any) {
     // 事件不存在(404)=还没写过技能 → []（合法）。瞬时读失败必须抛——否则上层会在空列表上
@@ -1855,6 +1873,7 @@ export async function setGlobalSkills(skills: GlobalSkill[]): Promise<void> {
       description: String(s.description ?? '').trim(),
       instructions,
       enabled: s.enabled !== false,
+      access: String(s.access ?? '').trim().slice(0, 256),
     }
   })
   const rid = await ensureControlRoom()
@@ -1870,6 +1889,8 @@ export interface GlobalAgent {
   model: string
   skill_slugs: string[]
   enabled: boolean
+  /** 可用范围(同 GlobalSkill.access):''=所有人;paid/creator=等级及以上;admin;tpl:slug列表。 */
+  access?: string
 }
 
 /** 读全局智能体列表（控制室 state event）；房间/事件不存在时返回 []。 */
@@ -1888,6 +1909,7 @@ export async function getGlobalAgents(): Promise<GlobalAgent[]> {
       model: String(a?.model || ''),
       skill_slugs: Array.isArray(a?.skill_slugs) ? a.skill_slugs.map(String) : [],
       enabled: a?.enabled !== false,
+      access: String(a?.access || ''),
     })).filter((a: GlobalAgent) => a.slug)
   } catch (e: any) {
     // 同 getGlobalSkills：404=未配置→[]；瞬时失败抛，防空列表覆盖真实智能体。

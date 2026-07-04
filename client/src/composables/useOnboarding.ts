@@ -1,6 +1,6 @@
 import { ref, reactive } from 'vue'
 import {
-  isOnboarded, setOnboarded,
+  isOnboarded, setOnboarded, reportOnboardingTemplate,
   createSpace, createChannelInSpace, setChannelConfig, onboardIngestKb,
   getOnboardingTemplates, type OnboardingTemplateDef,
   payGetMe, MEMBER_TIERS, memberTierLabel,
@@ -265,8 +265,11 @@ export function useOnboarding() {
         if (answers.kbDocs.length) {
           try { await onboardIngestKb(answers.kbDocs) } catch { /* 忽略 */ }
         }
-        // 5) 标记已引导
+        // 5) 标记已引导 + 上报所选模板给 bot(资源级权限「指定模板可用」据此判定)
         try { await setOnboarded(true) } catch { /* 标记失败也无妨，下次最多再问一次 */ }
+        if (answers.templateKey) {
+          try { await reportOnboardingTemplate(answers.templateKey) } catch { /* best-effort */ }
+        }
         step.value = 'done'
         // 如实反馈：用户要了 N 个频道但一个都没建成时，别假装"搭好了"。工作区已建好(sid 有效)，
         // 故仍进入工作区，只是把频道没建上的实情说清楚，引导用户进去手动补。

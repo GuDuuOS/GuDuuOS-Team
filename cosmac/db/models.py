@@ -512,3 +512,25 @@ class UserProfile(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<UserProfile {self.user_id}>"
+
+
+class UserTemplate(Base, TimestampMixin):
+    """「用户 ↔ 入驻模板」映射:注册引导选了哪个模板(cosmac.onboarding_templates 的 slug)。
+
+    资源级权限(技能/智能体的「可用范围」)据此判定"指定模板可用"的资源对谁开放。
+    引导完成时由 bot 端点写入(前端对控制室无写权限,account data bot 又读不到,故落 DB)。
+    一个用户一条;换模板(将来支持的话)就地覆盖。
+    """
+
+    __tablename__ = "cosmac_user_template"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # 账号（@user:domain），唯一——一个用户一条
+    user_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, unique=True, index=True
+    )
+    # 入驻模板 slug（cosmac.onboarding_templates 里的 key）
+    template_slug: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+
+    def __repr__(self) -> str:
+        return f"<UserTemplate {self.user_id} -> {self.template_slug}>"

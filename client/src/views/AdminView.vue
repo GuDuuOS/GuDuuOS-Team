@@ -372,6 +372,24 @@
               <span>技能正文（喂给主 AI 的提示/步骤）</span>
               <textarea v-model="skForm.instructions" rows="5" placeholder="按…步骤生成…" />
             </label>
+            <label class="adm-field">
+              <span>可用范围（谁能使用此技能；平台管理员始终可用，服务端强制）</span>
+              <select v-model="skAccessKind" class="adm-fsel">
+                <option value="">所有人</option>
+                <option value="paid">付费会员及以上</option>
+                <option value="creator">创作者及以上</option>
+                <option value="admin">仅平台管理员</option>
+                <option value="tpl">指定入驻模板</option>
+              </select>
+            </label>
+            <div v-if="skAccessKind === 'tpl'" class="adm-field">
+              <span>可用的入驻模板（选这些模板注册的用户可用）</span>
+              <label v-for="t in templates" :key="t.key" class="adm-tool">
+                <input type="checkbox" :checked="skAccessTpls.includes(t.key)" @change="toggleAccessTpl(skAccessTpls, t.key)" />
+                <span class="adm-tool-l">{{ t.icon }} {{ t.label || t.key }}</span>
+              </label>
+              <p v-if="!templates.length" class="adm-hint">还没有入驻模板——先到「入驻模板」页创建，再回来指定。</p>
+            </div>
             <label class="adm-tool">
               <input type="checkbox" v-model="skForm.enabled" />
               <span class="adm-tool-l">启用</span>
@@ -388,13 +406,14 @@
           <p v-if="!skills.length" class="adm-hint">还没有全局技能。点右上「新建技能」加一个。</p>
           <table v-else class="adm-table">
             <thead>
-              <tr><th>标识</th><th>名称</th><th>说明</th><th>状态</th><th>操作</th></tr>
+              <tr><th>标识</th><th>名称</th><th>说明</th><th>可用范围</th><th>状态</th><th>操作</th></tr>
             </thead>
             <tbody>
               <tr v-for="s in skFiltered" :key="s.slug">
                 <td class="adm-nowrap"><code>{{ s.slug }}</code></td>
                 <td class="adm-nowrap">{{ s.name || '—' }}</td>
                 <td class="adm-skill-desc">{{ s.description || '—' }}</td>
+                <td class="adm-nowrap">{{ accessLabel(s.access) }}</td>
                 <td>
                   <span class="adm-badge" :class="{ on: s.enabled }">{{ s.enabled ? '启用' : '停用' }}</span>
                 </td>
@@ -468,6 +487,24 @@
                 </label>
               </div>
             </div>
+            <label class="adm-field">
+              <span>可用范围（谁能使用此智能体；平台管理员始终可用，服务端强制）</span>
+              <select v-model="agAccessKind" class="adm-fsel">
+                <option value="">所有人</option>
+                <option value="paid">付费会员及以上</option>
+                <option value="creator">创作者及以上</option>
+                <option value="admin">仅平台管理员</option>
+                <option value="tpl">指定入驻模板</option>
+              </select>
+            </label>
+            <div v-if="agAccessKind === 'tpl'" class="adm-field">
+              <span>可用的入驻模板（选这些模板注册的用户可用）</span>
+              <label v-for="t in templates" :key="t.key" class="adm-tool">
+                <input type="checkbox" :checked="agAccessTpls.includes(t.key)" @change="toggleAccessTpl(agAccessTpls, t.key)" />
+                <span class="adm-tool-l">{{ t.icon }} {{ t.label || t.key }}</span>
+              </label>
+              <p v-if="!templates.length" class="adm-hint">还没有入驻模板——先到「入驻模板」页创建，再回来指定。</p>
+            </div>
             <label class="adm-tool">
               <input type="checkbox" v-model="agForm.enabled" />
               <span class="adm-tool-l">启用</span>
@@ -484,7 +521,7 @@
           <p v-if="!agents.length" class="adm-hint">还没有智能体。点右上「新建智能体」加一个。</p>
           <table v-else class="adm-table">
             <thead>
-              <tr><th>标识</th><th>名称</th><th>模型</th><th>技能</th><th>状态</th><th>操作</th></tr>
+              <tr><th>标识</th><th>名称</th><th>模型</th><th>技能</th><th>可用范围</th><th>状态</th><th>操作</th></tr>
             </thead>
             <tbody>
               <tr v-for="a in agFiltered" :key="a.slug">
@@ -492,6 +529,7 @@
                 <td>{{ a.name || '—' }}</td>
                 <td>{{ a.model || '默认' }}</td>
                 <td class="adm-skill-desc">{{ a.skill_slugs.length ? a.skill_slugs.join('、') : '—' }}</td>
+                <td class="adm-nowrap">{{ accessLabel(a.access) }}</td>
                 <td><span class="adm-badge" :class="{ on: a.enabled }">{{ a.enabled ? '启用' : '停用' }}</span></td>
                 <td class="adm-row-actions">
                   <button class="adm-btn ghost sm" :disabled="agSaving" @click="startEditAgent(a)">编辑</button>
@@ -1686,15 +1724,54 @@ async function loadSkills() {
   }
 }
 
+/* —— 资源「可用范围」(access)：技能/智能体共用的解析/构造/展示 ——
+ * 取值：''=所有人；paid/creator=该会员等级及以上；admin=仅平台管理员；
+ * 'tpl:keyA,keyB'=仅选了这些入驻模板注册的用户。bot 服务端按此强制过滤（注入/名册）。 */
+function parseAccess(a?: string): { kind: string; tpls: string[] } {
+  const v = String(a || '').trim()
+  if (!v || v === 'public') return { kind: '', tpls: [] }
+  if (v.startsWith('tpl:')) return { kind: 'tpl', tpls: v.slice(4).split(',').filter(Boolean) }
+  return { kind: v, tpls: [] }
+}
+function buildAccess(kind: string, tpls: string[]): string {
+  if (kind === 'tpl') return tpls.length ? 'tpl:' + tpls.join(',') : ''
+  return kind
+}
+function accessLabel(a?: string): string {
+  const { kind, tpls } = parseAccess(a)
+  if (!kind) return '所有人'
+  if (kind === 'paid') return '付费+'
+  if (kind === 'creator') return '创作者+'
+  if (kind === 'admin') return '仅管理员'
+  if (kind === 'tpl') return '模板 ' + (tpls.join('、') || '—')
+  return kind
+}
+function toggleAccessTpl(list: string[], key: string) {
+  const i = list.indexOf(key)
+  if (i >= 0) list.splice(i, 1)
+  else list.push(key)
+}
+const skAccessKind = ref('')
+const skAccessTpls = ref<string[]>([])
+const agAccessKind = ref('')
+const agAccessTpls = ref<string[]>([])
+
 function startAddSkill() {
   Object.assign(skForm, {
     slug: '', name: '', description: '', instructions: '', enabled: true, _isEdit: false,
   })
+  skAccessKind.value = ''
+  skAccessTpls.value = []
+  if (!tpLoaded.value) loadTemplates()  // 「指定模板」选项需要模板列表
   skEditing.value = true
 }
 
 function startEditSkill(s: GlobalSkill) {
   Object.assign(skForm, { ...s, _isEdit: true })
+  const p = parseAccess(s.access)
+  skAccessKind.value = p.kind
+  skAccessTpls.value = p.tpls
+  if (!tpLoaded.value) loadTemplates()
   skEditing.value = true
 }
 
@@ -1727,6 +1804,7 @@ async function saveSkill() {
     description: skForm.description.trim(),
     instructions: skForm.instructions,
     enabled: skForm.enabled,
+    access: buildAccess(skAccessKind.value, skAccessTpls.value),
   }
   // 已有同 slug → 覆盖；否则追加
   const next = skills.value.slice()
@@ -1786,11 +1864,18 @@ function startAddAgent() {
     slug: '', name: '', description: '', system_prompt: '', model: '',
     skill_slugs: [], enabled: true, _isEdit: false,
   })
+  agAccessKind.value = ''
+  agAccessTpls.value = []
+  if (!tpLoaded.value) loadTemplates()  // 「指定模板」选项需要模板列表
   agEditing.value = true
 }
 
 function startEditAgent(a: GlobalAgent) {
   Object.assign(agForm, { ...a, skill_slugs: [...a.skill_slugs], _isEdit: true })
+  const p = parseAccess(a.access)
+  agAccessKind.value = p.kind
+  agAccessTpls.value = p.tpls
+  if (!tpLoaded.value) loadTemplates()
   agEditing.value = true
 }
 
@@ -1829,6 +1914,7 @@ async function saveAgent() {
     model: agForm.model.trim(),
     skill_slugs: [...agForm.skill_slugs],
     enabled: agForm.enabled,
+    access: buildAccess(agAccessKind.value, agAccessTpls.value),
   }
   const next = agents.value.slice()
   const i = next.findIndex((a) => a.slug === slug)
