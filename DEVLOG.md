@@ -7,6 +7,13 @@
 
 ---
 
+## 2026-07-05 — 修:私信头部名字/头像空白 + 新增 ARCHITECTURE.md
+- QA: 私信窗口顶部只有空头像方块,对方名字没显示。根因: currentName 只从 rooms(频道列表)
+  找,而私信房被排除出频道列表、在 dms 里 → 找不到 → 空。修: currentName 回退从 dms 取对方名。
+- 新增 ARCHITECTURE.md(项目根): 给人读的架构地图,14 章(定位/三层架构/目录/AI引擎/存储分层/
+  双层作用域/资源分层/组班流程/变现权限/auth/前端/部署/路线图/约束速查)。与 CLAUDE.md/DEVLOG 分工。
+- **部署: 仅前端 dist(ARCHITECTURE.md 纯文档无需部署)。**
+
 ## 2026-07-04 — feat:平台共享知识库(阶段2:后台上传管理)
 - 阶段1 已通检索地基(绑 'platform' 即可搜);阶段2 补后台维护。
 - 后端:平台库存 SCOPE_GLOBAL + 固定作用域 _PLATFORM_KB_SCOPE;三端点

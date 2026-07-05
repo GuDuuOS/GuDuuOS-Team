@@ -423,9 +423,13 @@ const focused = ref(false)
 const fav = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
 
-const currentName = computed(
-  () => rooms.value.find((r) => r.id === currentRoom.value)?.name || '',
-)
+const currentName = computed(() => {
+  const inRooms = rooms.value.find((r) => r.id === currentRoom.value)?.name
+  if (inRooms) return inRooms
+  // 私信房不在频道列表(rooms)里,而在 dms 里——否则私信头部名字/头像取不到(QA:顶部空白)
+  const dm = dms.value.find((d) => d.id === currentRoom.value)
+  return dm?.name || ''
+})
 const currentTopic = computed(
   () => rooms.value.find((r) => r.id === currentRoom.value)?.topic || '',
 )
