@@ -46,7 +46,7 @@
           <form class="onb-row" @submit.prevent="onAddChan">
             <input v-model="chanInput" class="onb-input" placeholder="再加一个频道，回车添加" />
             <button class="onb-add" :disabled="!chanInput.trim()" type="submit">＋ 加</button>
-            <button class="onb-send" type="button" @click="confirmChannels">下一步 →</button>
+            <button class="onb-send" type="button" @click="onConfirmChannels">下一步 →</button>
           </form>
         </div>
 
@@ -104,6 +104,11 @@ const aiPersonaInput = ref('')
 function pickTemplate(key: string) { pick(key) }
 function onName() { submitName(nameInput.value); nameInput.value = '' }
 function onAddChan() { addChannel(chanInput.value); chanInput.value = '' }
+// "下一步"前先把输入框里没点"＋加"的残留频道补进去(QA:手动输了频道名没点加就下一步→丢失)
+function onConfirmChannels() {
+  if (chanInput.value.trim()) { addChannel(chanInput.value); chanInput.value = '' }
+  confirmChannels()
+}
 
 // 进入 persona 步时把模板预填的 AI 名/人设带进输入框
 watch(step, (s) => {
