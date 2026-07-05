@@ -48,6 +48,7 @@ import {
   listDirectMessages,
   isDirectRoom,
   acceptRoomInvite,
+  markRoomRead,
   joinSpaceByLink,
   listChannelMembers,
   myPowerIn,
@@ -269,7 +270,7 @@ const aiSessions = ref<AiSession[]>([])
 function refreshAiSessions() { aiSessions.value = listAiSessions() }
 
 // ── 真人私信(DM):渲染在侧栏"私信"区,点开在主区聊天(头部/输入框走简化私聊样式) ──
-const dms = ref<{ id: string; name: string; avatar: string; pending?: boolean; fromPeer?: boolean }[]>([])
+const dms = ref<{ id: string; name: string; avatar: string; pending?: boolean; fromPeer?: boolean; unread?: number }[]>([])
 // 新私信通知(QA:对方发起私信毫无提示,接收方不知道):首轮加载只记不弹(老私信不轰炸),
 // 之后 sync 里**新出现的、对方发起的**私信房弹一条通知;正打开着那间房的不弹。
 let dmSeeded = false
@@ -1239,9 +1240,11 @@ function openRoom(id: string) {
       if (currentRoom.value !== id) return
       msgs.value = listMessages(id)
       channelMembers.value = listRoomMembers(id)
-      refreshDms()
+      markRoomRead(id).then(refreshDms)  // 补历史后再标已读+刷未读徽章
     }, 600)
   })
+  // 打开即标记已读(发已读回执 → 清未读徽章),并刷新私信列表
+  markRoomRead(id).then(refreshDms)
 }
 // 当前打开的房是不是"真人私信":私信头部不显示 频道设置/私密角标/成员管理(那是频道的东西)
 const currentIsDm = computed(() => (currentRoom.value ? isDirectRoom(currentRoom.value) : false))
@@ -1750,11 +1753,12 @@ onBeforeUnmount(() => {
                 <span class="cs-dm-av bot">智<span class="dot-online" /></span>
                 <span class="cs-label">中枢 AI</span>
               </div>
-              <!-- 真人私信列表:点开在主区聊天 -->
-              <div v-for="d in dms" :key="d.id" class="cs-item dm-row" :class="{ active: currentRoom === d.id }" @click="openRoom(d.id)" :title="d.pending ? '新私信邀请,点开即接受' : ''">
+              <!-- 真人私信列表:点开在主区聊天;有未读时名字加粗 + 红色未读数 -->
+              <div v-for="d in dms" :key="d.id" class="cs-item dm-row" :class="{ active: currentRoom === d.id, unread: (d.unread || 0) > 0 }" @click="openRoom(d.id)" :title="d.pending ? '新私信邀请,点开即接受' : ''">
                 <span class="cs-dm-av">{{ initials(d.name) }}</span>
                 <span class="cs-label">{{ d.name }}</span>
                 <span v-if="d.pending" class="cs-dm-new">新</span>
+                <span v-else-if="(d.unread || 0) > 0" class="cs-dm-unread">{{ d.unread! > 99 ? '99+' : d.unread }}</span>
               </div>
               <div class="cs-item cs-add-row" @click="openStartDm">
                 <span class="cs-ic-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14" /></svg></span>
@@ -2562,6 +2566,9 @@ onBeforeUnmount(() => {
 .ch-vis.dm { background: #fdf1e3; color: var(--accent); border: 1px solid #f0ddc2; }
 /* 私信列表"新邀请"红标 */
 .cs-dm-new { flex-shrink: 0; font-size: 10px; font-weight: 700; color: #fff; background: #c0392b; border-radius: 999px; padding: 1px 6px; }
+/* 私信未读:红色计数徽章 + 未读行名字加粗 */
+.cs-dm-unread { flex-shrink: 0; min-width: 16px; height: 16px; padding: 0 5px; border-radius: 8px; background: #c0392b; color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
+.dm-row.unread .cs-label { font-weight: 700; color: var(--text); }
 /* AI 面板"私人会话"角标 */
 .ai-dm-badge { flex-shrink: 0; margin-left: 8px; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--bg, #f1efe9); color: var(--text-3); border: 1px solid var(--border); }
 .hint { color: var(--text-3); font-size: 12px; }

@@ -3002,12 +3002,32 @@ export async function createDirectMessage(userId: string): Promise<string> {
  * fromPeer=true 表示这间房是**对方发起**的(新私信通知据此只提醒接收方,不提醒发起方)。
  * 同一个对方若有多间房(历史重复 DM 的存量),**按对方去重**只留最近活跃的那间——
  * 否则列表出现两条同名项/点开旧空房,观感就是"对方发的消息我没收到"(QA 实测)。 */
-export function listDirectMessages(): { id: string; name: string; avatar: string; pending?: boolean; fromPeer?: boolean }[] {
+/** 自算某房未读消息数(对方发的、在我"已读位"之后的 m.room.message)。不依赖服务端 push 计数，
+ *  比 getUnreadNotificationCount 更可靠(那个要 push rules 配置正确)。读不出返回 0。 */
+function roomUnreadCount(r: any, myId: string): number {
+  try {
+    const events = r.getLiveTimeline?.()?.getEvents?.() || []
+    const readUpTo = r.getEventReadUpTo?.(myId, false) || ''
+    let count = 0
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i]
+      if (ev.getId?.() === readUpTo) break   // 到达我已读位，之前的都读过
+      if (ev.getType?.() !== 'm.room.message') continue
+      if (ev.getSender?.() === myId) continue // 自己发的不算未读
+      count++
+    }
+    return count
+  } catch {
+    return 0
+  }
+}
+
+export function listDirectMessages(): { id: string; name: string; avatar: string; pending?: boolean; fromPeer?: boolean; unread?: number }[] {
   if (!mx) return []
   const myId = (mx as any).getUserId?.() || ''
   const out: {
     id: string; name: string; avatar: string
-    pending?: boolean; fromPeer?: boolean; peerId: string; ts: number
+    pending?: boolean; fromPeer?: boolean; unread?: number; peerId: string; ts: number
   }[] = []
   for (const r of mx.getRooms()) {
     try {
@@ -3034,6 +3054,7 @@ export function listDirectMessages(): { id: string; name: string; avatar: string
         id: r.roomId, name, avatar: '',
         pending: myMembership === 'invite' || undefined,
         fromPeer: fromPeer || undefined,
+        unread: roomUnreadCount(r, myId) || undefined,
         peerId: peer?.userId || '',
         ts: r.getLastActiveTimestamp?.() || 0,
       })
@@ -3049,6 +3070,17 @@ export function listDirectMessages(): { id: string; name: string; avatar: string
     return true
   })
   return deduped.map(({ ts, peerId, ...rest }) => rest)
+}
+
+/** 打开会话时标记已读(发已读回执 → 清未读)。best-effort，失败不影响使用。 */
+export async function markRoomRead(roomId: string): Promise<void> {
+  if (!mx || !roomId) return
+  try {
+    const room = mx.getRoom(roomId)
+    const events = room?.getLiveTimeline?.()?.getEvents?.() || []
+    const last = events[events.length - 1]
+    if (last) await (mx as any).sendReadReceipt(last)
+  } catch { /* 已读回执失败不影响使用 */ }
 }
 
 /** 删除（离开并遗忘）一个主 AI 会话房。 */

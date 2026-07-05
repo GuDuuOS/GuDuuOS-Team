@@ -7,6 +7,14 @@
 
 ---
 
+## 2026-07-05 — feat:私信未读消息提醒(红色未读数徽章)
+- QA: 私信发消息后对方没有未读提醒,只能点开才看到。根因:整个应用没做未读数机制。
+- 实现: ①roomUnreadCount 自算未读(对方发的、在我已读位之后的 m.room.message;不依赖
+  服务端 push 计数,更可靠);②listDirectMessages 每项带 unread;③私信项显示红色未读数徽章
+  +名字加粗;④openRoom 发已读回执(sendReadReceipt)清未读。先做私信(用户所报),
+  roomUnreadCount 通用、以后频道可复用。
+- **部署: 仅前端 dist。**
+
 ## 2026-07-05 — 修:裸露 URL 不可点击(工作区/邀请链接显示成纯文本)
 - QA: @主AI 分享工作区链接到频道,链接是纯文本点不了,成员进不了工作区。
 - 根因: renderMd 只 linkify markdown 格式 [文字](url),裸粘贴的 https:// 不处理。
