@@ -38,6 +38,7 @@ import {
   type AiSession,
   listSpaces,
   roomIdsInSpace,
+  aiSessionRoomIds,
   createSpace,
   createChannelInSpace,
   linkRoomToSpace,
@@ -199,11 +200,22 @@ async function loadTasks() { taskList.value = await getTasks() }
 // 按当前工作区过滤任务(QA:不同工作区任务看板全一样)。口径与左侧频道列表完全一致:
 // 任务所在频道属于本工作区 → 显示;属于**别的**工作区 → 隐藏;不属于任何工作区(孤儿专班/
 // 旧任务无 room_id) → 各工作区都显示,避免"任务凭空消失"。
-const scopedTasks = computed(() => taskList.value.filter((t) => {
-  const rid = t.room_id || ''
-  if (!activeSpace.value || !rid) return true
-  return spaceChildIds.value.has(rid) || !allSpaceChildIds.value.has(rid)
-}))
+const scopedTasks = computed(() => {
+  // 精确区分孤儿任务(QA:不同工作区任务看板全一样)——旧逻辑"孤儿任务各处显示"把
+  // **孤儿专班的任务**也各处显示了,导致每个工作区看着相同。现在:
+  //   · 当前工作区频道的任务 → 显示
+  //   · AI 会话房(私人会话/全局助理拆的"全局任务",不属于任何工作区)→ 各处显示(不该消失)
+  //   · 别的工作区频道 / **孤儿专班频道**的任务 → 隐藏(把专班"归入工作区"后才在那个工作区显示,
+  //     与频道列表"未归类"组同口径)
+  const aiIds = aiSessionRoomIds()
+  return taskList.value.filter((t) => {
+    const rid = t.room_id || ''
+    if (!activeSpace.value || !rid) return true   // 没选工作区 / 无 room_id 的旧任务:兼容各处显示
+    if (spaceChildIds.value.has(rid)) return true // 当前工作区的频道任务
+    if (aiIds.has(rid)) return true               // AI 会话房的全局任务
+    return false                                   // 别的工作区 / 孤儿专班:隐藏
+  })
+})
 // 按"项目/剧集"(任务的 goal=拆解时的总目标)分组，算每个项目的完成进度
 const activeGoal = ref('')   // '' = 全部项目
 const projects = computed(() => {
