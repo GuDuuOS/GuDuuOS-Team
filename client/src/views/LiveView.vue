@@ -947,9 +947,18 @@ function renderMd(raw: string): string {
   s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
   s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
   s = s.replace(/~~([^~\n]+)~~/g, '<del>$1</del>')
-  // 链接 [文字](url)，仅允许 http/https/mailto
+  // 链接 [文字](url)，仅允许 http/https/mailto。生成的 <a> 也 stash——否则下面的"裸 URL 成链"
+  // 会把 href 里的 url 二次匹配。
   s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    (_m, text, url) => keep(`<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`))
+  // 裸露 URL 自动成链（QA:工作区/邀请链接直接粘贴时显示成纯文本、点不了）。
+  // 放在 markdown 链接之后(那些已被 stash 抠走)、@提及之前;剥掉末尾句读避免把中文句号/右括号吃进链接。
+  s = s.replace(/(https?:\/\/[^\s<]+)/g, (m) => {
+    const tail = m.match(/[.,;:!?)\]}）】。，、！？]+$/)
+    const url = tail ? m.slice(0, -tail[0].length) : m
+    const suffix = tail ? tail[0] : ''
+    return keep(`<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`) + suffix
+  })
   // @提及高亮（@用户 或 @用户:服务器）
   s = s.replace(/(^|[\s(])@([a-zA-Z0-9_.\-]+(?::[a-zA-Z0-9_.\-]+)?)/g, '$1<span class="mention">@$2</span>')
   // 换行
