@@ -161,7 +161,9 @@ class ClaudeSdkEngine:
         base_url = _env("SDK_BASE_URL")
         api_key = _env("SDK_API_KEY")
         model = _env("SDK_MODEL", "deepseek-chat")
-        max_turns = int(_env("SDK_MAX_TURNS", "8") or 8)
+        # 默认 16:组班这类多步骤任务(建群→邀人→派单→设RULE→发消息…)一条消息内工具调用
+        # 轻松超 8 轮。太小会频繁"达上限"回退 legacy;太大则复杂任务跑更久更费 token。16 折中。
+        max_turns = int(_env("SDK_MAX_TURNS", "16") or 16)
 
         env = {"HOME": _SDK_HOME}
         if base_url:

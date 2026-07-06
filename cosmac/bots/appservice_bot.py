@@ -1028,7 +1028,10 @@ class CosmacBot:
                 logger.exception("Claude SDK 引擎执行失败,本条回退 legacy 引擎")
                 # 回退不能是无声的:欠费/CLI 坏了会让引擎一直默默回退,没人发现"高级引擎"
                 # 早就没在跑。向控制室发告警(1 小时最多一条),管理员能第一时间看到。
-                self._alert_engine_fallback(exc)
+                # 例外:"达到最大轮数"是**可预期的能力边界**(任务太复杂,非故障)——静默回退
+                # legacy 即可,别当故障告警惊动管理员(否则一条复杂任务就误报"引擎挂了/余额不足")。
+                if "maximum number of turns" not in str(exc).lower():
+                    self._alert_engine_fallback(exc)
         reply = agent.run(
             user_text, tool_ctx, extra_system=extra_system, history=history,
             progress_cb=reporter,
@@ -1055,7 +1058,8 @@ class CosmacBot:
                 room,
                 "⚠️ AI 高级引擎(Claude SDK)执行失败,已自动回退旧引擎,用户无感但请尽快排查。\n"
                 f"错误摘要: {type(exc).__name__}: {str(exc)[:180]}\n"
-                "常见原因: ① DeepSeek 账户余额不足 ② 服务器 claude CLI/Node 异常 ③ 端点网络不通。\n"
+                "常见原因: ① DeepSeek 账户余额不足 ② 服务器 claude CLI/Node 异常 ③ 端点网络不通\n"
+                "（注:『达到最大轮数』属任务过复杂的正常边界、非故障，已不在此告警）。\n"
                 "排查: journalctl -u guduu-bot | grep 引擎。(本提醒 1 小时内不再重复)",
             )
         except Exception:
