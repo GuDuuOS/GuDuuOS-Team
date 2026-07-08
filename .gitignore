@@ -36,3 +36,6 @@ hf_*.png
 GuDuu-筱雨工作室/
 *演示稿*/
 design-ref/
+
+# Guduu DI 独立产品源码(单独部署,不属于 CosMac 仓库)
+guduu-di-online/
