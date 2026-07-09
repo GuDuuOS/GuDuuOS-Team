@@ -185,7 +185,7 @@ function openDocs() {
 function openOrg() { org.value = true; board.value = false; tasks.value = false; docs.value = false; currentRoom.value = '' }
 
 // 任务看板（AI 任务编排 P1）：主 AI 拆解的真实任务，三列 Kanban + 手动改状态。
-import { getTasks, updateTask, type TaskItem } from '@/matrix/client'
+import { getTasks, updateTask, currentUserId, type TaskItem } from '@/matrix/client'
 const taskList = ref<TaskItem[]>([])
 // AI 侧栏放大态右栏：进度=真实任务完成数，项目文件=真实个人知识库文档
 const doneCount = computed(() => scopedTasks.value.filter((t) => t.status === 'done').length)
@@ -207,12 +207,18 @@ async function loadTasks() { taskList.value = await getTasks() }
 const scopedTasks = computed(() => {
   // 精确区分孤儿任务(QA:不同工作区任务看板全一样)——旧逻辑"孤儿任务各处显示"把
   // **孤儿专班的任务**也各处显示了,导致每个工作区看着相同。现在:
+  //   · **派给我本人的任务** → 永远显示(无视工作区作用域,见下)
   //   · 当前工作区频道的任务 → 显示
   //   · AI 会话房(私人会话/全局助理拆的"全局任务",不属于任何工作区)→ 各处显示(不该消失)
   //   · 别的工作区频道 / **孤儿专班频道**的任务 → 隐藏(把专班"归入工作区"后才在那个工作区显示,
   //     与频道列表"未归类"组同口径)
   const aiIds = aiSessionRoomIds()
   return taskList.value.filter((t) => {
+    // 【关键修复】主AI 在**发起人的 DM/AI 房**里派单时,任务 room_id = 那个私人房,它既不属于
+    // 被指派者的工作区、也不是被指派者自己的 AI 房 → 旧逻辑会把它藏掉,导致"被派单的人在任务看板
+    // 里看不到自己的任务"(与归没归入工作区无关)。所以:凡是**派给当前登录用户本人**的任务,
+    // 一律显示,不受工作区作用域过滤。(后端对非管理员本就只返回本人相关任务,这里放行安全。)
+    if (assignedToMe(t)) return true
     const rid = t.room_id || ''
     if (!activeSpace.value || !rid) return true   // 没选工作区 / 无 room_id 的旧任务:兼容各处显示
     if (spaceChildIds.value.has(rid)) return true // 当前工作区的频道任务
@@ -220,6 +226,27 @@ const scopedTasks = computed(() => {
     return false                                   // 别的工作区 / 孤儿专班:隐藏
   })
 })
+
+/** 这条任务是否派给当前登录用户本人(与后端 handle_tasks_list 可见性口径一致)。
+ *  比对「localpart」(去掉 @、去掉 :服务器 后缀、小写)——兼容 executor_ref 存全 id / 纯 localpart /
+ *  带不带 @ 的各种写法;旧任务无 executor_ref 时按 assignee 首词兜底。 */
+function assignedToMe(t: TaskItem): boolean {
+  const me = localPartOf(currentUserId())
+  if (!me) return false
+  const ref = (t.executor_ref || '').trim()
+  if (t.executor_kind === 'human' && ref) {
+    return localPartOf(ref) === me
+  }
+  if (!ref) {
+    const first = (t.assignee || '').trim().split(/\s+/)[0] || ''
+    if (first && localPartOf(first) === me) return true
+  }
+  return false
+}
+/** 取 Matrix user_id 的 localpart：`@duxz01:cosmac.cc` / `duxz01` / `@duxz01` → `duxz01`(小写)。 */
+function localPartOf(s: string): string {
+  return (s || '').trim().replace(/^@/, '').split(':')[0].toLowerCase()
+}
 // 按"项目/剧集"(任务的 goal=拆解时的总目标)分组，算每个项目的完成进度
 const activeGoal = ref('')   // '' = 全部项目
 const projects = computed(() => {

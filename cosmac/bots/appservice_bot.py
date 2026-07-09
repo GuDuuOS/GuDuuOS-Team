@@ -1265,6 +1265,18 @@ class CosmacBot:
                     people.append(p)
         except Exception:
             people = []
+        # 【防脏数据】只保留**本服务器**(server_name)域名下的真人——名册里若混进了外域/本地开发
+        # 残留的假账号(如 @xulei:guduu.local),AI 会照单派单,任务落到一个不存在的用户身上、谁也
+        # 看不到(线上实测踩过)。本产品单 homeserver,真实账号一律 @x:<server_name>,据此过滤。
+        try:
+            dom = ":" + str(self.config.server_name or "").strip()
+            if len(dom) > 1:
+                people = [
+                    p for p in people
+                    if str(p.get("user_id") or "").strip().endswith(dom)
+                ]
+        except Exception:
+            logger.debug("按 server_name 过滤名册失败,退回全量", exc_info=True)
         # 频道模式(在频道里@AI，非私聊):名册的"真人"只保留**本频道成员**——频道分身只调本群的人。
         # 全局模式(右侧私人会话)不过滤,给全局名册。
         if not ctx.is_dm and ctx.room_id and people:
