@@ -76,9 +76,23 @@ _TOOL_ACTION_LABELS: Dict[str, str] = {
     "ask_user_choice": "征询选择",
     "archive_project": "归档项目",
     "list_my_rooms": "查看频道清单",
+    "query_hr": "查询人事数据",
+    "query_sales": "查询销售业绩",
 }
 # 从工具参数里挑一个最有信息量的值,拼进动作描述(如 组建专班「暑期招生」)
 _TOOL_ARG_HINT_KEYS = ("project", "name", "room_name", "user_id", "query", "goal", "slug")
+
+# query_hr / query_sales 的 action → 中文子标签：让重复调用可区分、显得有条理
+# （把主 AI 的多步查询秀成"人数编制→薪酬统计→绩效分布"这样的分析过程）。
+_HR_ACTION_LABELS: Dict[str, str] = {
+    "summary": "整体概况", "roster": "花名册", "headcount": "人数编制",
+    "salary": "薪酬统计", "performance": "绩效分布", "ranking": "排行榜",
+    "attendance": "考勤请假", "trend": "入离职趋势", "find": "查个人档案",
+}
+_SALES_ACTION_LABELS: Dict[str, str] = {
+    "summary": "整体概况", "ranking": "业绩排行", "trend": "销售趋势",
+    "person": "个人业绩",
+}
 
 
 class _ProgressReporter:
@@ -98,11 +112,22 @@ class _ProgressReporter:
     def __call__(self, tool_name: str, args: Dict[str, Any]) -> None:
         label = _TOOL_ACTION_LABELS.get(tool_name, tool_name)
         hint = ""
-        for k in _TOOL_ARG_HINT_KEYS:
-            v = str((args or {}).get(k) or "").strip()
-            if v:
-                hint = f"「{v[:24]}」"
-                break
+        # 数据查询类工具：用 action 的中文子标签 + 部门作提示，重复调用也一目了然
+        if tool_name in ("query_hr", "query_sales"):
+            act = str((args or {}).get("action") or "").strip().lower()
+            sub_map = _HR_ACTION_LABELS if tool_name == "query_hr" else _SALES_ACTION_LABELS
+            sub = sub_map.get(act)
+            dep = str((args or {}).get("department") or "").strip()
+            if sub:
+                hint = "·" + sub
+            if dep:
+                hint += f"「{dep}」"
+        else:
+            for k in _TOOL_ARG_HINT_KEYS:
+                v = str((args or {}).get(k) or "").strip()
+                if v:
+                    hint = f"「{v[:24]}」"
+                    break
         self.steps.append(label + hint)
         # 已完成的步骤打勾,当前步骤沙漏
         lines = [
