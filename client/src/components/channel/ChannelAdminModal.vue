@@ -66,9 +66,15 @@
                 <div class="cam-row-label">
                   {{ m.name }}
                   <span v-if="m.isBot" class="cam-tag">APP</span>
+                  <!-- 频道管理员标识:群主(power=100)/管理员(≥50)给醒目徽章,一眼看清谁是管理员。
+                       bot 是内置 AI、不算"人类管理员",只挂 APP 标不给这个徽章(修「群主都标给中枢AI」)。-->
+                  <span v-else-if="m.role === 'owner'" class="cam-tag cam-tag-owner">👑 群主</span>
+                  <span v-else-if="m.role === 'admin'" class="cam-tag cam-tag-admin">管理员</span>
                   <span v-if="m.pending" class="cam-tag" style="background:#e8dcc4;color:#8a6a3a">待接受</span>
                 </div>
-                <div class="cam-row-desc">{{ m.roleLabel }} · {{ m.id }}</div>
+                <!-- bot 展示成"内置 AI 助手"而非"群主"——它虽是建房者(power=100),但对用户来说是系统 AI,
+                     不该占据"频道管理员"的呈现位;真正的人类管理员靠上面的徽章标识。 -->
+                <div class="cam-row-desc">{{ m.isBot ? '内置 AI 助手' : m.roleLabel }} · {{ m.id }}</div>
               </div>
               <button class="cam-del" title="移出频道" :disabled="liveBusy" @click="doRemoveLive(m)">×</button>
             </div>

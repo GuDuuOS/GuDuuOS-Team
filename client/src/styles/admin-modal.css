@@ -127,6 +127,17 @@
   padding: 1px 6px;
   border-radius: 4px;
 }
+/* 频道管理员标识:群主=金色、管理员=蓝色,徽章式醒目,让"谁是管理员"一眼可辨 */
+.cam-tag-owner {
+  font-family: inherit;
+  color: #8a5a10;
+  background: #f7e3b8;
+}
+.cam-tag-admin {
+  font-family: inherit;
+  color: #2f5a8a;
+  background: #d9e6f5;
+}
 .cam-level {
   font-size: 11px;
   padding: 1px 7px;
