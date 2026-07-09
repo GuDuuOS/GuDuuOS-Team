@@ -3439,6 +3439,7 @@ class CosmacBot:
         "web_search": "web_search",       # 联网搜索：共享付费 key、默认仅管理员（见 GATE_CATALOG）
         "assemble_team": "assemble_team",  # 一键建专班：独立门控（默认免费，可在后台调成付费）
         "create_tasks": "task_board",      # AI 拆解任务到看板：独立门控（默认免费）
+        "query_hr": "hr_data",             # 人事数据查询：敏感数据，默认仅管理员（见 GATE_CATALOG）
     }
 
     # —— 用量配额（变现第二步）——

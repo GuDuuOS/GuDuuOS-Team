@@ -336,6 +336,8 @@ GATE_CATALOG: List[Dict[str, str]] = [
     {"key": "people_manage", "label": "个人协作人名册（给常合作的人加能力，供 AI 派单）", "default": TIER_PAID, "group": "任务编排与协作"},
     {"key": "workflow_run", "label": "跑工作流（外部/付费、共享凭据）", "default": GATE_ADMIN, "group": "自动化"},
     {"key": "doc_read", "label": "图文教程（查看平台图文内容）", "default": TIER_PAID, "group": "内容"},
+    # 人事/员工（HR）数据查询：涉及薪资、绩效等敏感信息，默认仅平台管理员可查（可在后台调低）。
+    {"key": "hr_data", "label": "人事数据查询（花名册/薪酬/绩效/考勤·敏感）", "default": GATE_ADMIN, "group": "数据智能"},
 ]
 
 # 由目录派生的便捷映射

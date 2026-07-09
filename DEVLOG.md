@@ -1,5 +1,26 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-09 — feat:主AI人事数据查询(数据智能演示地基)
+- 背景: 下午演示要接「数据智能(DI)」,需让主AI能真查数据、真分析。选定场景=**企业人事(HR)**:
+  用户在聊天里问"哪个部门薪资最高/谁绩效待改进/近半年入离职趋势",主AI真查真答。
+- 实现(纯后端,不动前端聊天链路):
+  - **新表** cosmac_employee(员工花名册宽表:部门/职位/职级/汇报线/入职/在职状态/城市/月薪/
+    绩效/年假/本月请假加班/学历/生日)。一张宽表够演示、SQL聚合直观,日期用YYYY-MM-DD字符串
+    跨SQLite/PG一致,薪资用整数免精度问题。
+  - **只读repo** employee_repo:花名册筛选/人数编制/薪酬统计/绩效分布/排行榜/入离职趋势/
+    按人查档/公司总览。聚合在Python侧(~50人规模,最省事、跨库一致)。**不给写接口**,杜绝AI误改。
+  - **seed脚本** seed_hr:造一家虚构公司「星澜科技」51人(9部门·职级薪资挂钩·绩效分布·
+    含近期新人/试用期/3名近半年离职)。固定随机种子可复现、按工号upsert幂等。全是虚拟数据。
+  - **主AI新工具** query_hr(第17个工具):action分派(roster/headcount/salary/performance/
+    ranking/trend/find/summary),返回中文JSON给模型再自然语言分析。放_ALWAYS_ON常开。
+  - **门控** 新增能力 hr_data,默认**仅管理员**(薪资绩效敏感);gate map query_hr→hr_data;
+    前后端GATE_CATALOG各加一条(数据智能分组)。
+- 关键决策: 场景选HR而非社媒(社媒采集器P2~P4未做);数据自包含在cosmac DB,不依赖外部DI是否连通,
+  演示必跑通;敏感数据默认管理员门控,演示用@alice(管理员)问。
+- 测试: cosmac/tests/test_employee.py 7项全过(seed确定性/幂等+repo聚合+工具JSON+门控);ruff通过。
+- **部署: 后端——①git pull ②重启cosmac bot服务 ③在生产环境跑 `python -m cosmac.db.seed_hr`
+  灌数据(用生产COSMAC_DATABASE_URL,建表+播种)。前端gate目录改动可选(不影响聊天演示)。**
+
 ## 2026-07-05 — 修:SDK引擎"达最大轮数"误报成故障告警
 - 现象: 控制室/私信收到"Claude SDK执行失败,常见原因余额不足…"告警,但DeepSeek有钱。
 - 真因: 错误是 Reached maximum number of turns(8)——组班等多步骤任务一条消息内工具调用

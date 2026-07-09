@@ -534,3 +534,59 @@ class UserTemplate(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<UserTemplate {self.user_id} -> {self.template_slug}>"
+
+
+class Employee(Base, TimestampMixin):
+    """员工花名册（人事 / HR 数据）：企业「数据智能」演示与人事问答的底表。
+
+    背景：主 AI 需要能回答「谁在哪个部门」「本月入职几人」「哪个部门薪资最高」
+    「谁绩效最好」「谁本月请假最多」这类**人事问题**。这些是结构化的派生业务数据，
+    Matrix / Synapse 存不下也搜不了，按 §3 数据分层落到 cosmac 自己的 DB（本表）。
+
+    设计取舍（面向演示，够用即止）：
+    - **一张宽表**装下花名册 + 部门 + 薪酬 + 绩效 + 考勤，AI 一次查询即可综合分析，
+      不拆多表连接（演示规模 ~50 人，宽表最省事、SQL 聚合也直观）。
+    - **日期用字符串 ``YYYY-MM-DD``**：跨 SQLite（本地）/ Postgres（生产）行为一致，
+      按月聚合取前 7 位前缀即可（``hire_date[:7]``），免去 Date 类型与解析的跨库差异。
+    - **薪资用整数（月薪·元）**：避免 Float/Numeric 的跨库精度问题；聚合直接求和/均值。
+    - ``emp_no`` 工号全局唯一——seed 重跑时按工号 upsert，不产生重复人。
+    """
+
+    __tablename__ = "cosmac_employee"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # 工号（如 ``C1024``）——业务主键，唯一；seed/导入按它去重
+    emp_no: Mapped[str] = mapped_column(
+        String(32), nullable=False, unique=True, index=True
+    )
+    name: Mapped[str] = mapped_column(String(64), nullable=False, default="")  # 姓名
+    gender: Mapped[str] = mapped_column(String(8), nullable=False, default="")  # 性别 男/女
+    # 部门（如「研发部」）——查询/统计最常用的分组维度，建索引
+    department: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="", index=True
+    )
+    title: Mapped[str] = mapped_column(String(64), nullable=False, default="")  # 职位（如「后端工程师」）
+    level: Mapped[str] = mapped_column(String(16), nullable=False, default="")  # 职级（P4~P8 / M1~M3）
+    manager: Mapped[str] = mapped_column(String(64), nullable=False, default="")  # 汇报对象（上级姓名）
+    # 入职日期 YYYY-MM-DD；按月统计入职趋势取前缀
+    hire_date: Mapped[str] = mapped_column(String(10), nullable=False, default="")
+    # 在职状态：active 在职 / probation 试用期 / resigned 离职
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active", index=True
+    )
+    resign_date: Mapped[str] = mapped_column(String(10), nullable=False, default="")  # 离职日期（在职为空）
+    city: Mapped[str] = mapped_column(String(32), nullable=False, default="")  # 工作城市
+    salary: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 月薪（元）
+    # 最近一次绩效评级：S（卓越）/ A（优秀）/ B（合格）/ C（待改进）
+    perf_rating: Mapped[str] = mapped_column(String(4), nullable=False, default="")
+    annual_leave_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 年假总额（天）
+    annual_leave_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 已用年假（天）
+    leave_days_month: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 本月请假（天）
+    overtime_hours_month: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 本月加班（小时）
+    education: Mapped[str] = mapped_column(String(16), nullable=False, default="")  # 学历
+    birth_date: Mapped[str] = mapped_column(String(10), nullable=False, default="")  # 生日 YYYY-MM-DD
+    email: Mapped[str] = mapped_column(String(128), nullable=False, default="")  # 企业邮箱
+    phone: Mapped[str] = mapped_column(String(32), nullable=False, default="")  # 手机（脱敏）
+
+    def __repr__(self) -> str:
+        return f"<Employee {self.emp_no} {self.name}@{self.department}>"

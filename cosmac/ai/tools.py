@@ -125,6 +125,9 @@ class Toolbox:
         "invite_to_room",
         # 全局助理的"眼睛"(双层作用域第二步):只读、频道模式自动拒绝,同理常开防旧配置禁用。
         "list_my_rooms",
+        # 人事数据查询（数据智能）:只读、按 hr_data 门控(默认仅管理员),旧配置白名单没有它,
+        # 不放这会被当"未勾选=禁用"；门控足够拦权限，工具开关不再叠一层。
+        "query_hr",
     }
 
     def _is_enabled(self, name: str) -> bool:
@@ -457,6 +460,64 @@ class Toolbox:
                 "required": ["query"],
             },
             fn=self._tool_web_search,
+        )
+
+        # 8.5) 人事数据查询（数据智能）：让主 AI 能回答企业「人事」问题——花名册、编制人数、
+        #      薪酬统计、绩效分布/排名、考勤请假、入离职趋势、按人查档。数据来自 cosmac DB
+        #      的员工花名册表（cosmac_employee）。按 hr_data 门控（默认仅管理员），只读。
+        self._register(
+            name="query_hr",
+            description=(
+                "查询公司**人事 / 员工（HR）数据**并做统计分析。当用户问到与员工、部门、"
+                "人数编制、薪资/薪酬、绩效、考勤请假、入职/离职、汇报关系、司龄、花名册相关的问题时调用。"
+                "按 action 选择查询类型；拿到结构化结果后，用自然语言给出结论并适当分析/建议。\n"
+                "action 取值：\n"
+                "- roster：按条件查花名册（配合 department/status/keyword/city/level/perf_rating）\n"
+                "- headcount：人数编制统计（配合 group_by=department/status/city/level/title）\n"
+                "- salary：薪酬统计（配合 group_by=department/level/city；均值/总额/最高最低）\n"
+                "- performance：绩效评级分布 + 待改进名单（配合 department）\n"
+                "- ranking：排行榜（配合 field=salary/overtime/leave/tenure、top_n、department）\n"
+                "- attendance：等同 ranking 但看考勤（用 field=overtime 或 leave）\n"
+                "- trend：近 N 个月入职/离职趋势（配合 months）\n"
+                "- find：按姓名/工号查某个人的完整档案（配合 keyword）\n"
+                "- summary：公司人事总览快照（不确定问啥时先看它）"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": (
+                            "查询类型：roster/headcount/salary/performance/ranking/"
+                            "attendance/trend/find/summary"
+                        ),
+                    },
+                    "department": {"type": "string", "description": "部门名（如「研发部」），可选"},
+                    "status": {
+                        "type": "string",
+                        "description": "在职状态过滤：active 在职 / probation 试用期 / resigned 离职，可选",
+                    },
+                    "keyword": {
+                        "type": "string",
+                        "description": "姓名/职位/工号关键词（roster 模糊筛选、find 按人查档用）",
+                    },
+                    "city": {"type": "string", "description": "工作城市，可选"},
+                    "level": {"type": "string", "description": "职级（如 P6、M2），可选"},
+                    "perf_rating": {"type": "string", "description": "绩效评级 S/A/B/C，可选"},
+                    "group_by": {
+                        "type": "string",
+                        "description": "分组维度：department/status/city/level/title（headcount/salary 用）",
+                    },
+                    "field": {
+                        "type": "string",
+                        "description": "排行/考勤指标：salary 月薪 / overtime 加班 / leave 请假 / tenure 司龄",
+                    },
+                    "top_n": {"type": "integer", "description": "排行榜取前几名，默认 5（最多 20）"},
+                    "months": {"type": "integer", "description": "趋势看近几个月，默认 6（最多 24）"},
+                },
+                "required": ["action"],
+            },
+            fn=self._tool_query_hr,
         )
 
         # 9) 能力名册（模块3.5 档1）：列出可调配的 人/AI Agent/Skill/知识库 + 各自能力备注。
@@ -1145,6 +1206,82 @@ class Toolbox:
             snippet = (h.get("snippet") or "")[:300]
             lines.append(f"[{i}] {title}\n    {url}\n    {snippet}")
         return "\n".join(lines)
+
+    def _tool_query_hr(self, args: Dict[str, Any], ctx: ToolContext) -> str:
+        """人事数据查询（数据智能）。只读地查 cosmac_employee 花名册并做聚合。
+
+        门控由 execute 的 gate_check 统一裁决（query_hr→hr_data 能力，默认仅管理员），
+        这里不重复判权限。把结果整理成**紧凑的 JSON 文本**回给模型——模型据此用自然语言
+        回答并做分析。绝不抛异常（DB 不可用/无数据都给出可读提示）。
+        """
+        import json as _json
+
+        action = (args.get("action") or "summary").strip().lower()
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db import employee_repo as hr
+
+            with session_scope() as s:
+                # 先做一个空表兜底：没灌数据时明确告知，别让模型编
+                if hr.company_summary(s)["在职人数"] == 0 and \
+                        not hr.list_employees(s, limit=1):
+                    return "人事数据库里还没有员工数据（需要先播种/导入花名册）。"
+
+                if action == "roster":
+                    rows = hr.list_employees(
+                        s,
+                        department=args.get("department") or "",
+                        status=args.get("status") or "",
+                        keyword=args.get("keyword") or "",
+                        city=args.get("city") or "",
+                        level=args.get("level") or "",
+                        perf_rating=args.get("perf_rating") or "",
+                        limit=int(args.get("top_n") or 60),
+                    )
+                    data = {
+                        "查询": "花名册",
+                        "命中人数": len(rows),
+                        "员工": [hr.to_dict(e) for e in rows],
+                    }
+                elif action == "headcount":
+                    data = {"查询": "人数编制", **hr.headcount(
+                        s, group_by=args.get("group_by") or "department",
+                        include_resigned=(args.get("status") == "resigned"),
+                    )}
+                elif action == "salary":
+                    data = {"查询": "薪酬统计", **hr.salary_stats(
+                        s, group_by=args.get("group_by") or "department")}
+                elif action == "performance":
+                    data = {"查询": "绩效分布", **hr.perf_distribution(
+                        s, department=args.get("department") or "")}
+                elif action in ("ranking", "attendance"):
+                    field = args.get("field") or (
+                        "overtime" if action == "attendance" else "salary")
+                    data = {"查询": "排行榜", **hr.top_by(
+                        s, field=field, n=int(args.get("top_n") or 5),
+                        department=args.get("department") or "")}
+                elif action == "trend":
+                    data = {"查询": "入离职趋势", **hr.joins_leaves(
+                        s, months=int(args.get("months") or 6))}
+                elif action == "find":
+                    kw = (args.get("keyword") or "").strip()
+                    if not kw:
+                        return "请给出要查的人的姓名或工号（keyword）。"
+                    rows = hr.list_employees(s, keyword=kw, limit=10)
+                    if not rows:
+                        return f"没找到与「{kw}」匹配的员工。"
+                    data = {
+                        "查询": "按人查档",
+                        "命中": [hr.to_dict(e) for e in rows],
+                    }
+                else:  # summary 及未知动作
+                    data = {"查询": "公司人事总览", "公司": "星澜科技",
+                            **hr.company_summary(s)}
+            # ensure_ascii=False 保留中文，模型直接可读
+            return _json.dumps(data, ensure_ascii=False)
+        except Exception:
+            logger.exception("人事数据查询工具执行出错")
+            return "查询人事数据时出错了（数据库不可用？）。"
 
     def _tool_ask_user_choice(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         """发一张「选择卡」给用户点选（档·交互增强）。结束本轮，等用户点完发回再继续。"""
