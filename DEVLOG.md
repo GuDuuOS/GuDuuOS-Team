@@ -1,5 +1,11 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-09 — fix:频道管理弹窗重开后仍显示上次的报错
+- 现象:频道管理「人员」里移出成员失败(如 403 无权限),关掉弹窗再打开,顶部旧红字报错还粘着。
+- 根因:打开弹窗的 watch(visible) 只刷成员/智能体,没清 liveErr。
+- 修:弹窗打开(visible→true)时先清 liveErr + liveInvite,再刷成员。纯前端一处。
+- **部署:纯前端,覆盖 dist 即可(不重启 bot)。**
+
 ## 2026-07-09 — feat:频道名工作区内查重(禁止重名)
 - 现象:同一工作区可建两个「员工招聘」,重名后主AI/用户都分不清哪个是哪个。
 - 修(纯前端):新增 normChanName(去空格折叠+小写归一) + channelNameExists(name, excludeId)——
