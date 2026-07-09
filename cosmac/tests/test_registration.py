@@ -212,6 +212,70 @@ class LoginAccountTest(unittest.TestCase):
         self._audits: list = []
         reg._audit = (  # type: ignore
             lambda kind, **kw: self._audits.append((kind, kw.get("ok"), kw.get("detail"))))
+        # 保存原实现,tearDown 还原——防打桩的停用查询/HTTP 泄漏到别的用例。
+        self._orig_qud = reg.query_user_deactivated
+        self._orig_post = reg.requests.post
+
+    def tearDown(self) -> None:
+        reg.query_user_deactivated = self._orig_qud  # type: ignore
+        reg.requests.post = self._orig_post  # type: ignore
+
+    def test_deactivated_account_gets_specific_message(self) -> None:
+        # 停用账号:Synapse 密码登录 403(密码已抹),后端查出已停用 → 回专门文案,不再"密码错误"。
+        import cosmac.registration as _r
+
+        class _Resp:
+            status_code = 403
+            @staticmethod
+            def json():
+                return {}
+        _r.requests.post = lambda *a, **k: _Resp()  # type: ignore
+        _r.query_user_deactivated = lambda hs, uid: True  # type: ignore
+        st, payload = reg.login_account(
+            "duxz02", "whatever", hs_url="http://hs", client_ip="1.2.3.4", server_name="h"
+        )
+        self.assertEqual(st, 403)
+        self.assertEqual(payload.get("errcode"), "M_USER_DEACTIVATED")
+        self.assertIn("停用", payload.get("error", ""))
+        self.assertIn(("login", False, "deactivated"), self._audits)
+
+    def test_active_account_wrong_pw_stays_generic(self) -> None:
+        # 正常账号密码错(未停用)→ 仍回通用"用户名或密码错误",不泄露账号是否存在。
+        import cosmac.registration as _r
+
+        class _Resp:
+            status_code = 403
+            @staticmethod
+            def json():
+                return {}
+        _r.requests.post = lambda *a, **k: _Resp()  # type: ignore
+        _r.query_user_deactivated = lambda hs, uid: False  # type: ignore
+        st, payload = reg.login_account(
+            "alice", "wrong", hs_url="http://hs", client_ip="1.2.3.4", server_name="h"
+        )
+        self.assertEqual(st, 403)
+        self.assertNotIn("errcode", payload)
+        self.assertIn("用户名或密码", payload.get("error", ""))
+        self.assertIn(("login", False, "bad_credentials"), self._audits)
+
+    def test_query_user_deactivated_parses_admin_api(self) -> None:
+        # query_user_deactivated：读 Synapse 管理 API 的 deactivated 字段。
+        import cosmac.registration as _r
+
+        orig_env, orig_get = _r._env, _r.requests.get
+        try:
+            _r._env = lambda name, default="": (  # type: ignore
+                "admintok" if name == "ADMIN_TOKEN" else default)
+
+            class _R:
+                status_code = 200
+                @staticmethod
+                def json():
+                    return {"deactivated": True}
+            _r.requests.get = lambda *a, **k: _R()  # type: ignore
+            self.assertTrue(reg.query_user_deactivated("http://hs", "@x:h"))
+        finally:
+            _r._env, _r.requests.get = orig_env, orig_get  # type: ignore
 
     def test_success_returns_synapse_resp_and_audits_ok(self) -> None:
         import cosmac.registration as _r

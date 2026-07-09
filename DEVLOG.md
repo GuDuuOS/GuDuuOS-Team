@@ -1,5 +1,22 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-09 — fix:停用账号登录提示「用户名或密码错误」→ 改为「该账号已停用，请联系管理员」
+- 现象:被停用(deactivated)的账号登录,提示"用户名或密码错误",用户以为是自己记错密码。
+- 根因:停用会**抹掉密码**,所以密码登录必然在 Synapse 的凭据校验阶段就 403(M_FORBIDDEN),
+  根本走不到 Synapse 那句"账号已停用"的检查;前端(经后端代理登录)只拿到笼统 403 → 通用文案。
+- 修(后端;登录已收口到后端 login_account/login_email→_proxy_synapse_login):
+  · 新增 `query_user_deactivated(hs_url, user_id)`——用管理员令牌查 Synapse 管理 API
+    `GET /_synapse/admin/v2/users/<uid>` 的 deactivated 字段(异常/无令牌一律回 None,绝不搞崩登录);
+  · `_proxy_synapse_login` 收到 403 时,先用 server_name 拼 `@user:server_name` 查一下:**已停用**
+    → 回 `{errcode:M_USER_DEACTIVATED, error:"该账号已被停用，请联系管理员"}`;正常账号密码错/
+    账号不存在 → 仍回通用"用户名或密码错误"(不泄露账号是否存在,只在"确已停用"时明示);
+  · 账号/邮箱两条登录链都透传该专门文案(邮箱链原本会被"邮箱或密码错误"盖掉,已保留);审计打
+    detail=deactivated。前端无需改:后端返回的中文 error 本就直接展示。
+- 权衡:该提示会让人得知"某账号已停用"(轻度枚举面),但这正是负责人要的 UX;非停用一律通用文案,
+  且登录已有 IP 限频兜底。验证:test_registration +4(停用专门文案/正常仍通用/管理API解析/审计),
+  全量 416 测试仅剩 3 个既有无关失败。ruff 通过。
+- **部署:纯后端,仅 git pull + 重启 guduu-bot(不重建前端)。需 COSMAC_ADMIN_TOKEN 已配(现成)。**
+
 ## 2026-07-09 — fix:切换工作区后停在空白频道页(顶部无频道名)
 - 现象:在 A 工作区某频道里,点左侧 B 工作区,主区顶部频道名空白、正文还是旧频道内容。
 - 根因:selectSpace 切工作区时,若当前频道不属于新工作区,只把 currentRoom 清空,但主区视图标志

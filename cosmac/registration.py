@@ -714,7 +714,7 @@ def _audit(kind: str, *, subject: str = "", ip: str = "", ok: bool = False, deta
 
 
 def _proxy_synapse_login(
-    hs_url: str, username: str, password: str, client_ip: str
+    hs_url: str, username: str, password: str, client_ip: str, server_name: str = ""
 ) -> Tuple[int, Dict[str, Any]]:
     """经 bot 代理向 Synapse 做密码登录,返回 (对外状态, 对外body)。收口的公共实现。
 
@@ -751,12 +751,24 @@ def _proxy_synapse_login(
         return 429, {"error": "尝试过于频繁，请稍后再试"}
     if resp.status_code >= 500:
         return 502, {"error": "登录服务暂不可用，请稍后重试"}
-    # 401/403 等 → 凭据错(通用文案,不泄露账号是否存在)
+    # 401/403 等 → 凭据错。但**先分辨"账号已停用"**:停用会抹掉密码→登录必然 403,若还回
+    # "用户名或密码错误",被停用的人会一直以为是自己记错密码(负责人要求明确提示、去找管理员)。
+    # 仅停用时给专门文案;正常账号密码错/账号不存在仍回通用文案(不泄露账号是否存在)。
+    if server_name:
+        try:
+            if query_user_deactivated(hs_url, f"@{username}:{server_name}"):
+                return 403, {
+                    "error": "该账号已被停用，请联系管理员",
+                    "errcode": "M_USER_DEACTIVATED",
+                }
+        except Exception:
+            logger.debug("登录失败后查停用状态出错(忽略,回退通用文案)", exc_info=True)
     return 403, {"error": "用户名或密码错误"}
 
 
 def login_account(
-    username: str, password: str, *, hs_url: str, client_ip: str = "", code: str = ""
+    username: str, password: str, *, hs_url: str, client_ip: str = "",
+    code: str = "", server_name: str = "",
 ) -> Tuple[int, Dict[str, Any]]:
     """账号（用户名+密码）登录**收口到后端**：限频 + 代理 Synapse 登录 + 记审计。
 
@@ -780,10 +792,12 @@ def login_account(
         if not ok2:
             _audit("login", subject=username, ip=client_ip, ok=False, detail="stepup_bad_code")
             return 403, {"error": msg}
-    st, payload = _proxy_synapse_login(hs_url, username, password, client_ip)
+    st, payload = _proxy_synapse_login(hs_url, username, password, client_ip, server_name)
     if st != 200:
+        deact = payload.get("errcode") == "M_USER_DEACTIVATED"
         _audit("login", subject=username, ip=client_ip, ok=False,
-               detail={403: "bad_credentials", 429: "hs_rate_limited"}.get(st, "hs_error"))
+               detail="deactivated" if deact else
+               {403: "bad_credentials", 429: "hs_rate_limited"}.get(st, "hs_error"))
         return st, payload
     # 密码对了 → 异地二次验证闸(阶段2):可疑且未带码 → 撤 token、发码、要求验证。
     gate = _stepup_gate(username, email, code, hs_url=hs_url, client_ip=client_ip,
@@ -796,7 +810,8 @@ def login_account(
 
 
 def login_email(
-    email: str, password: str, *, hs_url: str, client_ip: str = "", code: str = ""
+    email: str, password: str, *, hs_url: str, client_ip: str = "",
+    code: str = "", server_name: str = "",
 ) -> Tuple[int, Dict[str, Any]]:
     """邮箱+密码登录：按邮箱反查用户名 → 用账号密码登 Synapse → 原样返回 Synapse 登录响应
     （含 access_token/user_id/device_id，前端据此存会话）。
@@ -821,7 +836,7 @@ def login_email(
         if not ok2:
             _audit("login", subject=username, ip=client_ip, ok=False, detail="stepup_bad_code")
             return 403, {"error": msg}
-    st, payload = _proxy_synapse_login(hs_url, username, password, client_ip)
+    st, payload = _proxy_synapse_login(hs_url, username, password, client_ip, server_name)
     # 审计 subject 统一用 username(localpart):邮箱登录与账号登录归到同一主体,recent_success_ips
     # 按 username 聚合、异地检测不会把同一人当三个主体(审查证伪C的小瑕疵①)。
     if st == 200:
@@ -839,6 +854,10 @@ def login_email(
     if st == 502:
         _audit("login", subject=username, ip=client_ip, ok=False, detail="hs_error")
         return 502, payload
+    # 账号已停用 → 保留专门文案(别被下面通用"邮箱或密码错误"盖掉),让用户知道去找管理员。
+    if payload.get("errcode") == "M_USER_DEACTIVATED":
+        _audit("login", subject=username, ip=client_ip, ok=False, detail="deactivated")
+        return st, payload
     _audit("login", subject=username, ip=client_ip, ok=False, detail="bad_credentials")
     return 403, {"error": "邮箱或密码错误"}
 
@@ -902,6 +921,39 @@ def make_room_admin(hs_url: str, room_id: str, user_id: str) -> Tuple[int, Dict[
     except requests.RequestException:
         logger.exception("调用 make_room_admin 失败")
         return 502, {"error": "接管频道服务暂不可用，请稍后重试"}
+
+
+def query_user_deactivated(hs_url: str, user_id: str) -> Optional[bool]:
+    """查某账号是否已被**停用**（deactivated）。返回 True=已停用 / False=正常或不存在 / None=查不了。
+
+    用 Synapse 管理 API `GET /_synapse/admin/v2/users/<user_id>`（需服务器管理员令牌
+    COSMAC_ADMIN_TOKEN）。给登录失败时分辨"密码错" vs "账号已停用"用——停用会抹掉密码,
+    登录必然 403,不查一下就只能回笼统的"用户名或密码错误",被停用的人一直以为是自己记错密码。
+    任何异常/无令牌都回 None（调用方据此回退通用文案,绝不因这步把登录搞崩）。
+    """
+    token = _env("ADMIN_TOKEN")
+    if not token or not user_id:
+        return None
+    from urllib.parse import quote
+    base = hs_url.rstrip("/")
+    url = f"{base}/_synapse/admin/v2/users/{quote(user_id, safe='')}"
+    try:
+        rr = requests.get(
+            url, headers={"Authorization": f"Bearer {token}"}, timeout=_HS_TIMEOUT
+        )
+    except requests.RequestException:
+        logger.debug("查账号停用状态请求异常", exc_info=True)
+        return None
+    if rr.status_code == 200:
+        try:
+            # Synapse 返回 deactivated 字段（可能是 bool 或 0/1）
+            return bool(rr.json().get("deactivated"))
+        except Exception:
+            return None
+    if rr.status_code == 404:
+        return False  # 账号不存在：当作"未停用"，回退通用文案（不泄露"账号不存在"）
+    logger.debug("查账号停用状态返回 %s", rr.status_code)
+    return None
 
 
 def reset_request_code(

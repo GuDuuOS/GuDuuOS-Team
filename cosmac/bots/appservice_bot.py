@@ -2797,6 +2797,7 @@ class CosmacBot:
             str(b.get("email") or ""), str(b.get("password") or ""),
             hs_url=self.config.homeserver_url, client_ip=client_ip,
             code=str(b.get("code") or ""),   # 阶段2:异地二次验证的邮箱验证码(第二步才带)
+            server_name=self.config.server_name,  # 停用检测要用它拼 @user:server_name
         )
 
     def handle_login_account(
@@ -2812,6 +2813,7 @@ class CosmacBot:
             str(b.get("username") or ""), str(b.get("password") or ""),
             hs_url=self.config.homeserver_url, client_ip=client_ip,
             code=str(b.get("code") or ""),   # 阶段2:异地二次验证的邮箱验证码(第二步才带)
+            server_name=self.config.server_name,  # 停用检测要用它拼 @user:server_name
         )
 
     def handle_kb_list_mine(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
