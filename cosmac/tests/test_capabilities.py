@@ -40,7 +40,9 @@ def _bot(states):
     from cosmac.bots.appservice_bot import CosmacBot
     from cosmac.config import CosmacConfig
 
-    bot = CosmacBot(CosmacConfig(llm_provider="echo"))
+    # server_name 与测试里的人员/房间域名(:h)对齐——能力名册按 server_name 过滤外域假号,
+    # 不对齐会把 @xiaoyu:h 这类正常测试人员当外域滤掉。
+    bot = CosmacBot(CosmacConfig(llm_provider="echo", server_name="h"))
     bot.client = FakeClient(states)
     return bot
 

@@ -51,7 +51,8 @@ def _bot():
     from cosmac.bots.appservice_bot import CosmacBot
     from cosmac.config import CosmacConfig
 
-    bot = CosmacBot(CosmacConfig(llm_provider="echo"))
+    # server_name 对齐测试域名(:h)——能力名册按 server_name 过滤外域假号,不对齐会误滤 @bob:h。
+    bot = CosmacBot(CosmacConfig(llm_provider="echo", server_name="h"))
     bot._gate_allows = lambda u, c: True  # type: ignore
     return bot
 

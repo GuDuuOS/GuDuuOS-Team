@@ -1,5 +1,22 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-09 — fix:被派单者点「开始」推进任务 403（看得到却点不动）
+- 现象:上一条修复后被指派者能在看板**看到**派给自己的任务,但点「开始」(改状态)报 403。
+- 根因:**可见性**与**改状态鉴权**用了两套口径,悄悄跑偏——
+  · `handle_tasks_list`(能不能看到):放行「派给本人」(executor_ref 指向本人);
+  · `_can_access_task`(能不能改状态,点开始/拖卡走它):只放行 平台管理员/下达者(sender)/
+    **任务所属房间的成员**——**唯独漏了被指派者本人**。任务常挂在发起人的 DM/AI 房,被指派者
+    不是那房间的成员 → 看得到却 403。("创作者会员/无工作区"是无关表象,鉴权里没有会员门控。)
+- 修:抽出 `_is_task_assignee`(localpart 口径,兼容全id/纯localpart/带不带@/大小写;旧任务按
+  assignee 首词兜底),`_can_access_task` 增加「被指派者可改自己的任务」;并把 `handle_tasks_list`
+  的可见性也改成复用同一个 `_is_task_assignee` —— **可见性==可改性共用一份口径,根治日后再跑偏**。
+  越权面不变:非下达者/非被指派者/非管理员/非房间成员仍拒(fail-closed)。
+- 验证:新增 test_task_access(7 项:全id/纯localpart/大小写/旧assignee兜底/他人拒/下达者/none);
+  修了上条 server_name 名册过滤引入的 2 个测试(test_capabilities、test_person 对齐 :h 域名);
+  全量 413 测试仅剩 3 个既有无关失败(test_runtime_config 的 query_sales 清单)。ruff 通过。
+- **部署:纯后端,仅 git pull + 重启 guduu-bot(不重建前端)。验收:被派单者点「开始」应能推进,
+  不再 403。**
+
 ## 2026-07-09 — fix:被派单的人在任务看板看不到自己的任务
 - 现象:主AI 派单后,duxz01/duxiuzhen01 等被指派者在「任务看板」看不到派给自己的任务;
   归不归入工作区都没用。

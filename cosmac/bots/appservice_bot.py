@@ -2333,16 +2333,47 @@ class CosmacBot:
             self.config.homeserver_url, room_id, user_id
         )
 
+    @staticmethod
+    def _is_task_assignee(user_id: str, task: Any) -> bool:
+        """user_id 是否是这条任务的**被指派者**（executor_ref 指向本人）。
+
+        与 handle_tasks_list 的可见性口径**完全一致**：比对 localpart，兼容 executor_ref 存
+        全 id / 纯 localpart / 带不带 @；旧任务无 executor_ref 时按 assignee 首词兜底。
+        —— 这是「看得到 = 改得动」的关键：可见性放行了被指派者，改状态的鉴权也必须同样放行，
+        否则被派单的人在看板点「开始」会 403（线上实测）。
+        """
+        if not user_id:
+            return False
+        localpart = user_id.split(":", 1)[0].lstrip("@").lower()
+        if not localpart:
+            return False
+
+        def _lp(s: str) -> str:
+            return str(s or "").strip().lstrip("@").split(":")[0].lower()
+
+        ref = str(getattr(task, "executor_ref", "") or "").strip()
+        if getattr(task, "executor_kind", "") == "human" and ref:
+            return _lp(ref) == localpart
+        if not ref:  # 旧任务无类型化执行者：按 assignee 首词兜底
+            a = str(getattr(task, "assignee", "") or "").strip()
+            first = a.split()[0] if a else ""
+            return bool(first) and _lp(first) == localpart
+        return False
+
     def _can_access_task(self, user_id: str, task: Any) -> bool:
         """判断 user_id 是否有权读/改这条任务。
 
         授权规则（任一成立即可）：① 平台管理员；② 任务由本人下达（task.sender）；
-        ③ 本人是任务所属房间(task.room_id)的成员。任何不确定一律拒绝（fail-closed），
+        ③ 任务**派给本人**（executor_ref/assignee 指向本人）——被指派者要能在看板推进自己的卡；
+        ④ 本人是任务所属房间(task.room_id)的成员。任何不确定一律拒绝（fail-closed），
         防止任意登录用户靠遍历 id 越权读写别人工作区的任务看板。
         """
         if not user_id:
             return False
         if task.sender and task.sender == user_id:
+            return True
+        # 被指派者可改自己的任务（与看板可见性同口径，修「看得到却点不动 403」）。
+        if self._is_task_assignee(user_id, task):
             return True
         if self._is_platform_admin(user_id):
             return True
@@ -2371,23 +2402,13 @@ class CosmacBot:
                 if is_admin:
                     visible = candidates
                 else:
-                    localpart = user_id.split(":", 1)[0].lstrip("@")
-                    visible = []
-                    for t in candidates:
-                        if t.sender and t.sender == user_id:
-                            visible.append(t)
-                            continue
-                        ref = str(t.executor_ref or "").strip()
-                        if t.executor_kind == "human" and ref in (
-                            user_id, localpart, "@" + localpart,
-                        ):
-                            visible.append(t)
-                            continue
-                        if not ref:
-                            a = str(t.assignee or "").strip()
-                            first = a.split()[0] if a else ""
-                            if first and first.lstrip("@").split(":")[0] == localpart:
-                                visible.append(t)
+                    # 可见性 = 本人下达 或 派给本人；与 _can_access_task(改状态鉴权)**共用同一口径**
+                    # (_is_task_assignee),保证「看得到 == 改得动」,不再各写一份而悄悄跑偏(线上踩过)。
+                    visible = [
+                        t for t in candidates
+                        if (t.sender and t.sender == user_id)
+                        or self._is_task_assignee(user_id, t)
+                    ]
                 for t in visible:
                     out.append({
                         "id": t.id, "title": t.title, "assignee": t.assignee,
