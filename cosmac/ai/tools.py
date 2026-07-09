@@ -754,7 +754,8 @@ class Toolbox:
         name = (args.get("name") or "新群").strip()
         # 默认把发起人拉进新群，再并上模型额外指定的邀请人（去重）
         invitees = list(dict.fromkeys([ctx.sender, *(args.get("invitees") or [])]))
-        room_id = self.client.create_room(name, invitees=invitees)
+        # 发起人 = 频道主人：建房时就提成 100 级管理员，否则他改不了房名/配置(403)。
+        room_id = self.client.create_room(name, invitees=invitees, admins=[ctx.sender])
         if not room_id:
             return f"建群「{name}」失败了（创建房间接口返回错误）。"
         # 关键：bot 建房后用户只是被「邀请」、且新房没挂进任何工作区(Space)——前端频道树按
@@ -1546,7 +1547,10 @@ class Toolbox:
         members = [str(m).strip() for m in (args.get("members") or []) if str(m).strip()]
         # 健壮性：只用发起人(必然存在)建房，其余成员**逐个尽力邀请**——某个 id 不存在/邀请
         # 失败都不影响专班建成（否则一个坏 id 就把整件事搞崩）。
-        room_id = self.client.create_room(project, invitees=[ctx.sender])
+        # 发起人 = 专班主人：建房时就提成 100 级管理员，否则他改不了频道名/配置(403)。
+        room_id = self.client.create_room(
+            project, invitees=[ctx.sender], admins=[ctx.sender]
+        )
         if not room_id:
             return f"建专班「{project}」失败了（建房间接口出错）。"
         # 专班房**真建成**才消费 teams 配额（终身配额，失败绝不能扣——否则免费用户被一次

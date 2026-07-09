@@ -2275,18 +2275,48 @@ class CosmacBot:
     def handle_channel_claim_admin(
         self, access_token: str, body: Dict[str, Any]
     ) -> Tuple[int, Dict[str, Any]]:
-        """平台管理员「接管」某频道:用 Synapse make_room_admin 给自己在该频道授 power=100,
-        以便修改频道配置/技能(bug14:服务器管理员≠房间管理员,默认在别人建的频道里没权限、
-        写不了 cosmac.channel_config state event)。仅平台管理员可调;非管理员一律 403。"""
+        """在某频道给调用者授 power=100(用 Synapse make_room_admin),让他能改频道名/配置/技能。
+
+        放行两类人(否则默认 power=0、写不了 m.room.name / cosmac.channel_config 那些 state event)：
+          ① **平台管理员**——接管任意频道(bug14:服务器管理员≠房间管理员)。
+          ② **无主频道的成员**——bot 建的频道里只有 bot 有权限(创建者就是 bot)，真人主人是 0 级、
+             一改名就 403。凡是「除 bot 外没有任何人 ≥50 级」的频道视为**无主**，其成员(通常就是当初
+             叫 AI 建这个频道的那个人)可**认领**为主人。已经有真人主人的频道则拒绝，防止普通成员抢权。
+        """
         user_id = self.client.whoami(access_token)
         if not user_id:
             return 401, {"error": "登录已失效，请重新登录"}
-        if not self._is_platform_admin(user_id):
-            return 403, {"error": "仅平台管理员可接管频道"}
         room_id = str((body or {}).get("room_id") or "").strip()
         if not room_id.startswith("!"):
             return 400, {"error": "无效的频道 id"}
+
         from cosmac import registration
+
+        # ① 平台管理员：直接接管，不看频道有没有主。
+        if self._is_platform_admin(user_id):
+            return registration.make_room_admin(
+                self.config.homeserver_url, room_id, user_id
+            )
+
+        # ② 普通用户：仅当本人是该频道成员、且频道当前「无主」才放行认领。
+        if not self.client.is_joined_member(room_id, user_id):
+            return 403, {"error": "你不是该频道成员，无法认领"}
+        try:
+            pl = self.client.get_state_event(room_id, "m.room.power_levels", "") or {}
+        except Exception:
+            # 读不到权限表(bot 未加入/网络错) → 保守拒绝，别乱授权。
+            return 403, {"error": "无法读取该频道权限，暂不能认领"}
+        bot = self.config.bot_user_id
+        users = pl.get("users") or {}
+        for uid, lvl in users.items():
+            if uid == bot:
+                continue  # bot 自己不算「主人」
+            if isinstance(lvl, int) and lvl >= 50:
+                # 已有真人管理员：本人就是的话直接放行(幂等)，否则拒绝抢权。
+                if uid == user_id:
+                    return 200, {"ok": True}
+                return 403, {"error": "该频道已有管理员，无法认领"}
+        # 无主 → 把本人提成管理员(借 bot 这个本地房间管理员的权限)。
         return registration.make_room_admin(
             self.config.homeserver_url, room_id, user_id
         )

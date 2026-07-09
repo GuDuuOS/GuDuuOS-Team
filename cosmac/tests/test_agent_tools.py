@@ -25,7 +25,7 @@ class FakeClient:
         self.created: List[str] = []
         self.sent: List[tuple] = []
 
-    def create_room(self, name, invitees=None):
+    def create_room(self, name, invitees=None, admins=None):
         self.created.append(name)
         return "!fakeroom:test"  # 假装建好了，返回一个 room_id
 
@@ -121,8 +121,8 @@ class TestAgentTools(unittest.TestCase):
         # 验证 ToolContext 注入：建群默认把发起人拉进去
         captured = {}
         client = FakeClient()
-        client.create_room = lambda name, invitees=None: (  # type: ignore
-            captured.update(name=name, invitees=invitees) or "!r:test"
+        client.create_room = lambda name, invitees=None, admins=None: (  # type: ignore
+            captured.update(name=name, invitees=invitees, admins=admins) or "!r:test"
         )
         toolbox = Toolbox(client)
         out = toolbox.execute(

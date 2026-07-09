@@ -61,6 +61,7 @@ import {
   type ChannelMember,
   updateSpace,
   updateRoom,
+  claimChannelAdmin,
   leaveAndForget,
   uploadMedia,
   mxcToHttp,
@@ -749,7 +750,17 @@ async function saveChannelSettings() {
   if (!id || !name || chSetBusy.value) return
   chSetBusy.value = true
   try {
-    await updateRoom(id, { name, topic: chSetTopic.value.trim() })
+    try {
+      await updateRoom(id, { name, topic: chSetTopic.value.trim() })
+    } catch (e: any) {
+      // 改名/改简介需要 50 级权限。旧频道里主人只有 0 级(bot 建房时没提权)→ 403。
+      // 让后端认领本频道管理员(仅平台管理员或无主频道的成员放行)，成功后重试一次。
+      if (await claimChannelAdmin(id)) {
+        await updateRoom(id, { name, topic: chSetTopic.value.trim() })
+      } else {
+        throw e
+      }
+    }
     toast('已保存', `频道改为「${name}」`)
     chSetOpen.value = false
     setTimeout(refresh, 700)

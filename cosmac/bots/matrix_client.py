@@ -193,18 +193,34 @@ class MatrixClient:
 
     # —— 主 AI 操作 IM 的能力（"手"）：建群 / 拉人 / 发富卡 ——
 
-    def create_room(self, name: str, invitees: Optional[List[str]] = None) -> Optional[str]:
+    def create_room(
+        self,
+        name: str,
+        invitees: Optional[List[str]] = None,
+        admins: Optional[List[str]] = None,
+    ) -> Optional[str]:
         """新建一个房间（专班群），可在创建时直接邀请一批用户。
 
         参数：
             name:     房间显示名（如"爆款专班·职场"）。
             invitees: 创建时就邀请的用户 id 列表（如 ["@admin:cosmac.cc"]）。
+            admins:   建房时就提成「房间管理员」(power=100) 的用户 id 列表。
+                      **关键**：bot 是唯一创建者(默认 power=100)，被邀请进来的真人若不提权就是 0 级，
+                      改不了房名/topic/频道配置(那些 state event 至少要 50 级)——于是频道"主人"一改名就
+                      403(user_level 0 < send_level 50)。所以谁发起建频道，就把谁提成 100 级、真正当主人。
         返回：成功返回新房间 room_id，失败返回 None。
         """
         url = self._url("/_matrix/client/v3/createRoom")
         body: Dict[str, Any] = {"name": name, "preset": "private_chat"}
         if invitees:
             body["invite"] = invitees
+        if admins:
+            # power_level_content_override 里的 users 会**整体替换**自动生成的 {创建者:100}，
+            # 所以必须把 bot 自己也显式列进去(否则 bot 反而丢了 100 级、管不了这个频道)。
+            users = {self.bot_user_id: 100}
+            for uid in admins:
+                users[uid] = 100
+            body["power_level_content_override"] = {"users": users}
         resp = self._session.post(url, json=body, timeout=15)
         if resp.status_code == 200:
             room_id = resp.json().get("room_id")

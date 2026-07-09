@@ -20,8 +20,8 @@ class FakeClient:
         self.states: list = []
         self.sent: list = []
 
-    def create_room(self, name, invitees=None):
-        self.created.append((name, invitees))
+    def create_room(self, name, invitees=None, admins=None):
+        self.created.append((name, invitees, admins))
         return "!team:h"
 
     def invite_user(self, room_id, user_id):
@@ -63,9 +63,11 @@ class TestAssembleTeam(unittest.TestCase):
             "tasks": [{"title": "写文案", "executor_kind": "human", "executor_ref": "@a:h"}],
         })
         # 建房：名字对、发起人随建房邀请；其余成员逐个 invite_user（健壮性：坏 id 不搞崩建房）
-        name, invitees = self.client.created[0]
+        name, invitees, admins = self.client.created[0]
         self.assertEqual(name, "双11大促")
         self.assertEqual(invitees, ["@owner:h"])
+        # 发起人 = 专班主人：建房时就提成 100 级管理员（否则改不了频道名/配置）
+        self.assertEqual(admins, ["@owner:h"])
         self.assertEqual(set(self.client.invited), {"@a:h", "@b:h"})
         # 频道配置：任务RULE / 协作Agent / 项目主AI / 技能
         room, etype, content = self.client.states[0]

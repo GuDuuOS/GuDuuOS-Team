@@ -1,5 +1,23 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-09 — fix:频道主人改不了频道名(403 无权限)
+- 现象:频道管理员(如 duxiuzhen02)在「频道设置」改名称/简介 → 403
+  `user_level (0) < send_level (50)`。
+- 根因:bot 建频道时是唯一创建者(power=100),被邀请进来的真人主人加入后是默认 **0 级**;
+  而改 `m.room.name` 至少要 50 级 → 频道主人一改名就被服务器拒。
+- 修(治本+存量):
+  · **治本**:`create_room` 加 `admins` 参,建房时用 `power_level_content_override` 把发起人
+    (=频道主人)提成 100 级;`create_room`/`assemble_team` 两个工具都传 `[ctx.sender]`。
+    (override.users 会整体替换默认 {创建者:100},故显式把 bot 自己也列进去保住它的 100。)
+  · **存量**:`/cosmac/channel/claim-admin` 放宽——除平台管理员外,「无主频道」(除 bot 外无人≥50)
+    的**成员**可认领为主人(借 bot 这个本地房间管理员 make_room_admin 提到 100);已有真人主人
+    的频道拒绝抢权、非成员拒绝。前端「频道设置」保存改名 403 时自动认领并重试一次。
+- 验证:新增 test_channel_claim_admin(5 项:平台管理员接管/成员认领无主/不能抢已有主/非成员拒/坏id)
+  全过;test_assemble_team、test_agent_tools 更新签名后全过;ruff 通过;vite build 通过。
+  (注:test_runtime_config 3 项失败为既有问题——query_sales 工具清单未同步,与本次无关。)
+- **部署:git pull + 重启 guduu-bot(后端认领逻辑) + 覆盖 dist(前端自动重试)。
+  存量坏频道:主人打开「频道设置」改一次名即自动认领修好;新频道天然不再有此问题。**
+
 ## 2026-07-09 — 美化:数据查询工具的执行过程展示(别露英文工具名)
 - 现象:主 AI 查数据时进度条显示原始英文「query_hr / query_sales」且重复几行,难看。
   根因:_TOOL_ACTION_LABELS 没登记这俩新工具,回退成原始工具名。
