@@ -780,6 +780,11 @@ async function saveChannelSettings() {
   const id = currentRoom.value
   const name = chSetName.value.trim()
   if (!id || !name || chSetBusy.value) return
+  // 改名也查重(排除自己):别把频道改成本工作区已有的名字,造成重名分不清。
+  if (channelNameExists(name, id)) {
+    toast('频道名已存在', `本工作区已有「${name}」频道，换个名字吧`)
+    return
+  }
   chSetBusy.value = true
   try {
     try {
@@ -860,9 +865,30 @@ function openNewChannel() {
   if (!activeSpace.value) { toast('请先选一个工作区', '频道需要归属到某个工作区'); return }
   newChName.value = ''; newChTopic.value = ''; newChPublic.value = false; newChOpen.value = true
 }
+/** 频道名归一化(去首尾空格、内部空白折叠成一个、转小写)——用于重名比对。 */
+function normChanName(s: string): string {
+  return (s || '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+/** 当前工作区内是否已存在同名频道(可排除某个 id,给"改名不算和自己撞名"用)。
+ *  只在**本工作区**范围查重——不同工作区允许重名;重名会让主AI/用户都分不清哪个是哪个。 */
+function channelNameExists(name: string, excludeId = ''): boolean {
+  const target = normChanName(name)
+  if (!target) return false
+  return rooms.value.some(
+    (r) => r.id !== excludeId
+      && (!activeSpace.value || spaceChildIds.value.has(r.id))
+      && normChanName(r.name) === target,
+  )
+}
+
 async function createChannel() {
   const n = newChName.value.trim()
   if (!n || newChCreating.value || !activeSpace.value) return
+  // 建之前先查重:本工作区已有同名频道就拦下,免得建出两个「员工招聘」谁也分不清(含主AI)。
+  if (channelNameExists(n)) {
+    toast('频道名已存在', `本工作区已有「${n}」频道，换个名字吧`)
+    return
+  }
   newChCreating.value = true
   try {
     const cid = await createChannelInSpace(activeSpace.value, n, { public: newChPublic.value, topic: newChTopic.value.trim() })

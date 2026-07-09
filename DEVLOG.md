@@ -1,5 +1,16 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-09 — feat:频道名工作区内查重(禁止重名)
+- 现象:同一工作区可建两个「员工招聘」,重名后主AI/用户都分不清哪个是哪个。
+- 修(纯前端):新增 normChanName(去空格折叠+小写归一) + channelNameExists(name, excludeId)——
+  只在**当前工作区**(spaceChildIds)范围查重(不同工作区允许重名)。
+  · 建频道 createChannel:建前查重,撞名 toast 拦下、不建。
+  · 改名 saveChannelSettings:改前查重(排除自己),撞名拦下。
+- 范围:覆盖**用户手动**建/改名(重名的主要来源)。主AI 建频道(create_room/assemble_team)未拦——
+  bot 不掌握工作区(Space)归属,做不到按工作区查重;留作已知边界(AI 建的名字相对可控)。
+- 验证:vite build 通过。真机:同工作区建/改成已有频道名 → 应弹「频道名已存在」不放行。
+- **部署:纯前端,覆盖 dist 即可(不重启 bot)。**
+
 ## 2026-07-09 — feat:频道支持上传图片/附件
 - 现象:频道输入框工具条只有格式化按钮,没有上传入口,发不了图片和文件。
 - 实现(纯前端,复用现成 uploadMedia):
