@@ -82,6 +82,29 @@ class TestCapabilityRegistry(unittest.TestCase):
         self.assertIn("真人", out)
         self.assertIn("AI Agent", out)
 
+    def test_filters_deactivated_accounts(self) -> None:
+        # 主 AI 不该派给已停用账号：停用集里的人从名册剔除（enabled=True 也照剔，那是 Synapse 层停用）。
+        states = {PEOPLE_EVENT_TYPE: {"people": [
+            {"user_id": "@alive:h", "name": "在职", "enabled": True},
+            {"user_id": "@gone:h", "name": "已停用者", "enabled": True},
+        ]}}
+        bot = _bot(states)
+        bot._deactivated_user_ids = lambda: {"@gone:h"}  # type: ignore
+        out = bot._list_capabilities_for_tool(ToolContext("!r:h", "@u:h"))
+        self.assertIn("@alive:h", out)
+        self.assertNotIn("@gone:h", out)
+        self.assertNotIn("已停用者", out)
+
+    def test_deactivated_lookup_failure_does_not_filter(self) -> None:
+        # fail-open：停用集查不到(None)时不过滤，名册照常给全量（别因一次查询抖动清空）。
+        states = {PEOPLE_EVENT_TYPE: {"people": [
+            {"user_id": "@a:h", "name": "甲", "enabled": True},
+        ]}}
+        bot = _bot(states)
+        bot._deactivated_user_ids = lambda: None  # type: ignore
+        out = bot._list_capabilities_for_tool(ToolContext("!r:h", "@u:h"))
+        self.assertIn("@a:h", out)
+
     def test_presets_present_when_no_config(self) -> None:
         # 即使没配任何真人/控制室智能体，名册也含内置预置 Agent（开箱即用的 AI 班底）。
         out = _bot({})._list_capabilities_for_tool(ToolContext("!r:h", "@u:h"))

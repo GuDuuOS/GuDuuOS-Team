@@ -1248,6 +1248,24 @@ class CosmacBot:
             logger.debug("读取个人协作人名册失败（忽略）", exc_info=True)
             return []
 
+    _DEACT_TTL = 120  # 停用账号集缓存有效期（秒）——名册每轮都可能重建，别每次都翻 Synapse 用户列表
+
+    def _deactivated_user_ids(self) -> Optional[set]:
+        """本服务器已停用账号的 user_id 集合（带 120s 缓存）。查不到回 None → 调用方不过滤(fail-open)。
+
+        能力名册过滤停用账号用。缓存避免每次建名册都分页拉一遍全量用户；查询失败时**不刷新缓存**、
+        回 None，让调用方退回"不过滤"（宁可偶尔多列一个停用者，也不因抖动清空名册）。
+        """
+        now = time.time()
+        cached = getattr(self, "_deact_cache", None)
+        if cached is not None and now - cached[0] < self._DEACT_TTL:
+            return cached[1]
+        from cosmac import registration
+        ids = registration.list_deactivated_user_ids(self.config.homeserver_url)
+        if ids is not None:
+            self._deact_cache = (now, ids)  # 只在成功时更新缓存
+        return ids
+
     def _list_capabilities_for_tool(self, ctx: ToolContext) -> str:
         """能力名册（list_capabilities 工具的执行体，注入 Toolbox.list_capabilities）。
 
@@ -1277,6 +1295,17 @@ class CosmacBot:
                 ]
         except Exception:
             logger.debug("按 server_name 过滤名册失败,退回全量", exc_info=True)
+        # 【过滤停用账号】主 AI 不该把任务派给已停用的人——TA 登不进来、任务落下去没人干。
+        # 停用集查不到(None)时不过滤(fail-open),别因一次查询抖动把名册清空。
+        try:
+            deact = self._deactivated_user_ids()
+            if deact:
+                people = [
+                    p for p in people
+                    if str(p.get("user_id") or "").strip() not in deact
+                ]
+        except Exception:
+            logger.debug("按停用状态过滤名册失败,退回全量", exc_info=True)
         # 频道模式(在频道里@AI，非私聊):名册的"真人"只保留**本频道成员**——频道分身只调本群的人。
         # 全局模式(右侧私人会话)不过滤,给全局名册。
         if not ctx.is_dm and ctx.room_id and people:

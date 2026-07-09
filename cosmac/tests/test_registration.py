@@ -258,6 +258,47 @@ class LoginAccountTest(unittest.TestCase):
         self.assertIn("用户名或密码", payload.get("error", ""))
         self.assertIn(("login", False, "bad_credentials"), self._audits)
 
+    def test_list_deactivated_user_ids_pages_and_filters(self) -> None:
+        # 分页拉全量用户,只收 deactivated=真 的 user_id;两页后 next_token=None 收尾。
+        import cosmac.registration as _r
+
+        orig_env, orig_get = _r._env, _r.requests.get
+        pages = [
+            {"users": [{"name": "@a:h", "deactivated": True},
+                       {"name": "@b:h", "deactivated": False}], "next_token": "1"},
+            {"users": [{"name": "@c:h", "deactivated": 1}], "next_token": None},
+        ]
+        calls = {"n": 0}
+        try:
+            _r._env = lambda name, default="": (  # type: ignore
+                "admintok" if name == "ADMIN_TOKEN" else default)
+
+            def _get(*a, **k):
+                i = calls["n"]
+                calls["n"] += 1
+
+                class _R:
+                    status_code = 200
+                    @staticmethod
+                    def json():
+                        return pages[i]
+                return _R()
+            _r.requests.get = _get  # type: ignore
+            ids = reg.list_deactivated_user_ids("http://hs")
+            self.assertEqual(ids, {"@a:h", "@c:h"})
+        finally:
+            _r._env, _r.requests.get = orig_env, orig_get  # type: ignore
+
+    def test_list_deactivated_fail_open_on_error(self) -> None:
+        # 无令牌 → None(调用方据此不过滤)。
+        import cosmac.registration as _r
+        orig_env = _r._env
+        try:
+            _r._env = lambda name, default="": default  # type: ignore（无 ADMIN_TOKEN）
+            self.assertIsNone(reg.list_deactivated_user_ids("http://hs"))
+        finally:
+            _r._env = orig_env  # type: ignore
+
     def test_query_user_deactivated_parses_admin_api(self) -> None:
         # query_user_deactivated：读 Synapse 管理 API 的 deactivated 字段。
         import cosmac.registration as _r

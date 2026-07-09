@@ -1,5 +1,18 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-09 — feat:主AI 派单过滤掉已停用账号
+- 背景:能力名册(list_capabilities)里若含已停用账号,主AI 会照样派单,任务落到登不进来的账号上、
+  没人干。要在源头把停用账号从名册剔除。
+- 实现:
+  · registration 新增 `list_deactivated_user_ids(hs_url)`——分页拉 Synapse 管理 API
+    `/_synapse/admin/v2/users?deactivated=true`,收出所有 deactivated=真 的 user_id 集合;
+    **fail-open**(无令牌/任何异常/某页非200 → None,调用方不过滤,别因抖动清空名册)。
+  · bot 加带 120s 缓存的 `_deactivated_user_ids()`(名册每轮可能重建,别每次翻全量用户;仅成功时刷缓存)。
+  · `_list_capabilities_for_tool` 在 server_name 域名过滤之后,再按停用集把停用者从「真人」剔除。
+- 验证:test_capabilities +2(停用者被剔/查不到时不过滤)、test_registration +2(分页解析/无令牌回None);
+  全量 420 测试仅剩 3 个既有无关失败。ruff 通过。依赖 COSMAC_ADMIN_TOKEN(现成)。
+- **部署:纯后端,仅 git pull + 重启 guduu-bot(不重建前端)。**
+
 ## 2026-07-09 — fix:停用账号登录提示「用户名或密码错误」→ 改为「该账号已停用，请联系管理员」
 - 现象:被停用(deactivated)的账号登录,提示"用户名或密码错误",用户以为是自己记错密码。
 - 根因:停用会**抹掉密码**,所以密码登录必然在 Synapse 的凭据校验阶段就 403(M_FORBIDDEN),

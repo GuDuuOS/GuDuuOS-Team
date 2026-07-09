@@ -956,6 +956,53 @@ def query_user_deactivated(hs_url: str, user_id: str) -> Optional[bool]:
     return None
 
 
+def list_deactivated_user_ids(
+    hs_url: str, *, page_limit: int = 200, max_pages: int = 25
+) -> Optional[set]:
+    """列出本服务器**所有已停用**账号的 user_id 集合。返回 set / None(查不了)。
+
+    给能力名册过滤用——主 AI 派单不该派给已停用的人(任务落到登不进来的账号上,谁也干不了)。
+    分页拉 Synapse 管理 API `GET /_synapse/admin/v2/users?deactivated=true`(该参数=**包含**停用者,
+    再按每条的 deactivated 字段挑出停用的)。需管理员令牌 COSMAC_ADMIN_TOKEN。
+    **fail-open**：无令牌/任何异常/某页非 200 一律回 None——调用方据此**不过滤**(宁可多列一个停用者,
+    也不能因一次查询抖动把整份名册清空、让 AI "没人可派")。max_pages 兜底防超大部署下无限翻页。
+    """
+    token = _env("ADMIN_TOKEN")
+    if not token:
+        return None
+    base = hs_url.rstrip("/")
+    out: set = set()
+    frm: Any = 0
+    try:
+        for _ in range(max_pages):
+            url = (
+                f"{base}/_synapse/admin/v2/users"
+                f"?from={frm}&limit={page_limit}&guests=false&deactivated=true"
+            )
+            rr = requests.get(
+                url, headers={"Authorization": f"Bearer {token}"}, timeout=_HS_TIMEOUT
+            )
+            if rr.status_code != 200:
+                logger.debug("列停用用户返回 %s", rr.status_code)
+                return None
+            data = rr.json()
+            for u in data.get("users") or []:
+                if u.get("deactivated") and u.get("name"):
+                    out.add(str(u["name"]))
+            nxt = data.get("next_token")
+            if nxt is None:  # 没有下一页了
+                return out
+            frm = nxt
+        logger.debug("列停用用户翻页达上限 %s,可能不完整", max_pages)
+        return out
+    except requests.RequestException:
+        logger.debug("列停用用户请求异常", exc_info=True)
+        return None
+    except Exception:
+        logger.debug("解析停用用户列表失败", exc_info=True)
+        return None
+
+
 def reset_request_code(
     email: str, *, client_ip: str = "", turnstile: str = ""
 ) -> Tuple[int, Dict[str, Any]]:
