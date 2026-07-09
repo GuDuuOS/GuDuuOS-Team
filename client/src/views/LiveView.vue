@@ -31,6 +31,8 @@ import {
   sendReply,
   editMessage,
   sendText,
+  sendImageFile,
+  sendFileAttachment,
   ensureBotDm,
   listAiSessions,
   createAiSession,
@@ -1030,6 +1032,13 @@ function fmtTime(ts: number) {
   const m = String(d.getMinutes()).padStart(2, '0')
   return `${h}:${m}`
 }
+// 文件大小人类可读：B / KB / MB（附件下载卡片用）
+function fmtSize(bytes?: number): string {
+  if (!bytes || bytes < 0) return ''
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
 // 日期分隔线标签：今天 / 昨天 / X月X日
 function dayKey(ts: number) {
   const d = new Date(ts)
@@ -1326,6 +1335,33 @@ async function send() {
   else if (rep) await sendReply(currentRoom.value, t, rep.id)
   else await sendText(currentRoom.value, t)
   setTimeout(refresh, 400)
+}
+
+// ── 附件/图片上传 ──
+const fileInputRef = ref<HTMLInputElement>()   // 隐藏的文件选择框
+const uploading = ref(false)
+// 上限：图片/文件都限到 50MB，超了本地先拦（Synapse 默认也有上限，本地拦提示更友好）
+const MAX_UPLOAD = 50 * 1024 * 1024
+function pickAttachment() { if (!uploading.value) fileInputRef.value?.click() }
+async function onAttachmentPicked(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  input.value = ''   // 清空，允许连续选同一个文件再次触发 change
+  if (!files.length || !currentRoom.value) return
+  uploading.value = true
+  try {
+    for (const f of files) {
+      if (f.size > MAX_UPLOAD) { toast('文件过大', `${f.name} 超过 50MB，未发送`); continue }
+      // 按 MIME 判断走图片还是文件：图片进画廊式缩略图，其余当附件下载卡片
+      if (f.type.startsWith('image/')) await sendImageFile(currentRoom.value, f)
+      else await sendFileAttachment(currentRoom.value, f)
+    }
+    setTimeout(refresh, 400)
+  } catch (err: any) {
+    toast('上传失败', err?.message || String(err))
+  } finally {
+    uploading.value = false
+  }
 }
 
 async function aiSend() {
@@ -2048,7 +2084,16 @@ onBeforeUnmount(() => {
                 <span v-if="isBot(m.sender)" class="app-tag">APP</span>
                 <span class="time">{{ fmtTime(m.ts) }}</span>
               </div>
-              <div v-if="!m.card" class="text"><span v-html="renderMd(m.body)"></span><span v-if="m.edited" class="edited">（已编辑）</span></div>
+              <!-- 图片附件：缩略图，点击新标签打开原图 -->
+              <a v-if="m.attachment && m.attachment.kind === 'image'" class="msg-img" :href="m.attachment.url" target="_blank" rel="noopener" :title="m.attachment.name">
+                <img :src="m.attachment.url" :alt="m.attachment.name" loading="lazy" />
+              </a>
+              <!-- 文件附件：可下载卡片 -->
+              <a v-else-if="m.attachment && m.attachment.kind === 'file'" class="msg-file" :href="m.attachment.url" target="_blank" rel="noopener" :download="m.attachment.name">
+                <span class="msg-file-ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg></span>
+                <span class="msg-file-meta"><span class="msg-file-name">{{ m.attachment.name }}</span><span class="msg-file-size">{{ fmtSize(m.attachment.size) }} · 点击下载</span></span>
+              </a>
+              <div v-else-if="!m.card" class="text"><span v-html="renderMd(m.body)"></span><span v-if="m.edited" class="edited">（已编辑）</span></div>
               <ChoiceCard v-else-if="m.card.kind === 'choice'" :card="m.card" @pick="(t) => pickChoice(t, currentRoom)" />
               <div v-else-if="m.card.kind === 'team_created'" class="rich team">
                 <div class="team-h">✅ 专班「{{ m.card.project }}」已建好，已加入「{{ activeSpaceName }}」</div>
@@ -2133,10 +2178,18 @@ onBeforeUnmount(() => {
                 <button class="tb-btn" title="引用" @click="tb.quote"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 7v6H4V9c0-1.1.9-2 2-2h1Zm10 0v6h-3V9c0-1.1.9-2 2-2h1Z" /></svg></button>
                 <button class="tb-btn" title="无序列表" @click="tb.ul"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" /></svg></button>
                 <button class="tb-btn" title="@提及" @click="tb.at"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" /><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8" /></svg></button>
+                <span class="tb-sep" />
+                <!-- 上传图片/附件：点开系统文件框，图片走缩略图、其余走下载卡片 -->
+                <button class="tb-btn" :title="uploading ? '上传中…' : '上传图片/附件'" :disabled="uploading" @click="pickAttachment">
+                  <svg v-if="!uploading" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+                  <span v-else class="tb-spin" />
+                </button>
               </div>
               <div class="tb-right">
                 <button class="send" :disabled="!draft.trim()" title="发送 (Enter)" @click="send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13" /><path d="M22 2 15 22l-4-9-9-4Z" /></svg></button>
               </div>
+              <!-- 隐藏的文件选择框：多选;图片+常见文档都可 -->
+              <input ref="fileInputRef" type="file" multiple style="display:none" @change="onAttachmentPicked" />
             </div>
           </div>
         </div>
@@ -3030,6 +3083,19 @@ onBeforeUnmount(() => {
 .day-sep span { font-size: 11px; font-weight: 600; color: var(--text-3); font-family: var(--mono); }
 .msg .text { color: var(--text); font-size: var(--fs-100); line-height: var(--lh-200); word-break: break-word; }
 .edited { font-size: 11px; color: var(--text-dim); margin-left: 6px; }
+/* 图片附件缩略图：限最大尺寸，圆角，点击开原图 */
+.msg-img { display: inline-block; margin-top: 4px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); max-width: 360px; line-height: 0; }
+.msg-img img { display: block; max-width: 100%; max-height: 320px; height: auto; object-fit: cover; cursor: zoom-in; }
+/* 文件附件下载卡片 */
+.msg-file { display: inline-flex; align-items: center; gap: 10px; margin-top: 4px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-panel); text-decoration: none; max-width: 320px; }
+.msg-file:hover { background: var(--bg-hover); }
+.msg-file-ic { color: var(--accent); flex-shrink: 0; display: inline-flex; }
+.msg-file-meta { display: flex; flex-direction: column; min-width: 0; }
+.msg-file-name { color: var(--text); font-size: var(--fs-100); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-file-size { color: var(--text-dim); font-size: 11px; }
+/* 工具条上传中的小转圈 */
+.tb-spin { width: 13px; height: 13px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: tb-spin .7s linear infinite; }
+@keyframes tb-spin { to { transform: rotate(360deg); } }
 /* @提及高亮 */
 .text :deep(.mention), .ai-bubble :deep(.mention) { background: var(--accent-soft); color: var(--warn); border-radius: 4px; padding: 0 3px; font-weight: 600; }
 /* 回复预览（整行浮在头像上方 · 弯角连接线 + ↩ + 名字上色 + 正文淡色）*/

@@ -15,6 +15,17 @@ export interface LiveRoom {
 }
 
 /** 给 UI 用的精简消息结构；card 为 cosmac.card 自定义富卡（可能没有） */
+/** 消息附件（图片 / 文件）：由 m.image / m.file / m.video / m.audio 事件解析而来。 */
+export interface MsgAttachment {
+  kind: 'image' | 'file'
+  url: string          // 可直接用的 http(s) 下载/显示地址（已由 mxc 转换）
+  name: string         // 文件名（body）
+  mimetype?: string
+  size?: number        // 字节
+  w?: number           // 图片宽（用于占位比例）
+  h?: number           // 图片高
+}
+
 export interface LiveMsg {
   id: string
   sender: string
@@ -22,6 +33,8 @@ export interface LiveMsg {
   body: string
   ts: number
   card?: any
+  /** 图片/文件附件（有则消息体渲染成缩略图或下载卡片，而非纯文本） */
+  attachment?: MsgAttachment
   /** 是否被编辑过（m.replace），显示"已编辑" */
   edited?: boolean
   /** 回复的目标消息（m.in_reply_to）：对方 id/名 + 正文预览 */
@@ -460,6 +473,13 @@ function spaceMeta(room: any): { label?: string; order?: number } {
 export function mxcToHttp(mxc: string, size = 64): string {
   if (!mx || !mxc) return ''
   return (mx as any).mxcUrlToHttp?.(mxc, size, size, 'crop') || ''
+}
+
+/** mxc:// → 原图/原文件的 http 下载地址（不缩略，用于图片查看/文件下载）。 */
+export function mxcToDownload(mxc: string): string {
+  if (!mx || !mxc) return ''
+  // 不传宽高 = 走 /download/（原文件）；传了才是 /thumbnail/。
+  return (mx as any).mxcUrlToHttp?.(mxc) || ''
 }
 
 /** 读某个 Space 的头像（m.room.avatar → mxc → http）。 */
@@ -2801,6 +2821,7 @@ export function listMessages(roomId: string): LiveMsg[] {
         body: stripReplyFallback(c.body || ''),
         ts: e.getTs(),
         card: c['cosmac.card'],
+        attachment: parseAttachment(c),
         edited: !!replacing,
         replyToId: inReplyTo,
         replyToSender,
@@ -2808,6 +2829,64 @@ export function listMessages(roomId: string): LiveMsg[] {
         replyToBody,
       }
     })
+}
+
+/** 从消息 content 解析图片/文件附件。非附件消息返回 undefined。
+ *  m.image/m.video/m.audio → 图片位(视频/音频暂统一按"文件"下载,至少可取);m.file → 文件。
+ *  只认 mxc:// 的 url(加密房的 file.url 另说,本产品未开端到端加密,普通 url 即可)。 */
+function parseAttachment(c: any): MsgAttachment | undefined {
+  const t = c?.msgtype
+  const mxc = c?.url
+  if (!mxc || typeof mxc !== 'string' || !mxc.startsWith('mxc://')) return undefined
+  const info = c?.info || {}
+  const name = String(c?.body || '文件')
+  if (t === 'm.image') {
+    return {
+      kind: 'image', url: mxcToDownload(mxc), name,
+      mimetype: info.mimetype, size: info.size, w: info.w, h: info.h,
+    }
+  }
+  if (t === 'm.file' || t === 'm.video' || t === 'm.audio') {
+    return { kind: 'file', url: mxcToDownload(mxc), name, mimetype: info.mimetype, size: info.size }
+  }
+  return undefined
+}
+
+/** 上传并发送一张图片到房间（m.image）。尽力附带宽高(缩略图渲染需要)。 */
+export async function sendImageFile(roomId: string, file: File): Promise<void> {
+  if (!mx) throw new Error('未登录')
+  const url = await uploadMedia(file)
+  if (!url) throw new Error('上传失败')
+  const info: Record<string, any> = { mimetype: file.type, size: file.size }
+  try {
+    const dim = await readImageSize(file)
+    if (dim) { info.w = dim.w; info.h = dim.h }
+  } catch { /* 读宽高失败不阻断发送 */ }
+  await (mx as any).sendEvent(roomId, 'm.room.message', {
+    msgtype: 'm.image', body: file.name, url, info,
+  })
+}
+
+/** 上传并发送一个文件附件到房间（m.file）。 */
+export async function sendFileAttachment(roomId: string, file: File): Promise<void> {
+  if (!mx) throw new Error('未登录')
+  const url = await uploadMedia(file)
+  if (!url) throw new Error('上传失败')
+  await (mx as any).sendEvent(roomId, 'm.room.message', {
+    msgtype: 'm.file', body: file.name, url,
+    info: { mimetype: file.type || 'application/octet-stream', size: file.size },
+  })
+}
+
+/** 读一张图片文件的像素宽高（best-effort，读不出返回 null）。 */
+function readImageSize(file: File): Promise<{ w: number; h: number } | null> {
+  return new Promise((resolve) => {
+    const u = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => { resolve({ w: img.naturalWidth, h: img.naturalHeight }); URL.revokeObjectURL(u) }
+    img.onerror = () => { resolve(null); URL.revokeObjectURL(u) }
+    img.src = u
+  })
 }
 
 /** 去掉富回复正文里 "> <@x> 引用..." 的 fallback 前缀，只留用户真正打的内容。 */

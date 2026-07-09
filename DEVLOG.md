@@ -1,5 +1,17 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-09 — feat:频道支持上传图片/附件
+- 现象:频道输入框工具条只有格式化按钮,没有上传入口,发不了图片和文件。
+- 实现(纯前端,复用现成 uploadMedia):
+  · client.ts:新增 sendImageFile(m.image,带宽高)/sendFileAttachment(m.file);LiveMsg 加
+    attachment 字段;mapMessages 解析 m.image/m.file/m.video/m.audio → 附件;mxcToDownload 取原文件地址。
+  · LiveView:工具条加「上传」按钮 + 隐藏 file input(多选、50MB 上限、图片按 MIME 走 m.image 其余走
+    m.file);消息体渲染——图片=缩略图(点击开原图)、文件=下载卡片(图标+名+大小);上传中转圈+失败 toast。
+  · 媒体地址走与现有头像同一套 mxcUrlToHttp(该服务器媒体可匿名取,和头像一致)。
+- 验证:vite build 通过。真机验收:频道里点上传→选图/文件→应发出并渲染缩略图/下载卡片
+  (需登录真实会话,本地 preview 连不上生产 Synapse,故以线上为准)。
+- **部署:纯前端,覆盖 dist 即可(不重启 bot)。**
+
 ## 2026-07-09 — feat:主AI 派单过滤掉已停用账号
 - 背景:能力名册(list_capabilities)里若含已停用账号,主AI 会照样派单,任务落到登不进来的账号上、
   没人干。要在源头把停用账号从名册剔除。
