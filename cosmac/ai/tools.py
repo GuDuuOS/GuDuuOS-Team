@@ -128,6 +128,8 @@ class Toolbox:
         # 人事数据查询（数据智能）:只读、按 hr_data 门控(默认仅管理员),旧配置白名单没有它,
         # 不放这会被当"未勾选=禁用"；门控足够拦权限，工具开关不再叠一层。
         "query_hr",
+        # 销售业绩查询（数据智能）:只读、按 sales_data 门控(默认仅管理员),同理常开。
+        "query_sales",
     }
 
     def _is_enabled(self, name: str) -> bool:
@@ -518,6 +520,42 @@ class Toolbox:
                 "required": ["action"],
             },
             fn=self._tool_query_hr,
+        )
+
+        # 8.6) 销售业绩查询（数据智能）：让主 AI 能回答「销售额 / 签单 / 业绩完成率」类问题。
+        #      数据来自 cosmac DB 的 cosmac_sales_record（按 销售员 × 月份）。按 sales_data 门控。
+        self._register(
+            name="query_sales",
+            description=(
+                "查询公司**销售业绩数据**并做分析。当用户问到销售额、业绩、签单/成单、目标、"
+                "业绩完成率/达成率、销售排名、销售趋势、某销售员的业绩时调用。按 action 选类型；"
+                "拿到结构化结果后用自然语言给结论与分析。\n"
+                "action 取值：\n"
+                "- summary：某月销售概况（团队总销售额/目标/签单/完成率 + 每人明细），默认最近月\n"
+                "- ranking：销售排行榜（配合 by=actual 销售额 / completion 完成率 / deals 签单数、top_n）\n"
+                "- trend：近 N 个月团队销售趋势（配合 months）\n"
+                "- person：某销售员近几个月业绩（配合 keyword=姓名/工号）\n"
+                "可选 period 指定月份（YYYY-MM），不填=最近有数据的月。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "查询类型：summary/ranking/trend/person",
+                    },
+                    "period": {"type": "string", "description": "月份 YYYY-MM（可选，默认最近月）"},
+                    "by": {
+                        "type": "string",
+                        "description": "排行维度：actual 销售额 / completion 完成率 / deals 签单数",
+                    },
+                    "top_n": {"type": "integer", "description": "排行取前几名，默认 5（最多 20）"},
+                    "months": {"type": "integer", "description": "趋势/某人看近几个月，默认 6"},
+                    "keyword": {"type": "string", "description": "person 用：销售员姓名或工号"},
+                },
+                "required": ["action"],
+            },
+            fn=self._tool_query_sales,
         )
 
         # 9) 能力名册（模块3.5 档1）：列出可调配的 人/AI Agent/Skill/知识库 + 各自能力备注。
@@ -1282,6 +1320,47 @@ class Toolbox:
         except Exception:
             logger.exception("人事数据查询工具执行出错")
             return "查询人事数据时出错了（数据库不可用？）。"
+
+    def _tool_query_sales(self, args: Dict[str, Any], ctx: ToolContext) -> str:
+        """销售业绩查询（数据智能）。只读地查 cosmac_sales_record 并聚合。
+
+        门控由 execute 的 gate_check 统一裁决（query_sales→sales_data，默认仅管理员）。
+        返回紧凑中文 JSON 供模型分析。绝不抛异常。
+        """
+        import json as _json
+
+        action = (args.get("action") or "summary").strip().lower()
+        period = (args.get("period") or "").strip()
+        try:
+            from cosmac.db import sales_repo as sr
+            from cosmac.db import session_scope
+
+            with session_scope() as s:
+                if not sr.has_data(s):
+                    return "销售业绩库里还没有数据（需要先播种/导入销售数据）。"
+
+                if action == "ranking":
+                    data = {"查询": "销售排行榜", **sr.ranking(
+                        s, period=period, by=args.get("by") or "actual",
+                        n=int(args.get("top_n") or 5))}
+                elif action == "trend":
+                    data = {"查询": "销售趋势", **sr.trend(
+                        s, months=int(args.get("months") or 6))}
+                elif action == "person":
+                    kw = (args.get("keyword") or "").strip()
+                    if not kw:
+                        return "请给出要查的销售员姓名或工号（keyword）。"
+                    detail = sr.person(s, keyword=kw, months=int(args.get("months") or 6))
+                    if not detail:
+                        return f"没找到「{kw}」的销售业绩记录（可能不是销售岗）。"
+                    data = {"查询": "个人销售业绩", **detail}
+                else:  # summary 及未知动作
+                    data = {"查询": "销售概况", "公司": "星澜科技",
+                            **sr.monthly_summary(s, period=period)}
+            return _json.dumps(data, ensure_ascii=False)
+        except Exception:
+            logger.exception("销售业绩查询工具执行出错")
+            return "查询销售业绩时出错了（数据库不可用？）。"
 
     def _tool_ask_user_choice(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         """发一张「选择卡」给用户点选（档·交互增强）。结束本轮，等用户点完发回再继续。"""

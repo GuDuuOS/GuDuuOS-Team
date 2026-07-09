@@ -590,3 +590,34 @@ class Employee(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<Employee {self.emp_no} {self.name}@{self.department}>"
+
+
+class SalesRecord(Base, TimestampMixin):
+    """销售业绩记录（按 销售员 × 月份）：销售额 / 签单 / 目标 / 业绩完成率的底表。
+
+    与 [Employee] 配套——挂在「销售部」员工身上（emp_no 对应花名册工号），做成**月度时序**，
+    支撑「本月销售额」「谁签单最多」「业绩完成率排名」「近半年趋势」这类销售问题。属结构化派生
+    业务数据，同 §3 分层落 cosmac DB。
+
+    - period 用 ``YYYY-MM`` 月份字符串（跨 SQLite/PG 一致、易按月聚合）。
+    - 金额用整数（元），业绩完成率 = actual / target（查询时算，不存冗余）。
+    - (emp_no, period) 唯一——一个销售员一个月一条；seed 重跑按此 upsert，不重复。
+    """
+
+    __tablename__ = "cosmac_sales_record"
+    __table_args__ = (
+        UniqueConstraint("emp_no", "period", name="uq_sales_emp_period"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    emp_no: Mapped[str] = mapped_column(String(32), nullable=False, index=True)  # 销售员工号
+    name: Mapped[str] = mapped_column(String(64), nullable=False, default="")  # 姓名（冗余，免连表）
+    department: Mapped[str] = mapped_column(String(64), nullable=False, default="")  # 部门（冗余）
+    period: Mapped[str] = mapped_column(String(7), nullable=False, index=True)  # 月份 YYYY-MM
+    target: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 月度目标销售额（元）
+    actual: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 实际销售额（元）
+    deals: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 签单数
+    new_customers: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 新增客户数
+
+    def __repr__(self) -> str:
+        return f"<SalesRecord {self.emp_no} {self.period} {self.actual}/{self.target}>"

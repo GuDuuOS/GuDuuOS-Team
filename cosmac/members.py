@@ -338,6 +338,8 @@ GATE_CATALOG: List[Dict[str, str]] = [
     {"key": "doc_read", "label": "图文教程（查看平台图文内容）", "default": TIER_PAID, "group": "内容"},
     # 人事/员工（HR）数据查询：涉及薪资、绩效等敏感信息，默认仅平台管理员可查（可在后台调低）。
     {"key": "hr_data", "label": "人事数据查询（花名册/薪酬/绩效/考勤·敏感）", "default": GATE_ADMIN, "group": "数据智能"},
+    # 销售业绩数据查询：销售额/签单/完成率等经营敏感信息，默认仅平台管理员可查。
+    {"key": "sales_data", "label": "销售业绩查询（销售额/签单/完成率·敏感）", "default": GATE_ADMIN, "group": "数据智能"},
 ]
 
 # 由目录派生的便捷映射

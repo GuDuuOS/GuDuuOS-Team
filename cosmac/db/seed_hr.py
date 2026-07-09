@@ -24,7 +24,7 @@ from typing import Any, Dict, List
 from sqlalchemy import select
 
 from cosmac.db import init_engine, session_scope
-from cosmac.db.models import Employee
+from cosmac.db.models import Employee, SalesRecord
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,15 @@ _DEPT_MULT = {
 
 # 绩效评级分布权重（S 少、B 多、C 尾部）
 _PERF_POOL = (["S"] * 10) + (["A"] * 35) + (["B"] * 45) + (["C"] * 10)
+
+# —— 销售业绩：职级 → 月度目标销售额（元）——
+_SALES_TARGET = {
+    "M2": 800_000,  # 销售总监
+    "P7": 550_000,  # 大客户经理（资深）
+    "P6": 420_000,  # 大客户经理
+    "P5": 260_000,  # 销售代表
+    "P4": 190_000,  # 销售代表（初级）
+}
 
 # —— 部门编制表：(部门, [(职位, 职级)...], 需要人数) ——
 # 每个部门第一条通常是负责人（M 序列），后面是成员。
@@ -277,9 +286,70 @@ def build_employees(today: date) -> List[Dict[str, Any]]:
     return people
 
 
+def _period_list(today: date, n: int) -> list:
+    """最近 n 个月的 ``YYYY-MM`` 列表（升序，末尾=当月）。"""
+    y, m = today.year, today.month
+    out = []
+    for i in range(n):
+        yy, mm = y, m - i
+        while mm <= 0:
+            mm += 12
+            yy -= 1
+        out.append(f"{yy:04d}-{mm:02d}")
+    return list(reversed(out))
+
+
+def seed_sales(today: date, months: int = 6) -> int:
+    """给「销售部」在职销售员造近 N 个月的业绩记录（销售额/签单/目标/完成率）。
+
+    - 只给有业绩指标的角色造数（销售总监/大客户经理/销售代表）；销售运营等支持岗跳过。
+    - 目标按职级定档，逐月 ±10% 抖动；完成率在 0.7~1.25 之间加权波动（多数接近达标）。
+    - 签单数 = 销售额 / 单均（4~7 万随机）；新增客户 = 签单数的 45%~75%。
+    - 按 (emp_no, period) upsert，幂等。返回写入的记录条数。
+    """
+    periods = _period_list(today, months)
+    written = 0
+    with session_scope() as s:
+        # 读「销售部」在职/试用期员工（离职的不造业绩）
+        sales = [
+            e for e in s.scalars(
+                select(Employee).where(Employee.department == "销售部")
+            ).all()
+            if e.status in ("active", "probation") and "运营" not in (e.title or "")
+        ]
+        for e in sales:
+            base = _SALES_TARGET.get(e.level, 250_000)
+            for p in periods:
+                target = int(round(base * _RNG.uniform(0.9, 1.1) / 1000)) * 1000
+                # 完成率加权：多数 0.85~1.15，少数特别高/低，制造看点
+                rate = _RNG.choice(
+                    [0.72, 0.83, 0.9, 0.95, 1.0, 1.05, 1.1, 1.18, 1.25]
+                ) * _RNG.uniform(0.97, 1.03)
+                actual = int(round(target * rate / 1000)) * 1000
+                avg_deal = _RNG.randint(40_000, 70_000)
+                deals = max(1, round(actual / avg_deal))
+                new_cust = max(0, round(deals * _RNG.uniform(0.45, 0.75)))
+                row = s.scalars(
+                    select(SalesRecord).where(
+                        SalesRecord.emp_no == e.emp_no, SalesRecord.period == p
+                    ).limit(1)
+                ).first()
+                if row is None:
+                    row = SalesRecord(emp_no=e.emp_no, period=p)
+                    s.add(row)
+                row.name = e.name
+                row.department = e.department
+                row.target = target
+                row.actual = actual
+                row.deals = deals
+                row.new_customers = new_cust
+                written += 1
+    return written
+
+
 def seed(today: date | None = None) -> int:
-    """把生成的员工数据 upsert 进 DB；返回写入的总条数。"""
-    init_engine(create_all=True)  # 确保 cosmac_employee 表存在
+    """把生成的员工数据 + 销售业绩 upsert 进 DB；返回写入的员工条数。"""
+    init_engine(create_all=True)  # 确保 cosmac_employee / cosmac_sales_record 表存在
     day = today or date.today()
     people = build_employees(day)
     written = 0
@@ -294,7 +364,9 @@ def seed(today: date | None = None) -> int:
             for k, v in p.items():
                 setattr(row, k, v)
             written += 1
-    logger.info("已播种 %d 名员工（公司=%s）", written, COMPANY)
+    # 员工落库后，再给销售部造业绩数据（读的是已提交的花名册）
+    sales_n = seed_sales(day)
+    logger.info("已播种 %d 名员工 + %d 条销售业绩（公司=%s）", written, sales_n, COMPANY)
     return written
 
 
@@ -315,7 +387,7 @@ def _main() -> None:
         return
 
     n = seed()
-    print(f"✅ 已播种 {n} 名员工到 cosmac DB（公司：{COMPANY}）。")
+    print(f"✅ 已播种 {n} 名员工 + 销售业绩数据到 cosmac DB（公司：{COMPANY}）。")
 
 
 if __name__ == "__main__":

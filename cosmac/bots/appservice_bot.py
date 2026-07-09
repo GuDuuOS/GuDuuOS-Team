@@ -3468,6 +3468,7 @@ class CosmacBot:
         "assemble_team": "assemble_team",  # 一键建专班：独立门控（默认免费，可在后台调成付费）
         "create_tasks": "task_board",      # AI 拆解任务到看板：独立门控（默认免费）
         "query_hr": "hr_data",             # 人事数据查询：敏感数据，默认仅管理员（见 GATE_CATALOG）
+        "query_sales": "sales_data",       # 销售业绩查询：经营敏感数据，默认仅管理员
     }
 
     # —— 用量配额（变现第二步）——

@@ -1,5 +1,19 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-09 — feat:销售业绩数据 + query_sales 工具(数据智能扩展)
+- 背景:在人事数据基础上,补销售额/签单/业绩完成率的模拟数据,让主 AI 也能聊销售经营问题。
+- 数据模型:新表 cosmac_sales_record(销售员×月份:目标/实际销售额/签单数/新增客户;
+  完成率=实际/目标查询时算)。挂在花名册「销售部」员工身上,做成近 6 个月时序。
+- 只读 sales_repo:月度概况/排行榜(销售额·完成率·签单)/趋势/按人查/前端 api_overview。
+- seed_hr 扩展:seed() 员工落库后调 seed_sales——给销售部在职员工(排除销售运营支持岗)
+  按职级定目标、逐月±10%、完成率 0.72~1.25 加权波动,自洽。按(emp_no,period) 幂等 upsert。
+- 主 AI 新工具 query_sales(action=summary/ranking/trend/person),放 _ALWAYS_ON 常开。
+- 门控:新增能力 sales_data(默认仅管理员,经营敏感);gate map query_sales→sales_data;
+  前后端 GATE_CATALOG「数据智能」分组各加一条。
+- 验证:test_employee 扩到 10 项全过(含 TestSales);ruff 通过;vite build 通过。
+- **部署:git pull + 重启 guduu-bot + 重跑 seed_hr(建销售表+播种,幂等) + 覆盖 dist。
+  聊天即可测:问主 AI「本月销售额/业绩完成率排名/近半年销售趋势」。前端销售面板留作可选下一步。**
+
 ## 2026-07-09 — feat:前端「组织/人事」页(把花名册搬进 OS 呈现)
 - 背景:HR 数据只躺在 DB、只能靠聊天问出来,演示不直观。负责人要"50 多人在前端 OS 看得见、
   能按部门/角色挑人"——给数据智能演示一个可视化"舞台",也回答"在哪演示"。

@@ -100,5 +100,43 @@ class TestQueryHrTool(unittest.TestCase):
         self.assertEqual(self._call({"action": "summary"}), "需管理员权限")
 
 
+class TestSales(unittest.TestCase):
+    """销售业绩：seed_sales + sales_repo + query_sales 工具。"""
+
+    def setUp(self) -> None:
+        init_engine("sqlite://", create_all=True)
+        seed(today=date(2026, 7, 9))  # 一并播种员工 + 销售业绩
+        self.tb = Toolbox(None)
+        self.ctx = ToolContext("!r:h", "@alice:h", is_dm=True)
+
+    def test_sales_seeded_for_sales_team(self) -> None:
+        from cosmac.db import sales_repo as sr
+
+        with session_scope() as s:
+            self.assertTrue(sr.has_data(s))
+            self.assertEqual(sr.latest_period(s), "2026-07")  # 最近月=播种当月
+            summ = sr.monthly_summary(s)
+            self.assertGreater(summ["团队销售额"], 0)
+            self.assertGreater(summ["人数"], 0)
+
+    def test_query_sales_actions(self) -> None:
+        for args in (
+            {"action": "summary"},
+            {"action": "ranking", "by": "completion", "top_n": 3},
+            {"action": "ranking", "by": "deals"},
+            {"action": "trend", "months": 6},
+        ):
+            out = self.tb.execute(
+                ToolCall(id="1", name="query_sales", arguments=args), self.ctx
+            )
+            self.assertIn("查询", json.loads(out))
+
+    def test_query_sales_person_needs_keyword(self) -> None:
+        out = self.tb.execute(
+            ToolCall(id="1", name="query_sales", arguments={"action": "person"}), self.ctx
+        )
+        self.assertIn("请给出", out)
+
+
 if __name__ == "__main__":
     unittest.main()
