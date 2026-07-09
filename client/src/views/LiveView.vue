@@ -1911,7 +1911,7 @@ onBeforeUnmount(() => {
                   <span class="kan-n">{{ tasksByStatus(col.key).length }}</span>
                 </div>
                 <div class="kan-cards">
-                  <div v-for="t in tasksByStatus(col.key)" :key="t.id" class="kan-card" :class="{ done: t.status === 'done' }">
+                  <div v-for="t in tasksByStatus(col.key)" :key="t.id" class="kan-card" :class="{ done: t.status === 'done' }" @click="col.key !== 'done' && moveTask(t, nextStatus(col.key))">
                     <div class="kan-title">{{ t.title }}</div>
                     <div v-if="t.assignee || execLabel(t) || t.progress > 0" class="kan-foot">
                       <span v-if="t.assignee" class="kan-who">
@@ -1924,9 +1924,9 @@ onBeforeUnmount(() => {
                       <div class="kan-bar" :style="{ width: t.progress + '%' }" />
                     </div>
                     <div class="kan-btns">
-                      <button v-if="col.key !== 'todo'" class="kan-btn" title="退回" @click="moveTask(t, prevStatus(col.key))">←</button>
+                      <button v-if="col.key !== 'todo'" class="kan-btn" title="退回" @click.stop="moveTask(t, prevStatus(col.key))">←</button>
                       <span class="kan-spacer" />
-                      <button v-if="col.key !== 'done'" class="kan-btn primary" @click="moveTask(t, nextStatus(col.key))">{{ col.key === 'todo' ? '开始 →' : '完成 ✓' }}</button>
+                      <button v-if="col.key !== 'done'" class="kan-btn primary" @click.stop="moveTask(t, nextStatus(col.key))">{{ col.key === 'todo' ? '开始 →' : '完成 ✓' }}</button>
                     </div>
                   </div>
                   <div v-if="!tasksByStatus(col.key).length" class="kan-empty">
