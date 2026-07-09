@@ -1744,7 +1744,7 @@ onBeforeUnmount(() => {
                 @click="openRoom(r.id)"
               >
                 <span class="cs-chan-av" :style="{ background: colorOf(r.name) }">{{ iconChar(r.name) }}</span>
-                <span class="cs-label">{{ r.name }}</span>
+                <span class="cs-label" :title="r.name">{{ r.name }}</span>
                 <span v-if="isArchived(r.id)" class="cs-archived-tag" title="专班已归档收尾">🗄</span>
               </div>
               <p v-if="!channelRooms.length" class="cs-empty">还没有频道</p>
@@ -1770,7 +1770,7 @@ onBeforeUnmount(() => {
                 @click="openRoom(r.id)"
               >
                 <span class="cs-chan-av" :style="{ background: colorOf(r.name) }">{{ iconChar(r.name) }}</span>
-                <span class="cs-label">{{ r.name }}</span>
+                <span class="cs-label" :title="r.name">{{ r.name }}</span>
               </div>
               <p v-if="!fanRooms.length" class="cs-empty">还没有粉丝社区频道</p>
               <div class="cs-item cs-add-row" @click="openNewChannel">
@@ -1797,7 +1797,7 @@ onBeforeUnmount(() => {
                 @click="openRoom(r.id)"
               >
                 <span class="cs-chan-av" :style="{ background: colorOf(r.name) }">{{ iconChar(r.name) }}</span>
-                <span class="cs-label">{{ r.name }}</span>
+                <span class="cs-label" :title="r.name">{{ r.name }}</span>
                 <button class="cs-adopt" :disabled="!!adoptBusy" title="归入当前工作区" @click.stop="adoptOrphan(r)">
                   {{ adoptBusy === r.id ? '…' : '归入' }}
                 </button>
