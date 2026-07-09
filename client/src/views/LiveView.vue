@@ -512,8 +512,11 @@ function wsLabel(name: string) {
 function selectSpace(id: string) {
   activeSpace.value = id
   spaceChildIds.value = roomIdsInSpace(id)
-  // 切了工作区，若当前频道不属于它，回到频道空态
-  if (currentRoom.value && !spaceChildIds.value.has(currentRoom.value)) currentRoom.value = ''
+  // 切了工作区，若当前正看的频道不属于新工作区：别停在"频道模式却没频道"的**空白页**
+  // (顶部频道名空白、正文还是旧频道——用户实测到的 bug)，直接回到该工作区的「数据看板」。
+  // currentRoom 有值 ⟺ 正处于频道视图(openRoom 会把 board/tasks/docs/org 全置 false)，
+  // 故这里可安全地用 openBoard() 一步切回看板(它会把 board=true 且清空 currentRoom)。
+  if (currentRoom.value && !spaceChildIds.value.has(currentRoom.value)) openBoard()
   // 任务看板选中的"项目"是上个工作区的,清掉回到「全部项目」
   activeGoal.value = ''
 }
