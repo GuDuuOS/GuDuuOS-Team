@@ -109,6 +109,7 @@ import SocialSourceModal from '@/components/board/SocialSourceModal.vue'
 import { useSocialSources, platformLabel, platformIcon } from '@/composables/useSocialSources'
 import OnboardingWizard from '@/components/onboarding/OnboardingWizard.vue'
 import DocReader from '@/components/doc/DocReader.vue'
+import OrgView from '@/components/org/OrgView.vue'
 import { useOnboarding } from '@/composables/useOnboarding'
 import { useMarketplace } from '@/composables/useMarketplace'
 import { useCli } from '@/composables/useCli'
@@ -174,11 +175,13 @@ async function askFromBoard() {
 const board = ref(true)
 const tasks = ref(false)
 const docs = ref(false)   // 文档视图(类云文档，按工作区一棵页面树)：与 board/tasks 同级
-function openBoard() { board.value = true; tasks.value = false; docs.value = false; currentRoom.value = '' }
-function openTasks() { tasks.value = true; board.value = false; docs.value = false; currentRoom.value = ''; loadTasks() }
+const org = ref(false)    // 组织/人事视图（员工花名册，数据智能演示）：与 board/tasks 同级
+function openBoard() { board.value = true; tasks.value = false; docs.value = false; org.value = false; currentRoom.value = '' }
+function openTasks() { tasks.value = true; board.value = false; docs.value = false; org.value = false; currentRoom.value = ''; loadTasks() }
 function openDocs() {
-  docs.value = true; board.value = false; tasks.value = false; currentRoom.value = ''
+  docs.value = true; board.value = false; tasks.value = false; org.value = false; currentRoom.value = ''
 }
+function openOrg() { org.value = true; board.value = false; tasks.value = false; docs.value = false; currentRoom.value = '' }
 
 // 任务看板（AI 任务编排 P1）：主 AI 拆解的真实任务，三列 Kanban + 手动改状态。
 import { getTasks, updateTask, type TaskItem } from '@/matrix/client'
@@ -1237,6 +1240,7 @@ function openRoom(id: string) {
   board.value = false
   tasks.value = false
   docs.value = false
+  org.value = false
   currentRoom.value = id
   msgs.value = listMessages(id)
   channelMembers.value = listRoomMembers(id)
@@ -1444,6 +1448,7 @@ function computePath(): string {
   if (currentRoom.value) return `/s/${encodeURIComponent(s)}/c/${encodeURIComponent(currentRoom.value)}`
   if (tasks.value) return `/s/${encodeURIComponent(s)}/tasks`
   if (docs.value) return `/s/${encodeURIComponent(s)}/docs`
+  if (org.value) return `/s/${encodeURIComponent(s)}/org`
   return `/s/${encodeURIComponent(s)}/board`
 }
 
@@ -1465,7 +1470,7 @@ function applyFromRoute() {
     profileVisible.value = p.startsWith('/me')
     if (adminOpen.value || profileVisible.value) return
     // 匹配 /s/:space、/s/:space/board、/s/:space/tasks、/s/:space/docs、/s/:space/c/:roomId
-    const m = p.match(/^\/s\/([^/]+)(?:\/(board|tasks|docs)|\/c\/(.+))?$/)
+    const m = p.match(/^\/s\/([^/]+)(?:\/(board|tasks|docs|org)|\/c\/(.+))?$/)
     if (!m) return // 根路径或无法识别 → 保持现状
     const space = decodeURIComponent(m[1])
     if (space && spaces.value.some((s) => s.id === space)) {
@@ -1476,13 +1481,15 @@ function applyFromRoute() {
     if (roomId) {
       // 房间还没加载到 / 不存在 → 退回数据看板，避免空白
       if (rooms.value.some((r) => r.id === roomId)) openRoom(roomId)
-      else { board.value = true; tasks.value = false; docs.value = false; currentRoom.value = '' }
+      else { board.value = true; tasks.value = false; docs.value = false; org.value = false; currentRoom.value = '' }
     } else if (m[2] === 'tasks') {
-      tasks.value = true; board.value = false; docs.value = false; currentRoom.value = ''
+      tasks.value = true; board.value = false; docs.value = false; org.value = false; currentRoom.value = ''
     } else if (m[2] === 'docs') {
       openDocs()
+    } else if (m[2] === 'org') {
+      openOrg()
     } else {
-      board.value = true; tasks.value = false; docs.value = false; currentRoom.value = ''
+      board.value = true; tasks.value = false; docs.value = false; org.value = false; currentRoom.value = ''
     }
   } finally {
     applyingFromRoute = false
@@ -1490,7 +1497,7 @@ function applyFromRoute() {
 }
 
 // 状态 → 地址：用 push 让浏览器后退可用
-watch([activeSpace, board, tasks, docs, currentRoom, adminOpen, profileVisible], () => {
+watch([activeSpace, board, tasks, docs, org, currentRoom, adminOpen, profileVisible], () => {
   if (!syncReady || applyingFromRoute) return
   const path = computePath()
   if (route.path !== path) router.push(path).catch(() => {})
@@ -1676,6 +1683,12 @@ onBeforeUnmount(() => {
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M8 13h8M8 17h8" /></svg>
             </span>
             <span class="cs-label">图文教程</span>
+          </div>
+          <div class="cs-item pinned-item" :class="{ active: org }" @click="openOrg">
+            <span class="cs-ic">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
+            </span>
+            <span class="cs-label">组织/人事</span>
           </div>
 
           <!-- 频道 group（真实房间）-->
@@ -1930,6 +1943,11 @@ onBeforeUnmount(() => {
         <!-- ===== 图文教程（全平台一份·前台只读·类公众号；付费可见；编辑在管理后台）===== -->
         <template v-else-if="docs">
           <DocReader />
+        </template>
+
+        <!-- ===== 组织/人事（员工花名册·数据智能演示；仅管理员可见数据）===== -->
+        <template v-else-if="org">
+          <OrgView />
         </template>
 
         <!-- ===== 频道 ===== -->

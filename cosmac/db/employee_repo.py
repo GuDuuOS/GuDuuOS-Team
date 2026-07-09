@@ -53,6 +53,31 @@ def to_dict(e: Employee) -> Dict[str, Any]:
     }
 
 
+def to_api_dict(e: Employee) -> Dict[str, Any]:
+    """转成给**前端**用的字典（英文键，TS 侧类型友好）。字段与 to_dict 同源、键名英文。"""
+    return {
+        "emp_no": e.emp_no,
+        "name": e.name,
+        "gender": e.gender,
+        "department": e.department,
+        "title": e.title,
+        "level": e.level,
+        "manager": e.manager,
+        "hire_date": e.hire_date,
+        "status": e.status,
+        "resign_date": e.resign_date,
+        "city": e.city,
+        "salary": e.salary,
+        "perf_rating": e.perf_rating,
+        "annual_leave_total": e.annual_leave_total,
+        "annual_leave_used": e.annual_leave_used,
+        "leave_days_month": e.leave_days_month,
+        "overtime_hours_month": e.overtime_hours_month,
+        "education": e.education,
+        "birth_date": e.birth_date,
+    }
+
+
 def list_employees(
     session: Session,
     *,

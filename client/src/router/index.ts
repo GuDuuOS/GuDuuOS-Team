@@ -14,6 +14,7 @@ const routes = [
   { path: '/', component: LiveView },
   { path: '/s/:space/board', component: LiveView },
   { path: '/s/:space/tasks', component: LiveView },
+  { path: '/s/:space/org', component: LiveView },
   { path: '/s/:space/c/:roomId', component: LiveView },
   { path: '/admin', component: LiveView },
   { path: '/me', component: LiveView },

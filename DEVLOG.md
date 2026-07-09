@@ -1,5 +1,20 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-09 — feat:前端「组织/人事」页(把花名册搬进 OS 呈现)
+- 背景:HR 数据只躺在 DB、只能靠聊天问出来,演示不直观。负责人要"50 多人在前端 OS 看得见、
+  能按部门/角色挑人"——给数据智能演示一个可视化"舞台",也回答"在哪演示"。
+- 后端:新增只读端点 `GET /cosmac/hr/employees`(仅管理员,同 hr_data 敏感口径)——返回
+  公司概览+部门分组+员工列表;employee_repo 加 to_api_dict(英文键给前端)。
+- 前端:新增自包含组件 `components/org/OrgView.vue`(仿 DocReader 页面级组件模式):
+  公司概览 KPI 条 + 部门筛选 chips + 姓名/职位搜索 + 员工卡片网格 + 点开详情抽屉
+  (工号/汇报线/入职/薪资/绩效/年假/考勤/学历/生日)。试用期/离职/绩效用色标区分。
+- LiveView 接线(最小):org 标志位+openOrg、左侧导航"组织/人事"入口、主区一行 <OrgView/>、
+  URL 同步三处(computePath/applyFromRoute/watch)加 `/s/:space/org`、router 补占位路由。
+  遵循 client-root-is-liveview 的页面级视图约定,不引入新架构。
+- 验证:vue-tsc 全量类型检查 + vite build 通过;后端 test_employee 7 项全过;ruff 通过。
+- **部署:①后端 git pull + 重启 guduu-bot(新端点) ②前端 dist copy 到 /var/www/cosmac-app
+  + nginx reload。登录 @alice(管理员)左侧点「组织/人事」即见 51 人。**
+
 ## 2026-07-09 — feat:主AI人事数据查询(数据智能演示地基)
 - 背景: 下午演示要接「数据智能(DI)」,需让主AI能真查数据、真分析。选定场景=**企业人事(HR)**:
   用户在聊天里问"哪个部门薪资最高/谁绩效待改进/近半年入离职趋势",主AI真查真答。

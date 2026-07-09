@@ -2191,6 +2191,34 @@ class CosmacBot:
             logger.debug("统计 DB 指标失败", exc_info=True)
         return 200, out
 
+    def handle_hr_employees(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """人事花名册（给前端「组织/人事」页用）：公司概览 + 部门分组 + 员工列表。
+
+        权限：花名册含薪资/绩效等敏感字段，与 hr_data 门控同口径——**仅平台管理员**可读；
+        非管理员回 403，前端据此回退（不报错）。数据来自 cosmac DB 的 cosmac_employee 表
+        （由 seed_hr 播种）；读失败/空表都优雅返回，不抛异常。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(user_id):
+            return 403, {"error": "仅平台管理员可查看人事数据"}
+        out: Dict[str, Any] = {
+            "company": "星澜科技", "summary": {}, "departments": [], "employees": [],
+        }
+        try:
+            from cosmac.db import employee_repo as hr
+            from cosmac.db import session_scope
+
+            with session_scope() as s:
+                out["summary"] = hr.company_summary(s)
+                out["departments"] = out["summary"].get("各部门人数", [])
+                rows = hr.list_employees(s, limit=999)
+                out["employees"] = [hr.to_api_dict(e) for e in rows]
+        except Exception:
+            logger.debug("读人事花名册失败", exc_info=True)
+        return 200, out
+
     def handle_admin_emails(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """管理后台:列「用户名 localpart → 邮箱」映射(给用户列表显示邮箱)。**仅平台管理员**。
 
@@ -3795,6 +3823,14 @@ class _Handler(BaseHTTPRequestHandler):
             auth = self.headers.get("Authorization", "")
             token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
             code, payload = self.bot.handle_stats(token)
+            self._send_json(code, payload, cors=True)
+            return
+
+        # 组织/人事页：员工花名册（仅平台管理员；带本人 token）
+        if self.path.split("?", 1)[0] == "/cosmac/hr/employees":
+            auth = self.headers.get("Authorization", "")
+            token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
+            code, payload = self.bot.handle_hr_employees(token)
             self._send_json(code, payload, cors=True)
             return
 

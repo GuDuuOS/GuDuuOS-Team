@@ -2518,6 +2518,38 @@ export async function getPlatformStats(): Promise<PlatformStats | null> {
   } catch { return null }
 }
 
+/** 员工花名册的一条（组织/人事页）。字段与后端 cosmac_employee 表英文键一致。 */
+export interface Employee {
+  emp_no: string; name: string; gender: string
+  department: string; title: string; level: string; manager: string
+  hire_date: string; status: string; resign_date: string
+  city: string; salary: number; perf_rating: string
+  annual_leave_total: number; annual_leave_used: number
+  leave_days_month: number; overtime_hours_month: number
+  education: string; birth_date: string
+}
+
+/** 人事页整包数据：公司名 + 概览 + 部门分组 + 员工列表。 */
+export interface HrData {
+  company: string
+  summary: Record<string, any>
+  departments: { 名称: string; 人数: number }[]
+  employees: Employee[]
+}
+
+/** 拉人事花名册（仅平台管理员可读；非管理员/未登录返回 null，前端回退占位）。 */
+export async function getHrEmployees(): Promise<HrData | null> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return null
+  try {
+    const r = await fetch(`${payBase()}/cosmac/hr/employees`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return null
+    return await r.json()
+  } catch { return null }
+}
+
 /** 任务看板的一条任务（AI 任务编排）。executor_kind/ref 是档2 的类型化执行者。 */
 export interface TaskItem {
   id: number; title: string; assignee: string
