@@ -1494,7 +1494,9 @@ const filteredUsers = computed(() => {
       if (q && !(u.id.toLowerCase().includes(q) || (u.name || '').toLowerCase().includes(q))) return false
       if (filterRole.value === 'admin' && !u.admin) return false
       if (filterRole.value === 'member' && u.admin) return false
-      if (filterTier.value !== 'all' && memberTier(u.id) !== filterTier.value) return false
+      // 用**与列表同款的有效等级**过滤：管理员在等级列显示「管理员」(u.admin),不是其底层 tier——
+      // 否则按「付费会员」筛会把底层 tier=paid 的管理员也带进来(与展示不一致,QA 实测)。
+      if (filterTier.value !== 'all' && (u.admin ? 'admin' : memberTier(u.id)) !== filterTier.value) return false
       if (filterStatus.value === 'ok' && u.deactivated) return false
       if (filterStatus.value === 'off' && !u.deactivated) return false
       return true
