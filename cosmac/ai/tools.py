@@ -72,6 +72,31 @@ class ToolContext:
     space_id: str = ""
 
 
+def _parse_due_to_epoch(raw: str) -> Optional[int]:
+    """把日期字符串解析成 epoch 秒（任务截止时间）。解析不了返回 None。
+
+    支持：'YYYY-MM-DD'（只给日期 → 默认当天 23:59）/ 'YYYY-MM-DD HH:MM' / 'YYYY-MM-DD HH:MM:SS'，
+    '/' 与 'T' 分隔也认。用**系统本地时区**（datetime.timestamp() 对 naive 时间按本地时区换算）——
+    与提醒扫描比较用的 time.time() 同一时钟，避免差几个小时。
+    """
+    from datetime import datetime
+
+    s = (raw or "").strip().replace("/", "-").replace("T", " ")
+    for fmt, date_only in (
+        ("%Y-%m-%d %H:%M:%S", False),
+        ("%Y-%m-%d %H:%M", False),
+        ("%Y-%m-%d", True),
+    ):
+        try:
+            dt = datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+        if date_only:
+            dt = dt.replace(hour=23, minute=59, second=0)
+        return int(dt.timestamp())
+    return None
+
+
 class Toolbox:
     """主 AI 可用工具的注册表 + 执行器。
 
@@ -703,11 +728,13 @@ class Toolbox:
         self._register(
             name="update_task",
             description=(
-                "更新**当前频道**里某条任务的状态/结果，用于推进与**审核回填**：\n"
+                "更新**当前频道**里某条任务的状态/结果/**截止日期**，用于推进、审核回填与改期：\n"
                 "  • 执行者交付 → status=done 且 result 填交付内容/结论/链接\n"
                 "  • 审核通过 → status=done\n"
                 "  • 审核打回 → status=doing 且 result 写明打回原因与修改要求\n"
                 "  • 开始处理 → status=doing\n"
+                "  • **改截止日期** → due 填新日期（如『2025-07-11』或『2025-07-11 10:00』）；"
+                "清空截止日期填 due=''。用户说『把截止改到X』就直接用本工具改,别再新建任务。\n"
                 "只能改本频道的任务（按 task_id，先用 list_room_tasks 拿编号）。"
             ),
             parameters={
@@ -725,6 +752,13 @@ class Toolbox:
                     "progress": {
                         "type": "integer",
                         "description": "进度 0-100（可选）。",
+                    },
+                    "due": {
+                        "type": "string",
+                        "description": (
+                            "新截止日期（可选）。格式『YYYY-MM-DD』或『YYYY-MM-DD HH:MM』"
+                            "（只给日期默认当天 23:59）。传空串 '' = 清除截止日期（改为无时限）。"
+                        ),
                     },
                 },
                 "required": ["task_id"],
@@ -1570,6 +1604,21 @@ class Toolbox:
         status = (args.get("status") or "").strip() or None
         result = args.get("result")
         progress = args.get("progress")
+        # 截止日期：没给这个键=不动;给了(含空串)=改期。空串→清除(None);否则解析日期→epoch 秒。
+        from cosmac.db.task_repo import _DUE_UNSET
+        due_val: Any = _DUE_UNSET
+        due_label = ""
+        if "due" in args and args.get("due") is not None:
+            raw = str(args.get("due")).strip()
+            if raw == "":
+                due_val = None            # 显式清除截止
+                due_label = "清除截止日期"
+            else:
+                parsed = _parse_due_to_epoch(raw)
+                if parsed is None:
+                    return "截止日期看不懂，请用『2025-07-11』或『2025-07-11 10:00』这样的格式。"
+                due_val = parsed
+                due_label = f"截止改为 {raw}"
         try:
             from cosmac.db import session_scope
             from cosmac.db.task_repo import get_task, update_task
@@ -1585,10 +1634,13 @@ class Toolbox:
                     status=status,
                     result=result if isinstance(result, str) else None,
                     progress=progress if isinstance(progress, int) else None,
+                    due_ts=due_val,
                 )
             if not ok:
                 return f"任务 #{tid} 没有可更新的内容。"
             tail = f" → {status}" if status else ""
+            if due_label:
+                tail += f"（{due_label}）"
             return f"已更新任务 #{tid}「{title}」{tail}。"
         except Exception:
             logger.exception("更新任务失败")
