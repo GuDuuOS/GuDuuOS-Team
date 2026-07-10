@@ -2589,6 +2589,7 @@ onBeforeUnmount(() => {
       <div class="nw-modal">
         <div class="nw-title">成员与角色</div>
         <div class="nw-sub">「{{ activeSpaceName }}」的成员（{{ serverMembers.length }} 人）· {{ myServerPower >= 100 ? '你是群主' : myServerPower >= 50 ? '你是管理员' : '你是成员' }}</div>
+        <div class="nw-note">这里是<b>工作区级</b>成员（能管理整个工作区的人）。各频道的成员是独立的——加入某个频道并不等于加入工作区；要看某频道有哪些人，请到该频道的「关于此频道」面板查看。</div>
         <div class="mmg-list">
           <div v-for="m in serverMembers" :key="m.id" class="mmg-row">
             <span class="mmg-ava" :class="{ bot: m.isBot }">
