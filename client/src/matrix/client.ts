@@ -2023,6 +2023,8 @@ export interface Person {
   expertise: string
   note: string
   enabled: boolean
+  /** 休假/暂不可用：为 true 时主 AI 不派单给 TA，逾期提醒会升级给下达者建议改派 */
+  unavailable?: boolean
 }
 
 /** 读人员能力名册（控制室 state event）；不存在时返回 []。 */

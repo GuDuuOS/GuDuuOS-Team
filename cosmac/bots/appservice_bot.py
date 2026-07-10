@@ -1323,6 +1323,12 @@ class CosmacBot:
                 ]
         except Exception:
             logger.debug("按停用状态过滤名册失败,退回全量", exc_info=True)
+        # 【过滤休假/不可用】admin 在「人员能力」页把某人标记 unavailable(休假/长期不在)——同样别派给他，
+        # 否则任务落到不干活的人头上一直挂着、阻塞其他协作者(负责人反馈的场景)。
+        try:
+            people = [p for p in people if not p.get("unavailable")]
+        except Exception:
+            logger.debug("按可用状态过滤名册失败,退回全量", exc_info=True)
         # 频道模式(在频道里@AI，非私聊):名册的"真人"只保留**本频道成员**——频道分身只调本群的人。
         # 全局模式(右侧私人会话)不过滤,给全局名册。
         if not ctx.is_dm and ctx.room_id and people:
@@ -3628,6 +3634,32 @@ class CosmacBot:
             return str(task.executor_ref)
         return str(task.assignee or "")
 
+    def _assignee_unavailable(self, task: Any) -> Optional[str]:
+        """任务负责人当前是否**不可用**，是则返回原因文案（"账号已停用"/"休假·暂不可用"），否则 None。
+
+        只对**类型化真人执行者**（有 @user_id）判定；文本标签负责人对应不到账号，返回 None。
+        用于逾期/快到期提醒时判断"是不是人不在导致挂着"，据此升级给下达者、提示改派——避免任务
+        永远挂在一个登不进来/在休假的人头上、阻塞其他协作者。
+        """
+        if task.executor_kind != "human":
+            return None
+        uid = str(task.executor_ref or "").strip()
+        if not uid.startswith("@"):
+            return None
+        try:
+            deact = self._deactivated_user_ids()
+            if deact and uid in deact:
+                return "账号已停用"
+        except Exception:
+            pass
+        try:
+            for p in self._people_items():
+                if str(p.get("user_id") or "").strip() == uid and p.get("unavailable"):
+                    return "休假·暂不可用"
+        except Exception:
+            pass
+        return None
+
     def scan_task_reminders(self) -> int:
         """扫一遍任务，给**快到期/逾期**的未完成任务在其频道内发提醒（@负责人），按位去重。
 
@@ -3656,13 +3688,29 @@ class CosmacBot:
                         continue
                     who = self._task_reminder_target(t)
                     when = self._fmt_due(t.due_ts)
+                    reason = self._assignee_unavailable(t)  # 负责人不可用的原因（None=可用/判不了）
+                    # 升级条件：逾期 一律升级；或负责人已"不可用"(停用/休假)则**提前**升级——
+                    # 别等它逾期才发现人不在、任务早已阻塞了别人。升级 = 同时 @ 下达者(owner)提示改派。
+                    escalate = overdue or (reason is not None)
                     if overdue:
                         body = f"⚠️ 任务「{t.title}」已逾期（应于 {when} 完成）"
                     else:
                         body = f"⏰ 提醒：任务「{t.title}」将在 {when} 到期"
-                    if who:
-                        body = f"{who} " + body
-                    body += "，请及时推进或更新状态（详见任务看板）。"
+                    if reason:
+                        body += f"，且负责人{reason}"
+                    # @ 提及：负责人 +（升级时）下达者，两者去重、只 @ 真实 @id。
+                    mentions: List[str] = []
+                    if who and who.startswith("@"):
+                        mentions.append(who)
+                    owner = str(t.sender or "").strip()
+                    if escalate and owner.startswith("@") and owner != who:
+                        mentions.append(owner)
+                    if mentions:
+                        body = " ".join(mentions) + " " + body
+                    if escalate:
+                        body += "，请及时跟进；若负责人无法推进，建议改派他人，以免阻塞其他协作。（详见任务看板）"
+                    else:
+                        body += "，请及时推进或更新状态（详见任务看板）。"
                     try:
                         self.client.send_text(room, body)
                     except Exception:

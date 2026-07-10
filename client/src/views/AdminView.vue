@@ -633,6 +633,10 @@
               <input type="checkbox" v-model="plForm.enabled" />
               <span class="adm-tool-l">启用（参与 AI 派单）</span>
             </label>
+            <label class="adm-tool">
+              <input type="checkbox" v-model="plForm.unavailable" />
+              <span class="adm-tool-l">休假 / 暂不可用（主 AI 不派单给 TA；已派任务逾期时提醒改派）</span>
+            </label>
             <div class="adm-actions">
               <button class="adm-btn ghost" :disabled="plSaving" @click="plEditing = false">取消</button>
               <button class="adm-btn" :disabled="plSaving" @click="savePerson">
@@ -651,6 +655,7 @@
                 <td>
                   <code>{{ r.id }}</code><template v-if="r.name"> · {{ r.name }}</template>
                   <span v-if="r.deactivated" class="adm-tag off">已停用</span>
+                  <span v-else-if="r.unavailable" class="adm-tag off">休假中</span>
                 </td>
                 <td>{{ r.role || '—' }}</td>
                 <td class="adm-skill-desc">{{ r.expertise || '—' }}</td>
@@ -2098,7 +2103,7 @@ const plSaving = ref(false)
 const plLoaded = ref(false)
 const plEditing = ref(false)
 const plForm = reactive<Person>({
-  user_id: '', name: '', role: '', expertise: '', note: '', enabled: true,
+  user_id: '', name: '', role: '', expertise: '', note: '', enabled: true, unavailable: false,
 })
 
 function switchToPeople() {
@@ -2139,6 +2144,7 @@ const peopleRows = computed(() =>
         role: p?.role || '',
         expertise: p?.expertise || '',
         enabled: p ? p.enabled : true,
+        unavailable: !!p?.unavailable,
         hasProfile: !!p,
         deactivated: u.deactivated,
       }
@@ -2167,6 +2173,7 @@ function startEditPersonForUser(r: { id: string; name: string; deactivated?: boo
     expertise: ex?.expertise || '',
     note: ex?.note || '',
     enabled: ex ? ex.enabled : true,
+    unavailable: ex?.unavailable ?? false,
   })
   plEditing.value = true
 }
@@ -2199,6 +2206,7 @@ async function savePerson() {
     expertise: plForm.expertise.trim(),
     note: plForm.note.trim(),
     enabled: plForm.enabled,
+    unavailable: plForm.unavailable,
   }
   const next = people.value.slice()
   const i = next.findIndex((p) => p.user_id === uid)

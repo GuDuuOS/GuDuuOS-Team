@@ -23,10 +23,11 @@ ROOM = "!r:h"
 DAY = 86400
 
 
-def _mk(due_ts, *, status="todo", room=ROOM, kind="human", ref="@a:h", assignee="小李"):
+def _mk(due_ts, *, status="todo", room=ROOM, kind="human", ref="@a:h", assignee="小李",
+        sender="@u:h"):
     with session_scope() as s:
         created = create_tasks(
-            s, goal="G", room_id=room, sender="@u:h",
+            s, goal="G", room_id=room, sender=sender,
             items=[{
                 "title": "写方案", "assignee": assignee,
                 "executor_kind": kind, "executor_ref": ref, "due_ts": due_ts,
@@ -112,6 +113,33 @@ class TestTaskReminder(unittest.TestCase):
         self.assertEqual(bot.client.sent, [])
         with session_scope() as s:  # 但已标记，避免每轮空扫
             self.assertEqual(tasks_needing_reminder(s, now_ts=now, soon_secs=DAY), [])
+
+    def test_overdue_escalates_to_owner(self):
+        # 逾期 → 除 @负责人，还升级 @下达者(owner) + 建议改派，避免任务挂着阻塞他人。
+        import time as _t
+        now = int(_t.time())
+        _mk(now - 100, ref="@a:h", sender="@boss:h")
+        bot = CosmacBot(CosmacConfig(llm_provider="echo"))
+        bot.client = FakeClient()
+        bot.scan_task_reminders()
+        msg = bot.client.sent[0][1]
+        self.assertIn("@a:h", msg)     # 负责人
+        self.assertIn("@boss:h", msg)  # 下达者被升级提醒
+        self.assertIn("改派", msg)
+
+    def test_unavailable_assignee_escalates_early(self):
+        # 负责人已"不可用"(此处：停用)时，任务**还没逾期**(soon)也提前升级给下达者、注明原因。
+        import time as _t
+        now = int(_t.time())
+        _mk(now + 3600, ref="@a:h", sender="@boss:h")  # 快到期、未逾期
+        bot = CosmacBot(CosmacConfig(llm_provider="echo"))
+        bot.client = FakeClient()
+        bot._deactivated_user_ids = lambda: {"@a:h"}  # type: ignore
+        bot.scan_task_reminders()
+        msg = bot.client.sent[0][1]
+        self.assertIn("账号已停用", msg)
+        self.assertIn("@boss:h", msg)  # 提前升级给下达者
+        self.assertIn("改派", msg)
 
     def test_parse_due(self):
         self.assertIsNone(_parse_due_to_ts(""))
