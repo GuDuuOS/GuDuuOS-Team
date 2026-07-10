@@ -288,7 +288,11 @@ import {
   type Confidential,
   type AccessLevel
 } from '@/composables/useChannelAdmin'
-import { getGlobalAgents, kbRoomList, kbRoomAdd, kbRoomDelete, type GlobalAgent } from '@/matrix/client'
+import {
+  getGlobalAgents, kbRoomList, kbRoomAdd, kbRoomDelete,
+  normalizeUserId, userExists, checkUserDeactivated,
+  type GlobalAgent,
+} from '@/matrix/client'
 
 type TabKey = 'persona' | 'members' | 'skills' | 'knowledge' | 'dataScopes' | 'rules' | 'model' | 'memory'
 type CountKey = 'members' | 'skills' | 'knowledge' | 'rules' | 'dataScopes'
@@ -334,6 +338,17 @@ async function doInviteLive() {
   if (!liveInvite.value.trim() || liveBusy.value) return
   liveBusy.value = true; liveErr.value = ''
   try {
+    // 邀请前先校验：①账号不存在 ②账号已停用——停用用户能收到邀请却永远接受不了,
+    // 只会在成员列表里挂着「待接受」,不给提示的话邀请人一直以为拉进来了。
+    const uid = normalizeUserId(liveInvite.value)
+    if (!(await userExists(uid))) {
+      liveErr.value = '该用户不存在，请检查用户名是否正确。'
+      return
+    }
+    if (await checkUserDeactivated(uid)) {
+      liveErr.value = '该用户账号当前处于停用状态，无法加入频道。请联系系统管理员恢复账号状态。'
+      return
+    }
     await inviteLiveMember(liveInvite.value)
     liveInvite.value = ''
   } catch (e: any) {
