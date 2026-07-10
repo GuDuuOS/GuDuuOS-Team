@@ -1,5 +1,8 @@
-import { reactive, ref } from 'vue'
-import { getMyProfile, saveMyProfile, myProfileInfo, type MyAiProfile } from '@/matrix/client'
+import { computed, reactive, ref } from 'vue'
+import {
+  getMyProfile, saveMyProfile, myProfileInfo,
+  getMyPresence, setMyPresence, type MyAiProfile,
+} from '@/matrix/client'
 
 /** 我的权限（可开关）*/
 export interface UserPermission { label: string; desc?: string; enabled: boolean }
@@ -11,12 +14,19 @@ const handle = ref('')
 const user = reactive<{ name: string; avatar: string; color?: string; role: string }>({
   name: '我', avatar: '我', color: undefined, role: '',
 })
+let presenceLoadedFor = ''  // 已从 account data 载入过状态的账号 id（防重复载入把用户本次的选择冲掉）
 function refreshIdentity() {
   const info = myProfileInfo()
   user.name = info.name || '我'
   user.avatar = (info.name || info.userId || '我').replace(/^@/, '')[0] || '我'
   user.role = ''
   handle.value = info.userId
+  // 仅在**首次/切账号**时从 account data 回填状态——refreshIdentity 会被反复调用，若每次都读，
+  // 会在 setAccountData 的 sync 回声到达前把用户刚选的「离开」冲回旧值（闪一下又变绿）。
+  if (info.userId && info.userId !== presenceLoadedFor) {
+    presenceLoadedFor = info.userId
+    status.value = getMyPresence() as typeof status.value
+  }
 }
 
 /** 个人设置弹窗 */
@@ -31,6 +41,19 @@ const aiSavedTip = ref(false) // 保存成功后短暂显示「已保存」
 const settingsVisible = ref(false)
 const settingsTab = ref<UserSettingsTab>('profile')
 const status = ref<'在线' | '忙碌' | '离开' | '隐身'>('在线')
+// 四态 → 指示灯颜色（驱动右上角头像的状态点 + 菜单里的状态文字）
+const STATUS_COLOR: Record<string, string> = {
+  在线: '#61c554', 忙碌: '#e5544b', 离开: '#f4be4f', 隐身: '#9aa4b0',
+}
+const statusMeta = computed(() => ({
+  label: status.value,
+  color: STATUS_COLOR[status.value] || STATUS_COLOR['在线'],
+}))
+/** 改在线状态：更新本地 + 写 account data + 尽力推 Matrix presence（真正生效、刷新留存）。 */
+function setStatus(s: '在线' | '忙碌' | '离开' | '隐身') {
+  status.value = s
+  void setMyPresence(s)
+}
 
 // 通用的权限/授权偏好开关（不绑定任何具体行业；后端持久化以后再接真值）。
 const permissions = reactive<UserPermission[]>([
@@ -84,6 +107,8 @@ export function useUserProfile() {
     user,
     handle,
     status,
+    statusMeta,
+    setStatus,
     permissions,
     shareableData,
     settingsVisible,

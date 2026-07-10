@@ -130,6 +130,33 @@ export function myProfileInfo(): { userId: string; name: string; avatarUrl: stri
   return { userId: uid, name, avatarUrl: mxc ? mxcToHttp(mxc, 96) : '' }
 }
 
+/* ===== 在线状态（presence）=====
+ * 中文四态存 account data（`cosmac.presence`，跨端同步 + 刷新留存）——**不只依赖 Matrix presence**，
+ * 因为 Synapse 常把 presence 关掉(性能考虑)，那样 setPresence 不生效、状态点永远绿。所以本地以
+ * account data 为准来驱动 UI 指示灯；同时尽力把状态推给 Matrix presence（server 开了就多端/联邦可见）。
+ */
+const PRESENCE_ACCOUNT_DATA = 'cosmac.presence'
+const PRESENCE_MAP: Record<string, 'online' | 'unavailable' | 'offline'> = {
+  在线: 'online', 忙碌: 'unavailable', 离开: 'unavailable', 隐身: 'offline',
+}
+
+/** 读本人当前选择的在线状态（存在 account data 里；没设过默认「在线」）。 */
+export function getMyPresence(): string {
+  try {
+    const c = (mx as any)?.getAccountData?.(PRESENCE_ACCOUNT_DATA)?.getContent?.()
+    return c?.status || '在线'
+  } catch { return '在线' }
+}
+
+/** 设本人在线状态：写 account data（UI 指示灯的真值来源）+ 尽力推 Matrix presence（禁用则忽略）。 */
+export async function setMyPresence(status: string): Promise<void> {
+  if (!mx) return
+  try { await (mx as any).setAccountData?.(PRESENCE_ACCOUNT_DATA, { status }) } catch { /* 忽略 */ }
+  try {
+    await (mx as any).setPresence?.({ presence: PRESENCE_MAP[status] || 'online', status_msg: status })
+  } catch { /* 服务器禁用 presence 时忽略，不影响本地指示灯 */ }
+}
+
 async function startFrom(opts: {
   baseUrl: string
   accessToken: string

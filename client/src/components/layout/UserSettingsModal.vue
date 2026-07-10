@@ -37,7 +37,7 @@
           </div>
           <div class="cam-field">
             <label class="cam-field-label">在线状态</label>
-            <select v-model="status" class="cam-select">
+            <select :value="status" class="cam-select" @change="onStatusChange">
               <option v-for="s in statusOptions" :key="s" :value="s">{{ s }}</option>
             </select>
           </div>
@@ -127,7 +127,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useUserProfile, type UserSettingsTab } from '@/composables/useUserProfile'
 
 const {
-  user, handle, status, permissions, shareableData, settingsVisible, settingsTab, closeSettings,
+  user, handle, status, setStatus, permissions, shareableData, settingsVisible, settingsTab, closeSettings,
   aiProfile, aiLoading, aiSaving, aiSavedTip, saveAiProfile,
 } = useUserProfile()
 
@@ -148,6 +148,9 @@ const tabs: { key: UserSettingsTab; label: string }[] = [
   { key: 'share', label: '可调用数据' }
 ]
 const statusOptions = ['在线', '忙碌', '离开', '隐身']
+function onStatusChange(e: Event) {
+  setStatus((e.target as HTMLSelectElement).value as any)
+}
 
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape' && settingsVisible.value) closeSettings()

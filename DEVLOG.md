@@ -1,5 +1,20 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-10 — fix:个人「在线状态」改了不生效(指示灯永远绿)
+- 现象:个人设置把在线状态改成「离开」,右上角头像状态点还是绿的、菜单还写「在线」。
+- 根因:①下拉框的 status 只是个本地 ref、从不调 setPresence;②状态点/文字是**写死的绿+「在线」**,
+  跟 status 无关。两头都没接上。
+- 修(纯前端):
+  · client.ts 加 getMyPresence/setMyPresence——状态存 **account data**(`cosmac.presence`,跨端同步+
+    刷新留存)作 UI 真值来源,同时**尽力**推 Matrix presence(Synapse 常禁用 presence,故不能只靠它)。
+  · useUserProfile:下拉改 setStatus(写 account data + 推 presence);statusMeta 给四态配色
+    (在线绿/忙碌红/离开黄/隐身灰);切账号/首次才从 account data 回填(防 sync 回声前把选择冲掉)。
+  · 右上角状态点颜色 + 菜单状态文字改为绑定 statusMeta/status。
+- 说明:纯 Matrix presence 依赖服务器开关,本实现以 account data 为准,指示灯**必然生效**;presence 推送
+  是"开了更好"的加成。四态→presence 映射:在线 online / 忙碌·离开 unavailable / 隐身 offline。
+- 验证:vite build 通过。真机:改「离开」→ 状态点变黄、菜单显示「离开」,刷新后保持。
+- **部署:纯前端,覆盖 dist 即可(不重启 bot)。**
+
 ## 2026-07-10 — feat:频道知识库支持上传文件(真入库 RAG)
 - 背景:频道管理「知识库」页原来只有"添加来源"(存名字/说明的占位标签),不真入库。用户要能上传文件
   喂给本频道 AI 检索。

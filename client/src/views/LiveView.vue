@@ -139,7 +139,7 @@ const { open: openCli } = useCli()
 const { open: openProfileHome, visible: profileVisible } = useProfileHome()
 const { open: openPluginStore } = usePluginStore()
 const { open: openAssets } = useCustomAssets()
-const { openSettings } = useUserProfile()
+const { openSettings, status: myStatus, statusMeta: myStatusMeta } = useUserProfile()
 
 // ── 数据看板 ──
 import KpiCard from '@/components/canvas/KpiCard.vue'
@@ -1683,14 +1683,14 @@ onBeforeUnmount(() => {
         <div class="um-wrap">
           <button class="user-chip" :class="{ open: userMenuOpen }" @click.stop="toggleUserMenu">
             <span class="avatar">{{ initials(me) }}</span>
-            <span class="online-dot" />
+            <span class="online-dot" :style="{ background: myStatusMeta.color }" :title="myStatus" />
           </button>
           <div v-if="userMenuOpen" class="um-pop" @click.stop>
             <div class="um-head">
               <span class="um-ava">{{ initials(me) }}</span>
               <div class="um-id">
                 <div class="um-name">{{ me }}</div>
-                <div class="um-handle">已连接 {{ HS }} · <span class="um-online">在线</span></div>
+                <div class="um-handle">已连接 {{ HS }} · <span class="um-online" :style="{ color: myStatusMeta.color }">{{ myStatus }}</span></div>
               </div>
             </div>
             <div class="um-sep" />
