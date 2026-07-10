@@ -127,6 +127,21 @@ class TestAssembleTeam(unittest.TestCase):
         self.assertIn("起个名字", out)
         self.assertEqual(self.client.created, [])  # 没建房
 
+    def test_dedup_channel_name_when_collision(self) -> None:
+        # 已有同名频道「税务自查」→ 新专班改叫「税务自查专班」,避免左栏两个一样的频道。
+        self.client.joined_rooms = lambda: ["!exist:h"]                         # type: ignore
+        self.client.get_state_event = lambda rid, et, sk="": (                  # type: ignore
+            {"name": "税务自查"} if et == "m.room.name" else None)              # 无 create/ai/dm 标记 → channel
+        out = self._run({"project": "税务自查", "members": ["@a:h"]})
+        self.assertEqual(self.client.created[0][0], "税务自查专班")             # 建房用去重名
+        self.assertIn("税务自查专班", out)                                      # 回灌用去重名
+
+    def test_no_dedup_when_no_collision(self) -> None:
+        # 没有同名频道 → 名字原样,不加后缀
+        self.client.joined_rooms = lambda: []                                   # type: ignore
+        self._run({"project": "全新项目"})
+        self.assertEqual(self.client.created[0][0], "全新项目")
+
 
 class TestTaskReviewTools(unittest.TestCase):
     """档4 派单+审核回填：list_room_tasks / update_task（含跨频道越权防护）。"""

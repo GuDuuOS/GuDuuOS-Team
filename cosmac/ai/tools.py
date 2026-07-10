@@ -947,6 +947,45 @@ class Toolbox:
             "请给**频道名**或 room_id,或直接到目标频道里@我操作。(我不在里面的频道我也看不到。)"
         )
 
+    def _existing_channel_names(self) -> "set":
+        """bot 可见的所有**频道**名字集合(排除 工作区/AI会话房/私信/控制室)。建专班防重名用。"""
+        out: set = set()
+        try:
+            for rid in (self.client.joined_rooms() or []):
+                if self._room_kind(rid) != "channel":
+                    continue
+                try:
+                    ev = self.client.get_state_event(rid, "m.room.name")
+                    nm = str((ev or {}).get("name") or "").strip()
+                except Exception:
+                    nm = ""
+                if nm and "控制室" not in nm:
+                    out.add(nm)
+        except Exception:
+            logger.debug("列现有频道名失败", exc_info=True)
+        return out
+
+    def _dedup_channel_name(self, name: str) -> str:
+        """专班频道名防重名:已有同名频道 → 优先「<name>专班」,再撞加序号。
+
+        场景(线上实测):已有频道「税务自查」,用户又让 AI 建专班,AI 直接又叫「税务自查」,
+        左栏出现两个一模一样的频道、谁也分不清。加「专班」后缀区分。
+        """
+        name = (name or "").strip()
+        if not name:
+            return name
+        existing = self._existing_channel_names()
+        if name not in existing:
+            return name
+        base = name if name.endswith("专班") else name + "专班"
+        if base not in existing:
+            return base
+        for i in range(2, 30):
+            cand = f"{base}{i}"
+            if cand not in existing:
+                return cand
+        return base
+
     def _room_name(self, room_id: str) -> str:
         """取房间显示名(复用 5 分钟名字缓存)。读不到返回空串。
 
@@ -1643,14 +1682,17 @@ class Toolbox:
         if not project:
             return "请给专班/项目起个名字。"
         members = [str(m).strip() for m in (args.get("members") or []) if str(m).strip()]
+        # 防重名:已有同名频道就给这个专班加「专班」后缀区分,别让左栏出现两个一模一样的频道。
+        # project 仍作为项目目标/RULE 里的人读标签;channel_name 只是频道的显示名。
+        channel_name = self._dedup_channel_name(project)
         # 健壮性：只用发起人(必然存在)建房，其余成员**逐个尽力邀请**——某个 id 不存在/邀请
         # 失败都不影响专班建成（否则一个坏 id 就把整件事搞崩）。
         # 发起人 = 专班主人：建房时就提成 100 级管理员，否则他改不了频道名/配置(403)。
         room_id = self.client.create_room(
-            project, invitees=[ctx.sender], admins=[ctx.sender]
+            channel_name, invitees=[ctx.sender], admins=[ctx.sender]
         )
         if not room_id:
-            return f"建专班「{project}」失败了（建房间接口出错）。"
+            return f"建专班「{channel_name}」失败了（建房间接口出错）。"
         # 专班房**真建成**才消费 teams 配额（终身配额，失败绝不能扣——否则免费用户被一次
         # Synapse 抖动扣光就永久锁死，审查 bug#7）。
         self._consume_quota(ctx, "assemble_team")
@@ -1785,8 +1827,10 @@ class Toolbox:
             except Exception:
                 logger.exception("派任务进专班失败")
 
-        # 开班消息发进频道
-        parts = [f"🗂 专班「{project}」已组建。"]
+        # 开班消息发进频道（用**去重后的真实频道名**，别再说成撞名的那个）
+        parts = [f"🗂 专班「{channel_name}」已组建。"]
+        if channel_name != project:
+            parts.append(f"(已有同名频道「{project}」，本专班改叫「{channel_name}」以区分。)")
         if invited:
             parts.append("已邀请：" + "、".join(invited))
         if failed:
@@ -1815,14 +1859,16 @@ class Toolbox:
         try:
             self.client.send_card(
                 ctx.room_id,
-                f"专班「{project}」已建好（room_id={room_id}）。",
-                {"kind": "team_created", "team_room": room_id, "project": project},
+                f"专班「{channel_name}」已建好（room_id={room_id}）。",
+                {"kind": "team_created", "team_room": room_id, "project": channel_name},
             )
         except Exception:
             logger.debug("发送 team_created 信号卡失败（忽略）", exc_info=True)
 
         # 回灌给模型（让它知道建好了、可继续编排/汇报；邀请失败也如实告知，别假装都拉进来了）
-        summary = [f"已建好专班「{project}」(room_id={room_id})，邀到 {len(invited)} 人"]
+        # ⚠️ 用去重后的 channel_name——撞名时改了名,模型转述必须用真实频道名,别再说成撞名的那个。
+        rename_note = f"（注意:已有同名频道，本专班实际叫「{channel_name}」）" if channel_name != project else ""
+        summary = [f"已建好专班「{channel_name}」{rename_note}(room_id={room_id})，邀到 {len(invited)} 人"]
         if failed:
             summary.append(f"{len(failed)} 人没邀到（{('、'.join(failed))}，账号可能不存在）")
         summary.append(f"项目主AI={lead}" if lead else "项目主AI=内置编排人设")
