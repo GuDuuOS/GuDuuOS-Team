@@ -1,5 +1,12 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-11 — 体验:后台查看成员——主AI 显示为「CosMac Star」而非裸 id
+- 现象:管理后台频道管理→查看成员,主AI 显示成 `@guduu:cosmac.cc`(裸 id),不友好。
+- 根因:admin `/members` 接口只返回 user_id、没有显示名,列表直接渲染裸 id。
+- 修(纯前端):按 botId() 识别本 bot → 显示「CosMac Star」(粗体)+ 淡色真实 id `@guduu:cosmac.cc`,
+  头像用深色「智」;其余真人仍显示各自 id(他们没设显示名,admin 接口也拿不到)。
+- **部署:纯前端,覆盖 dist 即可。**
+
 ## 2026-07-11 — fix:主AI 谎报"已在频道发公告"(其实发进了工作区)
 - 现象:主AI 回"已在频道发了欢迎公告+任务一览",但频道里空空如也。
 - 根因:与上一条同源——send_message 也走 `_resolve_room_by_name`,把"制作·女相师"(工作区名)

@@ -1335,8 +1335,11 @@
           <div v-if="membersLoading" class="adm-center"><div class="adm-spin" /> 加载中…</div>
           <template v-else>
             <div v-for="m in memberList" :key="m" class="adm-mrow">
-              <span class="adm-ava sm">{{ m.replace(/^@/, '').charAt(0).toUpperCase() }}</span>
-              <span class="adm-mid">{{ m }}</span>
+              <span class="adm-ava sm" :class="{ bot: isBotMember(m) }">{{ isBotMember(m) ? '智' : m.replace(/^@/, '').charAt(0).toUpperCase() }}</span>
+              <span class="adm-mid">
+                <template v-if="isBotMember(m)"><b>CosMac Star</b> <span class="adm-dim">{{ m }}</span></template>
+                <template v-else>{{ m }}</template>
+              </span>
             </div>
             <div v-if="!memberList.length" class="adm-empty">没有成员</div>
           </template>
@@ -1406,6 +1409,7 @@ import {
   type QuotaLimits,
   AI_TOOL_CATALOG,
   AI_PROVIDERS,
+  botId,
   type AdminUser,
   type AdminRoom,
   type GlobalSkill,
@@ -1705,6 +1709,9 @@ const rooms = ref<AdminRoom[]>([])
 const roomsLoading = ref(false)
 const roomsLoaded = ref(false)        // 懒加载：首次切到频道 tab 才拉
 const roomBusy = ref<string | null>(null)
+// 主 AI(bot)在成员列表里显示成友好名「CosMac Star」而不是裸 id @guduu:xxx。
+// admin /members 接口只返回 user_id、没有显示名，故按 botId() 识别本 bot 特判。
+function isBotMember(id: string): boolean { return id === botId() }
 // 成员弹窗：membersOf 为当前查看的房间，null 表示关闭
 const membersOf = ref<AdminRoom | null>(null)
 const memberList = ref<string[]>([])
@@ -3101,5 +3108,7 @@ onMounted(check)
 .adm-mlist { max-height: 320px; overflow-y: auto; margin-bottom: 12px; }
 .adm-mrow { display: flex; align-items: center; gap: 9px; padding: 6px 2px; }
 .adm-ava.sm { width: 26px; height: 26px; font-size: 12px; border-radius: 7px; }
+.adm-ava.bot { background: #2b2b33; color: #fff; }
 .adm-mid { font-family: var(--mono); font-size: var(--fs-75); color: var(--text-2); }
+.adm-mid b { font-family: var(--font-body); font-weight: 600; color: var(--text); margin-right: 4px; }
 </style>
