@@ -25,10 +25,10 @@
           <span class="adm-mi-ic">🛠</span> 技能库
         </button>
         <button class="adm-mi" :class="{ active: tab === 'agents' }" @click="switchToAgents">
-          <span class="adm-mi-ic">🧑‍🚀</span> 智能体
+          <span class="adm-mi-ic">🎭</span> 智能体
         </button>
         <button class="adm-mi" :class="{ active: tab === 'people' }" @click="switchToPeople">
-          <span class="adm-mi-ic">🧑‍💼</span> 人员能力
+          <span class="adm-mi-ic">👥</span> 人员能力
         </button>
         <button class="adm-mi" :class="{ active: tab === 'templates' }" @click="switchToTemplates">
           <span class="adm-mi-ic">🧰</span> 入驻模板
