@@ -72,6 +72,7 @@ import {
   isFavourite,
   setFavourite,
   normalizeUserId,
+  userExists,
   isServerAdmin,
   ensureControlRoomMembership,
   acceptPendingInvites,
@@ -358,6 +359,11 @@ async function doStartDm() {
   if (!v || dmBusy.value) return
   dmBusy.value = true
   try {
+    // 先校验对方存在——不存在就别建出一个邀请不到人的死私信房,直接给清晰提示。
+    if (!(await userExists(v))) {
+      toast('该用户不存在', '请检查用户名是否正确（对方需已有账号）')
+      return
+    }
     const roomId = await createDirectMessage(v)   // 已有则复用,不重复建
     dmDialogOpen.value = false
     // 邀请刚发出,房可能还没 sync 完;稍等再刷新列表并打开

@@ -850,6 +850,25 @@ export function normalizeUserId(input: string): string {
   return `@${s}:${serverName()}`               // 只有 localpart → 补本服务器域名
 }
 
+/** 探测某用户是否存在（发私信/邀请前先校验，别建出一个邀请不到人的死房）。
+ *  用 `GET /profile/{userId}`：404=不存在 → 返回 false；200 或其它状态(403/网络错等探测不可靠)
+ *  一律返回 true（放行），只在**明确 404** 时判定不存在，避免因服务器限制/抖动误拦真实用户。 */
+export async function userExists(input: string): Promise<boolean> {
+  if (!mx) return true
+  const uid = normalizeUserId(input)
+  if (!uid) return false
+  const base = ((mx as any).getHomeserverUrl?.() || (mx as any).baseUrl || '').replace(/\/$/, '')
+  const token = (mx as any).getAccessToken?.() || ''
+  try {
+    const r = await fetch(`${base}/_matrix/client/v3/profile/${encodeURIComponent(uid)}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    return r.status !== 404
+  } catch {
+    return true  // 网络异常放行，交给后续建房/邀请那步兜底
+  }
+}
+
 /** 这个房间是否被收藏（Matrix 标准 m.favourite 标签）。 */
 export function isFavourite(roomId: string): boolean {
   return !!mx?.getRoom(roomId)?.tags?.['m.favourite']
