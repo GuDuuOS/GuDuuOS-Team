@@ -947,6 +947,25 @@ class Toolbox:
             "请给**频道名**或 room_id,或直接到目标频道里@我操作。(我不在里面的频道我也看不到。)"
         )
 
+    def _room_name(self, room_id: str) -> str:
+        """取房间显示名(复用 5 分钟名字缓存)。读不到返回空串。
+
+        只用于把工具结果说清楚:让模型转述时报的是**真实落地的房间名**,而不是它自己以为的那个。
+        (线上实测:模型把工作区名当频道名,发完消息还照着自己的说法回"已发到 xx 频道"。)
+        """
+        import time as _time
+        now = _time.time()
+        cached = self._room_name_cache.get(room_id)
+        if cached and now - cached[1] < 300:
+            return cached[0]
+        try:
+            ev = self.client.get_state_event(room_id, "m.room.name")
+            nm = str((ev or {}).get("name") or "")
+        except Exception:
+            return ""
+        self._room_name_cache[room_id] = (nm, now)
+        return nm
+
     def _tool_invite_to_room(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         """邀请用户进已有房间。默认当前房间；指定别的房间要过 _check_room_access 防越权。"""
         user_id = str(args.get("user_id") or "").strip()
@@ -984,9 +1003,12 @@ class Toolbox:
         if not ok and status == 403 and self._promote_bot_in_room(room_id):
             ok, status, err = self.client.invite_user_status(room_id, user_id)
         if ok:
+            nm = self._room_name(room_id)
+            where = f"「{nm}」（{room_id}）" if nm else f"房间 {room_id}"
             return (
-                f"已邀请 {user_id} 加入房间 {room_id}。"
+                f"已邀请 {user_id} 加入{where}。"
                 "对方下次打开客户端会自动入群（本服务器账号）。"
+                "转告用户时**必须用这里的真实频道名**，不要用你以为的名字。"
             )
         detail = f"（服务器返回 {status}: {err}）" if status else "（网络异常，请稍后重试）"
         return (
@@ -1040,7 +1062,12 @@ class Toolbox:
         event_id = self.client.send_text(room_id, text)
         if not event_id:
             return f"往房间 {room_id} 发消息失败。"
-        return f"已往房间 {room_id} 发送消息（event_id={event_id}）。"
+        nm = self._room_name(room_id)
+        where = f"「{nm}」（{room_id}）" if nm else f"房间 {room_id}"
+        return (
+            f"已往{where}发送消息（event_id={event_id}）。"
+            "转告用户时**必须用这里的真实频道名**，不要用你以为的名字。"
+        )
 
     def _tool_list_members(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         room_id = args.get("room_id") or ctx.room_id

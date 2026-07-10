@@ -463,7 +463,9 @@ class SendMessageTargetTest(unittest.TestCase):
             ),
             ToolContext("!cur:test", "@alice:test", is_dm=True),
         )
-        self.assertIn("已往房间", out)
+        # 结果里带上**真实频道名**(修:模型别按自己以为的名字瞎转述)
+        self.assertIn("测试频道", out)
+        self.assertIn("!allowed:test", out)
         self.assertEqual(self.client.sent, [("!allowed:test", "公告")])
 
     def test_channel_mode_defaults_to_current_room(self) -> None:
