@@ -939,18 +939,22 @@ export function listChannelMembers(roomId: string): ChannelMember[] {
   const out: ChannelMember[] = all.map((m: any) => {
     const power = usersPower[m.userId] ?? defaultPower
     const { role, roleLabel } = roleOfPower(power)
+    const isBot = m.userId === botId()
     const mxc = m.getMxcAvatarUrl?.() || m.events?.member?.getContent?.()?.avatar_url || ''
     // js-sdk 在没设昵称时把 name 填成完整 userId（@guduu:cosmac.cc），显示难看；
     // 这种情况退回用 id 的 localpart（@后、:前那段），仍是真实信息、只是更干净。
     const localpart = m.userId.replace(/^@/, '').split(':')[0]
     const name = (!m.name || m.name === m.userId) ? localpart : m.name
+    // 主AI(bot)即便建房是 power=100,也不叫「群主/频道主」——那是真人的位置。AI 作为频道内置
+    // 助理,有管理权的标「副频道主」，只有真人才显示「群主」。普通成员两者都是「成员」。
+    const label = (isBot && role !== 'member') ? '副频道主' : roleLabel
     return {
       id: m.userId,
       name,
       avatar: mxc ? mxcToHttp(mxc, 64) : '',
-      isBot: m.userId === botId(),
+      isBot,
       role,
-      roleLabel,
+      roleLabel: label,
       power,
       pending: m.membership === 'invite',
     }

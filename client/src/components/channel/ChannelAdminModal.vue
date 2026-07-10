@@ -72,9 +72,9 @@
                   <span v-else-if="m.role === 'admin'" class="cam-tag cam-tag-admin">管理员</span>
                   <span v-if="m.pending" class="cam-tag" style="background:#e8dcc4;color:#8a6a3a">待接受</span>
                 </div>
-                <!-- bot 展示成"内置 AI 助手"而非"群主"——它虽是建房者(power=100),但对用户来说是系统 AI,
-                     不该占据"频道管理员"的呈现位;真正的人类管理员靠上面的徽章标识。 -->
-                <div class="cam-row-desc">{{ m.isBot ? '内置 AI 助手' : m.roleLabel }} · {{ m.id }}</div>
+                <!-- 角色文字:bot 的 roleLabel 已在 listChannelMembers 里归一成「副频道主」(不叫群主),
+                     真人则是 群主/管理员/成员。真正的人类管理员另有上面的醒目徽章。 -->
+                <div class="cam-row-desc">{{ m.roleLabel }} · {{ m.id }}</div>
               </div>
               <button class="cam-del" title="移出频道" :disabled="liveBusy" @click="doRemoveLive(m)">×</button>
             </div>
