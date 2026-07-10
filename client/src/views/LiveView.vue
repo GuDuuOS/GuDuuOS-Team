@@ -445,6 +445,7 @@ watch(aiOpen, (v) => { if (v) nextTick(scrollAiToBottom) })
 
 // ── 纯界面态（折叠分组 / 下拉菜单 / 专注模式 / 收藏星）────
 const channelsOpen = ref(true)
+const favOpen = ref(true)
 const fanCommunityOpen = ref(true)
 const dmsOpen = ref(true)
 const appMenuOpen = ref(false)
@@ -1001,14 +1002,20 @@ const FAN_RE = /(后援会|歌迷会|粉丝|应援|社区|fans?\b|fan ?club)/i
 function isFanRoom(name: string): boolean { return FAN_RE.test(name) }
 // 某频道是否「已归档专班」（bot 收尾写 cosmac.project.archived）：灰显 + 排到最后。
 function isArchived(id: string): boolean { return isProjectArchived(id) }
-// 普通频道（剔除粉丝社区房间）；已归档的排到最后（在用频道在前，留档不打扰）。
+// 收藏的频道（m.favourite 标签）——单独置顶成「收藏」组;已收藏的不再在下面的普通/粉丝组重复出现。
+const favRooms = computed(() =>
+  filteredRooms.value
+    .filter((r) => r.fav)
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh')),
+)
+// 普通频道（剔除粉丝社区房间 + 已收藏的）；已归档的排到最后（在用频道在前，留档不打扰）。
 const channelRooms = computed(() =>
   filteredRooms.value
-    .filter((r) => !isFanRoom(r.name))
+    .filter((r) => !r.fav && !isFanRoom(r.name))
     .sort((a, b) => Number(isArchived(a.id)) - Number(isArchived(b.id))),
 )
-// 粉丝社区频道
-const fanRooms = computed(() => filteredRooms.value.filter((r) => isFanRoom(r.name)))
+// 粉丝社区频道（剔除已收藏的）
+const fanRooms = computed(() => filteredRooms.value.filter((r) => !r.fav && isFanRoom(r.name)))
 
 // ── 频道彩色图标：按名字确定性取色 + 取代表字（无需后端，所有频道立即生效）──
 const CHAN_PALETTE = ['#c96442', '#6b8e4e', '#4a7a8c', '#b58932', '#8a6a8a', '#5a7a8a', '#b94a4a', '#7a8a5a']
@@ -1366,7 +1373,18 @@ async function toggleFav() {
   if (!id) return
   const next = !fav.value
   fav.value = next
-  try { await setFavourite(id, next) } catch (e: any) { fav.value = !next; toast('收藏失败', e?.message || String(e)) }
+  // 乐观更新左栏分组:直接改 rooms 里该频道的 fav,让它即时进/出「收藏」组——别等 setRoomTag 的
+  // sync 回声(回声到达前 room.tags 还是旧的,refresh() 会读到旧值、频道不动)。
+  const r = rooms.value.find((x) => x.id === id)
+  const prevFav = r?.fav
+  if (r) r.fav = next
+  try {
+    await setFavourite(id, next)
+  } catch (e: any) {
+    fav.value = !next
+    if (r) r.fav = prevFav   // 失败回滚
+    toast('收藏失败', e?.message || String(e))
+  }
 }
 
 async function send() {
@@ -1812,6 +1830,27 @@ onBeforeUnmount(() => {
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
             </span>
             <span class="cs-label">组织/人事</span>
+          </div>
+
+          <!-- 收藏 group（m.favourite 标签的频道置顶；无收藏则整组不显示）-->
+          <div v-if="favRooms.length" class="cs-group">
+            <button class="cs-group-head" @click="favOpen = !favOpen">
+              <svg class="caret" :class="{ open: favOpen }" width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M9 6 15 12 9 18z" /></svg>
+              <span>⭐ 收藏</span>
+            </button>
+            <template v-if="favOpen">
+              <div
+                v-for="r in favRooms"
+                :key="'fav' + r.id"
+                class="cs-item ch-row"
+                :class="{ active: r.id === currentRoom, archived: isArchived(r.id) }"
+                @click="openRoom(r.id)"
+              >
+                <span class="cs-chan-av" :style="{ background: colorOf(r.name) }">{{ iconChar(r.name) }}</span>
+                <span class="cs-label" :title="r.name">{{ r.name }}</span>
+                <span v-if="isArchived(r.id)" class="cs-archived-tag" title="专班已归档收尾">🗄</span>
+              </div>
+            </template>
           </div>
 
           <!-- 频道 group（真实房间）-->

@@ -12,6 +12,8 @@ export interface LiveRoom {
   name: string
   /** 频道简介（Matrix m.room.topic），频道头展示用 */
   topic?: string
+  /** 是否被收藏（Matrix m.favourite 标签）——收藏的频道在左栏进「收藏」组 */
+  fav?: boolean
 }
 
 /** 给 UI 用的精简消息结构；card 为 cosmac.card 自定义富卡（可能没有） */
@@ -427,7 +429,7 @@ export function listRooms(): LiveRoom[] {
     // 不是聊天频道。出现在列表里会被管理员当普通频道误删(实测发生过——退出后后台配置读写全断)。
     // 按 canonical alias 判定(#cosmac-ctrl),改名也藏得住。
     .filter((r) => !((r as any).getCanonicalAlias?.() || '').startsWith('#cosmac-ctrl:'))
-    .map((r) => ({ id: r.roomId, name: r.name || r.roomId, topic: roomTopic(r) }))
+    .map((r) => ({ id: r.roomId, name: r.name || r.roomId, topic: roomTopic(r), fav: !!(r as any).tags?.['m.favourite'] }))
     // 无名 DM 的 name 会回退成对方 mxid（以 @ 开头），不进频道列表
     .filter((r) => !r.name.startsWith('@'))
     .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
