@@ -217,6 +217,9 @@
             </p>
           </div>
           <div class="adm-actions">
+            <button class="adm-btn ghost" :disabled="reconciling || roomsLoading || !rooms.length" title="列表成员数来自服务器统计、可能滞后；点此按真实状态逐个校准" @click="reconcileAllCounts">
+              {{ reconciling ? '校准中…' : '校准成员数' }}
+            </button>
             <button class="adm-btn ghost" :disabled="roomsLoading" @click="loadRooms">
               {{ roomsLoading ? '刷新中…' : '刷新' }}
             </button>
@@ -1729,10 +1732,42 @@ async function viewMembers(r: AdminRoom) {
   memberList.value = []
   try {
     memberList.value = await getRoomMembers(r.id)
+    // 列表里的"成员数"来自 Synapse 房间统计(room_stats_current.joined_members)，会滞后/漂移——
+    // 实测出现 0/1 与真实成员对不上。/members 读的是**当前真实状态**、权威。查看后顺手把该行的数字
+    // 校准成真实值，让列表与弹窗一致（本产品单 homeserver、无联邦，故本服成员数=总成员数=真实数）。
+    r.members = memberList.value.length
+    r.localMembers = memberList.value.length
   } catch (e: any) {
     warn('加载失败', e?.message || '无法获取成员')
   } finally {
     membersLoading.value = false
+  }
+}
+
+/** 批量校准所有频道的成员数（把统计口径的旧数换成 /members 的真实数）。
+ *  限并发 6，避免一次性打爆 Synapse admin API；失败的行保留原值、不中断整体。 */
+const reconciling = ref(false)
+async function reconcileAllCounts() {
+  if (reconciling.value) return
+  reconciling.value = true
+  try {
+    const list = rooms.value.slice()
+    const CONCURRENCY = 6
+    let i = 0
+    async function worker() {
+      while (i < list.length) {
+        const r = list[i++]
+        try {
+          const ms = await getRoomMembers(r.id)
+          r.members = ms.length
+          r.localMembers = ms.length
+        } catch { /* 单行失败保留原值 */ }
+      }
+    }
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker))
+    success('已校准成员数', '列表成员数已按真实状态更新')
+  } finally {
+    reconciling.value = false
   }
 }
 
