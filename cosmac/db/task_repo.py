@@ -32,10 +32,12 @@ def create_tasks(
     items: List[Dict[str, Any]],
     room_id: str = "",
     sender: str = "",
+    space_id: str = "",
 ) -> List[Task]:
     """把一批子任务落库。items: [{"title","assignee","executor_kind","executor_ref"}]。
 
     executor_kind/ref（档2）是主AI 读能力名册后填的类型化执行者；缺省/非法 kind 回落 none。
+    space_id：所属工作区(Space room_id)，任务看板据它按工作区过滤；空=无归属(前端各处显示)。
     脏数据兜底：title 空的丢弃；超量截断到 _MAX_TASKS。
     """
     out: List[Task] = []
@@ -67,6 +69,7 @@ def create_tasks(
             progress=0,
             room_id=room_id or "",
             sender=sender or "",
+            space_id=(space_id or "")[:255],
             due_ts=due_ts,
         )
         session.add(t)

@@ -30,6 +30,18 @@ class TestTaskRepo(unittest.TestCase):
         self.assertEqual(rows["跑封面"].executor_kind, "workflow")
         self.assertEqual(rows["跑封面"].executor_ref, "cover-gen")
 
+    def test_space_id_stored_and_defaults_empty(self) -> None:
+        # 工作区归属：给了就存（任务看板据它按工作区过滤）；没给 → 空串（存量/无归属任务）。
+        with session_scope() as s:
+            create_tasks(s, goal="g", items=[{"title": "带归属"}],
+                         room_id="!r:h", sender="@u:h", space_id="!space:h")
+            create_tasks(s, goal="g", items=[{"title": "无归属"}],
+                         room_id="!r:h", sender="@u:h")
+        with session_scope() as s:
+            rows = {t.title: t for t in list_tasks(s, room_ids=["!r:h"])}
+        self.assertEqual(rows["带归属"].space_id, "!space:h")
+        self.assertEqual(rows["无归属"].space_id, "")
+
     def test_invalid_kind_falls_back_to_none(self) -> None:
         with session_scope() as s:
             create_tasks(s, goal="g", items=[

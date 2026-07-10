@@ -292,6 +292,11 @@ class Task(Base, TimestampMixin):
     # 上下文：拆解发生的房间（bot DM / 频道）与下达人，便于以后派发回到正确地方
     room_id: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     sender: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # 所属工作区(Space room_id)：拆任务时前端随消息带上的 `cosmac.doc_space`。
+    # 任务看板据它按工作区过滤——中枢AI 私聊里拆的任务 room_id 是私聊房、不属任何工作区，
+    # 只靠 room_id 无法归位（历史上只能"各处显示"，导致每个工作区看板长一样）。
+    # 空串 = 存量/无归属任务，前端沿用旧的"各处显示"兜底，不丢任务。
+    space_id: Mapped[str] = mapped_column(String(255), nullable=False, default="", index=True)
     # 截止时间（epoch 秒，可空=无时限）：主 AI 拆任务时可设；定时扫描据它做"快到期/逾期"提醒。
     due_ts: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, default=None)
     # 提醒去重位掩码：bit0(1)=已发"快到期"提醒 / bit1(2)=已发"逾期"提醒。改截止时间时清零重来。

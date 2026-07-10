@@ -67,6 +67,9 @@ class ToolContext:
     # 当前对话是否「私聊/AI 会话房」(用户与主AI的一对一会话)。工具用它防语义事故:
     # 用户在私聊里说"邀请xx进本群","本群"其实是私聊房——把人拉进用户的私人对话是灾难。
     is_dm: bool = False
+    # 发起人当前所在的工作区(Space room_id)——前端随消息带上的 `cosmac.doc_space`。
+    # 拆任务时盖在任务上，任务看板据此按工作区过滤(私聊房的 room_id 归不了工作区)。
+    space_id: str = ""
 
 
 class Toolbox:
@@ -1206,6 +1209,7 @@ class Toolbox:
                 created = create_tasks(
                     s, goal=goal, items=items,
                     room_id=ctx.room_id, sender=ctx.sender,
+                    space_id=ctx.space_id,   # 归到发起人当时所在的工作区
                 )
                 n = len(created)
                 # 给模型回灌时把指派情况也带上（类型化执行者 + 人读标签），便于它据此继续编排
@@ -1731,6 +1735,7 @@ class Toolbox:
                     created = create_tasks(
                         s, goal=project, items=task_items,
                         room_id=room_id, sender=ctx.sender,
+                        space_id=ctx.space_id,   # 专班归到发起人当时所在的工作区
                     )
                     n_tasks = len(created)
             except Exception:

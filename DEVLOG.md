@@ -1,5 +1,24 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-10 — feat:任务加「工作区归属」,任务看板真正按工作区切换 ⚠️含 DB 迁移
+- 现象:切换左侧工作区后,任务看板内容不变(各工作区看板长一样)。
+- 根因:中枢AI 私聊里拆的任务 room_id = **私聊房**,不属于任何工作区,只能靠"各处显示"兜底;
+  加上我之前修"被派单者看不到自己任务"时加的「派给我的永远显示」,三条放行叠加 → 看板不随工作区变。
+- 决策(负责人拍板):给任务加工作区归属。
+- 实现(前端已随每条发给中枢AI 的消息带 `cosmac.doc_space`,此前无人消费,现在做第一个消费者):
+  · models.Task 加 `space_id`(索引);task_repo.create_tasks 接受并存;ToolContext 加 space_id;
+    _tool_create_tasks / _tool_assemble_team 传 ctx.space_id;bot 从 event content 读 cosmac.doc_space
+    塞进 ToolContext;handle_tasks_list 返回 space_id。
+  · 前端 TaskItem 加 space_id;scopedTasks 改为:**有归属**→只在该工作区显示(归属工作区我进不去但
+    派给我 → 仍显示,不弄丢);**无归属**(存量)→沿用旧兜底(本工作区频道/别的工作区频道则那边看/
+    私聊孤儿房各处显示),一条不丢。
+- 验证:test_task_repo +1(space_id 存取/缺省空);ruff 通过;全量 435 测试仅剩 3 个既有无关失败;vite build 通过。
+- **⚠️ 部署顺序:git pull → 先跑 DB 迁移(加列) → 再重启 guduu-bot → 覆盖 dist。**
+  迁移(幂等):
+  `ALTER TABLE cosmac_task ADD COLUMN IF NOT EXISTS space_id VARCHAR(255) NOT NULL DEFAULT '';`
+  `CREATE INDEX IF NOT EXISTS ix_cosmac_task_space_id ON cosmac_task (space_id);`
+  不先加列就重启 bot → 查任务的 SELECT 会因缺列报错。
+
 ## 2026-07-10 — fix:频道邀请停用/不存在用户时给出明确提示
 - 现象:频道管理→人员 手动邀请已停用用户,邀请"成功"但对方永远接受不了,只在成员列表挂着「待接受」,
   邀请人一直以为拉进来了(截图 duxz02/wenan)。

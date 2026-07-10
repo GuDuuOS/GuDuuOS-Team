@@ -518,6 +518,9 @@ class CosmacBot:
                     room_id=room_id, sender=sender,
                     source_key=f"event:{event_id}:ai" if event_id else "",
                     is_dm=is_dm,   # 工具层防"把人邀进私聊"等语义事故
+                    # 前端随每条发给中枢AI 的消息带上当前工作区；拆任务时盖在任务上，
+                    # 任务看板据此按工作区过滤（私聊房的 room_id 归不了工作区）。
+                    space_id=str(content.get("cosmac.doc_space") or "")[:255],
                 )
                 reply = self._run_agent_engine(
                     agent, text or user_text, tool_ctx, extra_system, history,
@@ -2472,6 +2475,8 @@ class CosmacBot:
                         "executor_kind": t.executor_kind, "executor_ref": t.executor_ref,
                         # 所属频道：前端"删频道前提醒未完成任务"用它按房间统计
                         "room_id": t.room_id or "",
+                        # 所属工作区：前端任务看板据此按工作区过滤（空=存量无归属，各处显示）
+                        "space_id": getattr(t, "space_id", "") or "",
                         # 截止时间（epoch 秒，可空）：看板据它显示"还剩几天/已逾期"。
                         "due_ts": t.due_ts,
                     })

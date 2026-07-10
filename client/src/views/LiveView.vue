@@ -211,25 +211,28 @@ async function loadTasks() { taskList.value = await getTasks() }
 // 任务所在频道属于本工作区 → 显示;属于**别的**工作区 → 隐藏;不属于任何工作区(孤儿专班/
 // 旧任务无 room_id) → 各工作区都显示,避免"任务凭空消失"。
 const scopedTasks = computed(() => {
-  // 精确区分孤儿任务(QA:不同工作区任务看板全一样)——旧逻辑"孤儿任务各处显示"把
-  // **孤儿专班的任务**也各处显示了,导致每个工作区看着相同。现在:
-  //   · **派给我本人的任务** → 永远显示(无视工作区作用域,见下)
-  //   · 当前工作区频道的任务 → 显示
-  //   · AI 会话房(私人会话/全局助理拆的"全局任务",不属于任何工作区)→ 各处显示(不该消失)
-  //   · 别的工作区频道 / **孤儿专班频道**的任务 → 隐藏(把专班"归入工作区"后才在那个工作区显示,
-  //     与频道列表"未归类"组同口径)
+  // 任务按**工作区归属(space_id)**过滤——中枢AI 私聊里拆的任务 room_id 是私聊房、归不了工作区,
+  // 光靠 room_id 只能"各处显示",导致每个工作区看板长一样(负责人报的 bug)。现在拆任务时会把
+  // 发起人当时所在的工作区盖在任务上,于是:
+  //   · 有归属(新任务) → 只在它自己的工作区显示,切工作区内容就真的变;
+  //     若归属的工作区我进不去(不是该 Space 成员)但任务派给我 → 仍显示,免得我的任务彻底看不到。
+  //   · 无归属(存量老任务) → 沿用旧兜底(按 room_id 判断 / 各处显示),保证一条都不丢。
   const aiIds = aiSessionRoomIds()
+  const mySpaceIds = new Set(spaces.value.map((s) => s.id))
   return taskList.value.filter((t) => {
-    // 【关键修复】主AI 在**发起人的 DM/AI 房**里派单时,任务 room_id = 那个私人房,它既不属于
-    // 被指派者的工作区、也不是被指派者自己的 AI 房 → 旧逻辑会把它藏掉,导致"被派单的人在任务看板
-    // 里看不到自己的任务"(与归没归入工作区无关)。所以:凡是**派给当前登录用户本人**的任务,
-    // 一律显示,不受工作区作用域过滤。(后端对非管理员本就只返回本人相关任务,这里放行安全。)
-    if (assignedToMe(t)) return true
+    const sid = t.space_id || ''
+    if (sid) {
+      if (sid === activeSpace.value) return true      // 就是本工作区的任务
+      if (mySpaceIds.has(sid)) return false           // 属于我的另一个工作区 → 只在那边显示
+      return assignedToMe(t)                          // 归属工作区我进不去,但派给我 → 别弄丢
+    }
+    // —— 以下为无归属的存量任务：旧口径兜底 ——
     const rid = t.room_id || ''
-    if (!activeSpace.value || !rid) return true   // 没选工作区 / 无 room_id 的旧任务:兼容各处显示
-    if (spaceChildIds.value.has(rid)) return true // 当前工作区的频道任务
-    if (aiIds.has(rid)) return true               // AI 会话房的全局任务
-    return false                                   // 别的工作区 / 孤儿专班:隐藏
+    if (!activeSpace.value || !rid) return true       // 没选工作区 / 无 room_id:各处显示
+    if (spaceChildIds.value.has(rid)) return true     // 本工作区的频道任务
+    if (allSpaceChildIds.value.has(rid)) return assignedToMe(t)  // 别的工作区频道:那边看;派给我才兜底
+    if (aiIds.has(rid)) return true                   // 自己的 AI 会话房:全局任务
+    return true                                        // 私聊/孤儿房:没有归宿 → 各处显示,不丢
   })
 })
 

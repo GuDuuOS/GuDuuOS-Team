@@ -2696,6 +2696,7 @@ export interface TaskItem {
   status: string; progress: number; goal: string; result: string
   executor_kind?: string; executor_ref?: string
   room_id?: string   // 所属频道(删频道前统计未完成任务用)
+  space_id?: string  // 所属工作区(Space id)：看板按工作区过滤；空=存量无归属任务
   due_ts?: number | null   // 截止时间(epoch 秒,可空)——看板显示"还剩几天/已逾期"
 }
 
