@@ -633,6 +633,25 @@ function openServerMembers() {
   wsSetOpen.value = false
   memberMgrOpen.value = true
 }
+// 「刷新」原来直接调 reloadServerMembers:它是同步读本地 sync 状态、瞬间返回,按钮毫无反馈,
+// 用户不知道点没点到。这里给一个明确的忙态 + 结果 toast(读的是最新成员数,不是假动画)。
+const mmgRefreshing = ref(false)
+async function refreshServerMembers() {
+  if (mmgRefreshing.value) return
+  mmgRefreshing.value = true
+  try {
+    reloadServerMembers()
+    await nextTick()   // 让「刷新中…」渲染出来一帧,按钮有可见反馈
+    toast('已刷新', `当前 ${serverMembers.value.length} 位工作区成员`)
+  } finally {
+    mmgRefreshing.value = false
+  }
+}
+// 二级弹窗回到上一级:关成员管理、重开「工作区设置」(此前进来就回不去了)
+function backToWsSettings() {
+  memberMgrOpen.value = false
+  wsSetOpen.value = true
+}
 // 我能不能管理某成员：我≥50、且对方 power 比我低、且不是我自己/bot
 function canManage(m: ChannelMember): boolean {
   return myServerPower.value >= 50 && m.power < myServerPower.value && m.id !== me.value && !m.isBot
@@ -2678,7 +2697,11 @@ onBeforeUnmount(() => {
           </template>
         </div>
         <div class="nw-foot">
-          <button class="nw-btn" @click="reloadServerMembers">刷新</button>
+          <!-- 二级弹窗:给一条回到「工作区设置」的路(此前进来后只能关掉、回不去上一级) -->
+          <button class="nw-btn mmg-back" @click="backToWsSettings">← 返回工作区设置</button>
+          <button class="nw-btn" :disabled="mmgRefreshing" @click="refreshServerMembers">
+            {{ mmgRefreshing ? '刷新中…' : '刷新' }}
+          </button>
           <button class="nw-btn primary" @click="memberMgrOpen = false">完成</button>
         </div>
       </div>
@@ -3495,6 +3518,8 @@ onBeforeUnmount(() => {
 .nw-mem-tag.pending { background: #f4e9d0; color: #8a6d1a; }
 .nw-mem-empty { font-size: 13px; color: var(--text-3); padding: 14px; text-align: center; }
 .nw-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+/* 二级弹窗的「返回上一级」按钮：靠左，与右侧的 刷新/完成 分开 */
+.mmg-back { margin-right: auto; }
 .nw-btn { height: 36px; padding: 0 16px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-panel); color: var(--text-2); font-size: 14px; cursor: pointer; }
 .nw-btn:hover { background: var(--bg-hover); color: var(--text); }
 .nw-btn.primary { background: var(--accent); border-color: var(--accent); color: #1a1300; font-weight: 700; }
