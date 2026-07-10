@@ -2467,7 +2467,7 @@ onBeforeUnmount(() => {
 
         <!-- 名称 -->
         <div class="nw-field-label">{{ curWsType.nameLabel }}</div>
-        <input v-model="newWsName" class="nw-input" :placeholder="curWsType.namePh" @keyup.enter="createWorkspace" />
+        <input v-model="newWsName" class="nw-input" maxlength="50" :placeholder="curWsType.namePh" @keyup.enter="createWorkspace" />
 
         <!-- 简称（全宽）-->
         <div class="nw-field-label">简称 <span class="nw-hint">左栏图标 · 最多 2 字 · 可留空</span></div>
@@ -2500,9 +2500,9 @@ onBeforeUnmount(() => {
         <div class="nw-title">新建频道</div>
         <div class="nw-sub">将建在「{{ activeSpaceName }}」工作区下，并自动拉主 AI 进群</div>
         <div class="nw-field-label">频道名称</div>
-        <input v-model="newChName" class="nw-input" placeholder="如：第二季筹备 / 海报评审" @keyup.enter="createChannel" />
+        <input v-model="newChName" class="nw-input" maxlength="50" placeholder="如：第二季筹备 / 海报评审" @keyup.enter="createChannel" />
         <div class="nw-field-label">简介（可选，显示在频道头）</div>
-        <textarea v-model="newChTopic" class="nw-input nw-textarea" rows="2" placeholder="一句话说明这个频道是干嘛的" />
+        <textarea v-model="newChTopic" class="nw-input nw-textarea" rows="2" maxlength="200" placeholder="一句话说明这个频道是干嘛的" />
         <div class="nw-field-label">可见性</div>
         <div class="nw-vis">
           <button class="nw-vis-btn" :class="{ on: !newChPublic }" @click="newChPublic = false">私密 · 邀请制</button>
@@ -2525,9 +2525,9 @@ onBeforeUnmount(() => {
         <div class="nw-title">频道设置</div>
         <div class="nw-sub">改这个频道的名称和简介（实时写进后端）</div>
         <div class="nw-field-label">频道名称</div>
-        <input v-model="chSetName" class="nw-input" placeholder="频道名称" @keyup.enter="saveChannelSettings" />
+        <input v-model="chSetName" class="nw-input" maxlength="50" placeholder="频道名称" @keyup.enter="saveChannelSettings" />
         <div class="nw-field-label">简介</div>
-        <textarea v-model="chSetTopic" class="nw-input nw-textarea" rows="2" placeholder="一句话说明这个频道是干嘛的" />
+        <textarea v-model="chSetTopic" class="nw-input nw-textarea" rows="2" maxlength="200" placeholder="一句话说明这个频道是干嘛的" />
         <div v-if="chDeleteArm && chDeleteTaskWarn > 0" class="ch-del-warn">
           ⚠️ 本频道还有 <b>{{ chDeleteTaskWarn }}</b> 个未完成任务。退出后这些任务仍在任务看板里，
           但你将失去从这个频道跟进它们的入口。确认要退出吗？
@@ -2556,9 +2556,9 @@ onBeforeUnmount(() => {
         <div class="nw-title">工作区设置</div>
         <div class="nw-sub">改这个工作区的名称和左栏简称（实时写进后端）</div>
         <div class="nw-field-label">名称</div>
-        <input v-model="wsSetName" class="nw-input" placeholder="工作区名称" @keyup.enter="saveWsSettings" />
+        <input v-model="wsSetName" class="nw-input" maxlength="50" placeholder="工作区名称" @keyup.enter="saveWsSettings" />
         <div class="nw-field-label">简称（左栏图标，最多 2 字；上传图片后以图片为准）</div>
-        <input v-model="wsSetLabel" class="nw-input" :placeholder="wsSetName ? wsLabel(wsSetName) : '如 制作'" />
+        <input v-model="wsSetLabel" class="nw-input" maxlength="2" :placeholder="wsSetName ? wsLabel(wsSetName) : '如 制作'" />
 
         <div class="nw-field-label">图标（上传图片，可选）</div>
         <div class="nw-avatar-row">

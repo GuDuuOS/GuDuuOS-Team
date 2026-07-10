@@ -211,6 +211,9 @@ class MatrixClient:
         返回：成功返回新房间 room_id，失败返回 None。
         """
         url = self._url("/_matrix/client/v3/createRoom")
+        # 名字兜底截断:AI 拆任务/组班时偶尔把一长串重复文本当频道名(实测出现过"女相师 制作专班"重复
+        # 几十遍撑爆频道头),这里统一截到 50 字,与前端表单 maxlength 同口径,防呈现层被撑破。
+        name = (name or "新群").strip()[:50]
         body: Dict[str, Any] = {"name": name, "preset": "private_chat"}
         if invitees:
             body["invite"] = invitees
