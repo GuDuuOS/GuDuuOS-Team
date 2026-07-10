@@ -862,6 +862,32 @@ export async function userExists(input: string): Promise<boolean> {
   }
 }
 
+/** 私信对方（除自己/主AI 外那个人）及其是否还「在场」(membership=join)。
+ *  对方被停用/退出后，Synapse 会把他移出房(membership=leave)，此时发消息没人收——据此提醒发送人。 */
+export function dmPeerStatus(roomId: string): { peerId: string; joined: boolean } {
+  const room = mx?.getRoom(roomId)
+  const meId = mx?.getUserId?.() || ''
+  if (!room) return { peerId: '', joined: false }
+  const all = (room as any).getMembers?.() || []   // 含 join/invite/leave（离场者也在 state 里）
+  const peer = all.find((m: any) => m.userId !== meId && m.userId !== botId())
+  if (!peer) return { peerId: '', joined: false }
+  return { peerId: peer.userId, joined: peer.membership === 'join' }
+}
+
+/** 查某用户是否已停用（私信对方不在场时用于区分「已停用」还是「已退出」的措辞）。失败/未知返回 false。 */
+export async function checkUserDeactivated(userId: string): Promise<boolean> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token || !userId) return false
+  try {
+    const r = await fetch(`${payBase()}/cosmac/user/deactivated?user_id=${encodeURIComponent(userId)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return false
+    const j = await r.json().catch(() => ({}))
+    return !!j?.deactivated
+  } catch { return false }
+}
+
 /** 这个房间是否被收藏（Matrix 标准 m.favourite 标签）。 */
 export function isFavourite(roomId: string): boolean {
   return !!mx?.getRoom(roomId)?.tags?.['m.favourite']

@@ -1,5 +1,18 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-10 — fix:给已停用用户发私信,提醒发送人消息送不达
+- 现象:给已停用用户发私信,消息"发送成功"但对方收不到,发送人却不知情。
+- 根因:用户被停用后 Synapse 把他移出所有房(membership=leave),私信房只剩发送人一人,发出去没人收;
+  前端无任何提示。
+- 修(后端+前端):
+  · 后端 handle_user_deactivated + GET /cosmac/user/deactivated?user_id=(复用 query_user_deactivated,
+    需登录;查不到当未停用不误报)。
+  · 前端 dmPeerStatus(取私信对方及其 membership)+ checkUserDeactivated;openRoom 时若是私信且对方
+    **不在场**(非 join)→ 立即在输入框上方显示红色提醒条,再异步确认是否"已停用"决定措辞:
+    停用→「该用户账号已被停用，消息无法送达。如需继续沟通，请重新邀请对方加入。」;
+    否则→「对方已不在此私信中（可能已停用或退出），消息可能无法送达…」。
+- **部署:git pull + 重启 guduu-bot(新端点) + 覆盖 dist。**
+
 ## 2026-07-10 — fix:频道内图片/视频/音频/文档正常显示+内嵌预览(已认证媒体)
 - 现象:频道上传图片后裂图,只显示乱码文件名。
 - 根因:渲染用 mxcToDownload(mxc) 的**未认证**媒体 URL 交给 <img>;新版 Synapse 强制"已认证媒体",

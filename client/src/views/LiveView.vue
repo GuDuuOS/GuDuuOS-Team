@@ -73,6 +73,8 @@ import {
   setFavourite,
   normalizeUserId,
   userExists,
+  dmPeerStatus,
+  checkUserDeactivated,
   isServerAdmin,
   ensureControlRoomMembership,
   acceptPendingInvites,
@@ -1348,6 +1350,7 @@ function openRoom(id: string) {
   msgs.value = listMessages(id)
   channelMembers.value = listRoomMembers(id)
   fav.value = isFavourite(id)
+  checkDmDeliverability(id)
   reactions.value = listReactions(id)
   replyTo.value = null
   editingId.value = null
@@ -1367,6 +1370,21 @@ function openRoom(id: string) {
 }
 // 当前打开的房是不是"真人私信":私信头部不显示 频道设置/私密角标/成员管理(那是频道的东西)
 const currentIsDm = computed(() => (currentRoom.value ? isDirectRoom(currentRoom.value) : false))
+
+// ── 私信"送不达"提醒：对方被停用/退出后 Synapse 把他移出房,消息发出去没人收 ──
+const dmUndeliverable = ref<{ show: boolean; deactivated: boolean }>({ show: false, deactivated: false })
+async function checkDmDeliverability(id: string) {
+  dmUndeliverable.value = { show: false, deactivated: false }
+  try {
+    if (!isDirectRoom(id)) return
+    const { peerId, joined } = dmPeerStatus(id)
+    if (!peerId || joined) return   // 对方还在场 → 正常,不提醒
+    // 对方不在场:先标记提醒,再异步确认是不是"已停用"(决定措辞),避免误报
+    dmUndeliverable.value = { show: true, deactivated: false }
+    const deactivated = await checkUserDeactivated(peerId)
+    if (currentRoom.value === id) dmUndeliverable.value = { show: true, deactivated }
+  } catch { /* 探测失败就不提醒,不打扰 */ }
+}
 // 收藏当前频道（真实 Matrix m.favourite 标签，按频道独立、跨设备同步）
 async function toggleFav() {
   const id = currentRoom.value
@@ -2225,6 +2243,12 @@ onBeforeUnmount(() => {
 
         <!-- Composer -->
         <div v-if="currentRoom" class="composer">
+          <!-- 私信送不达提醒：对方已停用/退出,发出去也没人收 -->
+          <div v-if="dmUndeliverable.show" class="dm-undeliverable">
+            ⚠ {{ dmUndeliverable.deactivated
+              ? '该用户账号已被停用，消息无法送达。如需继续沟通，请重新邀请对方加入。'
+              : '对方已不在此私信中（可能已停用或退出），消息可能无法送达。如需继续沟通，请重新邀请对方加入。' }}
+          </div>
           <!-- 回复横幅 -->
           <div v-if="replyTo" class="reply-bar">
             <span class="reply-bar-txt">↩ 回复 <b>{{ replyTo.name }}</b>：{{ replyTo.body.slice(0, 40) }}</span>
@@ -3210,6 +3234,7 @@ onBeforeUnmount(() => {
 .emoji-cell { width: 28px; height: 28px; border: 0; background: transparent; border-radius: 6px; cursor: pointer; font-size: 17px; display: inline-flex; align-items: center; justify-content: center; }
 .emoji-cell:hover { background: var(--bg-hover); }
 /* 回复横幅 */
+.dm-undeliverable { background: #fbeaea; border: 1px solid #e6b8b8; color: #a33; border-radius: 10px; padding: 8px 12px; font-size: 12px; line-height: 1.5; margin-bottom: 8px; }
 .reply-bar { display: flex; align-items: center; gap: 8px; background: var(--bg-soft); border: 1px solid var(--border); border-bottom: 0; border-radius: 10px 10px 0 0; padding: 6px 12px; font-size: 12px; color: var(--text-3); }
 .reply-bar-txt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .reply-bar-txt b { color: var(--accent); }

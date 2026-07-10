@@ -3110,6 +3110,24 @@ class CosmacBot:
             logger.exception("频道知识库删除失败")
             return 500, {"error": "删除失败"}
 
+    def handle_user_deactivated(
+        self, access_token: str, user_id: str
+    ) -> Tuple[int, Dict[str, Any]]:
+        """查某用户是否已停用。给「私信对方不在场时提示消息可能送不达」用。需登录。
+
+        用 Synapse 管理 API(query_user_deactivated,需 ADMIN_TOKEN)。查不到/未配置令牌 → deactivated=false
+        (未知不误报"已停用")。这是组织内工具,同事间可见彼此停用状态,泄露风险低。
+        """
+        me = self.client.whoami(access_token)
+        if not me:
+            return 401, {"error": "登录已失效，请重新登录"}
+        user_id = str(user_id or "").strip()
+        if not user_id.startswith("@"):
+            return 400, {"error": "无效用户 id"}
+        from cosmac import registration
+        d = registration.query_user_deactivated(self.config.homeserver_url, user_id)
+        return 200, {"deactivated": bool(d)}  # None(查不了) → false,不误报
+
     # —— 平台共享知识库（阶段2）：管理员后台维护，任何专班可绑(knowledge=['platform'])——
     # 存 SCOPE_GLOBAL + 固定作用域 _PLATFORM_KB_SCOPE。读/写/删**仅平台管理员**(服务端强制)。
 
@@ -4112,6 +4130,7 @@ class _Handler(BaseHTTPRequestHandler):
                 or p.startswith("/cosmac/kb/")
                 or p.startswith("/cosmac/platform-kb/")
                 or p.startswith("/cosmac/people/")
+                or p.startswith("/cosmac/user/")
                 or p.startswith("/cosmac/profile/")
                 or p.startswith("/cosmac/usage/")
                 or p.startswith("/cosmac/admin/")      # 后台用户列表拉邮箱（GET 带 Authorization 也要预检）
@@ -4243,6 +4262,15 @@ class _Handler(BaseHTTPRequestHandler):
             qs = parse_qs(urlparse(self.path).query)
             room_id = (qs.get("room_id") or [""])[0]
             code, payload = self.bot.handle_kb_room_list(token, room_id)
+            self._send_json(code, payload, cors=True)
+            return
+        # 私信提示：查某用户是否已停用（?user_id=）
+        if self.path.split("?", 1)[0] == "/cosmac/user/deactivated":
+            from urllib.parse import parse_qs, urlparse
+            token = self._bearer()
+            qs = parse_qs(urlparse(self.path).query)
+            uid = (qs.get("user_id") or [""])[0]
+            code, payload = self.bot.handle_user_deactivated(token, uid)
             self._send_json(code, payload, cors=True)
             return
         # 图文教程：列全局页面树（无需 room_id，全平台一份）
