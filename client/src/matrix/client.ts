@@ -3146,10 +3146,53 @@ const DM_STATE = 'cosmac.dm'                 // 真人一对一私信房标记(�
  * 误当频道漏进频道列表(QA)。 */
 function isDmRoom(r: any): boolean {
   try {
-    if (r?.currentState?.getStateEvents?.(DM_STATE, '')) return true
-    if (typeof r?.getDMInviter === 'function' && r.getDMInviter()) return true
+    if (!r) return false
+    if (r.currentState?.getStateEvents?.(DM_STATE, '')) return true      // 我们自己的标记
+    if (directRoomIds().has(r.roomId)) return true                        // Matrix 标准 m.direct
+    if (typeof r.getDMInviter === 'function' && r.getDMInviter()) return true  // 邀请阶段
+    // 兜底启发式:**无房名 + 恰好两人 + 不是 AI 会话房** → 真人一对一私信。
+    // 为什么需要它:上面三条都可能失效——老私信没有 cosmac.dm 标记,而 getDMInviter 只在**邀请态**
+    // 有值;一旦接受邀请入房,该私信就没有任何信号了,会被误当成频道(头部出现"频道设置/私密",
+    // 输入框写"发送到 #对方名",实测踩过)。本产品的频道**一律有名字**(前端建频道必填、后端建房
+    // 默认"新群"),所以"无名的两人房"只可能是私信。
+    if (isAiSessionRoom(r)) return false
+    if (r.isSpaceRoom?.()) return false
+    // 控制室(平台配置房)可能也是"两人、无名",显式排除,别把它渲染进私信区
+    if ((r.getCanonicalAlias?.() || '').startsWith('#cosmac-ctrl:')) return false
+    const named = !!r.currentState?.getStateEvents?.('m.room.name', '')?.getContent?.()?.name
+    if (named) return false
+    // 算**全部成员**(含已离开的):对方被停用/退出后 joined 只剩我一人,但它依然是那段私信
+    // (房名会变成 "Empty room (was xxx)"),按 2 人算才认得出来。
+    if ((r.getMembers?.() || []).length === 2) return true
   } catch { /* 读不出一律当非 DM */ }
   return false
+}
+
+/** 读 `m.direct` 账号数据 → 私信房间 id 集合（Matrix 标准私信标记，跨客户端/跨设备通用）。 */
+function directRoomIds(): Set<string> {
+  const out = new Set<string>()
+  try {
+    const c: any = (mx as any)?.getAccountData?.('m.direct')?.getContent?.() || {}
+    for (const uid of Object.keys(c)) {
+      for (const rid of (c[uid] || [])) out.add(rid)
+    }
+  } catch { /* 读不出就空集 */ }
+  return out
+}
+
+/** 把某房间登记进 `m.direct`（标准私信标记）——让"是不是私信"在接受邀请入房后依然成立。
+ *  幂等；失败静默（顶多退回启发式判定）。 */
+export async function markAsDirect(roomId: string, peerId: string): Promise<void> {
+  if (!mx || !roomId || !peerId) return
+  try {
+    const cur: any = (mx as any).getAccountData?.('m.direct')?.getContent?.() || {}
+    const next = { ...cur }
+    const arr: string[] = Array.isArray(next[peerId]) ? [...next[peerId]] : []
+    if (arr.includes(roomId)) return   // 已登记
+    arr.push(roomId)
+    next[peerId] = arr
+    await (mx as any).setAccountData('m.direct', next)
+  } catch { /* 忽略 */ }
 }
 
 /** 供视图判定"当前打开的房是不是私信"(私信头部/输入框走简化样式,不按频道渲染)。 */
@@ -3163,7 +3206,13 @@ export async function acceptRoomInvite(roomId: string): Promise<void> {
   if (!mx) return
   const r = mx.getRoom(roomId)
   if (r && (r as any).getMyMembership?.() === 'invite') {
+    // ⚠️ 入房**之前**先把"这是私信"记进 m.direct：getDMInviter 只在邀请态有值,一旦 join 就没了,
+    // 而对方建的私信房在被邀阶段读不到我们的 cosmac.dm 标记(邀请只下发 stripped state)。
+    // 不在这里记下来,接受邀请后这个私信就会失去全部信号、被误当成频道。
+    let inviter = ''
+    try { inviter = (r as any).getDMInviter?.() || '' } catch { /* ignore */ }
     try { await mx.joinRoom(roomId) } catch { /* 已加入/权限问题都不阻断打开 */ }
+    if (inviter) await markAsDirect(roomId, inviter)
   }
 }
 const AI_SESSION_NAME = '中枢 AI'
@@ -3250,6 +3299,8 @@ export async function createDirectMessage(userId: string): Promise<string> {
     // 标记这是真人 DM(稳定识别,不依赖房名);渲染在"私信"区、并从"频道"列表排除
     initial_state: [{ type: DM_STATE, state_key: '', content: { v: 1 } }],
   })
+  // 同时登记进 Matrix 标准的 m.direct(跨客户端/跨设备通用),双保险
+  await markAsDirect(res.room_id, uid)
   return res.room_id
 }
 

@@ -2233,7 +2233,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           </template>
-          <p v-if="currentRoom && !msgs.length" class="hint pad">这个频道还没有消息</p>
+          <p v-if="currentRoom && !msgs.length" class="hint pad">{{ currentIsDm ? '还没有聊天记录，发条消息打个招呼吧' : '这个频道还没有消息' }}</p>
           <p v-if="!currentRoom" class="hint pad">← 选一个频道开始</p>
         </div>
 
