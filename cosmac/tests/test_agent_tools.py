@@ -384,6 +384,27 @@ class RoomAccessScopeTest(unittest.TestCase):
         self.assertNotEqual(msg, "")
         self.assertIn("成员", msg)
 
+    def test_list_my_rooms_admin_sees_all_channels(self) -> None:
+        # 管理员/负责人:跨工作区看全部 bot 频道(含自己没加入的 !secret),便于统筹。
+        self.tb.is_admin = lambda uid: uid == "@alice:test"  # type: ignore
+        out = self.tb.execute(
+            ToolCall(id="x", name="list_my_rooms", arguments={}),
+            ToolContext("!cur:test", "@alice:test", is_dm=True),
+        )
+        self.assertIn("!allowed:test", out)
+        self.assertIn("!secret:test", out)  # 非成员房,管理员也能看到
+        self.assertIn("跨工作区", out)
+
+    def test_list_my_rooms_nonadmin_still_scoped(self) -> None:
+        # 非管理员即使注入了 is_admin 回调,判为否也只看自己在的房(隐私边界不破)。
+        self.tb.is_admin = lambda uid: False  # type: ignore
+        out = self.tb.execute(
+            ToolCall(id="x", name="list_my_rooms", arguments={}),
+            ToolContext("!cur:test", "@alice:test", is_dm=True),
+        )
+        self.assertIn("!allowed:test", out)
+        self.assertNotIn("!secret:test", out)
+
 
 class SendMessageTargetTest(unittest.TestCase):
     """send_message 目标房防呆(QA 实测:私聊里让 AI 发公告,消息落进私聊,群成员收不到)。"""

@@ -114,6 +114,10 @@ class Toolbox:
         # 能力名册回调（模块3.5 档1）：由 bot 注入 _list_capabilities_for_tool。签名 (ctx)->文本。
         # 让 list_capabilities 工具能列出"可调配的 人/Agent/Skill/知识库"，供主AI 拆任务匹配。
         self.list_capabilities: Optional[Callable[[ToolContext], str]] = None
+        # 是否平台管理员回调（bot 注入 _is_platform_admin）。签名 (user_id)->bool。
+        # 用于 list_my_rooms 的可见范围：普通用户只看自己在的频道(隐私边界)；管理员/负责人看
+        # 全部 bot 频道(跨工作区统筹——否则他查不到自己没加入、但组织里存在的频道)。None=当作非管理员。
+        self.is_admin: Optional[Callable[[str], bool]] = None
         # 工具名 → (说明书, 执行函数)。执行函数签名: (arguments, ctx) -> 结果文本
         self._tools: Dict[str, Dict[str, Any]] = {}
         # 启用集合：None = 全部启用（默认）；否则只启用集合内的工具。
@@ -847,15 +851,18 @@ class Toolbox:
             room_ids = []
         if not room_ids:
             return "暂时拿不到频道列表(服务波动?),请稍后再试。"
+        # 可见范围：普通用户只列自己在的频道(隐私边界);**平台管理员/负责人**列全部 bot 频道——
+        # 否则他跨工作区查一个"自己没加入但组织里存在"的频道(如别的工作区的专班)会一直查不到。
+        is_admin = bool(self.is_admin and self.is_admin(ctx.sender))
         import time as _time
         now = _time.time()
         out: List[str] = []
-        for rid in room_ids[:100]:
+        for rid in room_ids[:150]:
             try:
                 if self._room_kind(rid) != "channel":
                     continue  # AI 会话房/私信不算频道
-                # 全局模式的边界:只列**发起人自己在**的房——不暴露 TA 不在的群
-                if not self.client.is_joined_member(rid, ctx.sender):
+                # 非管理员:只暴露发起人自己在的房;管理员:全部频道都可见(跨工作区统筹)。
+                if not is_admin and not self.client.is_joined_member(rid, ctx.sender):
                     continue
                 cached = self._room_name_cache.get(rid)
                 if cached and now - cached[1] < 300:
@@ -871,8 +878,9 @@ class Toolbox:
                 continue  # 单个房读不出不影响整体
         if not out:
             return "没有找到你所在的频道。"
+        head = f"全部频道({len(out)} 个,跨工作区)" if is_admin else f"你所在的频道({len(out)} 个)"
         return (
-            f"你所在的频道({len(out)} 个):\n" + "\n".join(out)
+            f"{head}:\n" + "\n".join(out)
             + "\n\n(要看某个频道最近聊了什么,我可以用 get_recent_messages 调取。)"
         )
 

@@ -247,6 +247,8 @@ class CosmacBot:
         self.toolbox.kb_search = self._kb_search_for_tool
         # 能力名册（模块3.5 档1）：注入"列出可调配资源"的回调，让主AI 拆任务时知道找谁。
         self.toolbox.list_capabilities = self._list_capabilities_for_tool
+        # 频道清单可见范围：管理员/负责人可跨工作区看全部频道，普通用户只看自己在的（隐私边界）。
+        self.toolbox.is_admin = self._is_platform_admin
         # 资源存在性校验(组班链路完善):assemble_team 据此识别"库里没有的 Agent/Skill"并提醒缺口
         self.toolbox.known_agents = lambda: {
             str(a.get("slug") or "") for a in self._global_agent_items() if a.get("slug")
