@@ -157,6 +157,25 @@
             <button class="cam-add-btn" :disabled="!kLabel.trim()" @click="doAddKnowledge">＋ 添加来源</button>
           </div>
           <div v-if="isLive" class="cam-help" :style="saveHintStyle">{{ saveHint }}</div>
+
+          <!-- 真实上传：把文本文件切块入库，本频道 AI 检索时自动命中（区别于上面的“来源”标签占位）-->
+          <template v-if="isLive">
+            <div class="cam-kb-divider">上传文档到本频道知识库（AI 自动检索）</div>
+            <div v-if="kbErr" class="cam-help cam-help-top" style="color:#b94a4a">{{ kbErr }}</div>
+            <div v-for="d in kbDocs" :key="'kbd' + d.id" class="cam-row">
+              <div class="cam-row-main">
+                <div class="cam-row-label">📄 {{ d.title }}</div>
+                <div class="cam-row-desc">已切块入库 · 本频道 AI 可检索</div>
+              </div>
+              <button class="cam-del" title="从知识库删除" @click="deleteRoomDoc(d.id)">×</button>
+            </div>
+            <p v-if="!kbDocs.length" class="cam-row-desc" style="padding:8px 2px">还没有上传文档。点下方「上传文件」把资料喂给本频道 AI。</p>
+            <div class="cam-add">
+              <button class="cam-add-btn" :disabled="kbUploading" @click="pickKbFile">{{ kbUploading ? '上传中…' : '⬆ 上传文件' }}</button>
+              <input ref="kbFileInput" type="file" multiple accept=".txt,.md,.markdown,.csv,.tsv,.json,.log,.text,.rst,.yaml,.yml,.xml,.html,.htm,text/*" style="display:none" @change="onKbFilePicked" />
+            </div>
+            <div class="cam-help">支持文本文件（.txt / .md / .csv / .json 等），单篇上限 2 万字。需你在本频道有管理员权限。PDF / Word 解析稍后支持。</div>
+          </template>
         </template>
 
         <!-- 数据权限 -->
@@ -269,7 +288,7 @@ import {
   type Confidential,
   type AccessLevel
 } from '@/composables/useChannelAdmin'
-import { getGlobalAgents, type GlobalAgent } from '@/matrix/client'
+import { getGlobalAgents, kbRoomList, kbRoomAdd, kbRoomDelete, type GlobalAgent } from '@/matrix/client'
 
 type TabKey = 'persona' | 'members' | 'skills' | 'knowledge' | 'dataScopes' | 'rules' | 'model' | 'memory'
 type CountKey = 'members' | 'skills' | 'knowledge' | 'rules' | 'dataScopes'
@@ -277,7 +296,7 @@ type CountKey = 'members' | 'skills' | 'knowledge' | 'rules' | 'dataScopes'
 const {
   visible, state, groupName, close, addMember, removeMember, addItem, removeItem, addScope, removeScope,
   // 真实成员 + 配置持久化（有真后端时走这套）
-  isLive, saveState, liveMembers, refreshLiveMembers, inviteLiveMember, removeLiveMember
+  roomId, isLive, saveState, liveMembers, refreshLiveMembers, inviteLiveMember, removeLiveMember
 } = useChannelAdmin()
 
 // 人设保存状态提示（存进房间 state event，多端同步）
@@ -360,13 +379,61 @@ async function loadGlobalAgents() {
   try { globalAgents.value = await getGlobalAgents() } catch { globalAgents.value = [] }
 }
 
+/* —— 频道知识库：上传真实文档进本频道 RAG（区别于上面的“来源”标签是占位）—— */
+const kbDocs = ref<{ id: number; title: string; source: string }[]>([])
+const kbUploading = ref(false)
+const kbErr = ref('')
+const kbFileInput = ref<HTMLInputElement>()
+// 可读为文本的类型：文本/markdown/csv/json/日志等。PDF/Word 需服务端解析，暂不支持。
+const KB_TEXT_RE = /\.(txt|md|markdown|csv|tsv|json|log|text|rst|yaml|yml|xml|html?)$/i
+const KB_MAX_CHARS = 20000  // 与后端 MAX_DOC_CHARS 对齐，本地先拦、提示更友好
+async function loadRoomDocs() {
+  if (!isLive.value || !roomId.value) { kbDocs.value = []; return }
+  kbDocs.value = await kbRoomList(roomId.value)
+}
+function pickKbFile() { if (!kbUploading.value) kbFileInput.value?.click() }
+async function onKbFilePicked(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  input.value = ''
+  if (!files.length || !roomId.value) return
+  kbUploading.value = true; kbErr.value = ''
+  try {
+    for (const f of files) {
+      if (!KB_TEXT_RE.test(f.name)) { kbErr.value = `${f.name}：暂只支持文本文件（.txt/.md/.csv/.json 等），PDF/Word 稍后支持`; continue }
+      const text = (await f.text()).trim()
+      if (!text) { kbErr.value = `${f.name}：内容为空，跳过`; continue }
+      if (text.length > KB_MAX_CHARS) { kbErr.value = `${f.name}：太长（${text.length} 字 > ${KB_MAX_CHARS}），请拆分后再传`; continue }
+      await kbRoomAdd(roomId.value, f.name, text)
+    }
+    await loadRoomDocs()
+  } catch (err: any) {
+    kbErr.value = err?.message || String(err)
+  } finally {
+    kbUploading.value = false
+  }
+}
+async function deleteRoomDoc(id: number) {
+  if (!roomId.value) return
+  kbErr.value = ''
+  try {
+    await kbRoomDelete(roomId.value, id)
+    await loadRoomDocs()
+  } catch (err: any) {
+    kbErr.value = err?.message || String(err)
+  }
+}
+// 切到「知识库」标签时拉一次真实已上传文档
+watch(tab, (t) => { if (t === 'knowledge') loadRoomDocs() })
+
 // 每次打开弹窗时，从 Matrix 重新拉一遍真实成员（防 sync 期间有进出群没反映）+ 全局智能体列表
 watch(visible, (v) => {
   if (!v) return
   // 清掉上次遗留的报错(如上次「移出失败」)——否则关掉再开,旧红字还粘在新弹窗顶上(本次修复)。
   liveErr.value = ''
   liveInvite.value = ''
-  if (isLive.value) { refreshLiveMembers(); loadGlobalAgents() }
+  kbErr.value = ''
+  if (isLive.value) { refreshLiveMembers(); loadGlobalAgents(); loadRoomDocs() }
 })
 
 function onKey(e: KeyboardEvent) {

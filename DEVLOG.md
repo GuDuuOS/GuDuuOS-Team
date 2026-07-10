@@ -1,5 +1,23 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-10 — feat:频道知识库支持上传文件(真入库 RAG)
+- 背景:频道管理「知识库」页原来只有"添加来源"(存名字/说明的占位标签),不真入库。用户要能上传文件
+  喂给本频道 AI 检索。
+- 实现(后端 3 端点 + 前端上传 UI,复用现成 ingest_document/RAG):
+  · 后端:handle_kb_room_list/add/delete → /cosmac/kb/room/{list,add,delete}。作用域 SCOPE_ROOM
+    (本频道 AI 检索自动命中,见 _kb_retrieve)。授权:上传/删除限**频道管理员**(_is_room_admin power≥50)
+    + knowledge 门控;列出限频道成员;删除做越权防护(doc 必须属于本频道)。单篇 2 万字上限、
+    每频道 200 篇上限,复用 kb_cmd 常量。
+  · 前端:client.ts 加 kbRoomList/Add/Delete;ChannelAdminModal「知识库」页加「上传文件」按钮
+    (多选、前端读文本、按扩展名过滤)+ 已上传文档列表 + 删除;composable 暴露 roomId。
+  · 文件类型:先支持**文本文件**(.txt/.md/.csv/.json 等,前端 f.text() 读取);PDF/Word 需服务端
+    解析,暂不支持(UI 已注明)。
+- 验证:test_kb_room 5 项(管理员增删查/成员不能增删/非成员不能列/越权删跨频道404/空内容400)全过;
+  ruff 通过;vite build 通过。全量 425 测试仅剩 3 个既有无关失败。
+- 注:无控制室时 GatingStore fail-closed 到"仅管理员"(安全设计),线上控制室可读→knowledge 默认 free、
+  频道管理员可正常上传。
+- **部署:git pull + 重启 guduu-bot(3 端点) + 覆盖 dist(上传 UI)。**
+
 ## 2026-07-09 — fix:频道管理弹窗重开后仍显示上次的报错
 - 现象:频道管理「人员」里移出成员失败(如 403 无权限),关掉弹窗再打开,顶部旧红字报错还粘着。
 - 根因:打开弹窗的 watch(visible) 只刷成员/智能体,没清 liveErr。

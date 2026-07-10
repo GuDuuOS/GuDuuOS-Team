@@ -2974,6 +2974,115 @@ class CosmacBot:
             logger.exception("知识库删除失败（UI）")
             return 500, {"error": "删除失败"}
 
+    # —— 频道知识库（SCOPE_ROOM）：频道管理面板「知识库」页上传/列出/删除文档 ——
+    # 与个人库的区别：作用域是**频道**(所有成员的 AI 检索都会带上)，故写/删限**频道管理员**(power≥50)，
+    # 读限频道成员。上传的文档经 ingest_document 切块入库，本频道 AI 走 RAG 时自动命中(见 _kb_retrieve)。
+
+    def handle_kb_room_list(
+        self, access_token: str, room_id: str
+    ) -> Tuple[int, Dict[str, Any]]:
+        """列出本频道(SCOPE_ROOM)已上传的知识库文档。需登录 + 是该频道成员。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        room_id = str(room_id or "").strip()
+        if not room_id.startswith("!"):
+            return 400, {"error": "无效的频道 id"}
+        # 读也要是频道成员——别让任意登录用户遍历 room_id 拉别人频道的知识库清单。
+        if not self.client.is_joined_member(room_id, user_id):
+            return 403, {"error": "你不是该频道成员"}
+        try:
+            from cosmac.db import kb, session_scope
+            from cosmac.db.models import SCOPE_ROOM
+
+            docs: List[Dict[str, Any]] = []
+            with session_scope() as s:
+                for d in kb.list_docs(s, scope=SCOPE_ROOM, scope_id=room_id):
+                    docs.append({"id": d.id, "title": d.title, "source": d.source})
+            return 200, {"docs": docs}
+        except Exception:
+            logger.exception("读频道知识库失败")
+            return 500, {"error": "读取失败"}
+
+    def handle_kb_room_add(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """上传一篇文档进本频道知识库。需登录 + **频道管理员**(power≥50) + knowledge 门控。
+
+        频道 KB 是共享资源、会注入所有成员的检索，故只有频道管理员能改（与改频道配置同口径）。
+        前端负责把文本文件读成 content 传上来（PDF/Word 解析暂不支持，见前端提示）。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        room_id = str((body or {}).get("room_id") or "").strip()
+        if not room_id.startswith("!"):
+            return 400, {"error": "无效的频道 id"}
+        if not self._is_room_admin(room_id, user_id):
+            return 403, {"error": "仅频道管理员可上传本频道知识库文档"}
+        # 知识库门控：与个人库/RAG 同一道 knowledge 闸。
+        if not self._gate_allows(user_id, "knowledge"):
+            return 403, {"error": self._gate_denied_text("knowledge", ui=True)}
+        title = str((body or {}).get("title") or "").strip()
+        content = str((body or {}).get("content") or "").strip()
+        if not content:
+            return 400, {"error": "文件内容为空（仅支持文本文件）"}
+        from cosmac.db.kb_cmd import MAX_DOC_CHARS, MAX_DOCS_PER_SCOPE
+
+        if len(content) > MAX_DOC_CHARS:
+            return 400, {
+                "error": f"文件太长（{len(content)} 字），上限 {MAX_DOC_CHARS} 字，请拆分后再传"
+            }
+        try:
+            from cosmac.db import kb, session_scope
+            from cosmac.db.models import SCOPE_ROOM
+
+            with session_scope() as s:
+                cur = len(kb.list_docs(s, scope=SCOPE_ROOM, scope_id=room_id))
+                if cur >= MAX_DOCS_PER_SCOPE:
+                    return 400, {
+                        "error": f"本频道知识库已达上限（{MAX_DOCS_PER_SCOPE} 篇），先删一些再传"
+                    }
+                doc = kb.ingest_document(
+                    s, scope=SCOPE_ROOM, scope_id=room_id,
+                    title=title or "未命名文档", source="upload", text=content,
+                )
+                return 200, {"ok": True, "id": doc.id, "title": doc.title, "chunks": len(doc.chunks)}
+        except Exception:
+            logger.exception("频道知识库入库失败")
+            return 500, {"error": "入库失败（数据库不可用？）"}
+
+    def handle_kb_room_delete(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """删本频道知识库一篇文档。需登录 + **频道管理员**。越权防护：doc 必须属于该频道。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        room_id = str((body or {}).get("room_id") or "").strip()
+        if not room_id.startswith("!"):
+            return 400, {"error": "无效的频道 id"}
+        if not self._is_room_admin(room_id, user_id):
+            return 403, {"error": "仅频道管理员可删除本频道知识库文档"}
+        try:
+            doc_id = int((body or {}).get("id"))
+        except (TypeError, ValueError):
+            return 400, {"error": "文档 id 无效"}
+        try:
+            from cosmac.db import kb, session_scope
+            from cosmac.db.models import SCOPE_ROOM, KnowledgeDoc
+
+            with session_scope() as s:
+                doc = s.get(KnowledgeDoc, doc_id)
+                # 越权防护：只能删属于**本频道**的文档（防遍历 id 删别处的库）。
+                if doc is None or doc.scope != SCOPE_ROOM or doc.scope_id != room_id:
+                    return 404, {"error": "没找到该文档（或不属于本频道）"}
+                kb.delete_doc(s, doc_id)
+                return 200, {"ok": True}
+        except Exception:
+            logger.exception("频道知识库删除失败")
+            return 500, {"error": "删除失败"}
+
     # —— 平台共享知识库（阶段2）：管理员后台维护，任何专班可绑(knowledge=['platform'])——
     # 存 SCOPE_GLOBAL + 固定作用域 _PLATFORM_KB_SCOPE。读/写/删**仅平台管理员**(服务端强制)。
 
@@ -3974,6 +4083,15 @@ class _Handler(BaseHTTPRequestHandler):
             code, payload = self.bot.handle_kb_list_mine(token)
             self._send_json(code, payload, cors=True)
             return
+        # 频道知识库：列本频道已上传文档（?room_id=）
+        if self.path.split("?", 1)[0] == "/cosmac/kb/room/list":
+            from urllib.parse import parse_qs, urlparse
+            token = self._bearer()
+            qs = parse_qs(urlparse(self.path).query)
+            room_id = (qs.get("room_id") or [""])[0]
+            code, payload = self.bot.handle_kb_room_list(token, room_id)
+            self._send_json(code, payload, cors=True)
+            return
         # 图文教程：列全局页面树（无需 room_id，全平台一份）
         if self.path.split("?", 1)[0] == "/cosmac/doc/tree":
             token = self._bearer()
@@ -4239,6 +4357,20 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "请求无效"}, cors=True)
                 return
             code, payload = self.bot.handle_kb_delete(token, body)
+            self._send_json(code, payload, cors=True)
+            return
+
+        # 频道知识库：上传 / 删除本频道文档（频道管理员，越权防护在 handler 内）。
+        if path in ("/cosmac/kb/room/add", "/cosmac/kb/room/delete"):
+            token = self._bearer()
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            if path == "/cosmac/kb/room/add":
+                code, payload = self.bot.handle_kb_room_add(token, body)
+            else:
+                code, payload = self.bot.handle_kb_room_delete(token, body)
             self._send_json(code, payload, cors=True)
             return
 

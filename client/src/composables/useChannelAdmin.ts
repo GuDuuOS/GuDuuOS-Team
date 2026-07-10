@@ -330,6 +330,7 @@ export function useChannelAdmin() {
     close: () => { visible.value = false },
 
     /* ===== 真实成员 / 配置持久化 API ===== */
+    roomId: currentRoomId,  // 当前频道 room_id（频道知识库上传等真后端操作用）
     isLive,            // true = 当前频道有真后端，「人员」标签走真实成员、配置写进房间
     saveState,         // 配置保存状态：idle/saving/saved/error（UI 提示用）
     liveMembers,       // 真实成员快照

@@ -127,6 +127,8 @@
   padding: 1px 6px;
   border-radius: 4px;
 }
+/* 频道知识库「上传文档」分区分隔线 */
+.cam-kb-divider { margin: 16px 2px 8px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; font-weight: 600; color: var(--text-2); }
 /* 频道管理员标识:群主=金色、管理员=蓝色,徽章式醒目,让"谁是管理员"一眼可辨 */
 .cam-tag-owner {
   font-family: inherit;
