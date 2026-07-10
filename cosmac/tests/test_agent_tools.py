@@ -406,6 +406,38 @@ class RoomAccessScopeTest(unittest.TestCase):
         self.assertNotIn("!secret:test", out)
 
 
+class ResolveRoomExcludesSpaceTest(unittest.TestCase):
+    """按名字找频道时绝不能命中**工作区(Space)**。
+
+    线上实测:工作区叫「制作·女相师」,频道叫「女相师 制作专班」。AI 按"制作·女相师"解析,
+    命中了工作区房间,把 5 个人邀进了**工作区**——用户看到"邀请成功",频道里却一个人没多。
+    """
+
+    class _C:
+        def joined_rooms(self):
+            return ["!space:test", "!chan:test"]
+
+        def get_state_event(self, room_id, etype, state_key=""):
+            if etype == "m.room.create":
+                return {"type": "m.space"} if room_id == "!space:test" else {}
+            if etype == "m.room.name":
+                return {"name": "制作·女相师"} if room_id == "!space:test" \
+                    else {"name": "女相师 制作专班"}
+            return None
+
+    def test_space_name_never_resolves(self) -> None:
+        tb = Toolbox(self._C())
+        rid, err = tb._resolve_room_by_name("制作·女相师")
+        self.assertEqual(rid, "")           # 不该命中工作区
+        self.assertIn("工作区", err or "")   # 且明确告知工作区不是频道
+
+    def test_real_channel_still_resolves(self) -> None:
+        tb = Toolbox(self._C())
+        rid, err = tb._resolve_room_by_name("女相师 制作专班")
+        self.assertEqual(rid, "!chan:test")
+        self.assertIsNone(err)
+
+
 class SendMessageTargetTest(unittest.TestCase):
     """send_message 目标房防呆(QA 实测:私聊里让 AI 发公告,消息落进私聊,群成员收不到)。"""
 

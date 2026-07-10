@@ -821,16 +821,23 @@ class Toolbox:
         )
 
     def _room_kind(self, room_id: str) -> str:
-        """房间类型:'ai'(AI会话房)/'dm'(真人私信)/'channel'(普通频道)。
+        """房间类型:'space'(工作区)/'ai'(AI会话房)/'dm'(真人私信)/'channel'(普通频道)。
 
         按建房时打的 state 标记判定,结果永久缓存(标记不会变)——list_my_rooms 每次要过
         全部房间,不缓存会打出成倍的 state 查询。读失败按 channel 处理且不缓存(下次重试)。
+
+        ⚠️ **工作区(Space)本身也是一个房间、也有名字**。不识别出来的话,按名字找"频道"时会命中
+        工作区(如「制作·女相师」),AI 就把人邀进了工作区而不是频道——用户看到"邀请成功"、频道里
+        却一个人没多(线上实测)。故这里先认 m.room.create.type == m.space。
         """
         cached = self._room_kind_cache.get(room_id)
         if cached is not None:
             return cached
         try:
-            if self.client.get_state_event(room_id, "cosmac.ai_session") is not None:
+            create = self.client.get_state_event(room_id, "m.room.create") or {}
+            if create.get("type") == "m.space":
+                kind = "space"
+            elif self.client.get_state_event(room_id, "cosmac.ai_session") is not None:
                 kind = "ai"
             elif self.client.get_state_event(room_id, "cosmac.dm") is not None:
                 kind = "dm"
@@ -888,20 +895,25 @@ class Toolbox:
         )
 
     def _resolve_room_by_name(self, name: str) -> "Tuple[str, Optional[str]]":
-        """把群名解析成 room_id。返回 (room_id, None) 或 ("", 错误/引导文案)。
+        """把**频道名**解析成 room_id。返回 (room_id, None) 或 ("", 错误/引导文案)。
 
-        在 bot 已加入的所有房间里按 m.room.name 匹配:精确命中唯一 → 用它;
+        在 bot 已加入的房间里按 m.room.name 匹配:精确命中唯一 → 用它;
         多个命中 → 列出候选让用户挑(重名群正是历史 bug 的产物);没精确命中再试包含匹配。
         房名带 5 分钟缓存,避免每次邀人都全量拉一遍 state。
+
+        ⚠️ 只在**真正的频道**里找:排除 工作区(Space)/AI会话房/私信/控制室。否则"制作·女相师"
+        这种**工作区名**会被当成频道命中,AI 把人邀进了工作区、频道里却一个人没多(线上实测)。
         """
         import time as _time
         now = _time.time()
         rooms = self.client.joined_rooms()
         if not rooms:
             return "", "我这边拿不到群列表(服务波动?),请稍后再试,或直接到目标群里@我操作。"
-        # 刷新缓存(逐房读 m.room.name;5 分钟内复用)
+        # 刷新缓存(逐房读 m.room.name;5 分钟内复用),同时只保留"频道"类房间
         names: Dict[str, str] = {}
         for rid in rooms:
+            if self._room_kind(rid) != "channel":
+                continue  # 工作区/AI会话房/私信 都不是可邀人的"频道"
             cached = self._room_name_cache.get(rid)
             if cached and now - cached[1] < 300:
                 names[rid] = cached[0]
@@ -913,6 +925,8 @@ class Toolbox:
                 nm = ""
             names[rid] = nm
             self._room_name_cache[rid] = (nm, now)
+        # 控制室是平台配置房,不是聊天频道,绝不能被解析成邀请目标
+        names = {rid: nm for rid, nm in names.items() if "控制室" not in nm}
         exact = [rid for rid, nm in names.items() if nm == name]
         if len(exact) == 1:
             return exact[0], None
@@ -928,7 +942,10 @@ class Toolbox:
         if len(part) > 1:
             listing = "\n".join(f"  · {names[r]}（{r}）" for r in part[:6])
             return "", f"找到多个名字包含「{name}」的群,请说全名或给 room_id:\n{listing}"
-        return "", f"没找到叫「{name}」的群(我不在里面的群我看不到)。确认群名,或到目标群里@我操作。"
+        return "", (
+            f"没找到叫「{name}」的**频道**。注意:工作区(左栏那一列)不是频道,不能往里邀人;"
+            "请给**频道名**或 room_id,或直接到目标频道里@我操作。(我不在里面的频道我也看不到。)"
+        )
 
     def _tool_invite_to_room(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         """邀请用户进已有房间。默认当前房间；指定别的房间要过 _check_room_access 防越权。"""
