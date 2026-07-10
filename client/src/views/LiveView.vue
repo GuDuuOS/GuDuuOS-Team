@@ -1670,7 +1670,7 @@ onBeforeUnmount(() => {
           <span class="product-name">CosMac Star<span class="product-x">X</span>{{ activeSpaceName }}</span>
         </button>
         <div v-if="appMenuOpen" class="tas-pop" @click.stop>
-          <button class="tas-item active"><span class="tas-ic accent">▣</span><span class="tas-label">Channels</span><span class="tas-check">✓</span></button>
+          <button class="tas-item active"><span class="tas-ic">💬</span><span class="tas-label">频道</span><span class="tas-check">✓</span></button>
           <div class="tas-sep" />
           <button class="tas-item" @click="onMarket"><span class="tas-ic">🛒</span><span class="tas-label">AI Agent 商城</span></button>
           <button class="tas-item" @click="onCli"><span class="tas-ic">▸</span><span class="tas-label">CLI</span></button>
