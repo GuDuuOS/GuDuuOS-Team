@@ -17,10 +17,10 @@ export interface LiveRoom {
 }
 
 /** 给 UI 用的精简消息结构；card 为 cosmac.card 自定义富卡（可能没有） */
-/** 消息附件（图片 / 文件）：由 m.image / m.file / m.video / m.audio 事件解析而来。 */
+/** 消息附件（图片 / 视频 / 音频 / 文件）：由 m.image / m.video / m.audio / m.file 事件解析而来。 */
 export interface MsgAttachment {
-  kind: 'image' | 'file'
-  url: string          // 可直接用的 http(s) 下载/显示地址（已由 mxc 转换）
+  kind: 'image' | 'video' | 'audio' | 'file'
+  mxc: string          // 原始 mxc:// 地址——由 AttachmentView 组件带 token 拉成可显示的 blob URL
   name: string         // 文件名（body）
   mimetype?: string
   size?: number        // 字节
@@ -502,13 +502,6 @@ function spaceMeta(room: any): { label?: string; order?: number } {
 export function mxcToHttp(mxc: string, size = 64): string {
   if (!mx || !mxc) return ''
   return (mx as any).mxcUrlToHttp?.(mxc, size, size, 'crop') || ''
-}
-
-/** mxc:// → 原图/原文件的 http 下载地址（不缩略，用于图片查看/文件下载）。 */
-export function mxcToDownload(mxc: string): string {
-  if (!mx || !mxc) return ''
-  // 不传宽高 = 走 /download/（原文件）；传了才是 /thumbnail/。
-  return (mx as any).mxcUrlToHttp?.(mxc) || ''
 }
 
 /** 读某个 Space 的头像（m.room.avatar → mxc → http）。 */
@@ -2939,17 +2932,35 @@ function parseAttachment(c: any): MsgAttachment | undefined {
   const mxc = c?.url
   if (!mxc || typeof mxc !== 'string' || !mxc.startsWith('mxc://')) return undefined
   const info = c?.info || {}
-  const name = String(c?.body || '文件')
-  if (t === 'm.image') {
-    return {
-      kind: 'image', url: mxcToDownload(mxc), name,
-      mimetype: info.mimetype, size: info.size, w: info.w, h: info.h,
-    }
-  }
-  if (t === 'm.file' || t === 'm.video' || t === 'm.audio') {
-    return { kind: 'file', url: mxcToDownload(mxc), name, mimetype: info.mimetype, size: info.size }
-  }
+  const base = { mxc, name: String(c?.body || '文件'), mimetype: info.mimetype, size: info.size }
+  if (t === 'm.image') return { ...base, kind: 'image', w: info.w, h: info.h }
+  if (t === 'm.video') return { ...base, kind: 'video' }
+  if (t === 'm.audio') return { ...base, kind: 'audio' }
+  if (t === 'm.file') return { ...base, kind: 'file' }
   return undefined
+}
+
+/** 把 mxc:// 拉成可用于 <img>/<video>/<a download> 的地址：新版 Synapse 强制**已认证媒体**，
+ *  <img> 等标签带不了 Authorization 头，故这里带 token fetch 成 blob 再转 object URL；老版/失败
+ *  回退到未认证 http URL（老服务器 <img> 能直接用）。异步，失败返回 ''。调用方用完记得 revokeObjectURL。 */
+export async function mxcToObjectUrl(mxc: string): Promise<string> {
+  if (!mx || !mxc?.startsWith('mxc://')) return ''
+  const rest = mxc.slice('mxc://'.length)
+  const slash = rest.indexOf('/')
+  if (slash < 0) return ''
+  const server = rest.slice(0, slash)
+  const mediaId = rest.slice(slash + 1)
+  if (!server || !mediaId) return ''
+  const token = (mx as any).getAccessToken?.() || ''
+  const base = ((mx as any).getHomeserverUrl?.() || (mx as any).baseUrl || '').replace(/\/$/, '')
+  // 先试已认证媒体端点(Synapse 1.100+ 强制)
+  const authed = `${base}/_matrix/client/v1/media/download/${encodeURIComponent(server)}/${encodeURIComponent(mediaId)}`
+  try {
+    const r = await fetch(authed, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+    if (r.ok) return URL.createObjectURL(await r.blob())
+  } catch { /* 回退 */ }
+  // 回退：老版未认证 URL(直接给 <img>；若服务器只认证媒体,这条会 401、由组件显示"打不开")
+  return (mx as any).mxcUrlToHttp?.(mxc) || ''
 }
 
 /** 上传并发送一张图片到房间（m.image）。尽力附带宽高(缩略图渲染需要)。 */
@@ -2967,14 +2978,17 @@ export async function sendImageFile(roomId: string, file: File): Promise<void> {
   })
 }
 
-/** 上传并发送一个文件附件到房间（m.file）。 */
+/** 上传并发送一个附件到房间：按 MIME 选 m.video / m.audio / m.file，让视频/音频能在聊天里直接播放。 */
 export async function sendFileAttachment(roomId: string, file: File): Promise<void> {
   if (!mx) throw new Error('未登录')
   const url = await uploadMedia(file)
   if (!url) throw new Error('上传失败')
+  const mime = file.type || 'application/octet-stream'
+  const msgtype = mime.startsWith('video/') ? 'm.video'
+    : mime.startsWith('audio/') ? 'm.audio' : 'm.file'
   await (mx as any).sendEvent(roomId, 'm.room.message', {
-    msgtype: 'm.file', body: file.name, url,
-    info: { mimetype: file.type || 'application/octet-stream', size: file.size },
+    msgtype, body: file.name, url,
+    info: { mimetype: mime, size: file.size },
   })
 }
 

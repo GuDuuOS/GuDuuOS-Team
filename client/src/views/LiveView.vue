@@ -99,6 +99,7 @@ import MembershipModal from '@/components/membership/MembershipModal.vue'
 import ChannelAdminModal from '@/components/channel/ChannelAdminModal.vue'
 import KnowledgeModal from '@/components/layout/KnowledgeModal.vue'
 import ChoiceCard from '@/components/chat/ChoiceCard.vue'
+import AttachmentView from '@/components/chat/AttachmentView.vue'
 import MyPeopleModal from '@/components/chat/MyPeopleModal.vue'
 import MyUsageModal from '@/components/layout/MyUsageModal.vue'
 import { useKnowledge } from '@/composables/useKnowledge'
@@ -1090,13 +1091,6 @@ function fmtTime(ts: number) {
   const h = String(d.getHours()).padStart(2, '0')
   const m = String(d.getMinutes()).padStart(2, '0')
   return `${h}:${m}`
-}
-// 文件大小人类可读：B / KB / MB（附件下载卡片用）
-function fmtSize(bytes?: number): string {
-  if (!bytes || bytes < 0) return ''
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 // 日期分隔线标签：今天 / 昨天 / X月X日
 function dayKey(ts: number) {
@@ -2176,15 +2170,8 @@ onBeforeUnmount(() => {
                 <span v-if="isBot(m.sender)" class="app-tag">APP</span>
                 <span class="time">{{ fmtTime(m.ts) }}</span>
               </div>
-              <!-- 图片附件：缩略图，点击新标签打开原图 -->
-              <a v-if="m.attachment && m.attachment.kind === 'image'" class="msg-img" :href="m.attachment.url" target="_blank" rel="noopener" :title="m.attachment.name">
-                <img :src="m.attachment.url" :alt="m.attachment.name" loading="lazy" />
-              </a>
-              <!-- 文件附件：可下载卡片 -->
-              <a v-else-if="m.attachment && m.attachment.kind === 'file'" class="msg-file" :href="m.attachment.url" target="_blank" rel="noopener" :download="m.attachment.name">
-                <span class="msg-file-ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg></span>
-                <span class="msg-file-meta"><span class="msg-file-name">{{ m.attachment.name }}</span><span class="msg-file-size">{{ fmtSize(m.attachment.size) }} · 点击下载</span></span>
-              </a>
+              <!-- 附件：图片/视频/音频/文件——AttachmentView 带 token 拉已认证媒体、内嵌预览/下载 -->
+              <AttachmentView v-if="m.attachment" :att="m.attachment" />
               <div v-else-if="!m.card" class="text"><span v-html="renderMd(m.body)"></span><span v-if="m.edited" class="edited">（已编辑）</span></div>
               <ChoiceCard v-else-if="m.card.kind === 'choice'" :card="m.card" @pick="(t) => pickChoice(t, currentRoom)" />
               <div v-else-if="m.card.kind === 'team_created'" class="rich team">

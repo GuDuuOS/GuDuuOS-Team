@@ -1,5 +1,20 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-10 — fix:频道内图片/视频/音频/文档正常显示+内嵌预览(已认证媒体)
+- 现象:频道上传图片后裂图,只显示乱码文件名。
+- 根因:渲染用 mxcToDownload(mxc) 的**未认证**媒体 URL 交给 <img>;新版 Synapse 强制"已认证媒体",
+  <img>/<video> 带不了 Authorization 头 → 401 裂图。(与之前工作区图标裂图同根)
+- 修(纯前端,做成通用机制):
+  · client.ts 加 mxcToObjectUrl(mxc)——带 token fetch 已认证媒体端点(/_matrix/client/v1/media/download)
+    成 blob 再转 object URL;老服务器回退未认证 URL。MsgAttachment 改带原始 mxc + 细分 kind
+    (image/video/audio/file);sendFileAttachment 按 MIME 选 m.video/m.audio/m.file(视频音频能直接播)。
+  · 新组件 AttachmentView.vue:解析 mxc→blob,图片缩略图(点开原图)/视频播放器/音频播放器/文件下载卡片,
+    带加载中·失败态,卸载回收 object URL。消息渲染改用它。
+  · 清理旧的 mxcToDownload / fmtSize 死代码。
+- 说明:同一个 mxcToObjectUrl 之后可复用去修「工作区图标保存后裂图」(左栏+弹窗当前图标),本条先修
+  用户报的聊天附件。
+- **部署:纯前端,覆盖 dist 即可。**
+
 ## 2026-07-10 — fix:工作区/频道 名称·简介 加最大长度校验
 - 现象:AI 组班偶尔把一长串重复文本当频道名(实测"女相师 制作专班"重复几十遍),撑爆频道头。
 - 修:
