@@ -685,7 +685,11 @@ async function onPickWsImage(e: Event) {
   try {
     const mxc = await uploadMedia(file)
     wsSetAvatarChange.value = mxc
-    wsSetAvatarPreview.value = mxcToHttp(mxc, 64)
+    // 预览用**本地文件**的 object URL,而不是 mxcToHttp(mxc)——新版 Synapse 强制"已认证媒体",
+    // <img> 带不了 Authorization 头,直接引用媒体 URL 会加载失败(显示裂图)。本地文件必渲染、且即时。
+    if (wsPreviewObjUrl) URL.revokeObjectURL(wsPreviewObjUrl)
+    wsPreviewObjUrl = URL.createObjectURL(file)
+    wsSetAvatarPreview.value = wsPreviewObjUrl
   } catch (err: any) {
     toast('上传失败', err?.message || String(err))
   } finally {
@@ -693,9 +697,12 @@ async function onPickWsImage(e: Event) {
     if (wsFileInput.value) wsFileInput.value.value = '' // 允许重选同一文件
   }
 }
+// 预览用的本地 object URL（换图/移除/关闭时回收，避免内存泄漏）
+let wsPreviewObjUrl = ''
 function removeWsImage() {
   wsSetAvatarChange.value = ''
   wsSetAvatarPreview.value = ''
+  if (wsPreviewObjUrl) { URL.revokeObjectURL(wsPreviewObjUrl); wsPreviewObjUrl = '' }
 }
 
 // 简称统一限制为「2 个字符」——按码点(visual char)算，中/英/日/韩/emoji 都是 2 个为上限。
