@@ -186,6 +186,17 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
 
 
+def _env_int(name: str, default: int) -> int:
+    """读整数型环境变量（走 cosmac.config._env 的 COSMAC_/GUDUU_ 前缀回退）；非法/空回 default。"""
+    from cosmac.config import _env
+
+    try:
+        v = _env(name, "")
+        return int(v) if str(v).strip() else default
+    except (TypeError, ValueError):
+        return default
+
+
 class CosmacBot:
     """主 AI 的事件处理核心：把 Synapse 推来的事件变成 AI 的反应。"""
 
@@ -268,6 +279,10 @@ class CosmacBot:
         self._user_template_cache: Dict[str, Tuple[str, float]] = {}
         # SDK 引擎回退告警的节流时间戳(1小时最多向控制室发一条,防刷屏)
         self._engine_alert_ts: float = 0.0        # 上次读到的配置覆盖
+        # —— 任务时效提醒（定时扫描）——扫描间隔 + "快到期"窗口，都可用 env 调；单实例内定时够用。
+        self._reminder_interval_secs = _env_int("TASK_REMINDER_INTERVAL", 900)  # 默认每 15 分钟扫一次
+        _soon_hours = _env_int("TASK_REMINDER_SOON_HOURS", 24)                  # 默认到期前 24h 提醒
+        self._reminder_soon_secs = max(1, _soon_hours) * 3600
         # 上次读取时间（缓存 20s，别每条消息都打服务器）。
         # 用 -inf 当"从未读过"的哨兵：保证首次必读（monotonic 起点不定，别用 0）。
         self._cfg_cache_ts: float = float("-inf")
@@ -727,10 +742,12 @@ class CosmacBot:
                 bound_sources=gctx.get("kb_scopes"),
             )
             wf_text = self._preset_workflows_text(gctx.get("workflow_slugs") or [])
-            # 交互准则(内置基线) → 平台规则 → 任务RULE → 人设 → 用户偏好 → 长期记忆 → 技能 → 知识库 → 预置工作流
+            # 当前时间：让模型能把"3天后/下周五"这类相对期限换算成绝对日期（拆任务设 due 用）。
+            now_text = "【当前时间】" + time.strftime("%Y-%m-%d %H:%M（%A）", time.localtime())
+            # 时间 → 交互准则(内置基线) → 平台规则 → 任务RULE → 人设 → 用户偏好 → 长期记忆 → 技能 → 知识库 → 预置工作流
             return "\n\n".join(
                 p for p in (
-                    _INTERACTION_POLICY,
+                    now_text, _INTERACTION_POLICY,
                     rules_text, task_rule_text, persona, user_pref_text,
                     mem_text, skills_text, kb_text, wf_text,
                 ) if p
@@ -2447,6 +2464,8 @@ class CosmacBot:
                         "executor_kind": t.executor_kind, "executor_ref": t.executor_ref,
                         # 所属频道：前端"删频道前提醒未完成任务"用它按房间统计
                         "room_id": t.room_id or "",
+                        # 截止时间（epoch 秒，可空）：看板据它显示"还剩几天/已逾期"。
+                        "due_ts": t.due_ts,
                     })
         except Exception:
             logger.debug("读取任务失败", exc_info=True)
@@ -3592,6 +3611,90 @@ class CosmacBot:
         except Exception:
             return False
 
+    # —— 任务时效提醒（定时扫描）：快到期/逾期在任务所属频道内 @ 负责人提醒 ——
+
+    def _fmt_due(self, ts: Optional[int]) -> str:
+        """把截止 epoch 秒格式化成 'MM-DD HH:MM'（服务器本地时区），给提醒文案用。"""
+        if not ts:
+            return "截止时间"
+        try:
+            return time.strftime("%m-%d %H:%M", time.localtime(int(ts)))
+        except Exception:
+            return "截止时间"
+
+    def _task_reminder_target(self, task: Any) -> str:
+        """提醒该 @ 谁：类型化真人执行者 id 优先（能触发推送）；否则退回 assignee 文本标签。"""
+        if task.executor_kind == "human" and str(task.executor_ref or "").startswith("@"):
+            return str(task.executor_ref)
+        return str(task.assignee or "")
+
+    def scan_task_reminders(self) -> int:
+        """扫一遍任务，给**快到期/逾期**的未完成任务在其频道内发提醒（@负责人），按位去重。
+
+        返回本轮发出的提醒条数。全程兜异常：一条失败不影响其余、更不阻断扫描线程。
+        """
+        now = int(time.time())
+        sent = 0
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.task_repo import (
+                REMIND_OVERDUE, REMIND_SOON, mark_reminded, tasks_needing_reminder,
+            )
+
+            with session_scope() as s:
+                items = tasks_needing_reminder(
+                    s, now_ts=now, soon_secs=self._reminder_soon_secs
+                )
+                for it in items:
+                    t = it["task"]
+                    overdue = it["kind"] == "overdue"
+                    bit = REMIND_OVERDUE if overdue else REMIND_SOON
+                    room = t.room_id or ""
+                    if not room:
+                        # 没挂在任何频道的任务没法"频道内提醒"——直接标记，避免每轮空扫它。
+                        mark_reminded(s, t.id, bit)
+                        continue
+                    who = self._task_reminder_target(t)
+                    when = self._fmt_due(t.due_ts)
+                    if overdue:
+                        body = f"⚠️ 任务「{t.title}」已逾期（应于 {when} 完成）"
+                    else:
+                        body = f"⏰ 提醒：任务「{t.title}」将在 {when} 到期"
+                    if who:
+                        body = f"{who} " + body
+                    body += "，请及时推进或更新状态（详见任务看板）。"
+                    try:
+                        self.client.send_text(room, body)
+                    except Exception:
+                        logger.debug("发任务提醒失败 task=%s room=%s", t.id, room, exc_info=True)
+                        continue  # 发失败**不标记**已提醒，下一轮再试
+                    mark_reminded(s, t.id, bit)
+                    sent += 1
+        except Exception:
+            logger.debug("扫描任务时效提醒失败（忽略本轮）", exc_info=True)
+        if sent:
+            logger.info("任务时效提醒：本轮发出 %d 条", sent)
+        return sent
+
+    def start_reminder_scanner(self) -> None:
+        """启动后台守护线程，周期性扫描任务时效并发提醒。
+
+        单实例内定时即可（见 memory wf-reliability-scope：durable 队列/多实例是已知边界、本期不做）。
+        """
+        interval = self._reminder_interval_secs
+
+        def _loop() -> None:
+            time.sleep(min(60, interval))  # 启动后先等一会儿，让服务/sync 就绪
+            while True:
+                self.scan_task_reminders()
+                time.sleep(interval)
+
+        threading.Thread(target=_loop, name="task-reminder", daemon=True).start()
+        logger.info(
+            "任务时效提醒扫描线程已启动（间隔 %ds，快到期窗口 %ds）",
+            interval, self._reminder_soon_secs,
+        )
+
     def _room_is_named_channel(self, room_id: str) -> bool:
         """房间有"实名"(非空、不是「中枢 AI」)→ 视为频道。
 
@@ -4584,6 +4687,9 @@ def run(config: CosmacConfig) -> None:
             "⚠️ COSMAC_PAY_ALLOW_MANUAL 已开启：manual 支付通道可被浏览器触发开通会员，"
             "仅供测试！生产环境务必关闭此开关。"
         )
+
+    # #5：启动任务时效提醒扫描线程——周期性扫"快到期/逾期"未完成任务，在其频道内 @ 负责人提醒。
+    bot.start_reminder_scanner()
 
     # 把 bot 和 hs_token 注入到 Handler 类上（http.server 用类、不便传参，用 partial 构造）
     handler_cls = partial(_make_handler, bot=bot, hs_token=config.hs_token)

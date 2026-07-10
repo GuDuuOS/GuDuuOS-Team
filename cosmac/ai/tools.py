@@ -26,6 +26,32 @@ from cosmac.config import CHANNEL_CONFIG_EVENT_TYPE, WORKFLOWS_EVENT_TYPE
 logger = logging.getLogger("cosmac.ai.tools")
 
 
+def _parse_due_to_ts(due: Any) -> Optional[int]:
+    """把主 AI 填的截止时间字符串解析成 epoch 秒（服务器本地时区）。解析不了返回 None（=无时限）。
+
+    接受 'YYYY-MM-DD'（当天 18:00 视为截止）或 'YYYY-MM-DD HH:MM'。容忍 '/' 分隔与多余空白。
+    只认绝对日期——相对时间（『3天后』）由模型据 system 里的『当前时间』先换算好再传。
+    """
+    import time as _t
+
+    s = str(due or "").strip().replace("/", "-")
+    if not s:
+        return None
+    for fmt, is_date_only in (("%Y-%m-%d %H:%M", False), ("%Y-%m-%d", True)):
+        try:
+            tm = _t.strptime(s, fmt)
+        except ValueError:
+            continue
+        st = list(tm)
+        if is_date_only:  # 只给了日期：默认当天 18:00 截止（比 00:00 更符合"当天要交"的直觉）
+            st[3], st[4] = 18, 0
+        try:
+            return int(_t.mktime(_t.struct_time(st)))
+        except (OverflowError, ValueError):
+            return None
+    return None
+
+
 @dataclass
 class ToolContext:
     """一次工具调用的上下文（模型不该感知的内部信息从这里注入）。
@@ -405,6 +431,14 @@ class Toolbox:
                                         "workflow→slug；none 留空。须来自 list_capabilities。"
                                     ),
                                 },
+                                "due": {
+                                    "type": "string",
+                                    "description": (
+                                        "截止时间（可选）：写成 'YYYY-MM-DD' 或 'YYYY-MM-DD HH:MM'。"
+                                        "用户说相对时间（如『3天后』『下周五』）时，按 system 里给的"
+                                        "『当前时间』换算成绝对日期再填。没有明确期限就别填。"
+                                    ),
+                                },
                             },
                             "required": ["title"],
                         },
@@ -632,6 +666,10 @@ class Toolbox:
                                     "enum": ["human", "agent", "workflow", "none"],
                                 },
                                 "executor_ref": {"type": "string"},
+                                "due": {
+                                    "type": "string",
+                                    "description": "截止时间(可选)：'YYYY-MM-DD' 或 'YYYY-MM-DD HH:MM'；相对时间先据当前时间换算。",
+                                },
                             },
                             "required": ["title"],
                         },
@@ -1147,6 +1185,10 @@ class Toolbox:
         items = args.get("tasks") or []
         if not isinstance(items, list) or not items:
             return "没有可登记的子任务。"
+        # 把每条的截止时间 due(字符串) 解析成 due_ts(epoch 秒)，交给 create_tasks 落库；解析不了忽略。
+        for it in items:
+            if isinstance(it, dict) and it.get("due"):
+                it["due_ts"] = _parse_due_to_ts(it.get("due"))
         by_person: Dict[str, list] = {}  # 真人被指派者 id → 其任务标题(用于群内 @ 通知,bug12)
         try:
             from cosmac.db import session_scope
@@ -1669,6 +1711,10 @@ class Toolbox:
         n_tasks = 0
         task_items = args.get("tasks") or []
         if isinstance(task_items, list) and task_items:
+            # 解析每条截止时间 due → due_ts（同 create_tasks 路径）。
+            for it in task_items:
+                if isinstance(it, dict) and it.get("due"):
+                    it["due_ts"] = _parse_due_to_ts(it.get("due"))
             try:
                 from cosmac.db import session_scope
                 from cosmac.db.task_repo import create_tasks

@@ -167,6 +167,16 @@ def _heal_business_schema(engine: Engine) -> None:
                         "ALTER TABLE cosmac_task "
                         "ADD COLUMN executor_ref VARCHAR(255) NOT NULL DEFAULT ''"
                     ))
+                # 任务时效（快到期/逾期提醒）新增两列：截止时间 + 提醒去重位。
+                if "due_ts" not in have:
+                    conn.execute(text(
+                        "ALTER TABLE cosmac_task ADD COLUMN due_ts BIGINT"
+                    ))
+                if "reminded" not in have:
+                    conn.execute(text(
+                        "ALTER TABLE cosmac_task "
+                        "ADD COLUMN reminded INTEGER NOT NULL DEFAULT 0"
+                    ))
         # 图文页表补列：旧库的 cosmac_doc_page 还没 cover（封面图），补上否则带封面写入报
         # UndefinedColumn。
         if insp.has_table(DocPage.__tablename__):

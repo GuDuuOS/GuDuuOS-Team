@@ -278,6 +278,19 @@ function execLabel(t: TaskItem): string {
   if (k === 'workflow') return '⚙ ' + ref
   return ''
 }
+// 截止时间徽章：据 due_ts 与当前时间算"已逾期/今天到期/还剩N天/日期截止"，配色区分紧急度。
+// 已完成任务不显示（已经交付了、期限不再有意义）。
+function dueMeta(t: TaskItem): { text: string; cls: string } | null {
+  if (!t.due_ts || t.status === 'done') return null
+  const d = new Date(t.due_ts * 1000)
+  const when = `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const diff = t.due_ts - Date.now() / 1000  // 距截止秒数（负=已逾期）
+  if (diff < 0) return { text: `已逾期 · ${when}`, cls: 'overdue' }
+  if (diff < 86400) return { text: `今天到期 · ${when}`, cls: 'soon' }
+  const days = Math.floor(diff / 86400)
+  if (days <= 2) return { text: `还剩 ${days} 天 · ${when}`, cls: 'soon' }
+  return { text: `${when} 截止`, cls: '' }
+}
 function nextStatus(s: string) { return s === 'todo' ? 'doing' : 'done' }
 function prevStatus(s: string) { return s === 'done' ? 'doing' : 'todo' }
 async function moveTask(t: TaskItem, status: string) {
@@ -2016,6 +2029,7 @@ onBeforeUnmount(() => {
                 <div class="kan-cards">
                   <div v-for="t in tasksByStatus(col.key)" :key="t.id" class="kan-card" :class="{ done: t.status === 'done' }" @click="col.key !== 'done' && moveTask(t, nextStatus(col.key))">
                     <div class="kan-title">{{ t.title }}</div>
+                    <div v-if="dueMeta(t)" class="kan-due" :class="dueMeta(t)!.cls">🕒 {{ dueMeta(t)!.text }}</div>
                     <div v-if="t.assignee || execLabel(t) || t.progress > 0" class="kan-foot">
                       <span v-if="t.assignee" class="kan-who">
                         <span class="kan-who-ava">{{ t.assignee.slice(0, 1) }}</span>{{ t.assignee }}
@@ -2931,6 +2945,10 @@ onBeforeUnmount(() => {
 .kan-card.done { opacity: .68; }
 .kan-card.done .kan-title { text-decoration: line-through; text-decoration-color: var(--text-3); }
 .kan-title { font-size: var(--fs-100); color: var(--text); line-height: 1.55; font-weight: 500; }
+/* 截止时间徽章：中性=灰、快到期=橙、逾期=红 */
+.kan-due { display: inline-flex; align-items: center; gap: 3px; margin-top: 7px; font-size: var(--fs-75); color: var(--text-2); background: var(--bg-soft); border-radius: 999px; padding: 2px 9px; }
+.kan-due.soon { color: #8a5a10; background: #f7e3b8; }
+.kan-due.overdue { color: #b23b3b; background: #f6d6d6; }
 .kan-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 11px; }
 .kan-who { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-75); color: var(--text-2); background: var(--bg-soft); border-radius: 999px; padding: 2px 10px 2px 2px; }
 .kan-who-ava { width: 19px; height: 19px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 10px; font-weight: var(--fw-bold); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }

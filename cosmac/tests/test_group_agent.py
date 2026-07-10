@@ -168,8 +168,9 @@ class TestGroupAgent(unittest.TestCase):
         self.assertIn("对外报价必须经负责人确认", out)
         self.assertIn("不得编造数据", out)
         self.assertNotIn("这条停用的不该出现", out)
-        # 顺序：内置「交互行为准则」基线在最前，平台硬规则紧随其后（仍高于人设/技能等）
-        self.assertTrue(out.startswith("【交互行为准则"))
+        # 顺序：当前时间在最前，其后内置「交互行为准则」基线，平台硬规则紧随（仍高于人设/技能等）
+        self.assertTrue(out.startswith("【当前时间"))
+        self.assertLess(out.index("【当前时间"), out.index("【交互行为准则"))
         self.assertLess(out.index("【交互行为准则"), out.index("【必须严格遵守"))
 
     def test_rag_injects_relevant_kb_chunk(self) -> None:

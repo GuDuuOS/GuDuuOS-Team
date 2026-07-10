@@ -1,5 +1,25 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-10 — feat:任务时效——截止时间 + 定时扫描 + 频道内到期/逾期提醒
+- 需求:任务加时效,系统定时扫描,快到期或逾期时主AI 在任务所属频道内提醒负责人。
+- 实现(后端定时线程 + AI 设期限 + 前端展示):
+  · 数据:Task 加 due_ts(截止 epoch 秒,可空) + reminded(位掩码 bit0快到期/bit1逾期);engine.py
+    _heal_business_schema 补两列(线上重启自动 ALTER,无需手动迁移)。
+  · 定时扫描:bot 后台守护线程 start_reminder_scanner,默认每 15 分钟扫一次(COSMAC_TASK_REMINDER_INTERVAL),
+    快到期窗口默认 24h(COSMAC_TASK_REMINDER_SOON_HOURS)。scan_task_reminders 找出未完成+有截止+该档没提
+    过的任务,在其频道 send_text 提醒(@真人执行者,否则文本负责人),按位去重;发失败不标记、下轮重试;
+    无 room 的任务只标记不发。逾期优先于快到期。
+  · AI 设期限:create_tasks/assemble_team 的子任务加 due 字段('YYYY-MM-DD' 或带时间);tools._parse_due_to_ts
+    解析成 epoch(只给日期默认当天18:00)。system addendum 注入【当前时间】,让模型把"3天后"换算成绝对日期。
+    update_task 支持改 due_ts(改期限会清 reminded 重新计)。
+  · 前端:TaskItem 加 due_ts;handle_tasks_list 返回它;看板卡片加截止徽章(dueMeta:已逾期红/今天到期·还剩≤2天橙/
+    日期截止灰),已完成不显示。
+- 验证:test_task_reminder 6 项(soon/overdue判定+已完成排除+位去重+soon后逾期再触发+scan发送去重+无room只标记+
+    日期解析)全过;修 test_group_agent 顺序断言(加了【当前时间】前缀);ruff+vite build 通过;全量 431 测试
+    仅剩 3 个既有无关失败。
+- **部署:git pull + 重启 guduu-bot(定时线程+两列自动迁移) + 覆盖 dist(截止徽章)。
+    验收:让主AI「建个任务 X,3天后到期,派给 @某人」→ 任务看板出现带截止徽章的卡;到期前/逾期后频道内收到提醒。**
+
 ## 2026-07-10 — fix:个人「在线状态」改了不生效(指示灯永远绿)
 - 现象:个人设置把在线状态改成「离开」,右上角头像状态点还是绿的、菜单还写「在线」。
 - 根因:①下拉框的 status 只是个本地 ref、从不调 setPresence;②状态点/文字是**写死的绿+「在线」**,

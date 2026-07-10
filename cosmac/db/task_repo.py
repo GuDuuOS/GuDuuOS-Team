@@ -49,6 +49,14 @@ def create_tasks(
         ref = str(it.get("executor_ref") or "").strip()[:255]
         if kind == "none":
             ref = ""  # 未指派就不留 ref，避免悬空引用
+        # 截止时间（epoch 秒，可空）：主 AI 拆任务时可给，非法/缺省 → None（无时限）。
+        due_ts = None
+        raw_due = it.get("due_ts")
+        if raw_due is not None:
+            try:
+                due_ts = int(raw_due)
+            except (TypeError, ValueError):
+                due_ts = None
         t = Task(
             goal=str(goal or "")[:_MAX_TITLE],
             title=title,
@@ -59,6 +67,7 @@ def create_tasks(
             progress=0,
             room_id=room_id or "",
             sender=sender or "",
+            due_ts=due_ts,
         )
         session.add(t)
         out.append(t)
@@ -105,6 +114,9 @@ def get_task(session: Session, task_id: int) -> Optional[Task]:
     ).scalars().first()
 
 
+_DUE_UNSET = object()  # 哨兵：区分"不动 due_ts"与"显式清空为 None"
+
+
 def update_task(
     session: Session,
     task_id: int,
@@ -112,10 +124,12 @@ def update_task(
     status: Optional[str] = None,
     progress: Optional[int] = None,
     result: Optional[str] = None,
+    due_ts: Any = _DUE_UNSET,
 ) -> bool:
-    """改任务状态/进度/结果（手动拖卡 或 P2 的 AI/工作流自动回填）。
+    """改任务状态/进度/结果/截止时间（手动拖卡 或 P2 的 AI/工作流自动回填）。
 
-    status 改成 done 时进度补满 100；改成非 done 但没给进度则不动进度。返回是否命中。
+    status 改成 done 时进度补满 100；改成非 done 但没给进度则不动进度。
+    due_ts 传值（含 None=清空）会**重置 reminded=0**——新截止时间要重新计"快到期/逾期"提醒。返回是否命中。
     """
     values: Dict[str, Any] = {}
     if status is not None and status in _VALID_STATUS:
@@ -129,6 +143,15 @@ def update_task(
             pass
     if result is not None:
         values["result"] = str(result)[:_MAX_TITLE]
+    if due_ts is not _DUE_UNSET:
+        parsed = None
+        if due_ts is not None:
+            try:
+                parsed = int(due_ts)
+            except (TypeError, ValueError):
+                parsed = None
+        values["due_ts"] = parsed
+        values["reminded"] = 0  # 截止时间变了 → 提醒去重位清零，重新计
     if not values:
         return False
     res = session.execute(
@@ -136,3 +159,47 @@ def update_task(
     )
     session.flush()
     return (res.rowcount or 0) == 1
+
+
+# —— 时效提醒（定时扫描用）：位掩码 bit0=快到期已提醒 / bit1=逾期已提醒 ——
+REMIND_SOON = 1
+REMIND_OVERDUE = 2
+
+
+def tasks_needing_reminder(
+    session: Session, *, now_ts: int, soon_secs: int
+) -> List[Dict[str, Any]]:
+    """扫出**需要发提醒**的任务（未完成 + 有截止时间 + 该档提醒还没发过）。
+
+    返回 [{"task": Task, "kind": "soon"|"overdue"}]：
+      · 逾期(now ≥ due) 且 未发过逾期提醒 → kind=overdue（优先于快到期）；
+      · 未逾期但 now ≥ due-soon_secs 且 未发过快到期提醒 → kind=soon。
+    只读；发完提醒由调用方调 mark_reminded 记位（避免重复打扰）。
+    """
+    out: List[Dict[str, Any]] = []
+    rows = session.execute(
+        select(Task).where(
+            Task.status != "done",
+            Task.due_ts.is_not(None),
+        )
+    ).scalars().all()
+    for t in rows:
+        due = t.due_ts
+        if due is None:
+            continue
+        if now_ts >= due:
+            if not (t.reminded & REMIND_OVERDUE):
+                out.append({"task": t, "kind": "overdue"})
+        elif now_ts >= due - soon_secs:
+            if not (t.reminded & REMIND_SOON):
+                out.append({"task": t, "kind": "soon"})
+    return out
+
+
+def mark_reminded(session: Session, task_id: int, bit: int) -> None:
+    """给某任务打上"已发某档提醒"的位（按位或），防止下次扫描重复提醒。"""
+    t = session.get(Task, task_id)
+    if t is None:
+        return
+    t.reminded = (t.reminded or 0) | int(bit)
+    session.flush()

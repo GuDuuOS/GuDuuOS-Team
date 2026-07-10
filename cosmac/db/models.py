@@ -18,6 +18,7 @@ from typing import List, Optional
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -291,6 +292,10 @@ class Task(Base, TimestampMixin):
     # 上下文：拆解发生的房间（bot DM / 频道）与下达人，便于以后派发回到正确地方
     room_id: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     sender: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # 截止时间（epoch 秒，可空=无时限）：主 AI 拆任务时可设；定时扫描据它做"快到期/逾期"提醒。
+    due_ts: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, default=None)
+    # 提醒去重位掩码：bit0(1)=已发"快到期"提醒 / bit1(2)=已发"逾期"提醒。改截止时间时清零重来。
+    reminded: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     def __repr__(self) -> str:
         return f"<Task #{self.id} {self.status} {self.title[:20]!r}>"
