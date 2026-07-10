@@ -801,11 +801,20 @@ export async function createChannelInSpace(
     invite: [botId()], // 拉主 AI 进群，频道里 AI 能回
   })
   const cid = res.room_id
-  // 双向挂接：Space 记子频道，子频道指回父 Space
+  const server = serverName()
+  // 双向挂接：Space 记子频道，子频道指回父 Space。**必须挂上**——挂不上频道就成孤儿、
+  // 不进工作区频道树。突发建多个频道时可能限流，故 m.space.child 失败退避重试几次。
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await (mx as any).sendStateEvent(spaceId, 'm.space.child', { via: [server] }, cid)
+      break
+    } catch {
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 700 * (attempt + 1)))
+    }
+  }
   try {
-    await (mx as any).sendStateEvent(spaceId, 'm.space.child', { via: ['cosmac.cc'] }, cid)
-    await (mx as any).sendStateEvent(cid, 'm.space.parent', { via: ['cosmac.cc'], canonical: true }, spaceId)
-  } catch { /* 挂接失败也已建好房间 */ }
+    await (mx as any).sendStateEvent(cid, 'm.space.parent', { via: [server], canonical: true }, spaceId)
+  } catch { /* parent 指回是辅助,失败不影响频道进工作区(靠 m.space.child) */ }
   return cid
 }
 

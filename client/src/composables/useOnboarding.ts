@@ -239,10 +239,22 @@ export function useOnboarding() {
         // 1) 建工作区（私有）
         const sid = await createSpace(answers.workspace, { public: false, label: answers.workspace.slice(0, 2) })
         createdSpaceId.value = sid
-        // 2) 逐个建频道（单个失败不阻断其余），收集成功的房间 id
+        // 2) 逐个建频道（单个失败不阻断其余），收集成功的房间 id。
+        //    ⚠️ 一口气建"空间 + 多个频道 + 每个都邀 bot"会在很短时间内打出几十个事件,
+        //    容易触发 Synapse 突发限流(rc_message/rc_invites);此时**靠后**的频道创建会失败,
+        //    旧代码的 catch{} 又把错误吞了 → 用户加的那个频道(通常排最后)悄悄没建上(线上实测:
+        //    "每日站会"计数=0)。改成:①频道之间留间隔;②失败退避重试几次,让它有机会等限流窗口过去。
+        const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
         const channelIds: string[] = []
-        for (const cn of answers.channels) {
-          try { channelIds.push(await createChannelInSpace(sid, cn, { public: false })) } catch { /* 跳过失败的频道 */ }
+        for (let idx = 0; idx < answers.channels.length; idx++) {
+          const cn = answers.channels[idx]
+          if (idx > 0) await sleep(350)   // 频道之间留点间隔,别打成一梭子触发限流
+          let cid = ''
+          for (let attempt = 0; attempt < 3 && !cid; attempt++) {
+            if (attempt > 0) await sleep(800 * attempt)   // 失败退避:0.8s、1.6s
+            try { cid = await createChannelInSpace(sid, cn, { public: false }) } catch { /* 重试 */ }
+          }
+          if (cid) channelIds.push(cid)
         }
         // 3) 把人设(+RULE)写进每个频道的 channel_config.persona（房间级，普通用户有权限写）
         //    bot 的 _group_context 读 persona.prompt → 在该群以此人设回应，**真生效**。
