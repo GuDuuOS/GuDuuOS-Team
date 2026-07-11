@@ -40,6 +40,10 @@
 
 ## E. 明确暂缓(有结论,别重复评估)
 
+- Office 附件(doc/pptx/xlsx)在线预览:负责人拍板暂不做(2026-07-11)。现状=点击下载;
+  已有 PDF/文本/图片/视频/音频 在线预览覆盖日常场景。将来要做的两条路线已评估:
+  ①前端库(docx-preview+SheetJS,轻量但 pptx/老格式不支持) ②自托管 OnlyOffice(全格式,
+  需 Docker+约2GB内存)。公网 Office viewer 行不通(拿不到认证媒体)。
 - pgvector 向量检索:等知识库规模上来(现在 LIKE 检索够用)
 - 工作流 durable 队列/多实例 fencing/精确一次:单实例过度设计(负责人拍板"够用即止")
 - 任务编排档4b(workflow 自动回填):决定不做,run_workflow+update_task 手动够用
