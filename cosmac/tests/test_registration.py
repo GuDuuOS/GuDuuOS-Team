@@ -204,6 +204,39 @@ class PasswordResetTest(unittest.TestCase):
         self.assertEqual(st, 400)  # reset 桶里没这个码
 
 
+class IssueCodeValidityTest(unittest.TestCase):
+    """M14：_issue_code 的两种 429 必须可区分——60s 冷却(码仍有效) vs 每小时上限(可能无有效码)。
+
+    异地 step-up 据 code_valid 决定是否进挑战：每小时上限且旧码已过期时，绝不能假装码已发出、
+    让用户对着空挑战干等自锁。
+    """
+
+    def setUp(self) -> None:
+        reg._store.clear()
+
+    def test_cooldown_429_marks_code_valid(self) -> None:
+        # 第一次发码 200；紧接着第二次 → 60s 冷却 429，code_valid=True（码刚发、仍有效）
+        sc1, _ = reg._issue_code("login:x@y.com", lambda c: None)
+        self.assertEqual(sc1, 200)
+        sc2, sb2 = reg._issue_code("login:x@y.com", lambda c: None)
+        self.assertEqual(sc2, 429)
+        self.assertTrue(sb2.get("code_valid"))
+
+    def test_hourly_limit_with_expired_code_marks_invalid(self) -> None:
+        # 攒满每小时上限、且当前无未过期的码 → 429 且 code_valid=False
+        key = "login:z@y.com"
+        pc = reg._PendingCode()
+        now = __import__("time").time()
+        pc.sent_times = [now - i * 10 for i in range(reg._MAX_SENDS_PER_HOUR)]  # 已达上限
+        pc.last_sent = now - 120        # 已过 60s 冷却窗
+        pc.code = "123456"
+        pc.expires = now - 1            # 旧码**已过期**
+        reg._store[key] = pc
+        sc, sb = reg._issue_code(key, lambda c: None)
+        self.assertEqual(sc, 429)
+        self.assertFalse(sb.get("code_valid"))
+
+
 class LoginAccountTest(unittest.TestCase):
     """账号登录收口(login_account)：限频 + 代理 Synapse + 记审计。全程打桩,不连真库/真 HS。"""
 

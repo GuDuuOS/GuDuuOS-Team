@@ -1,5 +1,105 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-12 — fix:BUG 排查修复(第五批·前端 G5~G8 共 16 项，收官)
+- 剩余全部前端组，至此 BUG 排查发现的 ~40 项全部修完。
+- **G5 私信体验**:M10 刚发起私信误报"送不达"(dmPeerStatus 把 invite 待接受态当离场→加 pending 区分);
+  M11 私信刷新/深链落回看板(applyFromRoute 同时查 dms.value,DM 不在 rooms 里)。
+- **G6 消息/输入框**:M9 stripReplyFallback 吞掉">"开头的正常消息(只对确有 in_reply_to 的回复才剥
+  fallback);M13 发送失败草稿丢失(乐观清空→失败回填+恢复回复/编辑态+toast);L8 composer 工具条
+  标题/引用/列表现在能正常渲染(renderMd 加块级+样式)。
+- **G7 状态/会话/频道/路由**:M12 在线状态刷新不还原(afterLogin 里补 refreshIdentity);L4 删当前 AI
+  会话竞态又切回(先移开指针+排除刚删房);L5 频道名"@"开头从列表消失(仅无显式名时才按 @ 丢弃);
+  L6 公开工作区新建频道默认继承公开(负责人定);L7 零房间账号深链锁死 URL 同步(加兜底期限+定时器);
+  L11 前端工作区过滤弄丢"我下达的"任务(后端 task 输出补 sender、前端加 dispatchedByMe)。
+- **G8 后台/认证**:L14 入驻模板撞 64KB 上限(persistTemplates 加字节预检+明确提示);L15 唯一管理员
+  停用自己自锁(拦截+禁用按钮);L16 找回密码补弱密码门禁(与注册页同一道);L17 step-up 加"重发验证码"
+  入口;L18 注册后不再多建 device(registerVerify 直接引导会话,老后端无 token 才回退登录)。
+- 验证:全量后端 519 项全绿;client build 通过;后端 test_task_access 覆盖新 sender 字段。
+- **部署:含前端,git pull + 重启 guduu-bot + `cd client && npm run build` + 覆盖 dist。**
+- 至此全部 5 批(严重 11 + 后端 G1~G4 17 + 前端 G5~G8 16 = 44 项)修复完成。
+
+## 2026-07-12 — fix:BUG 排查修复(第四批·后端杂项 G4 共 6 项)
+- **G4 后端杂项(step-up/记忆/计量)**:
+  · M14 异地 step-up 429 误判自锁:_issue_code 两种 429 加 code_valid 标记(60s冷却=有效码 vs
+    每小时上限+旧码过期=无有效码),_stepup_gate 据此——无有效码时明确"稍后再试"而非假装发码卡住用户;
+  · M15 _recent_history 从**最新端**剔当前触发消息(旧实现从最旧端剔,用户重复发"继续"时当前输入被
+    喂两遍);
+  · L1 存储改按 UTF-8 字节计量(原按字符,中文低估~3x 且与媒体真实字节混加):_storage_bytes 的 SQL
+    求和用 octet_length(PG)/length(SQLite 回退),Python 侧守卫统一 _blen(encode utf-8);
+  · L2 AI 对话配额改「成功才扣」(原执行前预扣、LLM 失败也计数);
+  · L3 handle_kb_add/handle_kb_delete 入库/删除后作废存储缓存(「我的额度」即时反映);
+  · L13 人事花名册页面全量展示(list_employees 硬上限 60→2000,页面显式传大 limit;query_hr 工具
+    top_n 仍夹 60 保上下文)——原超 60 人列表静默截断、与 summary 全量统计口径打架。
+- 验证:新增 test_recent_history + test_registration(IssueCodeValidityTest);全量 519 项全绿;ruff 通过。
+- **部署:纯后端,git pull + 重启 guduu-bot。** 至此后端 4 组(G1~G4)17 项全部完成,余前端 4 组(G5~G8)。
+
+## 2026-07-12 — fix:BUG 排查修复(第三批·后端中/低优先 G1~G3 共 11 项)
+- 承接前两批(11 个严重项),负责人拍板"剩余全部都修"。本批后端 3 组：
+- **G1 配额/门控命令入口绕过**:①工坊自建技能端点补 custom_skill 门控(M3) ②「知识 添加」命令补
+  个人库 kb_docs+storage 配额守卫(M4,kb_cmd 加 personal_add_guard 注入) ③「工作流 跑」命令补
+  workflow_runs 配额(M5) ④入驻模板选择服务端强制 tier 门槛(M1,免费用户 POST 付费模板 slug 不再
+  白得 tpl 资源权限)。
+- **G2 access 点名绕过**(M2):known_agents/known_skills 回调加 for_user 参数,assemble_team 按发起人
+  access 过滤可见资源——够不到的受限智能体被点名当 lead/worker 时按"缺口"剔除、绝不注入其付费人设。
+  (群绑定/persona.agentSlug 按既定"管理员显式授权不过滤"设计保留,且只泄漏人设文本不绕功能门控)
+- **G3 任务/工作流健壮性**:①update_task 状态白名单+同义词归一化(M6,非法 status 不再假成功);②
+  assemble_team 配置写失败不再静默(M7,如实告知"没绑上"而非claim已绑)+建房后发消息包异常(避免模型
+  收到"出错重试"→重复建班/配额双扣);③命令路径工作流池满回滚来源预约(M8,不再残留占位误报中断);
+  ④archive_project 加授权(L9,仅频道管理员/平台管理员可清长期记忆,fail-closed);⑤统一两套截止时间
+  解析(L10,date-only 一律 23:59,原建任务用 18:00);⑥建专班命令补 self-admin+team_created 卡(L12)。
+- 验证:各项配回归测试(test_my_studio/test_kb_cmd/test_onboarding_templates/test_assemble_team/
+  test_archive/test_update_task_due 等);顺带更新受行为变化影响的既有测试期望;全量 515 项全绿;ruff 通过。
+- **部署:纯后端,git pull + 重启 guduu-bot 即可。** 前端组(G5~G8)+G4 后续批次。
+
+## 2026-07-12 — fix:全量 BUG 排查后修复(第二批·前端+端点 3 项)
+- 承接第一批，收尾 #9~#11(涉及前端 client.ts/AdminView.vue，需 client build + dist 部署)：
+  · **#9 入驻模板对普通用户失效**:模板存**私有控制室**、普通用户读 state 必 403 → 旧前端静默
+    回退内置模板，后台配的模板对新注册用户永不生效。修:新增 bot 端点
+    GET /cosmac/onboarding/templates(bot 是控制室成员、代读并只返回已上架模板)，前端
+    getOnboardingTemplates 改走该端点。新增 config 常量 ONBOARDING_TEMPLATES_EVENT_TYPE。
+  · **#10 编辑消息产生重复消息/重复作答**:matrix-js-sdk 把 m.replace 编辑事件也留在时间线里，
+    其 fallback 正文"* 新内容"被当成新消息。修:前端 listMessages/roomUnreadCount 排除 rel_type=
+    m.replace 的事件(不再重复显示、不污染未读)；后端 _handle_event 跳过 m.replace(AI 会话房不再
+    对编辑再答一遍)。
+  · **#11 频道删除可误删控制室**:后台「频道管理→删除」对控制室无排除，误删则全平台配置一次性
+    灭失、不可恢复。删除走浏览器直连 Synapse admin API(bot 不在链路)，故防呆放前端:client.ts
+    deleteRoom(唯一收口)按解析出的 room_id 硬拦控制室；AdminView doDeleteRoom 早拦 + 列表对控制室
+    隐藏删除按钮(显示「🔒 系统」)。
+- 验证:新增 test_onboarding_templates(4)、test_typing 补编辑不回复(1)；全量 504 项全绿；ruff 通过；
+  client build 通过。
+- **部署:本批含前端，需 git pull + 重启 guduu-bot + `cd client && npm run build` + 覆盖 dist。**
+
+## 2026-07-12 — fix:全量 BUG 排查后修复(第一批·后端 8 项，含 2 处资损、2 处越权)
+- 背景:对 docs/FEATURES.md 11 大块做并行代码排查，发现约 40 个真实缺陷。按严重度逐个修，
+  每项都补回归测试、每步全量跑绿(499 项)，不引入新问题。本批为后端(Python)8 项：
+  · **#1 充值把永久会员改写成限期**(trading/service.py):续费顺延对 expires_ts=0(永久)判假、
+    从今天起算 30 天 → 永久会员购买同档后反而缩水。修:永久同档购买保持永久。
+  · **#2 高档会员买低档套餐被降级清零**(trading/service.py):会员只存一个 tier，低档订单覆盖
+    高档、剩余天数蒸发。修:create_order 拦截降级购买(下单即拒)+ on_payment_success 防御(下单后
+    被管理员升级的竞态不降级覆盖)。
+  · **#3 onboard/ingest-kb 端点绕过配额门控**(appservice_bot.py):入驻批量灌库端点缺 knowledge
+    门控/kb_docs 篇数/storage_mb/单篇上限四道闸，免费用户可绕过刷满 200 篇超大文档。修:对齐
+    handle_kb_add 全套硬闸，best-effort 不打断引导。
+  · **#4 kbScopes 击穿知识库隔离**(appservice_bot.py):频道 state 里的 kbScopes 绑 user:/room:
+    来源检索时不校验归属，可读他人个人库/跨频道读频道库。修:_kb_retrieve 按成员资格授权(属主
+    须是本频道成员/发言人须是资料库频道成员)。
+  · **#5 run_workflow 幂等键不一致误报队列中断**(ai/tools.py):同步路径预约用 source_key:slug、
+    落账用 source_key，queued 占位永不结清 → 每次成功 1h 后误报"提交队列中断"、运行记录写脏。
+    修:落账用与预约同一 skey。
+  · **#6 任务看板先截断200再过滤**(appservice_bot.py + task_repo.py):可见性过滤在"全平台最新
+    200条"窗口内做，平台任务超 200 后老用户任务被挤出、看板整块消失。修:新增 list_tasks_for_user
+    把过滤下推到 DB(本人相关任务的超集)，再用精确谓词收口。
+  · **#7 legacy 引擎 LLM 异常无兜底**(appservice_bot.py):LLM 调用异常穿透 → 事务返回 False →
+    Synapse 重发整批 → Agent run 从头重跑 → 已执行工具无幂等键、重复副作用。修:就地兜住异常、
+    给用户失败提示、正常返回不重试;并保证 reporter.finish() 在异常时也定格进度卡。
+  · **#8 SDK 引擎回退 legacy 整单重跑**(appservice_bot.py):SDK 引擎跑到第 N 轮失败后回退 legacy
+    从零重跑，已执行的建群/派单/配额不回滚 → 重复+双扣(触顶 max_turns 时最严重)。修:失败时若
+    reporter.steps 非空(已执行工具)就停下、告知用户，不回退重跑;一步未执行才安全回退。
+- 顺带:修 test_runtime_config 陈旧期望(工具数 16→18，代码早已加 query_hr/query_sales)。
+- 验证:新增/更新回归测试 test_trading/test_storage_quota/test_kb_room/test_wf/test_task_access/
+  test_engine_error_fallback/test_sdk_fallback/test_typing;全量 499 项全绿;ruff 通过。
+- **部署:纯后端，git pull + 重启 guduu-bot 即可，无需 client build。** 前端 #9~#11 下一批。
+
 ## 2026-07-11 — feat:用户自建 智能体/技能「我的AI工坊」——归属账号、计入存储
 - 负责人需求:用户可自建 AI Agent 与 Skill,归属本人账号权益,都计入存储空间。
 - 现状盘点:cosmac_skill/cosmac_agent 表早有 scope=user 设计——个人技能已可用聊天命令建且随人

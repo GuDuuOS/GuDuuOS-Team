@@ -70,5 +70,59 @@ class TestTaskAccess(unittest.TestCase):
         self.assertFalse(bot._is_task_assignee("@duxz02:cosmac.cc", t))
 
 
+class TestTaskBoardWindow(unittest.TestCase):
+    """#6：平台任务超过 200 条后，「派给我的 / 我下达的」仍必须可见，不被全局窗口挤掉。"""
+
+    def setUp(self) -> None:
+        from cosmac.db import init_engine
+        init_engine("sqlite://", create_all=True)
+
+    def _bot_for(self, user_id: str) -> CosmacBot:
+        bot = CosmacBot(CosmacConfig(llm_provider="echo"))
+        bot._is_platform_admin = lambda uid: False  # type: ignore
+        bot.client = SimpleNamespace(  # type: ignore
+            whoami=lambda tok: user_id if tok == "tok" else None,
+            is_joined_member=lambda rid, uid: False,
+        )
+        return bot
+
+    def test_assigned_task_visible_beyond_200(self) -> None:
+        from cosmac.db import session_scope
+        from cosmac.db.task_repo import create_tasks
+        me = "@alice:h"
+        with session_scope() as s:
+            # 先造 1 条派给 alice 的老任务(id 最小,会落在"最新 200"窗口之外)
+            create_tasks(s, goal="g", items=[
+                {"title": "我的老任务", "executor_kind": "human", "executor_ref": me}],
+                room_id="!r:h", sender="@boss:h")
+            # 再造 250 条别人的新任务，把 alice 的挤出最新 200 窗口
+            for i in range(250):
+                create_tasks(s, goal="g", items=[
+                    {"title": f"别人{i}", "executor_kind": "human", "executor_ref": "@bob:h"}],
+                    room_id="!r:h", sender="@bob:h")
+        code, payload = self._bot_for(me).handle_tasks_list("tok")
+        self.assertEqual(code, 200)
+        titles = [t["title"] for t in payload["tasks"]]
+        self.assertIn("我的老任务", titles)                       # 旧实现这里会消失
+        self.assertFalse(any(x.startswith("别人") for x in titles))  # 不泄漏别人的
+
+    def test_own_created_task_visible_beyond_200(self) -> None:
+        # 「我下达的」（sender==本人）同样不能被窗口挤掉
+        from cosmac.db import session_scope
+        from cosmac.db.task_repo import create_tasks
+        me = "@alice:h"
+        with session_scope() as s:
+            create_tasks(s, goal="g", items=[
+                {"title": "我下达的老任务", "executor_kind": "human", "executor_ref": "@carol:h"}],
+                room_id="!r:h", sender=me)
+            for i in range(250):
+                create_tasks(s, goal="g", items=[
+                    {"title": f"别人{i}", "executor_kind": "human", "executor_ref": "@bob:h"}],
+                    room_id="!r:h", sender="@bob:h")
+        code, payload = self._bot_for(me).handle_tasks_list("tok")
+        titles = [t["title"] for t in payload["tasks"]]
+        self.assertIn("我下达的老任务", titles)
+
+
 if __name__ == "__main__":
     unittest.main()

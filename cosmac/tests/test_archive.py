@@ -25,6 +25,13 @@ class FakeClient:
         self.states.append((room_id, etype, content))
         return True
 
+    def get_state_event(self, room_id, etype, state_key=""):
+        # 归档授权(L9)读 power_levels：把项目负责人 @owner:h 设为管理员(power 100)——
+        # 与 assemble_team 建房时把发起人提成 100 一致。
+        if etype == "m.room.power_levels":
+            return {"users": {"@owner:h": 100}}
+        return None
+
     def send_text(self, room_id, text, txn_id=None):
         self.sent.append((room_id, text))
         return "$e"
@@ -119,6 +126,17 @@ class TestArchiveProjectTool(unittest.TestCase):
         self.assertIn("没有任务", out)
         with session_scope() as s:
             self.assertEqual(list_archives(s, room_ids=["!empty:h"]), [])
+
+    def test_non_admin_cannot_archive(self) -> None:
+        # L9：频道内普通成员(power<50)不能归档——不会清掉长期记忆，也不落归档记录。
+        out = self.tb.execute(
+            ToolCall(id="x", name="archive_project", arguments={"summary": "偷偷归档"}),
+            ToolContext("!team:h", "@member:h"),  # 非管理员
+        )
+        self.assertIn("频道管理员", out)
+        with session_scope() as s:
+            self.assertEqual(list_archives(s, room_ids=["!team:h"]), [])   # 没落档
+            self.assertEqual(get_summary(s, SCOPE_ROOM, "!team:h"), "项目过程记忆")  # 记忆没被清
 
 
 if __name__ == "__main__":

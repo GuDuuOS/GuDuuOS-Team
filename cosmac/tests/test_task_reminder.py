@@ -148,7 +148,11 @@ class TestTaskReminder(unittest.TestCase):
         ts = _parse_due_to_ts("2026-07-15")
         self.assertIsNotNone(ts)
         tm = _t.localtime(ts)
-        self.assertEqual((tm.tm_year, tm.tm_mon, tm.tm_mday, tm.tm_hour), (2026, 7, 15, 18))
+        # L10：建任务与改期统一口径，date-only → 当天 23:59（原建任务路径曾用 18:00）
+        self.assertEqual(
+            (tm.tm_year, tm.tm_mon, tm.tm_mday, tm.tm_hour, tm.tm_min),
+            (2026, 7, 15, 23, 59),
+        )
         ts2 = _parse_due_to_ts("2026-07-15 09:30")
         tm2 = _t.localtime(ts2)
         self.assertEqual((tm2.tm_hour, tm2.tm_min), (9, 30))

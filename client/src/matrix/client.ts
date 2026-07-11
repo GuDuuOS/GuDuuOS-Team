@@ -459,9 +459,14 @@ export function listRooms(): LiveRoom[] {
     // 不是聊天频道。出现在列表里会被管理员当普通频道误删(实测发生过——退出后后台配置读写全断)。
     // 按 canonical alias 判定(#cosmac-ctrl),改名也藏得住。
     .filter((r) => !((r as any).getCanonicalAlias?.() || '').startsWith('#cosmac-ctrl:'))
+    // 无名 DM 的 name 会回退成对方 mxid（以 @ 开头）不进频道列表；但**显式设了频道名**的房间即便
+    // 名字以 @ 开头（如"@全体公告"）也是正常频道，不能滤掉（L5）。故仅在**无显式 m.room.name**
+    // 时才按 @ 前缀丢弃（DM 本就已被上面的 isDmRoom 排除，这里只是兜无名房的名字回退）。
+    .filter((r) => {
+      const hasName = !!(r as any).currentState?.getStateEvents?.('m.room.name', '')
+      return hasName || !((r.name || r.roomId) || '').startsWith('@')
+    })
     .map((r) => ({ id: r.roomId, name: r.name || r.roomId, topic: roomTopic(r), fav: !!(r as any).tags?.['m.favourite'] }))
-    // 无名 DM 的 name 会回退成对方 mxid（以 @ 开头），不进频道列表
-    .filter((r) => !r.name.startsWith('@'))
     .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
 }
 
@@ -944,16 +949,23 @@ export async function userExists(input: string): Promise<boolean> {
   }
 }
 
-/** 私信对方（除自己/主AI 外那个人）及其是否还「在场」(membership=join)。
- *  对方被停用/退出后，Synapse 会把他移出房(membership=leave)，此时发消息没人收——据此提醒发送人。 */
-export function dmPeerStatus(roomId: string): { peerId: string; joined: boolean } {
+/** 私信对方（除自己/主AI 外那个人）及其在场状态。
+ *  - joined  = membership 'join'（已接受、在场）
+ *  - pending = membership 'invite'（刚发起、对方还没接受——这是**正常**待接受态，不是"送不达"）
+ *  - 两者都为 false = 对方已离场（leave/ban，被停用或退出）→ 此时发消息没人收，才提醒发送人。
+ *  M10：旧实现把 invite 也当成"不在场"，导致刚发起的私信立刻误报"送不达"。 */
+export function dmPeerStatus(roomId: string): { peerId: string; joined: boolean; pending: boolean } {
   const room = mx?.getRoom(roomId)
   const meId = mx?.getUserId?.() || ''
-  if (!room) return { peerId: '', joined: false }
+  if (!room) return { peerId: '', joined: false, pending: false }
   const all = (room as any).getMembers?.() || []   // 含 join/invite/leave（离场者也在 state 里）
   const peer = all.find((m: any) => m.userId !== meId && m.userId !== botId())
-  if (!peer) return { peerId: '', joined: false }
-  return { peerId: peer.userId, joined: peer.membership === 'join' }
+  if (!peer) return { peerId: '', joined: false, pending: false }
+  return {
+    peerId: peer.userId,
+    joined: peer.membership === 'join',
+    pending: peer.membership === 'invite',
+  }
 }
 
 /** 查某用户是否已停用（私信对方不在场时用于区分「已停用」还是「已退出」的措辞）。失败/未知返回 false。 */
@@ -1440,10 +1452,27 @@ export async function getRoomMembers(roomId: string): Promise<string[]> {
  * Synapse 会把所有本服成员踢出、purge 历史。该操作不可逆，调用前务必确认。
  */
 export async function deleteRoom(roomId: string, block = false): Promise<void> {
+  // 防呆(#11)：控制室(#cosmac-ctrl)承载全部平台配置——AI配置/技能/智能体/会员/门控/配额/套餐/
+  // 入驻模板/工作流/页面内容都只存在这一个房间的 state event 里。删掉不可恢复、整个平台瘫痪。
+  // 这里是删除的**唯一收口**，任何入口(含误点)都在此被挡住。
+  if (await isControlRoom(roomId)) {
+    throw new Error('这是 CosMac 控制室，删除会清空全部平台配置，已阻止此操作。')
+  }
   await adminFetch(`/_synapse/admin/v1/rooms/${encodeURIComponent(roomId)}`, {
     method: 'DELETE',
     body: JSON.stringify({ block, purge: true }),
   })
+}
+
+/** 某房间是否是 CosMac 控制室（按别名解析出的 room_id 比对）。解析不到/出错返回 false（不误拦）。 */
+export async function isControlRoom(roomId: string): Promise<boolean> {
+  if (!roomId) return false
+  try {
+    const ctrl = await resolveControlRoom()
+    return !!ctrl && ctrl === roomId
+  } catch {
+    return false
+  }
 }
 
 /* =====================================================================
@@ -2321,14 +2350,21 @@ export interface OnboardingTemplateDef {
   enabled: boolean       // 是否上架（可在引导里被选）
 }
 
-/** 读后台入驻模板列表；控制室/未配置时返回 []。 */
+/** 读后台入驻模板列表（首次引导用）。
+ *
+ * #9：模板存**私有控制室**，普通用户直接读 state 必 403 → 后台配的模板对新注册用户永远失效。
+ * 改走 bot 端点 /cosmac/onboarding/templates（bot 是控制室成员、代读并只返回已上架模板）。
+ * 未登录/未配置/读失败返回 []（调用方据此回退内置模板）。 */
 export async function getOnboardingTemplates(): Promise<OnboardingTemplateDef[]> {
-  if (!mx) return []
-  const rid = await resolveControlRoom()
-  if (!rid) return []
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return []
   try {
-    const ev = await (mx as any).getStateEvent(rid, ONBOARDING_TEMPLATES_EVENT_TYPE, '')
-    const arr = Array.isArray(ev?.templates) ? ev.templates : []
+    const r = await fetch(`${payBase()}/cosmac/onboarding/templates`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return []
+    const j = await r.json().catch(() => ({}))
+    const arr = Array.isArray(j?.templates) ? j.templates : []
     return arr.map((t: any) => ({
       key: String(t?.key || ''),
       label: String(t?.label || ''),
@@ -2346,10 +2382,8 @@ export async function getOnboardingTemplates(): Promise<OnboardingTemplateDef[]>
       tier: String(t?.tier || 'free'),
       enabled: t?.enabled !== false,
     })).filter((t: OnboardingTemplateDef) => t.key && t.label)
-  } catch (e: any) {
-    // 404=未配置→[]；瞬时失败抛，防空列表覆盖真实入驻模板。
-    if (e?.errcode === 'M_NOT_FOUND') return []
-    throw new Error('读取入驻模板失败，请重试')
+  } catch {
+    return []
   }
 }
 
@@ -2472,6 +2506,9 @@ export async function registerVerify(
   })
   const j = await r.json().catch(() => ({}))
   if (!r.ok) throw new Error(j?.error || '注册失败')
+  // L18：注册接口已返回可用会话(access_token/user_id/device_id)——直接用它引导会话，避免调用方
+  // 再 loginNoStart 多建一个 device/token。老后端若没回 token，调用方据返回值回退到登录。
+  if (j?.access_token && j?.user_id) saveSession(baseUrl, j)
   return j
 }
 
@@ -2855,6 +2892,7 @@ export interface TaskItem {
   executor_kind?: string; executor_ref?: string
   room_id?: string   // 所属频道(删频道前统计未完成任务用)
   space_id?: string  // 所属工作区(Space id)：看板按工作区过滤；空=存量无归属任务
+  sender?: string    // 下达人 user_id：前端按工作区过滤时判断"我下达的"，别弄丢(L11)
   due_ts?: number | null   // 截止时间(epoch 秒,可空)——看板显示"还剩几天/已逾期"
 }
 
@@ -3074,6 +3112,10 @@ export function listMessages(roomId: string): LiveMsg[] {
     .getLiveTimeline()
     .getEvents()
     .filter((e) => e.getType() === 'm.room.message')
+    // 编辑事件(m.replace)本身也留在时间线里(matrix-js-sdk 不聚合掉它)，其 fallback 正文是
+    // "* 新内容"。原事件已由下面 replacingEvent() 取到最新内容并标 edited，这里必须**排除编辑
+    // 事件本身**，否则消息流会多出一条以"* "开头的重复消息(#10)。
+    .filter((e) => e.getContent()?.['m.relates_to']?.['rel_type'] !== 'm.replace')
     // 已撤回(redacted)的消息 content 为空，跳过 → 不再显示空气泡
     .filter((e) => !(e as any).isRedacted?.() && Object.keys(e.getContent() || {}).length > 0)
     .map((e) => {
@@ -3093,14 +3135,16 @@ export function listMessages(roomId: string): LiveMsg[] {
         if (re) {
           replyToSender = re.getSender() || ''
           replyToName = room.getMember(replyToSender)?.name || replyToSender
-          replyToBody = stripReplyFallback(re.getContent()?.body || '').slice(0, 80)
+          const reIsReply = !!re.getContent()?.['m.relates_to']?.['m.in_reply_to']?.event_id
+          replyToBody = stripReplyFallback(re.getContent()?.body || '', reIsReply).slice(0, 80)
         }
       }
       return {
         id: e.getId() || '',
         sender,
         senderName: room.getMember(sender)?.name || sender,
-        body: stripReplyFallback(c.body || ''),
+        // 只有本条确实是回复(inReplyTo 存在)才剥 "> " fallback，普通消息里的引用行原样保留(M9)
+        body: stripReplyFallback(c.body || '', !!inReplyTo),
         ts: e.getTs(),
         card: c['cosmac.card'],
         attachment: parseAttachment(c),
@@ -3199,7 +3243,11 @@ function readImageSize(file: File): Promise<{ w: number; h: number } | null> {
 }
 
 /** 去掉富回复正文里 "> <@x> 引用..." 的 fallback 前缀，只留用户真正打的内容。 */
-function stripReplyFallback(body: string): string {
+function stripReplyFallback(body: string, isReply: boolean): string {
+  // M9：本产品自己的回复不写 "> " fallback（回复关系只存 m.relates_to.m.in_reply_to），但别的
+  // 客户端(Element)发的回复会在正文前塞 "> 引用" fallback 行。只有**确实是回复**的消息才剥离，
+  // 否则用户自己写的、以 "> " 开头的正常引用会被整段吞掉（composer「引用」按钮就会踩到）。
+  if (!isReply) return body
   // fallback 形如：连续若干 "> ..." 行 + 一个空行，之后才是正文
   const m = body.match(/^(> .*\n)+\n?/)
   return m ? body.slice(m[0].length) : body
@@ -3488,6 +3536,8 @@ function roomUnreadCount(r: any, myId: string): number {
       const ev = events[i]
       if (ev.getId?.() === readUpTo) break   // 到达我已读位，之前的都读过
       if (ev.getType?.() !== 'm.room.message') continue
+      // 编辑事件(m.replace)不是新消息，不该计入未读——否则对方编辑一条旧消息就让红点+1(#10)
+      if (ev.getContent?.()?.['m.relates_to']?.['rel_type'] === 'm.replace') continue
       if (ev.getSender?.() === myId) continue // 自己发的不算未读
       count++
     }

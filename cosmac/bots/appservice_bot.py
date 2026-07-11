@@ -37,6 +37,7 @@ from cosmac.config import (
     AI_CONFIG_EVENT_TYPE,
     CHANNEL_CONFIG_EVENT_TYPE,
     CONTROL_ADMINS_EVENT_TYPE,
+    ONBOARDING_TEMPLATES_EVENT_TYPE,
     PEOPLE_EVENT_TYPE,
     RULES_EVENT_TYPE,
     SKILLS_EVENT_TYPE,
@@ -249,13 +250,20 @@ class CosmacBot:
         self.toolbox.list_capabilities = self._list_capabilities_for_tool
         # 频道清单可见范围：管理员/负责人可跨工作区看全部频道，普通用户只看自己在的（隐私边界）。
         self.toolbox.is_admin = self._is_platform_admin
-        # 资源存在性校验(组班链路完善):assemble_team 据此识别"库里没有的 Agent/Skill"并提醒缺口
-        self.toolbox.known_agents = lambda: {
-            str(a.get("slug") or "") for a in self._global_agent_items() if a.get("slug")
+        # 资源存在性校验(组班链路完善):assemble_team 据此识别"库里没有的 Agent/Skill"并提醒缺口。
+        # M2 越权修复:带 for_user 时按发起人 access 过滤——发起人**够不到**的受限智能体不进可见集,
+        # assemble_team 里点名它当 lead/worker 会被当"缺口"剔除(不注入其付费人设),堵住"点名绕过
+        # 名册过滤"。for_user=None 保持全量(供无发起人上下文的场景)。
+        self.toolbox.known_agents = lambda for_user=None: {
+            str(a.get("slug") or "")
+            for a in self._global_agent_items()
+            if a.get("slug") and (for_user is None or self._resource_visible(a, for_user))
         }
         # 用 _skill_library(含预置技能):否则主 AI 组班时绑预置技能会被误报"库里没有"
-        self.toolbox.known_skills = lambda: {
-            str(s.get("slug") or "") for s in self._skill_library() if s.get("slug")
+        self.toolbox.known_skills = lambda for_user=None: {
+            str(s.get("slug") or "")
+            for s in self._skill_library()
+            if s.get("slug") and (for_user is None or self._resource_visible(s, for_user))
         }
         self.agent = Agent(
             llm=self.llm,
@@ -445,6 +453,11 @@ class CosmacBot:
             content = event.get("content", {})
             if content.get("msgtype") != "m.text":
                 return  # 第一步只处理纯文本，图片/文件等以后再说
+            # 编辑事件(m.replace)不是新消息：AI 会话房/私聊对每条 m.text 都回，若不排除，用户编辑
+            # 一次自己发过的消息，bot 会对 fallback 正文"* 新内容"再答一遍(#10)。编辑不触发新回复。
+            relates = content.get("m.relates_to")
+            if isinstance(relates, dict) and relates.get("rel_type") == "m.replace":
+                return
             user_text = content.get("body", "")
 
             # 私聊（仅用户+主AI，≤2人）里对每句话都回；
@@ -481,7 +494,10 @@ class CosmacBot:
                 self.client.send_text(room_id, self._gate_denied_text("ai_chat"))
                 return
             # 用量配额（变现第二步）：每天 AI 对话条数。超额提示升级并停在这（不消耗 LLM）。
-            quota_msg = self._rate_quota_blocked(sender, "ai_msg_daily")
+            # L2：这里**只查不扣**——真正出成回复后才计数(见下方 send_text 成功之后)。否则 LLM
+            # 报错/超时/工具循环崩了也照扣，用户白白少一次额度却没得到任何回复(与工具路径"成功
+            # 才扣"、#7 失败兜底同口径)。
+            quota_msg = self._rate_quota_blocked(sender, "ai_msg_daily", consume=False)
             if quota_msg:
                 self.client.send_text(room_id, quota_msg)
                 return
@@ -533,6 +549,24 @@ class CosmacBot:
                     room_id, reply,
                     txn_id=f"cosmac-ai-{event_id}" if event_id else None,
                 )
+                # L2：回复真正发出后才消费当日 AI 对话额度（失败走下面的 except 分支、不扣）。
+                self._rate_quota_blocked(sender, "ai_msg_daily", consume=True)
+            except Exception:
+                # 引擎/LLM 本体调用失败（网络错、模型不存在、后端 4xx/5xx 等）：绝不让异常穿透到
+                # handle_transaction —— 那会使其返回 False、Synapse 重发**整批**、整条 Agent run
+                # 从头重跑，而循环中途已执行的建群/发消息/邀人等工具**没有幂等键**、会重复副作用
+                #（#7）。这里就地兜住：给用户一条明确失败提示（带 txn_id 幂等，纵使别的事件触发
+                # 重发也不刷屏），然后正常返回——本条事务视为已消化，不再重试。
+                logger.exception("AI 回复失败（引擎/LLM 调用异常），已就地兜底、不重试")
+                try:
+                    self.client.send_text(
+                        room_id,
+                        "😵 抱歉，AI 暂时不可用（可能是模型服务波动或配置异常），请稍后再试一次。",
+                        txn_id=f"cosmac-ai-err-{event_id}" if event_id else None,
+                    )
+                except Exception:
+                    logger.debug("发送 AI 失败提示也失败了（忽略）", exc_info=True)
+                return
             finally:
                 self.client.set_typing(room_id, False)  # 关掉"正在输入…"
             # 长期记忆：回复发完后推进本群滚动摘要（到阈值才后台重摘要，绝不阻塞本次回复）。
@@ -653,16 +687,24 @@ class CosmacBot:
         except Exception as e:
             logger.debug("读历史失败（忽略，无短期记忆继续）：%s", e)
             return []
+        # 当前触发消息是**最新**那条(msgs 按旧→新排列，通常在末尾)。要剔的正是它——而不是历史里
+        # 更早的同文本消息。M15：旧实现从最旧端剔第一条匹配，用户重复发"继续/好的"时被剔的是旧的、
+        # 当前这条仍留在历史，随后又被 Agent.run 作为最后的 user 追加 → 模型看到当前输入出现两遍
+        # (还扰乱了时序)。故从**最新端**反向定位、只剔那一条。
+        cur = (cur_body or "").strip()
+        drop_idx = -1
+        for i in range(len(msgs) - 1, -1, -1):
+            b = (msgs[i].get("body") or "").strip()
+            if b == cur and (msgs[i].get("sender") or "") == cur_sender:
+                drop_idx = i
+                break
         out: List[Message] = []
-        dropped_current = False
-        for m in msgs:
+        for i, m in enumerate(msgs):
+            if i == drop_idx:
+                continue
             body = (m.get("body") or "").strip()
             s = m.get("sender") or ""
             if not body:
-                continue
-            # 跳过"当前这条触发消息"(它会作为最后的 user 单独追加，避免重复)
-            if not dropped_current and s == cur_sender and body == (cur_body or "").strip():
-                dropped_current = True
                 continue
             if len(body) > self._HISTORY_CHARS:
                 body = body[: self._HISTORY_CHARS] + "…"
@@ -840,11 +882,20 @@ class CosmacBot:
                     global_scopes.append(self._PLATFORM_KB_SCOPE)
             elif src.startswith("user:"):
                 uid = src[5:].strip()
-                if uid and uid not in user_scopes:
+                # 越权防护(#4)：kbScopes 存在房间 state event、任意有写 state 权限的成员都能改，
+                # 绝不能凭它裸读**别人**的个人库。只认「属主本人是当前频道成员」的绑定——这正是
+                # 合法语义（发起人把自己的个人库开放给自己所在的专班）；攻击者在自建房绑
+                # user:@受害者、受害者非本房成员 → is_joined_member 返回 False → 拒绝，不泄漏。
+                # uid==sender（自己的库）直接放行，省一次网络查询。
+                if uid and uid not in user_scopes and (
+                    uid == sender or self.client.is_joined_member(room_id, uid)
+                ):
                     user_scopes.append(uid)
             elif src.startswith("room:"):
                 rid = src[5:].strip()
-                if rid and rid not in room_scopes:
+                # 越权防护(#4)：把某频道库「调进」本频道，只对**当前发言人自己有权访问**(是该频道
+                # 成员)的资料库频道生效——否则任意成员可绑 room:!别人的频道，跨频道读走其知识库。
+                if rid and rid not in room_scopes and self.client.is_joined_member(rid, sender):
                     room_scopes.append(rid)
         try:
             from cosmac.ai.embeddings import get_embedder
@@ -1102,11 +1153,26 @@ class CosmacBot:
                 # legacy 即可,别当故障告警惊动管理员(否则一条复杂任务就误报"引擎挂了/余额不足")。
                 if "maximum number of turns" not in str(exc).lower():
                     self._alert_engine_fallback(exc)
-        reply = agent.run(
-            user_text, tool_ctx, extra_system=extra_system, history=history,
-            progress_cb=reporter,
-        )
-        reporter.finish()
+                # #8：SDK 引擎若**已执行过工具**(reporter.steps 非空 → 建群/邀人/派单等副作用已
+                # 落地、teams 等终身配额已扣),绝不能回退 legacy 从头重跑——那会重复建房、重复
+                # 派单、配额二次扣。reporter 每轮新建,steps 只反映本次。只有一个工具都没跑
+                # (通常首个 LLM 调用就失败;尤其触顶 max_turns 时步骤最多、重跑破坏最大)时，回退
+                # 才无副作用。已动过手就停下、如实告知，让用户决定是否接着做。
+                if reporter.steps:
+                    reporter.finish()
+                    return (
+                        "⚠️ 我在执行过程中已经做了部分操作，但随后遇到故障。为避免重复建群/"
+                        "重复派单，这条先停在这里。请看下已完成的部分，需要我接着把剩下的做完就说一声。"
+                    )
+        try:
+            reply = agent.run(
+                user_text, tool_ctx, extra_system=extra_system, history=history,
+                progress_cb=reporter,
+            )
+        finally:
+            # legacy 引擎抛异常时也要定格"正在执行"卡片，否则它永久卡在"⏳ 正在执行"（#7 连带）。
+            # finish() 自带 event_id/steps 守卫并自兜异常，任何时候调用都安全。
+            reporter.finish()
         return reply
 
     def _alert_engine_fallback(self, exc: Exception) -> None:
@@ -1295,6 +1361,22 @@ class CosmacBot:
 
     _STORAGE_TTL = 60  # 存储用量缓存(秒)——媒体统计要打 Synapse admin API,别每次都查
 
+    @staticmethod
+    def _blen(text: Optional[str]) -> int:
+        """字符串的 **UTF-8 字节数**（L1：存储配额口径是字节，中文每字 3 字节）。None→0。"""
+        return len((text or "").encode("utf-8"))
+
+    @staticmethod
+    def _sql_byte_len(session: Any):
+        """返回按方言取「文本字节长度」的 SQL 函数（L1）：
+        PostgreSQL(生产) 用 octet_length 精确到字节；SQLite(本地开发) 无此函数，回退 length(字符数)
+        ——本地不硬核算存储配额，够用。这样生产端媒体字节 + 知识库/自建内容字节口径一致(不再字符/字节混加)。
+        """
+        from sqlalchemy import func
+        name = getattr(getattr(session, "bind", None), "dialect", None)
+        name = getattr(name, "name", "") if name is not None else ""
+        return func.octet_length if name == "postgresql" else func.length
+
     def _storage_bytes(self, user_id: str) -> int:
         """本人已用存储字节 = Synapse 媒体(上传的附件/图片/视频) + 个人知识库文本。带 60s 缓存。
 
@@ -1321,8 +1403,9 @@ class CosmacBot:
             from cosmac.db import session_scope
             from cosmac.db.models import SCOPE_USER, KnowledgeChunk
             with session_scope() as s:
+                blen = self._sql_byte_len(s)  # L1：按字节算，与媒体字节口径一致
                 n = s.execute(
-                    select(func.coalesce(func.sum(func.length(KnowledgeChunk.text)), 0))
+                    select(func.coalesce(func.sum(blen(KnowledgeChunk.text)), 0))
                     .where(KnowledgeChunk.scope == SCOPE_USER,
                            KnowledgeChunk.scope_id == user_id)
                 ).scalar()
@@ -1334,16 +1417,17 @@ class CosmacBot:
             from cosmac.db import session_scope
             from cosmac.db.models import SCOPE_USER, Agent as DbAgent, Skill as DbSkill
             with session_scope() as s:
+                blen = self._sql_byte_len(s)
                 n1 = s.execute(
                     select(func.coalesce(func.sum(
-                        func.length(DbSkill.name) + func.length(DbSkill.description)
-                        + func.length(DbSkill.instructions)), 0))
+                        blen(DbSkill.name) + blen(DbSkill.description)
+                        + blen(DbSkill.instructions)), 0))
                     .where(DbSkill.scope == SCOPE_USER, DbSkill.scope_id == user_id)
                 ).scalar()
                 n2 = s.execute(
                     select(func.coalesce(func.sum(
-                        func.length(DbAgent.name) + func.length(DbAgent.description)
-                        + func.length(DbAgent.system_prompt)), 0))
+                        blen(DbAgent.name) + blen(DbAgent.description)
+                        + blen(DbAgent.system_prompt)), 0))
                     .where(DbAgent.scope == SCOPE_USER, DbAgent.scope_id == user_id)
                 ).scalar()
                 total += int(n1 or 0) + int(n2 or 0)
@@ -2133,6 +2217,12 @@ class CosmacBot:
             # 普通成员只能「工作流 列表」查看。
             if not self._gate_allows(sender, "workflow_run"):
                 return self._gate_denied_text("workflow_run") + " 你可以用「工作流 列表」查看可用工作流。"
+            # 用量配额（workflow_runs，每月）：与 AI 工具 run_workflow 同 metric，命令入口也要计量，
+            # 否则门控放行的付费用户走「工作流 跑」可无限次运行、配额形同虚设（M5）。先只查不扣，
+            # 真正提交成功后再消费（失败/池满不扣，与工具路径「成功才扣」同口径）。
+            over = self._rate_quota_blocked(sender, "workflow_runs", consume=False)
+            if over:
+                return over
             rest = body.split(maxsplit=1)
             arg = rest[1].strip() if len(rest) > 1 else ""
             parts = arg.split(maxsplit=1)
@@ -2149,15 +2239,18 @@ class CosmacBot:
             from cosmac.wf import supports_async_callback
             if (conn.get("async") and self.config.public_url
                     and supports_async_callback(conn.get("platform"))):
-                return self._dispatch_async(
+                out = self._dispatch_async(
                     conn, user_input, room_id, sender, name, source_key
                 )
+                self._tool_quota_consume(sender, "run_workflow")  # 提交成功才扣 workflow_runs
+                return out
             # #4/#5：**所有同步连接器**都放有界后台池跑、立即返回——webhook/dify/coze 也可能
             # 等到 30s、ComfyUI 更到 120s，同步执行会卡住 appservice 事务响应（Synapse 超时重试）。
             # 后台跑完把结果发回本群。池满则提示繁忙。
             if self._run_wf_in_background(
                 conn, user_input, room_id, sender, name, source_key
             ):
+                self._tool_quota_consume(sender, "run_workflow")  # 提交成功才扣 workflow_runs
                 return f"⏳ 工作流「{name}」已开始，完成后结果会自动发到本群。"
             return "⚠️ 任务太多、系统繁忙，请稍后再试。"
         return f"没听懂「{body}」。发「工作流 帮助」看用法。"
@@ -2197,7 +2290,12 @@ class CosmacBot:
 
         # ComfyUI 走慢池，避免长生成把快连接器/提交堵在队尾（#5）
         pool = "slow" if conn.get("platform") == "comfyui" else "fast"
-        return submit_background(work, pool=pool)
+        if submit_background(work, pool=pool):
+            return True
+        # 池满提交失败：回滚刚才的来源预约，否则占位残留、重放误判"已提交"、1h 后误报中断（M8）
+        if source_key:
+            self._release_wf_source(source_key)
+        return False
 
     def _dispatch_async(
         self, conn, user_input, room_id, sender, name, source_key: str = ""
@@ -2578,7 +2676,7 @@ class CosmacBot:
         out: List[Dict[str, Any]] = []
         try:
             from cosmac.db import session_scope
-            from cosmac.db.task_repo import list_tasks
+            from cosmac.db.task_repo import list_tasks, list_tasks_for_user
 
             is_admin = self._is_platform_admin(user_id)
             with session_scope() as s:
@@ -2587,10 +2685,16 @@ class CosmacBot:
                 #   其他人=只看**派给自己的**——executor_kind=human 且 executor_ref 是本人;
                 #   旧任务(无类型化执行者)按 assignee 首词==本人 localpart 兜底。
                 # 不再按"本人所在房间"放行——被拉进专班≠能看别人的任务。
-                candidates = list_tasks(s)
                 if is_admin:
-                    visible = candidates
+                    visible = list_tasks(s)  # 管理员看全部（内部统计口径）
                 else:
+                    # #6：先在 DB 层把候选收敛到「本人相关任务」(宽松超集)，再用精确谓词收口——
+                    # 避免旧实现「全局取最新 200 条→再按人过滤」在平台任务超 200 后把「派给我的」
+                    # 挤出窗口而消失。localpart 与 _is_task_assignee 同一提取口径。
+                    localpart = user_id.split(":", 1)[0].lstrip("@").lower()
+                    candidates = list_tasks_for_user(
+                        s, user_id=user_id, localpart=localpart,
+                    )
                     # 可见性 = 本人下达 或 派给本人；与 _can_access_task(改状态鉴权)**共用同一口径**
                     # (_is_task_assignee),保证「看得到 == 改得动」,不再各写一份而悄悄跑偏(线上踩过)。
                     visible = [
@@ -2609,6 +2713,9 @@ class CosmacBot:
                         "room_id": t.room_id or "",
                         # 所属工作区：前端任务看板据此按工作区过滤（空=存量无归属，各处显示）
                         "space_id": getattr(t, "space_id", "") or "",
+                        # 下达人：前端按工作区过滤时，"我下达的"(sender==本人)即便派给别人、且归属
+                        # 工作区我进不去，也要显示——否则会弄丢（L11）。
+                        "sender": t.sender or "",
                         # 截止时间（epoch 秒，可空）：看板据它显示"还剩几天/已逾期"。
                         "due_ts": t.due_ts,
                     })
@@ -2627,6 +2734,12 @@ class CosmacBot:
             task_id = int(body.get("id"))
         except (TypeError, ValueError):
             return 400, {"error": "无效任务 id"}
+        # 状态白名单 + 同义词归一化（M6）：非法 status 曾被 task_repo 静默丢弃，若同时给了别的
+        # 字段就"假成功"，只给非法 status 则误报 404「任务不存在」（任务其实存在）。这里先拦。
+        from cosmac.ai.tools import _normalize_task_status, _TASK_STATUSES
+        status = _normalize_task_status(body.get("status"))
+        if status is not None and status not in _TASK_STATUSES:
+            return 400, {"error": "任务状态非法（只能是 待办/进行中/已完成）"}
         try:
             from cosmac.db import session_scope
             from cosmac.db.task_repo import get_task, update_task
@@ -2640,14 +2753,15 @@ class CosmacBot:
                     return 403, {"error": "无权操作此任务"}
                 ok = update_task(
                     s, task_id,
-                    status=body.get("status"),
+                    status=status,
                     progress=body.get("progress"),
                     result=body.get("result"),
                 )
         except Exception:
             logger.exception("更新任务失败 id=%s", task_id)
             return 500, {"error": "更新失败"}
-        return (200, {"ok": True}) if ok else (404, {"error": "任务不存在"})
+        # 任务确实存在（上面已 get 到）：ok=False 只能是「没有可更新字段」→ 400 而非误导性 404。
+        return (200, {"ok": True}) if ok else (400, {"error": "没有可更新的内容"})
 
     # —— 图文教程（全局图文内容，类公众号）：页面树 CRUD ——
     # 改版后是**全平台一份**(不分工作区)：所有页面存在固定的 _GLOBAL_DOC_ROOM 作用域下。
@@ -3041,29 +3155,50 @@ class CosmacBot:
         docs = (body or {}).get("docs")
         if not isinstance(docs, list):
             return 400, {"error": "docs 无效"}
+        # 安全（#3）：本端点全信客户端传的 docs，正常引导与恶意刷库无法从请求上区分，故必须套用
+        # 与 handle_kb_add **完全一致**的服务端硬闸——知识库门控 + 单篇字数上限 + 篇数会员配额
+        # + 存储空间配额，否则免费用户可绕开所有闸往个人库灌满 200 篇、每篇近 512KB 的文档。
+        # best-effort：任一道闸拦下只是少灌/不灌，一律回 200 不打断引导（前端本就忽略结果）。
+        if not self._gate_allows(user_id, "knowledge"):
+            return 200, {"ingested": 0}  # 知识库门控未过 → 静默不灌，不用 403 打断引导
+        from cosmac.db.kb_cmd import MAX_DOC_CHARS, MAX_DOCS_PER_SCOPE
+
+        kb_limit = self._quota_limit(user_id, "kb_docs")       # 篇数会员配额（-1=不限）
+        st_limit = self._quota_limit(user_id, "storage_mb")    # 存储空间配额 MB（-1=不限）
+        used_bytes = self._storage_bytes(user_id)              # 起始已用存量（媒体+个人库）
         ingested = 0
         try:
             from cosmac.db import kb, session_scope
-            from cosmac.db.kb_cmd import MAX_DOCS_PER_SCOPE
             from cosmac.db.models import SCOPE_USER
 
             with session_scope() as s:
                 count = len(kb.list_docs(s, scope=SCOPE_USER, scope_id=user_id))
                 for d in docs[:50]:  # 一次最多灌 50 篇，防滥用
+                    # 篇数：会员配额与系统硬上限双闸，任一到顶即停
+                    if kb_limit >= 0 and count >= kb_limit:
+                        break
                     if count >= MAX_DOCS_PER_SCOPE:
                         break
                     title = str((d or {}).get("title") or "").strip()
                     text = str((d or {}).get("content") or "").strip()
                     if not title or not text:
                         continue
+                    if len(text) > MAX_DOC_CHARS:  # 单篇超长：跳过（不截断，避免灌半截脏数据）
+                        continue
+                    # 存储配额：加这篇会超上限就停（与 handle_kb_add 同口径，本地累加不吃缓存）
+                    if st_limit >= 0 and used_bytes + self._blen(text) > st_limit * 1048576:
+                        break
                     kb.ingest_document(
                         s, scope=SCOPE_USER, scope_id=user_id,
                         title=title, source="onboarding", text=text,
                     )
+                    used_bytes += self._blen(text)
                     count += 1
                     ingested += 1
         except Exception:
             logger.exception("入驻知识库入库失败")
+        if ingested:
+            self._storage_cache = {}  # 存量变了，作废 60s 缓存（与 handle_my_* 一致）
         return 200, {"ingested": ingested}
 
     def handle_kb_add(
@@ -3090,7 +3225,7 @@ class CosmacBot:
         # 用量配额（变现第二步）：知识库文档数按会员等级限。-1=不限；硬上限 MAX_DOCS_PER_SCOPE 兜底。
         # 存储空间配额(字节):个人库入库走服务端,这里硬管控(附件那条链路只能前端软管控)。
         st_limit = self._quota_limit(user_id, "storage_mb")
-        if st_limit >= 0 and self._storage_bytes(user_id) + len(content) > st_limit * 1048576:
+        if st_limit >= 0 and self._storage_bytes(user_id) + self._blen(content) > st_limit * 1048576:
             return 400, {"error": f"存储空间不足（上限 {st_limit}MB）。删除一些内容或升级会员扩容。"}
         kb_limit = self._quota_limit(user_id, "kb_docs")
         try:
@@ -3108,7 +3243,9 @@ class CosmacBot:
                     title=title, source="upload", text=content,
                 )
                 # 在 session 内取出需要的标量值返回（关闭后惰性加载会报错）
-                return 200, {"ok": True, "id": doc.id, "title": doc.title, "chunks": len(doc.chunks)}
+                out = {"ok": True, "id": doc.id, "title": doc.title, "chunks": len(doc.chunks)}
+            self._storage_cache = {}  # L3：个人库存量变了，作废 60s 缓存（与工坊路径一致）
+            return 200, out
         except Exception:
             logger.exception("知识库入库失败（UI 添加）")
             return 500, {"error": "入库失败（数据库不可用？）"}
@@ -3137,7 +3274,8 @@ class CosmacBot:
                 if doc is None or doc.scope != SCOPE_USER or doc.scope_id != user_id:
                     return 404, {"error": "没找到该文档（或不属于你）"}
                 kb.delete_doc(s, doc_id)
-                return 200, {"ok": True}
+            self._storage_cache = {}  # L3：删了个人库内容，作废存量缓存，「我的额度」即时反映
+            return 200, {"ok": True}
         except Exception:
             logger.exception("知识库删除失败（UI）")
             return 500, {"error": "删除失败"}
@@ -3469,6 +3607,86 @@ class CosmacBot:
 
     # —— 个人协作人能力名册（模块3.5：普通用户在前台维护，按 owner=本人 隔离）——
 
+    def _onboarding_template_by_key(self, key: str) -> Optional[Dict[str, Any]]:
+        """从控制室读入驻模板，按 key 找一个**已上架(enabled)**的；找不到/读失败返回 None。
+
+        供 handle_onboarding_select 做 tier 门控（M1）。bot 是控制室成员、恒可读；返回 None 表示
+        该 key 不是后台已上架模板（内置模板 / 未知 slug / 控制室无配置），调用方据此放行不校验。
+        """
+        key = (key or "").strip()
+        if not key:
+            return None
+        try:
+            ctrl = self.client.resolve_alias(self.config.control_room_alias)
+            if not ctrl:
+                return None
+            ev = self.client.get_state_event(ctrl, ONBOARDING_TEMPLATES_EVENT_TYPE) or {}
+        except Exception:
+            logger.debug("读取入驻模板失败（tier 校验按放行）", exc_info=True)
+            return None
+        for t in (ev.get("templates") if isinstance(ev, dict) else []) or []:
+            if (isinstance(t, dict)
+                    and str(t.get("key") or "").strip() == key
+                    and t.get("enabled") is not False):
+                return t
+        return None
+
+    def handle_onboarding_templates(
+        self, access_token: str
+    ) -> Tuple[int, Dict[str, Any]]:
+        """列出后台配置的**已上架**入驻模板，供首次引导读取。需登录。
+
+        #9：模板存**私有控制室** state event，普通用户读控制室必 403 → 旧前端直接读控制室失败、
+        静默回退内置硬编码模板，后台精心配的模板对真实注册用户永不生效。这里由 bot（控制室成员）
+        代读并只返回 ``enabled`` 的模板。best-effort：控制室不存在/读失败一律返回空列表（前端据此
+        回退内置模板，不报错打断引导）。返回字段与前端 OnboardingTemplateDef 对齐。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        try:
+            ctrl = self.client.resolve_alias(self.config.control_room_alias)
+            if not ctrl:
+                return 200, {"templates": []}
+            ev = self.client.get_state_event(ctrl, ONBOARDING_TEMPLATES_EVENT_TYPE) or {}
+        except Exception:
+            logger.debug("读取入驻模板失败（按空处理）", exc_info=True)
+            return 200, {"templates": []}
+        raw = ev.get("templates") if isinstance(ev, dict) else None
+        out: List[Dict[str, Any]] = []
+        for t in (raw or []):
+            if not isinstance(t, dict):
+                continue
+            if t.get("enabled") is False:  # 只给引导已上架的模板
+                continue
+            key = str(t.get("key") or "").strip()
+            label = str(t.get("label") or "").strip()
+            if not key or not label:  # 缺关键字段的脏数据丢弃
+                continue
+            kb_docs = []
+            for d in (t.get("kbDocs") or []):
+                if isinstance(d, dict):
+                    kb_docs.append({
+                        "title": str(d.get("title") or ""),
+                        "content": str(d.get("content") or ""),
+                    })
+            out.append({
+                "key": key,
+                "label": label,
+                "icon": str(t.get("icon") or "🧩"),
+                "desc": str(t.get("desc") or ""),
+                "model": str(t.get("model") or ""),
+                "persona": str(t.get("persona") or ""),
+                "rules": str(t.get("rules") or ""),
+                "skillSlugs": [str(x) for x in (t.get("skillSlugs") or [])],
+                "kbDocs": kb_docs,
+                "channels": [str(x) for x in (t.get("channels") or [])],
+                "workflowSlugs": [str(x) for x in (t.get("workflowSlugs") or [])],
+                "tier": str(t.get("tier") or "free"),
+                "enabled": True,
+            })
+        return 200, {"templates": out}
+
     def handle_onboarding_select(
         self, access_token: str, body: Dict[str, Any]
     ) -> Tuple[int, Dict[str, Any]]:
@@ -3483,6 +3701,15 @@ class CosmacBot:
         slug = str((body or {}).get("template") or "").strip()
         if not slug or len(slug) > 128:
             return 400, {"error": "模板标识无效"}
+        # tier 门控（M1）：若选的是**后台已上架模板**，必须满足其会员等级门槛，否则免费用户 POST
+        # 一个付费模板 slug 就能白得所有 access=tpl:<slug> 的技能/智能体使用权（tpl 门控被绕过）。
+        # 前端 templateLocked 只是 UX，服务端必须强制。内置/未知 slug 不关联任何后台 tpl 资源，
+        # 记录映射无授权风险 → 放行（保住无后台模板时的内置引导流程）。
+        tpl = self._onboarding_template_by_key(slug)
+        if tpl is not None:
+            need = str(tpl.get("tier") or "free")
+            if tier_level(self.members.get_tier(user_id)) < tier_level(need):
+                return 403, {"error": "该模板需要更高的会员等级，请先升级会员后再选择。"}
         try:
             from cosmac.db import session_scope
             from cosmac.db.user_template_repo import set_user_template
@@ -3563,9 +3790,10 @@ class CosmacBot:
                 existing = get_agent(s, SCOPE_USER, user_id, slug)
                 if existing is None and len(list_agents(s, scope=SCOPE_USER, scope_id=user_id)) >= self._MY_ITEMS_MAX:
                     return 400, {"error": f"自建智能体已达上限（{self._MY_ITEMS_MAX} 个），先删一些"}
-                add_chars = len(name) + len(description) + len(prompt)
+                add_chars = self._blen(name) + self._blen(description) + self._blen(prompt)
                 if existing is not None:  # 更新=净增量
-                    add_chars -= len(existing.name) + len(existing.description) + len(existing.system_prompt)
+                    add_chars -= (self._blen(existing.name) + self._blen(existing.description)
+                                  + self._blen(existing.system_prompt))
                 err = self._my_storage_guard(user_id, max(0, add_chars))
                 if err:
                     return 400, {"error": err}
@@ -3628,6 +3856,10 @@ class CosmacBot:
         user_id = self.client.whoami(access_token)
         if not user_id:
             return 401, {"error": "登录已失效，请重新登录"}
+        # 自建技能是付费功能（custom_skill 门控）：与聊天命令「技能」同一道闸、服务端强制——否则
+        # 免费用户绕开命令、换工坊 HTTP 端点照建不误（M3）。删自己的不设门控（见 delete 端点）。
+        if not self._gate_allows(user_id, "custom_skill"):
+            return 403, {"error": self._gate_denied_text("custom_skill", ui=True)}
         slug = str((body or {}).get("slug") or "").strip().lower()
         if not self._valid_slug(slug):
             return 400, {"error": "标识(slug)需为小写字母/数字/中划线,64 字符内"}
@@ -3648,9 +3880,10 @@ class CosmacBot:
                 existing = get_skill(s, SCOPE_USER, user_id, slug)
                 if existing is None and len(list_skills(s, scope=SCOPE_USER, scope_id=user_id)) >= self._MY_ITEMS_MAX:
                     return 400, {"error": f"自建技能已达上限（{self._MY_ITEMS_MAX} 个），先删一些"}
-                add_chars = len(name) + len(description) + len(instructions)
+                add_chars = self._blen(name) + self._blen(description) + self._blen(instructions)
                 if existing is not None:
-                    add_chars -= len(existing.name) + len(existing.description) + len(existing.instructions)
+                    add_chars -= (self._blen(existing.name) + self._blen(existing.description)
+                                  + self._blen(existing.instructions))
                 err = self._my_storage_guard(user_id, max(0, add_chars))
                 if err:
                     return 400, {"error": err}
@@ -4014,6 +4247,25 @@ class CosmacBot:
             logger.debug("工作流来源幂等登记失败（降级继续执行）：%s", e)
             return True
 
+    def _release_wf_source(self, source_key: str) -> None:
+        """回滚来源预约（删尚未提交的 queued 占位）。DB 不可用则忽略。
+
+        M8：命令路径 _run_wf_in_background 池满提交失败时必须调它，否则 queued 占位残留——之后
+        同一事件被 Synapse 重放会命中占位、_reserve_wf_source 返回 False → _run_wf_in_background
+        返回 True 让用户以为"已提交"实则什么都没跑；且 1 小时后被遗孤回收误报"提交队列中断"。
+        （工具路径 _release_workflow_source 早已这么做，命令路径此前漏了。）
+        """
+        if not source_key:
+            return
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.wf_repo import release_pending_source
+
+            with session_scope() as s:
+                release_pending_source(s, source_key)
+        except Exception:
+            logger.debug("回滚工作流来源预约失败（忽略）", exc_info=True)
+
     def _record_wf_run(
         self, room_id, sender, conn, user_input, result, source_key: str = ""
     ) -> None:
@@ -4053,19 +4305,37 @@ class CosmacBot:
         except Exception:
             is_dm = False
         can_write = True if is_dm else self._is_room_admin(room_id, sender)
+        # 个人库「添加」的会员配额守卫（M4）：篇数 kb_docs + 存储 storage_mb，与 UI 端 handle_kb_add
+        # 同口径。只对私聊(个人库)生效；群库不走它。起始存量算一次，闭包内比对。
+        guard = None
+        if is_dm:
+            kb_limit = self._quota_limit(sender, "kb_docs")
+            st_limit = self._quota_limit(sender, "storage_mb")
+            used_bytes = self._storage_bytes(sender)
+
+            def guard(cur: int, body_len: int) -> Optional[str]:
+                if kb_limit >= 0 and cur >= kb_limit:
+                    return f"个人知识库已满（{cur}/{kb_limit} 篇）。升级会员可扩容。"
+                if st_limit >= 0 and used_bytes + body_len > st_limit * 1048576:
+                    return f"存储空间不足（上限 {st_limit}MB）。删除一些内容或升级会员扩容。"
+                return None
         try:
             from cosmac.db import session_scope
             from cosmac.db.kb_cmd import handle_kb_command
 
             with session_scope() as s:
-                return handle_kb_command(
+                reply = handle_kb_command(
                     s,
                     is_dm=is_dm,
                     room_id=room_id,
                     user_id=sender,
                     text=text,
                     can_write=can_write,
+                    personal_add_guard=guard,
                 )
+            if is_dm:
+                self._storage_cache = {}  # 个人库可能增删，作废存量缓存（与 UI 路径一致）
+            return reply
         except Exception as e:
             logger.warning("知识库命令执行失败：%s", e)
             return "知识库功能暂不可用（服务器可能还没配置数据库）。"
@@ -4454,8 +4724,14 @@ class CosmacBot:
             logger.debug("配额消费失败（忽略）：metric=%s", metric, exc_info=True)
 
     def _launch_campaign(self, origin_room: str, requester: str, name: str) -> None:
-        """建一个专班群、拉发起人进来，并在群里发一张"派单"富卡。"""
-        new_room = self.client.create_room(name, invitees=[requester])
+        """建一个专班群、拉发起人进来，并在群里发一张"派单"富卡。
+
+        L12：与 assemble_team 工具对齐关键行为——① 建房时把发起人提成管理员(power=100)，否则
+        他改不了频道名/配置(403)；② 建成后给发起人所在房发 team_created 信号卡，客户端据此把
+        新专班自动挂进当前工作区（否则 FEATURES 宣称的"自动挂工作区"对本命令入口不成立）。
+        （派单富卡仍是演示卡：本命令是"一句话出富卡"的演示路径，真实任务编排走自然语言→工具。）
+        """
+        new_room = self.client.create_room(name, invitees=[requester], admins=[requester])
         if not new_room:
             self.client.send_text(origin_room, f"抱歉，建专班「{name}」失败了，请稍后再试。")
             return
@@ -4482,6 +4758,15 @@ class CosmacBot:
             f"· 拍板确认 → {requester}"
         )
         self.client.send_card(new_room, body, card)
+        # 让客户端把这个专班自动挂进发起人当前工作区（与 assemble_team 工具一致，L12）
+        try:
+            self.client.send_card(
+                origin_room,
+                f"专班「{name}」已建好（room_id={new_room}）。",
+                {"kind": "team_created", "team_room": new_room, "project": name},
+            )
+        except Exception:
+            logger.debug("发送 team_created 信号卡失败（忽略）", exc_info=True)
         self.client.send_text(
             origin_room, f"已为你建立专班「{name}」并把你拉进群，派单已发到新群里。"
         )
@@ -4788,6 +5073,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "无效页面 id"}, cors=True)
                 return
             code, payload = self.bot.handle_doc_page(token, page_id)
+            self._send_json(code, payload, cors=True)
+            return
+        # 入驻模板列表（首次引导读；bot 代读私有控制室，普通用户读不到 state，#9）
+        if self.path.split("?", 1)[0] == "/cosmac/onboarding/templates":
+            code, payload = self.bot.handle_onboarding_templates(self._bearer())
             self._send_json(code, payload, cors=True)
             return
         # 内置预置技能库（后台技能库页展示；代码内置，读控制室看不到）

@@ -295,9 +295,9 @@ class AssembleTeamGapsTest(unittest.TestCase):
     def setUp(self) -> None:
         self.client = FakeClient()
         self.tb = Toolbox(self.client)
-        # 库里只有这些资源
-        self.tb.known_agents = lambda: {"planner"}
-        self.tb.known_skills = lambda: {"copywriter"}
+        # 库里只有这些资源（回调带可选 for_user：M2 后按发起人 access 过滤，这里恒定全集）
+        self.tb.known_agents = lambda for_user=None: {"planner"}
+        self.tb.known_skills = lambda for_user=None: {"copywriter"}
 
     def _assemble(self, **kw):
         args = {"project": "测试专班"}

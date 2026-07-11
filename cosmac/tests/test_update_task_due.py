@@ -9,7 +9,9 @@ from __future__ import annotations
 import unittest
 from datetime import datetime
 
-from cosmac.ai.tools import Toolbox, ToolCall, ToolContext, _parse_due_to_epoch
+from cosmac.ai.tools import (
+    Toolbox, ToolCall, ToolContext, _parse_due_to_epoch, _parse_due_to_ts,
+)
 from cosmac.db import init_engine, session_scope
 from cosmac.db.task_repo import create_tasks, get_task
 
@@ -39,6 +41,12 @@ class TestParseDue(unittest.TestCase):
     def test_garbage_returns_none(self) -> None:
         self.assertIsNone(_parse_due_to_epoch("下周三"))
         self.assertIsNone(_parse_due_to_epoch(""))
+
+    def test_create_and_update_due_parsers_agree(self) -> None:
+        # L10：建任务(_parse_due_to_ts)与改期(_parse_due_to_epoch)曾各用 18:00/23:59 两套口径，
+        # 同一日期解析出的时刻差近 6 小时。现已统一——两者对同一 date-only 输入必须完全一致。
+        for d in ("2025-07-11", "2025/12/31", "2026-01-01 09:30"):
+            self.assertEqual(_parse_due_to_ts(d), _parse_due_to_epoch(d), d)
 
 
 class TestUpdateTaskDue(unittest.TestCase):

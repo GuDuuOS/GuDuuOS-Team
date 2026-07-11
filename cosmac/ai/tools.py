@@ -26,30 +26,34 @@ from cosmac.config import CHANNEL_CONFIG_EVENT_TYPE, WORKFLOWS_EVENT_TYPE
 logger = logging.getLogger("cosmac.ai.tools")
 
 
-def _parse_due_to_ts(due: Any) -> Optional[int]:
-    """把主 AI 填的截止时间字符串解析成 epoch 秒（服务器本地时区）。解析不了返回 None（=无时限）。
+# 任务状态白名单 + 模型/用户可能给的同义词归一化（M6：非法 status 曾被 task_repo 静默丢弃 →
+# 工具却回"已更新→<非法值>"的假成功，审核打回等流程静默失效）。
+_TASK_STATUSES = ("todo", "doing", "done")
+_STATUS_ALIASES = {
+    "todo": "todo", "待办": "todo", "todo列": "todo", "backlog": "todo", "pending": "todo",
+    "doing": "doing", "进行中": "doing", "in_progress": "doing", "inprogress": "doing",
+    "in-progress": "doing", "wip": "doing", "处理中": "doing",
+    "done": "done", "已完成": "done", "完成": "done", "completed": "done",
+    "complete": "done", "finished": "done", "closed": "done",
+}
 
-    接受 'YYYY-MM-DD'（当天 18:00 视为截止）或 'YYYY-MM-DD HH:MM'。容忍 '/' 分隔与多余空白。
-    只认绝对日期——相对时间（『3天后』）由模型据 system 里的『当前时间』先换算好再传。
-    """
-    import time as _t
 
-    s = str(due or "").strip().replace("/", "-")
+def _normalize_task_status(raw: Any) -> Any:
+    """把模型/用户给的状态词归一化到合法值；空→None(不改)；非法→原样返回(调用方据此报错)。"""
+    s = str(raw or "").strip().lower()
     if not s:
         return None
-    for fmt, is_date_only in (("%Y-%m-%d %H:%M", False), ("%Y-%m-%d", True)):
-        try:
-            tm = _t.strptime(s, fmt)
-        except ValueError:
-            continue
-        st = list(tm)
-        if is_date_only:  # 只给了日期：默认当天 18:00 截止（比 00:00 更符合"当天要交"的直觉）
-            st[3], st[4] = 18, 0
-        try:
-            return int(_t.mktime(_t.struct_time(st)))
-        except (OverflowError, ValueError):
-            return None
-    return None
+    return _STATUS_ALIASES.get(s, s)
+
+
+def _parse_due_to_ts(due: Any) -> Optional[int]:
+    """把主 AI 填的截止时间字符串解析成 epoch 秒（=无时限则 None）。
+
+    L10：曾经建任务(本函数)用「当天 18:00」、改期用「当天 23:59」两套口径——同一个日期两条路径
+    解析出的时刻差近 6 小时（用户没改日期、截止时刻却漂移，还影响到期提醒扫描）。现统一委托到
+    :func:`_parse_due_to_epoch`（date-only → 当天 23:59，且格式支持更全），只此一套口径。
+    """
+    return _parse_due_to_epoch(str(due or ""))
 
 
 @dataclass
@@ -129,8 +133,10 @@ class Toolbox:
         # 资源存在性校验回调(bot 注入):返回库里现有的 Agent/Skill slug 集合。
         # assemble_team 用它识别"库里没有的资源"并**提醒用户缺口**,而不是静默写进配置后失效
         # (负责人设计:组班资源必须来自库;没有的要提醒,可能需要先到后台添加)。None=跳过校验。
-        self.known_agents: Optional[Callable[[], Set[str]]] = None
-        self.known_skills: Optional[Callable[[], Set[str]]] = None
+        # 可选 for_user 参数:传发起人 id → 只返回其 access 够得到的资源(M2 越权过滤);
+        # 不传 → 全量(无发起人上下文的场景)。
+        self.known_agents: Optional[Callable[..., Set[str]]] = None
+        self.known_skills: Optional[Callable[..., Set[str]]] = None
         # 「群名→room_id」解析用的房名缓存(room_id → (名字, 时间戳);5 分钟 TTL,见 _resolve_room_by_name)
         self._room_name_cache: Dict[str, tuple] = {}
         # 房间类型缓存(room_id → 'ai'/'dm'/'channel';建房标记不变,永久缓存,见 _room_kind)
@@ -1278,7 +1284,9 @@ class Toolbox:
                 r = run_connector(
                     conn, user_input, client=self.client, room_id=ctx.room_id
                 )
-                self._record_workflow_run(slug, platform, ctx, user_input, r)
+                # 落账必须用与预约**同一个** skey（含 slug），否则查不到上面 _reserve 建的 queued
+                # 占位、会另插一行，占位永不结清 → 1 小时后被遗孤回收误报"提交队列中断"（#5）。
+                self._record_workflow_run(slug, platform, ctx, user_input, r, source_key=skey)
                 if not r.get("ok"):
                     self.client.send_text(
                         ctx.room_id, f"⚠️ 工作流「{name}」执行失败：{r.get('error')}"
@@ -1446,7 +1454,8 @@ class Toolbox:
                         city=args.get("city") or "",
                         level=args.get("level") or "",
                         perf_rating=args.get("perf_rating") or "",
-                        limit=int(args.get("top_n") or 60),
+                        # 工具喂模型上下文，top_n 夹到 60 上限（页面全量走 handle_hr_employees，L13）
+                        limit=min(int(args.get("top_n") or 60), 60),
                     )
                     data = {
                         "查询": "花名册",
@@ -1601,7 +1610,11 @@ class Toolbox:
             tid = int(args.get("task_id"))
         except (TypeError, ValueError):
             return "请给出要更新的任务编号 task_id（先用 list_room_tasks 拿编号）。"
-        status = (args.get("status") or "").strip() or None
+        # 状态白名单 + 同义词归一化（M6）：非法值直接拒绝，绝不透传给 task_repo 被静默丢弃、
+        # 却回一句"已更新→<非法值>"的假成功（模型/用户会以为改成功了）。
+        status = _normalize_task_status(args.get("status"))
+        if status is not None and status not in _TASK_STATUSES:
+            return "任务状态只能是 待办(todo)/进行中(doing)/已完成(done) 之一，请用其中之一。"
         result = args.get("result")
         progress = args.get("progress")
         # 截止日期：没给这个键=不动;给了(含空串)=改期。空串→清除(None);否则解析日期→epoch 秒。
@@ -1646,13 +1659,36 @@ class Toolbox:
             logger.exception("更新任务失败")
             return "更新任务失败（数据库不可用？）。"
 
+    def _can_archive(self, ctx: ToolContext) -> bool:
+        """能否归档本频道（L9）：平台管理员 或 本频道管理员(power≥50)。读不到权限→False(拒绝)。"""
+        try:
+            if self.is_admin and self.is_admin(ctx.sender):
+                return True
+            pl = self.client.get_state_event(ctx.room_id, "m.room.power_levels") or {}
+            users = pl.get("users") if isinstance(pl, dict) else None
+            users = users if isinstance(users, dict) else {}
+            default = int(pl.get("users_default", 0) or 0) if isinstance(pl, dict) else 0
+            return int(users.get(ctx.sender, default) or 0) >= 50
+        except Exception:
+            logger.debug("归档授权读取失败（拒绝）", exc_info=True)
+            return False
+
     def _tool_archive_project(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         """归档收尾本专班（模块3.5 收尾）：存归档记录 → 清频道长期记忆 → 贴收尾通知。
 
         把整盘项目落成一条 ProjectArchive（总目标+任务快照+收尾摘要），然后清掉本频道的
         滚动长期记忆（项目已结，不再占记忆），再写一个『已归档』state 标记 + 在群里贴通知。
         越权防护：只归档「本频道」的任务。绝不抛异常。
+
+        L9 授权：清长期记忆是**不可逆**的破坏性收尾，绝不能让频道内任意普通成员一句话触发。
+        只有频道管理员（power≥50；assemble_team 已把发起人设为 100）或平台管理员能做。
         """
+        # L9：破坏性动作前置授权，读不到权限一律拒绝（fail-closed）
+        if not self._can_archive(ctx):
+            return (
+                "归档会清空本频道的长期记忆（不可逆），属项目收尾动作，只有频道管理员/项目负责人"
+                "能操作。如确需归档，请让频道管理员来做。"
+            )
         summary = (args.get("summary") or "").strip()
         try:
             from cosmac.db import session_scope
@@ -1766,9 +1802,11 @@ class Toolbox:
         # —— 资源存在性校验(不能静默失效):模型给的 Agent/Skill 必须真在库里 ——
         # 不在库里的:从绑定清单剔除(防写进配置后查无此物、悄悄不生效),并收集进 missing
         # 提醒用户"缺什么、去哪补"。校验回调未注入/失败 → 跳过校验(优雅降级,绝不挡组班)。
+        # M2 越权：按**发起人 access** 过滤可见资源——发起人够不到的受限智能体/技能不在集合里，
+        # 点名它当 lead/worker/skill 会被下面当"缺口"剔除，绝不注入其付费人设/技能正文。
         missing: List[str] = []
         try:
-            known_a = self.known_agents() if self.known_agents else None
+            known_a = self.known_agents(ctx.sender) if self.known_agents else None
         except Exception:
             known_a = None
         if known_a is not None:
@@ -1780,7 +1818,7 @@ class Toolbox:
                 missing.append("协作AI:" + "、".join(bad_w))
                 workers = [w for w in workers if w in known_a]
         try:
-            known_s = self.known_skills() if self.known_skills else None
+            known_s = self.known_skills(ctx.sender) if self.known_skills else None
         except Exception:
             known_s = None
         if known_s is not None:
@@ -1855,7 +1893,16 @@ class Toolbox:
         if kb_scopes:
             content["kbScopes"] = kb_scopes
 
-        self.client.set_state_event(room_id, CHANNEL_CONFIG_EVENT_TYPE, content)
+        # M7：频道配置写入结果不能吞——写失败时人设/任务RULE/技能/kbScopes 全没生效，专班"裸奔"，
+        # 绝不能在开班消息里照样宣称"已设RULE/已绑技能"。捕获成功与否，下面据实汇报。
+        config_ok = True
+        try:
+            config_ok = bool(
+                self.client.set_state_event(room_id, CHANNEL_CONFIG_EVENT_TYPE, content)
+            )
+        except Exception:
+            logger.exception("写专班频道配置失败（M7）")
+            config_ok = False
 
         # 派任务卡进这个专班（作用域 = 新频道）
         n_tasks = 0
@@ -1887,15 +1934,22 @@ class Toolbox:
             parts.append("已邀请：" + "、".join(invited))
         if failed:
             parts.append("未邀到（账号可能不存在）：" + "、".join(failed))
-        parts.append(f"项目主AI：{lead}" if lead else "项目主AI：内置编排人设")
-        if workers:
-            parts.append("AI 协作：" + "、".join(workers))
-        if kb_labels:
-            parts.append("已把知识库调进本频道（全体成员/AI 可检索）：" + "、".join(kb_labels))
-        if task_rule:
+        if config_ok:
+            # 只有频道配置真写进去了，才宣称人设/协作/知识库/RULE 已生效（M7）
+            parts.append(f"项目主AI：{lead}" if lead else "项目主AI：内置编排人设")
+            if workers:
+                parts.append("AI 协作：" + "、".join(workers))
+            if kb_labels:
+                parts.append("已把知识库调进本频道（全体成员/AI 可检索）：" + "、".join(kb_labels))
+            if task_rule:
+                parts.append(
+                    "已设本专班任务约束（RULE，自动生成的基础版——要调整随时告诉我）。"
+                    if auto_rule else "已按你的要求设定本专班任务约束（RULE）。"
+                )
+        else:
             parts.append(
-                "已设本专班任务约束（RULE，自动生成的基础版——要调整随时告诉我）。"
-                if auto_rule else "已按你的要求设定本专班任务约束（RULE）。"
+                "⚠️ 频道已建、成员已邀，但**频道配置写入失败**——人设/任务约束(RULE)/技能/知识库"
+                "这次没能绑上。请对我说「给这个频道重新绑定…」重试，或到频道管理里手动设置。"
             )
         if missing:
             parts.append(
@@ -1904,7 +1958,12 @@ class Toolbox:
             )
         if n_tasks:
             parts.append(f"已派 {n_tasks} 个任务，详见任务看板。")
-        self.client.send_text(room_id, "\n".join(parts))
+        # M7：开班消息发送包异常——此刻房间已建、配额已扣、任务已派，绝不能因发消息网络错让异常
+        # 穿透到 execute()→模型收到"工具出错请重试"→撞名再建一个专班、任务重复派、配额二次扣。
+        try:
+            self.client.send_text(room_id, "\n".join(parts))
+        except Exception:
+            logger.debug("发送开班消息失败（忽略，专班已建成）", exc_info=True)
 
         # 让客户端把这个专班挂进用户**当前工作区**：bot 不在用户的 Space、没权限写 m.space.child；
         # 客户端在 Space 里有权限，收到这张信号卡会自动 join 新专班 + 挂到当前工作区，使其显示在频道树。
@@ -1923,17 +1982,25 @@ class Toolbox:
         summary = [f"已建好专班「{channel_name}」{rename_note}(room_id={room_id})，邀到 {len(invited)} 人"]
         if failed:
             summary.append(f"{len(failed)} 人没邀到（{('、'.join(failed))}，账号可能不存在）")
-        summary.append(f"项目主AI={lead}" if lead else "项目主AI=内置编排人设")
-        if workers:
-            summary.append(f"协作Agent {len(workers)} 个")
-        if skills:
-            summary.append(f"技能 {len(skills)} 个")
-        if kb_scopes:
-            summary.append(f"知识库 {len(kb_scopes)} 个已绑进频道")
-        summary.append(
-            ("已设任务RULE（自动生成的基础版，可按需修改）" if auto_rule else "已按你的要求设任务RULE")
-            if task_rule else "无任务RULE"
-        )
+        if not config_ok:
+            # M7：配置写失败——如实告知模型，避免它转述"已绑好人设/RULE/技能"误导用户；且明确
+            # 房间已建、别再调 assemble_team 重建（会重复建房/重复派单/配额二次扣）。
+            summary.append(
+                "但频道配置(人设/RULE/技能/知识库)写入失败、未生效——请转告用户可说"
+                f"「给频道 {room_id} 重新绑定…」重试，**切勿重新建专班**（房间已建好）"
+            )
+        else:
+            summary.append(f"项目主AI={lead}" if lead else "项目主AI=内置编排人设")
+            if workers:
+                summary.append(f"协作Agent {len(workers)} 个")
+            if skills:
+                summary.append(f"技能 {len(skills)} 个")
+            if kb_scopes:
+                summary.append(f"知识库 {len(kb_scopes)} 个已绑进频道")
+            summary.append(
+                ("已设任务RULE（自动生成的基础版，可按需修改）" if auto_rule else "已按你的要求设任务RULE")
+                if task_rule else "无任务RULE"
+            )
         summary.append(f"派 {n_tasks} 个任务" if n_tasks else "暂未派任务")
         if missing:
             summary.append(
@@ -1942,8 +2009,15 @@ class Toolbox:
             )
         return "；".join(summary) + "。"
 
-    def _record_workflow_run(self, slug, platform, ctx, user_input, result) -> None:
-        """尽力把运行记录落库；DB 不可用就跳过（不影响已拿到的结果）。"""
+    def _record_workflow_run(
+        self, slug, platform, ctx, user_input, result, source_key: str = ""
+    ) -> None:
+        """尽力把运行记录落库；DB 不可用就跳过（不影响已拿到的结果）。
+
+        ``source_key``：必须与本次运行 _reserve_workflow_source 用的键**完全一致**（同步后台路径
+        传 ``event:<id>:ai:<slug>``），record_run 才能命中并结清那条 queued 占位（#5）。不传则按
+        无来源键处理（直接插一行，不做去重）。
+        """
         try:
             from cosmac.db import session_scope
             from cosmac.db.wf_repo import record_run
@@ -1952,7 +2026,7 @@ class Toolbox:
                 record_run(
                     s, slug=slug, platform=platform, room_id=ctx.room_id,
                     sender=ctx.sender, user_input=user_input, result=result,
-                    source_key=ctx.source_key,
+                    source_key=source_key,
                 )
         except Exception:
             # 运行记录丢失不影响已拿到的结果，但要留痕，否则"为什么没有运行记录"无从排查。

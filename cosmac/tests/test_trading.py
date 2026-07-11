@@ -194,6 +194,50 @@ class OrderServiceTests(unittest.TestCase):
         res = self.svc.on_payment_success(o2["order_no"], now_ts=t0 + 10 * DAY)
         self.assertEqual(res["expires_ts"], t0 + 60 * DAY)
 
+    def test_create_order_rejects_downgrade_purchase(self):
+        # #2 资损修复：创作者会员不允许下单更低档的付费套餐（避免支付后被降级清零）。
+        t0 = 1_700_000_000
+        self.svc._members.grant(ALICE, "creator", source="admin", now_ts=t0)
+        with self.assertRaises(OrderError):
+            self.svc.create_order(user_id=ALICE, plan_slug="paid-monthly", currency="usd")
+        # 会员没被动过，仍是创作者
+        self.assertEqual(active_tier(self.svc._members.get_record(ALICE), t0), "creator")
+
+    def test_payment_does_not_downgrade_on_race(self):
+        # #2 防御：下单时是免费(放行)，支付前被管理员升到创作者，支付成功不得降级为 paid。
+        t0 = 1_700_000_000
+        out = self.svc.create_order(user_id=ALICE, plan_slug="paid-monthly", currency="usd")
+        self.svc._members.grant(ALICE, "creator", source="admin", now_ts=t0)  # 竞态升级
+        res = self.svc.on_payment_success(out["order_no"], now_ts=t0)
+        self.assertTrue(res.get("kept"))
+        self.assertEqual(res["tier"], "creator")
+        # 仍是创作者（永久），没被降成 paid
+        self.assertEqual(
+            active_tier(self.svc._members.get_record(ALICE), t0 + 999 * DAY), "creator"
+        )
+
+    def test_upgrade_paid_to_creator_allowed(self):
+        # 升级（付费→创作者）应放行、正常开通创作者（确认降级保护没误伤升级）。
+        t0 = 1_700_000_000
+        self.svc._members.grant(ALICE, "paid", source="admin", now_ts=t0)
+        out = self.svc.create_order(user_id=ALICE, plan_slug="creator-year", currency="usd")
+        res = self.svc.on_payment_success(out["order_no"], now_ts=t0)
+        self.assertEqual(res["tier"], "creator")
+        self.assertEqual(res["expires_ts"], t0 + 365 * DAY)
+
+    def test_permanent_membership_not_downgraded_by_purchase(self):
+        # #1 资损修复：管理员授予的永久同档会员（expires_ts=0）购买一单限期套餐后，
+        # 绝不能被改写成"30 天后到期"——保持永久。
+        t0 = 1_700_000_000
+        self.svc._members.grant(ALICE, "paid", source="admin", now_ts=t0)  # 永久
+        out = self.svc.create_order(user_id=ALICE, plan_slug="paid-monthly", currency="usd")
+        res = self.svc.on_payment_success(out["order_no"], now_ts=t0)
+        self.assertEqual(res["expires_ts"], 0)  # 仍是永久（0=永久）
+        # 远期（一年后）依然生效，不会到期回落免费
+        self.assertEqual(
+            active_tier(self.svc._members.get_record(ALICE), t0 + 999 * DAY), "paid"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

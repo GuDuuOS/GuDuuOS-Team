@@ -120,6 +120,9 @@ export function useUserProfile() {
     aiSavedTip,
     loadAiProfile,
     saveAiProfile,
+    // M12：登录/恢复会话完成后由 LiveView 调它，从 account data 回填在线状态——否则 setup 时
+    // session 还没就绪(userId 为空)、presence 不回填，刷新后状态点变回"在线"直到打开设置才纠正。
+    refreshIdentity,
     openSettings: (tab: UserSettingsTab = 'profile') => {
       refreshIdentity()   // 打开设置时按当前账号刷新身份
       settingsTab.value = tab

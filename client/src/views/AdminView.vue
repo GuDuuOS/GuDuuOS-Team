@@ -195,7 +195,8 @@
                 <button
                   v-if="!u.deactivated"
                   class="adm-op danger"
-                  :disabled="u.isBot || busy === u.id"
+                  :disabled="u.isBot || busy === u.id || u.id === currentUserId()"
+                  :title="u.id === currentUserId() ? '不能停用自己' : ''"
                   @click="doDeactivate(u)"
                 >停用</button>
                 <button v-else class="adm-op" :disabled="busy === u.id" @click="doReactivate(u)">
@@ -268,9 +269,13 @@
                 <button class="adm-op" :disabled="roomBusy === r.id" @click="viewMembers(r)">
                   查看成员
                 </button>
-                <button class="adm-op danger" :disabled="roomBusy === r.id" @click="doDeleteRoom(r)">
+                <button
+                  v-if="!isCtrlRoom(r)"
+                  class="adm-op danger" :disabled="roomBusy === r.id" @click="doDeleteRoom(r)"
+                >
                   删除
                 </button>
+                <span v-else class="adm-tag" title="控制室承载全部平台配置，不可删除">🔒 系统</span>
               </td>
             </tr>
             <tr v-if="!rooms.length"><td colspan="4" class="adm-empty">暂无频道</td></tr>
@@ -1433,6 +1438,7 @@ import {
   resetPassword,
   setUserAdmin,
   ensureControlRoomMembership,
+  currentUserId,
   serverName,
   listAdminRooms,
   getRoomMembers,
@@ -1768,6 +1774,12 @@ async function doResetPassword(u: AdminUser) {
 }
 
 async function doDeactivate(u: AdminUser) {
+  // L15：不能停用自己——Synapse 只拦"自我降权"、不拦对自己 /deactivate，唯一管理员停用自己会
+  // 立即掉线且无法登录，后台永久失守（只能上服务器用 admin API 救）。前端直接拦下。
+  if (u.id === currentUserId()) {
+    warn('不能停用自己', '停用自己会立即掉线且无法登录。如需停用，请让另一位管理员操作。')
+    return
+  }
   if (!confirm(`确认停用 ${u.name}？停用后该账号无法登录（可恢复）。`)) return
   busy.value = u.id
   try {
@@ -1888,7 +1900,18 @@ async function reconcileAllCounts() {
   }
 }
 
+// 控制室(#cosmac-ctrl)承载全部平台配置，绝不能删。别名快速判定，供列表隐藏删除按钮 + 早拦。
+// 硬后备在 client.ts deleteRoom（按解析出的 room_id 比对），即便这里漏判也删不掉。
+function isCtrlRoom(r: AdminRoom): boolean {
+  return !!r.alias && r.alias.startsWith('#cosmac-ctrl:')
+}
+
 async function doDeleteRoom(r: AdminRoom) {
+  // 防呆(#11)：控制室删掉=平台全部配置(AI配置/技能/智能体/会员/门控/配额/套餐/模板等)一次性灭失。
+  if (isCtrlRoom(r)) {
+    warn('不可删除', '这是 CosMac 控制室，删除会清空全部平台配置，已阻止。')
+    return
+  }
   // 删除不可逆，二次确认；并询问是否一并封禁（禁止重建/重新加入）
   if (!confirm(`确认删除频道「${r.name}」？\n将踢出所有成员并清除历史，不可恢复。`)) return
   const block = confirm('是否同时【封禁】此频道？\n确定 = 封禁（禁止任何人再加入/重建，用于违规群）\n取消 = 仅删除')
@@ -2474,6 +2497,16 @@ async function persistTemplates(next: OnboardingTemplateDef[], okMsg: string) {
   if (!tpLoaded.value) {
     warn('请先成功加载', '入驻模板尚未加载成功，无法保存（避免覆盖线上配置）')
     throw new Error('模板未加载')
+  }
+  // L14：所有模板合存**一个** state event，Matrix 单事件约 64KB 上限。超了服务器只回晦涩的
+  // M_TOO_LARGE、且此后任何模板增删改都失败。这里提前按字节预检，给可操作的提示、绝不发出去。
+  const bytes = new TextEncoder().encode(JSON.stringify({ templates: next })).length
+  const LIMIT = 60000  // 留余量给事件包裹字段
+  if (bytes > LIMIT) {
+    warn('模板内容过大',
+      `所有入驻模板合计约 ${Math.round(bytes / 1024)}KB，超过约 ${Math.round(LIMIT / 1024)}KB 上限。` +
+      '请精简知识库预置文档(kbDocs 正文)或减少模板数量后再保存。')
+    throw new Error('模板过大')
   }
   tpSaving.value = true
   try {

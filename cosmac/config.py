@@ -232,6 +232,12 @@ GATING_EVENT_TYPE = "cosmac.gating"
 # **密钥绝不进 Matrix**:cred 只是"凭据名"，真值在服务端 env COSMAC_WF_<CRED>（同 LLM key 策略）。
 WORKFLOWS_EVENT_TYPE = "cosmac.workflows"
 
+# 管理后台写的「入驻模板」state event 类型（存控制室；注册引导可选的「方案」）。每个模板打包
+# 模型/人设/RULE/技能/知识库/频道/工作流/所需会员等级。控制室是**私有房**、普通用户读不到，
+# 故首次引导不能像管理员那样直接读控制室 state，必须经 bot 端点 /cosmac/onboarding/templates
+# 代读（bot 是控制室成员）——否则新注册用户永远只看到内置硬编码模板、后台配的模板对其失效（#9）。
+ONBOARDING_TEMPLATES_EVENT_TYPE = "cosmac.onboarding_templates"
+
 # 每个频道(群)自己的配置 state event（前端「频道管理」写，存在该房间里）。
 # 这里 bot 只用到 content.persona：persona.agentSlug（本群绑定的全局智能体）
 # 与 persona.prompt（自定义人设）。与 client.ts 的 CHANNEL_CONFIG_EVENT 一致。

@@ -35,6 +35,7 @@ def _bot() -> CosmacBot:
     bot = CosmacBot(CosmacConfig(llm_provider="echo", server_name="h"))
     bot.client = _C()
     bot._quota_limit = lambda uid, key: -1  # 默认不限,存储管控单测里单独桩
+    bot._gate_allows = lambda *a, **k: True  # 门控另有测试;这里聚焦 CRUD/存储/隔离,放行
     return bot
 
 
@@ -90,6 +91,14 @@ class TestMyStudio(unittest.TestCase):
         self.assertEqual(payload["skills"][0]["slug"], "daily-recap")
         code, _ = self.bot.handle_my_skills_delete("tok", {"slug": "daily-recap"})
         self.assertEqual(code, 200)
+
+    def test_skill_save_enforces_custom_skill_gate(self) -> None:
+        # M3：工坊自建技能端点必须过 custom_skill 门控（与聊天命令同一道闸），门控未过→403
+        self.bot._gate_allows = lambda uid, cap: cap != "custom_skill"  # type: ignore
+        code, _ = self.bot.handle_my_skills_save("tok", {
+            "slug": "x", "name": "x", "description": "d",
+            "instructions": "正文"})
+        self.assertEqual(code, 403)
 
     def test_roster_shows_my_agent_first(self) -> None:
         self.bot.handle_my_agents_save("tok", dict(AGENT))

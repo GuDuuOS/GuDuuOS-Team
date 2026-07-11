@@ -19,8 +19,11 @@ from sqlalchemy.orm import Session
 
 from cosmac.db.models import Employee
 
-# 单次花名册返回上限，防止把整表塞进模型上下文
+# 默认返回上限（供模型工具 query_hr 用，防止把整表塞进上下文；不传 limit 即取它）。
 _MAX_ROWS = 60
+# 绝对硬上限：花名册**页面**(handle_hr_employees)要全量展示，显式传大 limit 时放行到这——
+# 否则超 60 人后列表被静默截断，而 company_summary 统计的是全量，列表与汇总口径打架（L13）。
+_MAX_PAGE_ROWS = 2000
 
 
 def _norm(s: Optional[str]) -> str:
@@ -126,7 +129,8 @@ def list_employees(
     rows = [e for e in rows if _match(e)]
     # 入职日期字符串 YYYY-MM-DD 可直接字典序倒排
     rows.sort(key=lambda e: e.hire_date or "", reverse=True)
-    n = max(1, min(int(limit or _MAX_ROWS), _MAX_ROWS))
+    # 默认 60（工具/上下文）；页面显式传大 limit 时放行到 _MAX_PAGE_ROWS（L13）。
+    n = max(1, min(int(limit or _MAX_ROWS), _MAX_PAGE_ROWS))
     return rows[:n]
 
 

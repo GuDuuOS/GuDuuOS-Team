@@ -72,20 +72,41 @@ class TestTypingIndicator(unittest.TestCase):
         # 确实发了回复（echo 后端会回显）
         self.assertEqual(len(bot.client.sent), 1)
 
-    def test_typing_cleared_even_if_generation_raises(self) -> None:
+    def test_typing_cleared_and_user_notified_if_generation_raises(self) -> None:
         bot = _bot_with_fake()
 
         class Boom:
+            system_prompt = "s"
+
             def run(self, *a, **k):
                 raise RuntimeError("boom")
 
         bot.agent = Boom()  # type: ignore  # 让生成抛异常
         bot._agent_for_model = lambda m: bot.agent  # type: ignore
-        with self.assertRaises(RuntimeError):
-            bot._handle_event(dict(_EVENT))
+        # #7：引擎/LLM 异常被就地兜住，**不再向上抛**（否则事务返回 False → Synapse 重发整批
+        # → 整条 Agent run 重跑 → 已执行的工具副作用重复）。
+        bot._handle_event(dict(_EVENT))
         # 关键：异常路径也必须把"正在输入…"关掉（finally）
         self.assertEqual(bot.client.typing, [("!r:h", True), ("!r:h", False)])
-        self.assertEqual(bot.client.sent, [])  # 没成功发出回复
+        # 用户收到明确失败提示（而非死寂或抛异常）
+        self.assertEqual(len(bot.client.sent), 1)
+        self.assertIn("暂时不可用", bot.client.sent[0][1])
+
+    def test_edit_event_does_not_trigger_reply(self) -> None:
+        # #10：编辑事件(m.replace)不是新消息，AI 不应对"* 新内容"再答一遍。
+        bot = _bot_with_fake()
+        edit_event = {
+            "type": "m.room.message", "sender": "@u:h", "room_id": "!r:h",
+            "event_id": "$edit",
+            "content": {
+                "msgtype": "m.text", "body": "* 新内容",
+                "m.new_content": {"msgtype": "m.text", "body": "新内容"},
+                "m.relates_to": {"rel_type": "m.replace", "event_id": "$orig"},
+            },
+        }
+        bot._handle_event(edit_event)
+        self.assertEqual(bot.client.sent, [])    # 没有任何回复
+        self.assertEqual(bot.client.typing, [])  # 连"正在输入…"都不触发
 
 
 if __name__ == "__main__":
