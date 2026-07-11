@@ -138,7 +138,8 @@ class TestCapabilityRegistry(unittest.TestCase):
         out = _bot({})._list_capabilities_for_tool(ToolContext("!r:h", "@u:h"))
         self.assertIn("AI Agent", out)
         self.assertIn("copywriter", out)  # 预置之一：文案
-        self.assertNotIn("空", out)        # 不再是"空名册"
+        # 不再是"空名册"(别用单字"空"断言——引入的智能体描述里"空间格局"等词会误伤)
+        self.assertNotIn("能力名册暂时是空的", out)
 
     def test_people_reader_filters_disabled(self) -> None:
         states = {PEOPLE_EVENT_TYPE: {"people": [

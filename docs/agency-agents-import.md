@@ -121,6 +121,14 @@
 
 ## B · 第二批·可选(按需挑)
 
+> ✅ **第二批已入库 47 个**(2026-07-11):财务 5 全收 + 学术 6 全收(叙事/心理/统计/历史/人类学/地理,
+> 服务内容创作与研究) + 医疗收 1(另 2 个为美国监管框架文档,跳过) + 专项 54 收 35。
+> 专项未入库 19 项:开发向(agentic-identity-trust/agents-orchestrator/lsp-index-engineer/mcp-builder/
+> salesforce-architect/model-qa/identity-graph-operator/civil-engineer)、美国特有(fedramp-rmf-compliance/
+> medical-billing-coding-specialist)、工具绑定型(data-consolidation/sales-data-extraction/
+> report-distribution/document-generator)、重复或过窄(customer-service/healthcare-customer-service/
+> sales-outreach/language-translator/french-consulting-market)。
+
 
 ### 财务 (finance, 5 个)
 
