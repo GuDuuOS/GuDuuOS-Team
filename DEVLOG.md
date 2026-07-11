@@ -1,5 +1,23 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-12 — fix:全量 BUG 排查后修复(第二批·前端+端点 3 项)
+- 承接第一批，收尾 #9~#11(涉及前端 client.ts/AdminView.vue，需 client build + dist 部署)：
+  · **#9 入驻模板对普通用户失效**:模板存**私有控制室**、普通用户读 state 必 403 → 旧前端静默
+    回退内置模板，后台配的模板对新注册用户永不生效。修:新增 bot 端点
+    GET /cosmac/onboarding/templates(bot 是控制室成员、代读并只返回已上架模板)，前端
+    getOnboardingTemplates 改走该端点。新增 config 常量 ONBOARDING_TEMPLATES_EVENT_TYPE。
+  · **#10 编辑消息产生重复消息/重复作答**:matrix-js-sdk 把 m.replace 编辑事件也留在时间线里，
+    其 fallback 正文"* 新内容"被当成新消息。修:前端 listMessages/roomUnreadCount 排除 rel_type=
+    m.replace 的事件(不再重复显示、不污染未读)；后端 _handle_event 跳过 m.replace(AI 会话房不再
+    对编辑再答一遍)。
+  · **#11 频道删除可误删控制室**:后台「频道管理→删除」对控制室无排除，误删则全平台配置一次性
+    灭失、不可恢复。删除走浏览器直连 Synapse admin API(bot 不在链路)，故防呆放前端:client.ts
+    deleteRoom(唯一收口)按解析出的 room_id 硬拦控制室；AdminView doDeleteRoom 早拦 + 列表对控制室
+    隐藏删除按钮(显示「🔒 系统」)。
+- 验证:新增 test_onboarding_templates(4)、test_typing 补编辑不回复(1)；全量 504 项全绿；ruff 通过；
+  client build 通过。
+- **部署:本批含前端，需 git pull + 重启 guduu-bot + `cd client && npm run build` + 覆盖 dist。**
+
 ## 2026-07-12 — fix:全量 BUG 排查后修复(第一批·后端 8 项，含 2 处资损、2 处越权)
 - 背景:对 docs/FEATURES.md 11 大块做并行代码排查，发现约 40 个真实缺陷。按严重度逐个修，
   每项都补回归测试、每步全量跑绿(499 项)，不引入新问题。本批为后端(Python)8 项：

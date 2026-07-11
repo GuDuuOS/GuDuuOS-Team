@@ -268,9 +268,13 @@
                 <button class="adm-op" :disabled="roomBusy === r.id" @click="viewMembers(r)">
                   查看成员
                 </button>
-                <button class="adm-op danger" :disabled="roomBusy === r.id" @click="doDeleteRoom(r)">
+                <button
+                  v-if="!isCtrlRoom(r)"
+                  class="adm-op danger" :disabled="roomBusy === r.id" @click="doDeleteRoom(r)"
+                >
                   删除
                 </button>
+                <span v-else class="adm-tag" title="控制室承载全部平台配置，不可删除">🔒 系统</span>
               </td>
             </tr>
             <tr v-if="!rooms.length"><td colspan="4" class="adm-empty">暂无频道</td></tr>
@@ -1888,7 +1892,18 @@ async function reconcileAllCounts() {
   }
 }
 
+// 控制室(#cosmac-ctrl)承载全部平台配置，绝不能删。别名快速判定，供列表隐藏删除按钮 + 早拦。
+// 硬后备在 client.ts deleteRoom（按解析出的 room_id 比对），即便这里漏判也删不掉。
+function isCtrlRoom(r: AdminRoom): boolean {
+  return !!r.alias && r.alias.startsWith('#cosmac-ctrl:')
+}
+
 async function doDeleteRoom(r: AdminRoom) {
+  // 防呆(#11)：控制室删掉=平台全部配置(AI配置/技能/智能体/会员/门控/配额/套餐/模板等)一次性灭失。
+  if (isCtrlRoom(r)) {
+    warn('不可删除', '这是 CosMac 控制室，删除会清空全部平台配置，已阻止。')
+    return
+  }
   // 删除不可逆，二次确认；并询问是否一并封禁（禁止重建/重新加入）
   if (!confirm(`确认删除频道「${r.name}」？\n将踢出所有成员并清除历史，不可恢复。`)) return
   const block = confirm('是否同时【封禁】此频道？\n确定 = 封禁（禁止任何人再加入/重建，用于违规群）\n取消 = 仅删除')

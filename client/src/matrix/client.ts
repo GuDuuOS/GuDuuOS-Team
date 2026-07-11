@@ -1440,10 +1440,27 @@ export async function getRoomMembers(roomId: string): Promise<string[]> {
  * Synapse 会把所有本服成员踢出、purge 历史。该操作不可逆，调用前务必确认。
  */
 export async function deleteRoom(roomId: string, block = false): Promise<void> {
+  // 防呆(#11)：控制室(#cosmac-ctrl)承载全部平台配置——AI配置/技能/智能体/会员/门控/配额/套餐/
+  // 入驻模板/工作流/页面内容都只存在这一个房间的 state event 里。删掉不可恢复、整个平台瘫痪。
+  // 这里是删除的**唯一收口**，任何入口(含误点)都在此被挡住。
+  if (await isControlRoom(roomId)) {
+    throw new Error('这是 CosMac 控制室，删除会清空全部平台配置，已阻止此操作。')
+  }
   await adminFetch(`/_synapse/admin/v1/rooms/${encodeURIComponent(roomId)}`, {
     method: 'DELETE',
     body: JSON.stringify({ block, purge: true }),
   })
+}
+
+/** 某房间是否是 CosMac 控制室（按别名解析出的 room_id 比对）。解析不到/出错返回 false（不误拦）。 */
+export async function isControlRoom(roomId: string): Promise<boolean> {
+  if (!roomId) return false
+  try {
+    const ctrl = await resolveControlRoom()
+    return !!ctrl && ctrl === roomId
+  } catch {
+    return false
+  }
 }
 
 /* =====================================================================
@@ -2321,14 +2338,21 @@ export interface OnboardingTemplateDef {
   enabled: boolean       // 是否上架（可在引导里被选）
 }
 
-/** 读后台入驻模板列表；控制室/未配置时返回 []。 */
+/** 读后台入驻模板列表（首次引导用）。
+ *
+ * #9：模板存**私有控制室**，普通用户直接读 state 必 403 → 后台配的模板对新注册用户永远失效。
+ * 改走 bot 端点 /cosmac/onboarding/templates（bot 是控制室成员、代读并只返回已上架模板）。
+ * 未登录/未配置/读失败返回 []（调用方据此回退内置模板）。 */
 export async function getOnboardingTemplates(): Promise<OnboardingTemplateDef[]> {
-  if (!mx) return []
-  const rid = await resolveControlRoom()
-  if (!rid) return []
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return []
   try {
-    const ev = await (mx as any).getStateEvent(rid, ONBOARDING_TEMPLATES_EVENT_TYPE, '')
-    const arr = Array.isArray(ev?.templates) ? ev.templates : []
+    const r = await fetch(`${payBase()}/cosmac/onboarding/templates`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return []
+    const j = await r.json().catch(() => ({}))
+    const arr = Array.isArray(j?.templates) ? j.templates : []
     return arr.map((t: any) => ({
       key: String(t?.key || ''),
       label: String(t?.label || ''),
@@ -2346,10 +2370,8 @@ export async function getOnboardingTemplates(): Promise<OnboardingTemplateDef[]>
       tier: String(t?.tier || 'free'),
       enabled: t?.enabled !== false,
     })).filter((t: OnboardingTemplateDef) => t.key && t.label)
-  } catch (e: any) {
-    // 404=未配置→[]；瞬时失败抛，防空列表覆盖真实入驻模板。
-    if (e?.errcode === 'M_NOT_FOUND') return []
-    throw new Error('读取入驻模板失败，请重试')
+  } catch {
+    return []
   }
 }
 
@@ -3074,6 +3096,10 @@ export function listMessages(roomId: string): LiveMsg[] {
     .getLiveTimeline()
     .getEvents()
     .filter((e) => e.getType() === 'm.room.message')
+    // 编辑事件(m.replace)本身也留在时间线里(matrix-js-sdk 不聚合掉它)，其 fallback 正文是
+    // "* 新内容"。原事件已由下面 replacingEvent() 取到最新内容并标 edited，这里必须**排除编辑
+    // 事件本身**，否则消息流会多出一条以"* "开头的重复消息(#10)。
+    .filter((e) => e.getContent()?.['m.relates_to']?.['rel_type'] !== 'm.replace')
     // 已撤回(redacted)的消息 content 为空，跳过 → 不再显示空气泡
     .filter((e) => !(e as any).isRedacted?.() && Object.keys(e.getContent() || {}).length > 0)
     .map((e) => {
@@ -3488,6 +3514,8 @@ function roomUnreadCount(r: any, myId: string): number {
       const ev = events[i]
       if (ev.getId?.() === readUpTo) break   // 到达我已读位，之前的都读过
       if (ev.getType?.() !== 'm.room.message') continue
+      // 编辑事件(m.replace)不是新消息，不该计入未读——否则对方编辑一条旧消息就让红点+1(#10)
+      if (ev.getContent?.()?.['m.relates_to']?.['rel_type'] === 'm.replace') continue
       if (ev.getSender?.() === myId) continue // 自己发的不算未读
       count++
     }

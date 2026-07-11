@@ -92,6 +92,22 @@ class TestTypingIndicator(unittest.TestCase):
         self.assertEqual(len(bot.client.sent), 1)
         self.assertIn("暂时不可用", bot.client.sent[0][1])
 
+    def test_edit_event_does_not_trigger_reply(self) -> None:
+        # #10：编辑事件(m.replace)不是新消息，AI 不应对"* 新内容"再答一遍。
+        bot = _bot_with_fake()
+        edit_event = {
+            "type": "m.room.message", "sender": "@u:h", "room_id": "!r:h",
+            "event_id": "$edit",
+            "content": {
+                "msgtype": "m.text", "body": "* 新内容",
+                "m.new_content": {"msgtype": "m.text", "body": "新内容"},
+                "m.relates_to": {"rel_type": "m.replace", "event_id": "$orig"},
+            },
+        }
+        bot._handle_event(edit_event)
+        self.assertEqual(bot.client.sent, [])    # 没有任何回复
+        self.assertEqual(bot.client.typing, [])  # 连"正在输入…"都不触发
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -37,6 +37,7 @@ from cosmac.config import (
     AI_CONFIG_EVENT_TYPE,
     CHANNEL_CONFIG_EVENT_TYPE,
     CONTROL_ADMINS_EVENT_TYPE,
+    ONBOARDING_TEMPLATES_EVENT_TYPE,
     PEOPLE_EVENT_TYPE,
     RULES_EVENT_TYPE,
     SKILLS_EVENT_TYPE,
@@ -445,6 +446,11 @@ class CosmacBot:
             content = event.get("content", {})
             if content.get("msgtype") != "m.text":
                 return  # 第一步只处理纯文本，图片/文件等以后再说
+            # 编辑事件(m.replace)不是新消息：AI 会话房/私聊对每条 m.text 都回，若不排除，用户编辑
+            # 一次自己发过的消息，bot 会对 fallback 正文"* 新内容"再答一遍(#10)。编辑不触发新回复。
+            relates = content.get("m.relates_to")
+            if isinstance(relates, dict) and relates.get("rel_type") == "m.replace":
+                return
             user_text = content.get("body", "")
 
             # 私聊（仅用户+主AI，≤2人）里对每句话都回；
@@ -3536,6 +3542,62 @@ class CosmacBot:
 
     # —— 个人协作人能力名册（模块3.5：普通用户在前台维护，按 owner=本人 隔离）——
 
+    def handle_onboarding_templates(
+        self, access_token: str
+    ) -> Tuple[int, Dict[str, Any]]:
+        """列出后台配置的**已上架**入驻模板，供首次引导读取。需登录。
+
+        #9：模板存**私有控制室** state event，普通用户读控制室必 403 → 旧前端直接读控制室失败、
+        静默回退内置硬编码模板，后台精心配的模板对真实注册用户永不生效。这里由 bot（控制室成员）
+        代读并只返回 ``enabled`` 的模板。best-effort：控制室不存在/读失败一律返回空列表（前端据此
+        回退内置模板，不报错打断引导）。返回字段与前端 OnboardingTemplateDef 对齐。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        try:
+            ctrl = self.client.resolve_alias(self.config.control_room_alias)
+            if not ctrl:
+                return 200, {"templates": []}
+            ev = self.client.get_state_event(ctrl, ONBOARDING_TEMPLATES_EVENT_TYPE) or {}
+        except Exception:
+            logger.debug("读取入驻模板失败（按空处理）", exc_info=True)
+            return 200, {"templates": []}
+        raw = ev.get("templates") if isinstance(ev, dict) else None
+        out: List[Dict[str, Any]] = []
+        for t in (raw or []):
+            if not isinstance(t, dict):
+                continue
+            if t.get("enabled") is False:  # 只给引导已上架的模板
+                continue
+            key = str(t.get("key") or "").strip()
+            label = str(t.get("label") or "").strip()
+            if not key or not label:  # 缺关键字段的脏数据丢弃
+                continue
+            kb_docs = []
+            for d in (t.get("kbDocs") or []):
+                if isinstance(d, dict):
+                    kb_docs.append({
+                        "title": str(d.get("title") or ""),
+                        "content": str(d.get("content") or ""),
+                    })
+            out.append({
+                "key": key,
+                "label": label,
+                "icon": str(t.get("icon") or "🧩"),
+                "desc": str(t.get("desc") or ""),
+                "model": str(t.get("model") or ""),
+                "persona": str(t.get("persona") or ""),
+                "rules": str(t.get("rules") or ""),
+                "skillSlugs": [str(x) for x in (t.get("skillSlugs") or [])],
+                "kbDocs": kb_docs,
+                "channels": [str(x) for x in (t.get("channels") or [])],
+                "workflowSlugs": [str(x) for x in (t.get("workflowSlugs") or [])],
+                "tier": str(t.get("tier") or "free"),
+                "enabled": True,
+            })
+        return 200, {"templates": out}
+
     def handle_onboarding_select(
         self, access_token: str, body: Dict[str, Any]
     ) -> Tuple[int, Dict[str, Any]]:
@@ -4855,6 +4917,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "无效页面 id"}, cors=True)
                 return
             code, payload = self.bot.handle_doc_page(token, page_id)
+            self._send_json(code, payload, cors=True)
+            return
+        # 入驻模板列表（首次引导读；bot 代读私有控制室，普通用户读不到 state，#9）
+        if self.path.split("?", 1)[0] == "/cosmac/onboarding/templates":
+            code, payload = self.bot.handle_onboarding_templates(self._bearer())
             self._send_json(code, payload, cors=True)
             return
         # 内置预置技能库（后台技能库页展示；代码内置，读控制室看不到）
