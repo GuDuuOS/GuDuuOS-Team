@@ -105,9 +105,19 @@ PRESET_AGENTS: List[Dict[str, Any]] = [
 
 
 def preset_agents() -> List[Dict[str, Any]]:
-    """返回预置 Agent 的**副本列表**（带规范字段），避免调用方改到模块级常量。"""
+    """返回预置 Agent 的**副本列表**（带规范字段），避免调用方改到模块级常量。
+
+    = 原生班底(PRESET_AGENTS) + agency-agents 引入库(agency_agents.py,分批扩充中)。
+    slug 冲突以原生班底为准(它们绑了预置技能、精调过);合并后仍受"控制室同 slug 覆盖/停用"总规则管。
+    """
+    from cosmac.ai.agency_agents import agency_agents
+
     out: List[Dict[str, Any]] = []
-    for a in PRESET_AGENTS:
+    seen: set = set()
+    for a in list(PRESET_AGENTS) + agency_agents():
+        if a["slug"] in seen:
+            continue
+        seen.add(a["slug"])
         out.append({
             "slug": a["slug"],
             "name": a.get("name", ""),
@@ -115,6 +125,7 @@ def preset_agents() -> List[Dict[str, Any]]:
             "system_prompt": a.get("system_prompt", ""),
             "model": a.get("model", ""),
             "skill_slugs": list(a.get("skill_slugs", [])),
+            "division": a.get("division", ""),  # 分组展示用(原生班底无此字段=通用班底)
             "enabled": True,
             "preset": True,  # 标记来源，便于前端/调试区分内置 vs 后台配置
         })

@@ -1370,10 +1370,14 @@ class CosmacBot:
             agents = []
         if agents:
             lines.append("— AI Agent（可绑进专班/派活）—")
-            for a in agents[:50]:
+            # 上限 200(引入 agency 预置后 80+ 个,50 会漏);描述截 60 字防工具输出膨胀——
+            # 名册只要"够 AI 选对人",完整人设在被指派/@ 时才注入。
+            for a in agents[:200]:
                 slug = str(a.get("slug") or "").strip()
                 name = str(a.get("name") or "").strip()
                 desc = str(a.get("description") or "").strip()
+                if len(desc) > 60:
+                    desc = desc[:60] + "…"
                 skills = a.get("skill_slugs") or []
                 seg = f"{slug}" + (f"（{name}）" if name else "")
                 if desc:
@@ -3362,6 +3366,19 @@ class CosmacBot:
             logger.exception("记录用户入驻模板失败")
             return 500, {"error": "记录失败"}
 
+    def handle_preset_agents(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """列出**内置预置 Agent 库**(原生班底+agency 引入,给后台「智能体」页展示)。
+
+        需登录。代码内置、前端读控制室看不到它们;后台想改/停用某个 → 同 slug 在「智能体」页
+        新建一条即可覆盖(合并规则见 _global_agent_items)。带 division 供分组展示。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        from cosmac.ai.presets import preset_agents
+
+        return 200, {"agents": preset_agents()}
+
     def handle_preset_skills(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """列出**内置预置技能库**(给后台技能库页展示;代码内置,前端读控制室看不到它们)。
 
@@ -4257,6 +4274,7 @@ class _Handler(BaseHTTPRequestHandler):
                 or p.startswith("/cosmac/onboard/")
                 or p.startswith("/cosmac/onboarding/")
                 or p.startswith("/cosmac/skills/")
+                or p.startswith("/cosmac/agents/")
                 or p.startswith("/cosmac/kb/")
                 or p.startswith("/cosmac/platform-kb/")
                 or p.startswith("/cosmac/people/")
@@ -4435,6 +4453,12 @@ class _Handler(BaseHTTPRequestHandler):
             auth = self.headers.get("Authorization", "")
             token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
             code, payload = self.bot.handle_preset_skills(token)
+            self._send_json(code, payload, cors=True)
+            return
+        # 内置预置 Agent 库(后台「智能体」页展示;同 slug 后台新建可覆盖)
+        if self.path.split("?", 1)[0] == "/cosmac/agents/presets":
+            token = self._bearer()
+            code, payload = self.bot.handle_preset_agents(token)
             self._send_json(code, payload, cors=True)
             return
         # 平台共享知识库列表（后台页，仅管理员）

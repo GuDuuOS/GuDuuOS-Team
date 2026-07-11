@@ -590,6 +590,35 @@
               </tr>
             </tbody>
           </table>
+
+          <!-- 预置智能体库（平台内置：原生班底 + agency 引入·已中文化；同标识新建即覆盖）-->
+          <div v-if="presetAgents.length" class="adm-preset-block">
+            <div class="adm-preset-h">
+              <span>🎭 预置智能体库（{{ presetAgents.length }}）</span>
+              <span class="adm-preset-sub">平台内置 · 主 AI 拆任务名册可见、可直接指派/@ · 要改哪个点「覆盖为自定义」，同标识保存后以你的为准</span>
+            </div>
+            <table class="adm-table">
+              <thead>
+                <tr><th>分组</th><th>标识</th><th>名称</th><th>备注（用户与主 AI 都看这个）</th><th>操作</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="a in presetAgentsSorted" :key="'pa-' + a.slug">
+                  <td class="adm-nowrap">{{ a.division || '通用班底' }}</td>
+                  <td class="adm-nowrap"><code>{{ a.slug }}</code></td>
+                  <td class="adm-nowrap">
+                    {{ a.name || '—' }}
+                    <span v-if="agOverriddenSlugs.has(a.slug)" class="adm-badge" title="已在上方自定义覆盖">已自定义</span>
+                  </td>
+                  <td class="adm-skill-desc">{{ a.description || '—' }}</td>
+                  <td class="adm-row-actions">
+                    <button class="adm-btn ghost sm" :disabled="agSaving || agOverriddenSlugs.has(a.slug)" @click="overridePresetAgent(a)">
+                      {{ agOverriddenSlugs.has(a.slug) ? '已覆盖' : '覆盖为自定义' }}
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </template>
 
@@ -1450,6 +1479,7 @@ import {
   AI_TOOL_CATALOG,
   AI_PROVIDERS,
   botId,
+  getPresetAgents,
   fetchSitePage,
   setSitePages,
   type SitePage,
@@ -2128,13 +2158,41 @@ function switchToAgents() {
 async function loadAgents() {
   agLoading.value = true
   try {
-    agents.value = await getGlobalAgents()
+    // 并行:控制室智能体(可编辑) + 内置预置库(只读展示,含 agency 引入)。预置失败不阻断主列表。
+    const [custom, presets] = await Promise.all([
+      getGlobalAgents(),
+      getPresetAgents().catch(() => [] as GlobalAgent[]),
+    ])
+    agents.value = custom
+    presetAgents.value = presets
     agLoaded.value = true
   } catch (e: any) {
     warn('加载失败', e?.message || '无法读取智能体')
   } finally {
     agLoading.value = false
   }
+}
+
+// —— 内置预置 Agent 库(只读展示;同 slug 在上面新建即覆盖,合并规则在 bot 侧) ——
+const presetAgents = ref<GlobalAgent[]>([])
+// 后台已自定义(覆盖)的 slug 集合:预置行标「已自定义」并禁用覆盖按钮
+const agOverriddenSlugs = computed(() => new Set(agents.value.map((a) => a.slug)))
+// 按分组排序展示(通用班底在前,其余按分组名聚拢)
+const presetAgentsSorted = computed(() =>
+  [...presetAgents.value].sort((a, b) =>
+    (a.division || '').localeCompare(b.division || '', 'zh') || a.slug.localeCompare(b.slug)),
+)
+/** 把某个预置 Agent 拷进编辑器改成自定义(保存后同 slug 覆盖预置) */
+function overridePresetAgent(a: GlobalAgent) {
+  Object.assign(agForm, {
+    slug: a.slug, name: a.name, description: a.description,
+    system_prompt: a.system_prompt, model: a.model || '',
+    skill_slugs: [...(a.skill_slugs || [])], enabled: true, access: '', _isEdit: false,
+  })
+  agAccessKind.value = ''
+  agAccessTpls.value = []
+  if (!tpLoaded.value) loadTemplates()
+  agEditing.value = true
 }
 
 function startAddAgent() {

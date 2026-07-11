@@ -96,8 +96,10 @@ class TestCapabilityRegistry(unittest.TestCase):
              "expertise": "小红书种草", "enabled": True},
         ]}}
         out = _bot(states)._list_capabilities_for_tool(ToolContext("!r:h", "@u:h"))
-        self.assertIn("后勤工作支持", out)      # 个人备注生效
-        self.assertNotIn("小红书种草", out)     # 平台值被覆盖,不再重复出现
+        # 只看「真人」段(AI Agent 段里引入的预置智能体描述可能恰好含同词,别误伤)
+        people_section = out.split("— AI Agent")[0]
+        self.assertIn("后勤工作支持", people_section)      # 个人备注生效
+        self.assertNotIn("小红书种草", people_section)     # 平台值被覆盖,不再重复出现
 
     def test_global_applies_when_no_personal_record(self) -> None:
         # 没写个人备注的其他用户,照常看到平台预设

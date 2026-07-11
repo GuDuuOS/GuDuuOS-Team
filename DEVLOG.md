@@ -1,5 +1,21 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-11 — feat:agency-agents 第一批 75 个预置智能体入库(A档·中文化)
+- 负责人拍板引入 msitarzewski/agency-agents(MIT,230+),流程:清单归类→分批中文化入库。
+  清单见 docs/agency-agents-import.md;本批=A档 75 个(营销36/付费投放7/销售9/产品5/客服支持5/
+  项目管理5/设计8;剔除 strategy 3 个非Agent文档与 4 个开发向)。
+- 实现:
+  · cosmac/ai/agency_agents.py:每个=slug+中文名+**中文备注**(description,用户与主AI都靠它理解
+    "这是干嘛的/何时找它")+浓缩中文人设(角色/擅长/工作方式/输出四要素;原库200+行,浓缩防上下文爆)。
+  · presets.preset_agents() 合并(原生班底优先,slug 冲突以原生为准);沿用"控制室同 slug 覆盖/停用"
+    总规则→后台可改可停。
+  · 能力名册 Agent 段:上限 50→200(83 个预置不再被截断),描述截 60 字防工具输出膨胀。
+  · 新端点 GET /cosmac/agents/presets + 后台「智能体」页新增"预置智能体库"区(按分组展示,
+    「覆盖为自定义」一键拷进编辑器,已覆盖的标记)。
+- 验证:test_agency_agents 5 项(字段齐全且中文/slug唯一不冲突/合并/enabled/名册可见不截断);
+  test_capabilities 一处断言收窄到真人段(引入的智能体描述撞词误伤);全量 465 仅剩 3 个既有无关失败。
+- **部署:git pull + 重启 guduu-bot(预置库+端点) + 覆盖 dist(后台展示)。**
+
 ## 2026-07-11 — feat:注册页「帮助/隐私政策」站内页 + 后台「页面内容」编辑
 - 现象:负责人报注册页【隐私】【帮助】跳到 Cloudflare——那是 **Turnstile 人机验证组件自带**的
   "隐私·条款"链接(指向 Cloudflare,组件的一部分,改不了)。我们的客户端此前根本没有自己的

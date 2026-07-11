@@ -2107,6 +2107,23 @@ export interface GlobalAgent {
   enabled: boolean
   /** 可用范围(同 GlobalSkill.access):''=所有人;paid/creator=等级及以上;admin;tpl:slug列表。 */
   access?: string
+  /** 预置库专用:true=平台内置(代码);division=分组(营销/销售…,空=通用班底)。 */
+  preset?: boolean
+  division?: string
+}
+
+/** 列内置预置 Agent 库(原生班底+agency 引入,后台「智能体」页只读展示)。失败返回 []。 */
+export async function getPresetAgents(): Promise<GlobalAgent[]> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return []
+  try {
+    const r = await fetch(`${payBase()}/cosmac/agents/presets`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return []
+    const j = await r.json().catch(() => ({}))
+    return Array.isArray(j?.agents) ? j.agents : []
+  } catch { return [] }
 }
 
 /** 读全局智能体列表（控制室 state event）；房间/事件不存在时返回 []。 */

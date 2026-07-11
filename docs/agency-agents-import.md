@@ -7,6 +7,11 @@
 
 ## A · 第一批·强对口(营销/销售/产品/设计/支持/项管/策略)
 
+> ✅ **第一批已入库 75 个**(2026-07-11,代码见 cosmac/ai/agency_agents.py,后台「智能体→预置智能体库」可见,
+> 同 slug 新建即可覆盖)。A 档未入库 5 项:strategy 3 个文件(是文档不是 Agent)、
+> Infrastructure Maintainer / Jira Workflow Steward / Senior Project Manager / UX Architect(开发向,按 C 口径不引入)。
+> 下一批:B 档(财务/专项杂类中的通用商务类/学术/医疗)按需推进。
+
 
 ### 营销 (marketing, 36 个)
 
