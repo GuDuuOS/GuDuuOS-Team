@@ -26,14 +26,17 @@
     <!-- 音频：内嵌播放器 -->
     <audio v-else-if="att.kind === 'audio'" class="att-audio" :src="src" controls preload="metadata" />
 
-    <!-- 文件：下载卡片（object URL + download 属性直接存盘） -->
-    <a v-else class="att-file" :href="src" :download="att.name" :title="att.name">
+    <!-- 文件：可在线预览的(PDF/文本类)点击新标签打开浏览器内置查看器;其余(Office/压缩包等
+         浏览器渲染不了)保持点击下载。预览页里浏览器自带"下载"按钮,不另占一个位。 -->
+    <a v-else class="att-file" :href="src" :download="previewable ? undefined : att.name"
+       :target="previewable ? '_blank' : undefined" rel="noopener"
+       :title="previewable ? att.name : `${att.name}（此格式暂不支持在线预览）`">
       <span class="att-file-ic">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
       </span>
       <span class="att-file-meta">
         <span class="att-file-name">{{ att.name }}</span>
-        <span class="att-file-size">{{ sizeText }} · 点击下载</span>
+        <span class="att-file-size">{{ sizeText }} · {{ previewable ? '点击在线预览' : '点击下载' }}</span>
       </span>
     </a>
   </div>
@@ -51,6 +54,20 @@ const failed = ref(false)
 let objUrl = ''   // 若解析出的是 blob object URL，卸载时回收
 
 const kindLabel = computed(() => ({ image: '图片', video: '视频', audio: '音频', file: '文件' }[props.att.kind] || '文件'))
+
+// 可在线预览的类型:PDF(浏览器内置查看器) + 文本类(txt/md/csv/json/log…按纯文本内联显示)。
+// Office(doc/pptx/xlsx)浏览器渲染不了——公网 viewer 拿不到我们的认证媒体,自托管 OnlyOffice 是
+// 后话——先老实标"点击下载"。text/html 刻意**不**按 html 预览(blob 与本页同源,渲染用户上传的
+// HTML 会执行其脚本=XSS),统一降级为纯文本。
+const mime = computed(() => (props.att.mimetype || '').toLowerCase())
+const previewable = computed(() =>
+  props.att.kind === 'file'
+  && (mime.value === 'application/pdf' || mime.value.startsWith('text/') || mime.value === 'application/json'))
+/** 预览时喂给 blob 的 MIME:PDF 原样;文本类一律 text/plain(必内联显示,且杜绝 html 脚本执行) */
+function previewMime(): string | undefined {
+  if (!previewable.value) return props.att.mimetype
+  return mime.value === 'application/pdf' ? 'application/pdf' : 'text/plain'
+}
 const sizeText = computed(() => {
   const n = props.att.size || 0
   if (!n) return ''
@@ -67,7 +84,7 @@ async function load(mxc: string) {
   revoke()
   loading.value = true; failed.value = false; src.value = ''
   try {
-    const url = await mxcToObjectUrl(mxc)
+    const url = await mxcToObjectUrl(mxc, previewMime())
     if (!url) { failed.value = true; return }
     if (url.startsWith('blob:')) objUrl = url
     src.value = url

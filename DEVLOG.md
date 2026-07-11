@@ -1,5 +1,18 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-11 — feat:聊天附件 PDF/文本在线预览(不必下载)
+- 现象:频道/私信里的文件只能下载后查看。
+- 修(纯前端):
+  · mxcToObjectUrl 加可选 mime 参——服务器常回 application/octet-stream,不校正 MIME 新标签打开
+    blob 只会再弹下载;按消息记录的类型重包 blob,浏览器内置查看器才接手。
+  · AttachmentView:PDF/文本类(txt/md/csv/json/log…)卡片改「点击在线预览」(新标签,浏览器原生
+    渲染,预览页自带下载按钮);文本类一律按 text/plain 重包——必内联显示,且**杜绝 html 附件的
+    脚本执行**(blob 与本页同源,直接渲染用户上传的 HTML=XSS)。
+  · Office(doc/pptx/xlsx)/压缩包等浏览器渲染不了,保持「点击下载」,title 注明暂不支持在线预览。
+    (公网 Office viewer 拿不到认证媒体;真要 Office 在线预览需自托管 OnlyOffice/Collabora,记为后话。)
+- 范围:图片/视频/音频此前已内嵌预览,本次补齐 PDF+文本。
+- **部署:纯前端,覆盖 dist 即可。**
+
 ## 2026-07-11 — fix:人员能力两入口"不同步"——统一覆盖语义 + 界面讲清覆盖关系
 - 现象:同一人(chengsp)在「管理后台·人员能力」显示"活动策划",在「我的协作人」却显示"后勤",
   像是两边数据不同步。

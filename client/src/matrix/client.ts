@@ -3017,7 +3017,7 @@ function parseAttachment(c: any): MsgAttachment | undefined {
 /** 把 mxc:// 拉成可用于 <img>/<video>/<a download> 的地址：新版 Synapse 强制**已认证媒体**，
  *  <img> 等标签带不了 Authorization 头，故这里带 token fetch 成 blob 再转 object URL；老版/失败
  *  回退到未认证 http URL（老服务器 <img> 能直接用）。异步，失败返回 ''。调用方用完记得 revokeObjectURL。 */
-export async function mxcToObjectUrl(mxc: string): Promise<string> {
+export async function mxcToObjectUrl(mxc: string, mime?: string): Promise<string> {
   if (!mx || !mxc?.startsWith('mxc://')) return ''
   const rest = mxc.slice('mxc://'.length)
   const slash = rest.indexOf('/')
@@ -3031,7 +3031,13 @@ export async function mxcToObjectUrl(mxc: string): Promise<string> {
   const authed = `${base}/_matrix/client/v1/media/download/${encodeURIComponent(server)}/${encodeURIComponent(mediaId)}`
   try {
     const r = await fetch(authed, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-    if (r.ok) return URL.createObjectURL(await r.blob())
+    if (r.ok) {
+      let b = await r.blob()
+      // 可选校正 MIME:服务器常回 application/octet-stream,浏览器新标签打开这种 blob 只会
+      // 再弹下载;按消息里记录的类型重包,PDF/文本才能用浏览器内置查看器"在线预览"。
+      if (mime && b.type !== mime) b = new Blob([b], { type: mime })
+      return URL.createObjectURL(b)
+    }
   } catch { /* 回退 */ }
   // 回退：老版未认证 URL(直接给 <img>；若服务器只认证媒体,这条会 401、由组件显示"打不开")
   return (mx as any).mxcUrlToHttp?.(mxc) || ''
