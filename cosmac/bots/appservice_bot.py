@@ -3118,6 +3118,46 @@ class CosmacBot:
             logger.exception("频道知识库删除失败")
             return 500, {"error": "删除失败"}
 
+    def handle_space_adopt(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """把某频道挂进某工作区(写 Space 的 m.space.child)——bot 代写。
+
+        为什么需要:凭邀请链接加入工作区的普通成员在 Space 里 power=0,写不了 state——
+        手动「归入」失败,AI 建专班后的自动挂接也静默失败,频道永远躺在「未归类」(线上实报)。
+        放行条件(fail-closed):请求者**同时**是该工作区与该频道的已加入成员——把自己所在的频道
+        挂进自己所在的工作区,不能碰别人的房。bot 在 Space 无权限时用 make_room_admin 自提权。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        space_id = str((body or {}).get("space_id") or "").strip()
+        room_id = str((body or {}).get("room_id") or "").strip()
+        if not space_id.startswith("!") or not room_id.startswith("!"):
+            return 400, {"error": "无效的房间 id"}
+        if not self.client.is_joined_member(space_id, user_id):
+            return 403, {"error": "你不是该工作区成员"}
+        if not self.client.is_joined_member(room_id, user_id):
+            return 403, {"error": "你不是该频道成员"}
+        content = {"via": [self.config.server_name]}
+        ok = self.client.set_state_event(space_id, "m.space.child", content, room_id)
+        if not ok:
+            # bot 多半不在这个 Space/没权限:用服务器管理 API 借 Space 的本地管理员给 bot 提权
+            # (make_room_admin 会顺带邀请),join 后重试一次。
+            from cosmac import registration
+            code, _ = registration.make_room_admin(
+                self.config.homeserver_url, space_id, self.config.bot_user_id
+            )
+            if code == 200:
+                try:
+                    self.client.join_room(space_id)
+                except Exception:
+                    logger.debug("bot 加入工作区失败(可能已在)", exc_info=True)
+                ok = self.client.set_state_event(space_id, "m.space.child", content, room_id)
+        if not ok:
+            return 502, {"error": "挂接失败（服务端权限不足），请联系管理员"}
+        return 200, {"ok": True}
+
     def handle_user_deactivated(
         self, access_token: str, user_id: str
     ) -> Tuple[int, Dict[str, Any]]:
@@ -4147,6 +4187,7 @@ class _Handler(BaseHTTPRequestHandler):
                 or p.startswith("/cosmac/platform-kb/")
                 or p.startswith("/cosmac/people/")
                 or p.startswith("/cosmac/user/")
+                or p.startswith("/cosmac/space/")
                 or p.startswith("/cosmac/profile/")
                 or p.startswith("/cosmac/usage/")
                 or p.startswith("/cosmac/admin/")      # 后台用户列表拉邮箱（GET 带 Authorization 也要预检）
@@ -4554,6 +4595,17 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "请求无效"}, cors=True)
                 return
             code, payload = self.bot.handle_kb_delete(token, body)
+            self._send_json(code, payload, cors=True)
+            return
+
+        # 工作区挂接：把"我在的频道"挂进"我在的工作区"(普通成员写不了 Space state,bot 代写)。
+        if path == "/cosmac/space/adopt":
+            token = self._bearer()
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_space_adopt(token, body)
             self._send_json(code, payload, cors=True)
             return
 

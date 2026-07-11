@@ -864,11 +864,28 @@ export async function linkRoomToSpace(spaceId: string, roomId: string): Promise<
   try {
     await (mx as any).sendStateEvent(spaceId, 'm.space.child', { via: [via] }, roomId)
   } catch {
-    return false  // 在该工作区没有写权限（理论上创建者有），挂接失败
+    // 直接写失败=我在该工作区没有写 state 的权限(凭链接加入的普通成员 power=0)。
+    // 回退走 bot 代写:后端校验"我同时是工作区与频道的成员"后由 bot 挂接——否则这类成员
+    // 手动「归入」和 AI 建专班的自动挂接都会失败,频道永远躺在「未归类」(线上实报)。
+    if (!(await spaceAdoptViaBot(spaceId, roomId))) return false
   }
   // 子房间指回父 Space（有权限就写，没有也无妨——频道树只看 Space 里的 m.space.child）
   try { await (mx as any).sendStateEvent(roomId, 'm.space.parent', { via: [via], canonical: true }, spaceId) } catch { /* ignore */ }
   return true
+}
+
+/** 请求后端由 bot 代写 m.space.child（成员无 Space 写权限时的回退）。成功 true。 */
+async function spaceAdoptViaBot(spaceId: string, roomId: string): Promise<boolean> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return false
+  try {
+    const r = await fetch(`${payBase()}/cosmac/space/adopt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ space_id: spaceId, room_id: roomId }),
+    })
+    return r.ok
+  } catch { return false }
 }
 
 /** 把"用户名 / @用户名 / @用户名:域名"都规范成完整 Matrix id（@用户名:本服务器）。
