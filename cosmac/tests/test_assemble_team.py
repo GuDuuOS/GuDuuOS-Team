@@ -89,6 +89,23 @@ class TestAssembleTeam(unittest.TestCase):
         self.assertEqual(len(tc), 1)
         self.assertEqual(tc[0]["team_room"], "!team:h")
 
+    def test_restricted_agent_not_bindable_by_unentitled_user(self) -> None:
+        # M2 越权：发起人够不到的受限智能体，点名当 lead/worker 会被按 access 过滤后的可见集
+        # 当成"缺口"剔除，绝不注入其付费人设。known_agents(for_user) 模拟按发起人过滤。
+        self.tb.known_agents = (
+            lambda for_user=None: {"open"} if for_user == "@owner:h" else {"open", "vip"}
+        )
+        out = self._run({
+            "project": "越权班", "lead_agent": "vip", "worker_agents": ["vip", "open"],
+        })
+        _room, _etype, content = self.client.states[0]
+        # vip 既没当上 lead（persona.agentSlug 不是 vip），也没进 worker 列表
+        self.assertNotEqual(content.get("persona", {}).get("agentSlug"), "vip")
+        self.assertNotIn("vip", content.get("agentSlugs", []))
+        # open 是发起人够得到的 → 正常绑定
+        self.assertIn("open", content.get("agentSlugs", []))
+        self.assertIn("越权班", out)  # 专班仍建成，只是没绑受限的 vip
+
     def test_knowledge_bound_into_channel(self) -> None:
         # 知识库"调进频道":owner→发起人个人库对全班开放;platform→平台共享库。
         # 写进 channel_config.kbScopes,频道分身检索时纳入(见 _group_context/_kb_retrieve)。
@@ -189,6 +206,23 @@ class TestTaskReviewTools(unittest.TestCase):
             t = get_task(s, self.tid)
         self.assertEqual(t.status, "doing")
         self.assertIn("打回", t.result)
+
+    def test_update_task_invalid_status_rejected(self) -> None:
+        # M6：非法状态直接拒绝，绝不"假成功"（旧行为：task_repo 静默丢弃、工具回"已更新→blocked"）
+        out = self._exec("update_task", {"task_id": self.tid, "status": "blocked", "result": "等资料"})
+        self.assertIn("待办", out)  # 提示只能是 待办/进行中/已完成
+        from cosmac.db.task_repo import get_task
+        with session_scope() as s:
+            t = get_task(s, self.tid)
+        self.assertEqual(t.status, "todo")            # 状态没被改动
+        self.assertNotEqual(t.result, "等资料")        # result 也没写（整条被拦）
+
+    def test_update_task_status_synonym_normalized(self) -> None:
+        # M6：模型给同义词（in_progress/完成）也能归一化到合法状态
+        self._exec("update_task", {"task_id": self.tid, "status": "in_progress"})
+        from cosmac.db.task_repo import get_task
+        with session_scope() as s:
+            self.assertEqual(get_task(s, self.tid).status, "doing")
 
     def test_update_task_cross_channel_blocked(self) -> None:
         # 从别的频道改本任务 → 拒绝（越权防护：只能改本频道的任务）

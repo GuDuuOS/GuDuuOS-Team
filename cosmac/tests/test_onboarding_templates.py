@@ -72,5 +72,33 @@ class TestOnboardingTemplates(unittest.TestCase):
         self.assertEqual(payload["templates"], [])
 
 
+class TestOnboardingSelectTierGate(unittest.TestCase):
+    """M1：选后台付费模板必须满足会员等级门槛，服务端强制（前端 templateLocked 只是 UX）。"""
+
+    def setUp(self) -> None:
+        from cosmac.db import init_engine
+        init_engine("sqlite://", create_all=True)
+        self.tpls = [{"key": "film", "label": "影视", "tier": "paid"}]
+
+    def _bot(self, my_tier: str) -> CosmacBot:
+        bot = _bot(self.tpls)
+        bot.members.get_tier = lambda uid: my_tier  # type: ignore
+        return bot
+
+    def test_free_user_rejected_for_paid_template(self) -> None:
+        code, payload = self._bot("free").handle_onboarding_select("tok", {"template": "film"})
+        self.assertEqual(code, 403)
+        self.assertIn("会员等级", payload["error"])
+
+    def test_paid_user_allowed(self) -> None:
+        code, _ = self._bot("paid").handle_onboarding_select("tok", {"template": "film"})
+        self.assertEqual(code, 200)
+
+    def test_unknown_slug_allowed(self) -> None:
+        # 内置/未知 slug 不关联后台 tpl 资源 → 放行（保住无后台模板时的内置引导）
+        code, _ = self._bot("free").handle_onboarding_select("tok", {"template": "builtin-x"})
+        self.assertEqual(code, 200)
+
+
 if __name__ == "__main__":
     unittest.main()

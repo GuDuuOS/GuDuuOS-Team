@@ -182,5 +182,34 @@ class TestKbHttpHandlers(unittest.TestCase):
         self.assertIn("升级", p["error"])
 
 
+class TestKbCommandPersonalQuota(unittest.TestCase):
+    """M4：个人库「知识 添加」命令必须过会员配额守卫（与 UI handle_kb_add 同口径）。"""
+
+    def setUp(self) -> None:
+        init_engine("sqlite://", create_all=True)
+        _force_hashing_embedder(self)
+
+    def test_guard_blocks_personal_add(self) -> None:
+        with session_scope() as s:
+            out = handle_kb_command(
+                s, is_dm=True, room_id=ROOM, user_id=USER,
+                text="知识 添加 标题 ｜ 正文内容",
+                personal_add_guard=lambda cur, blen: "配额满了，升级会员",
+            )
+        self.assertIn("配额满了", out)
+        with session_scope() as s:  # 被拦下，没真入库
+            self.assertEqual(len(kb.list_docs(s, scope=SCOPE_USER, scope_id=USER)), 0)
+
+    def test_guard_not_applied_to_room_add(self) -> None:
+        # 群库(is_dm=False)不走个人配额守卫——即便传了 guard 也不生效，正常入库
+        with session_scope() as s:
+            out = handle_kb_command(
+                s, is_dm=False, room_id=ROOM, user_id=USER, can_write=True,
+                text="知识 添加 标题 ｜ 正文内容",
+                personal_add_guard=lambda cur, blen: "不该触发",
+            )
+        self.assertIn("已把", out)
+
+
 if __name__ == "__main__":
     unittest.main()

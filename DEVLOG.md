@@ -1,5 +1,23 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-12 — fix:BUG 排查修复(第三批·后端中/低优先 G1~G3 共 11 项)
+- 承接前两批(11 个严重项),负责人拍板"剩余全部都修"。本批后端 3 组：
+- **G1 配额/门控命令入口绕过**:①工坊自建技能端点补 custom_skill 门控(M3) ②「知识 添加」命令补
+  个人库 kb_docs+storage 配额守卫(M4,kb_cmd 加 personal_add_guard 注入) ③「工作流 跑」命令补
+  workflow_runs 配额(M5) ④入驻模板选择服务端强制 tier 门槛(M1,免费用户 POST 付费模板 slug 不再
+  白得 tpl 资源权限)。
+- **G2 access 点名绕过**(M2):known_agents/known_skills 回调加 for_user 参数,assemble_team 按发起人
+  access 过滤可见资源——够不到的受限智能体被点名当 lead/worker 时按"缺口"剔除、绝不注入其付费人设。
+  (群绑定/persona.agentSlug 按既定"管理员显式授权不过滤"设计保留,且只泄漏人设文本不绕功能门控)
+- **G3 任务/工作流健壮性**:①update_task 状态白名单+同义词归一化(M6,非法 status 不再假成功);②
+  assemble_team 配置写失败不再静默(M7,如实告知"没绑上"而非claim已绑)+建房后发消息包异常(避免模型
+  收到"出错重试"→重复建班/配额双扣);③命令路径工作流池满回滚来源预约(M8,不再残留占位误报中断);
+  ④archive_project 加授权(L9,仅频道管理员/平台管理员可清长期记忆,fail-closed);⑤统一两套截止时间
+  解析(L10,date-only 一律 23:59,原建任务用 18:00);⑥建专班命令补 self-admin+team_created 卡(L12)。
+- 验证:各项配回归测试(test_my_studio/test_kb_cmd/test_onboarding_templates/test_assemble_team/
+  test_archive/test_update_task_due 等);顺带更新受行为变化影响的既有测试期望;全量 515 项全绿;ruff 通过。
+- **部署:纯后端,git pull + 重启 guduu-bot 即可。** 前端组(G5~G8)+G4 后续批次。
+
 ## 2026-07-12 — fix:全量 BUG 排查后修复(第二批·前端+端点 3 项)
 - 承接第一批，收尾 #9~#11(涉及前端 client.ts/AdminView.vue，需 client build + dist 部署)：
   · **#9 入驻模板对普通用户失效**:模板存**私有控制室**、普通用户读 state 必 403 → 旧前端静默

@@ -14,11 +14,16 @@
 from __future__ import annotations
 
 import re
+from typing import Callable, Optional
 
 from sqlalchemy.orm import Session
 
 from cosmac.db import kb
 from cosmac.db.models import SCOPE_ROOM, SCOPE_USER, KnowledgeDoc
+
+# 个人库入库前的会员配额守卫签名：(当前篇数, 本篇正文字符数) -> 超额提示 或 None(放行)。
+# 由 bot 用 _quota_limit/_storage_bytes 构建注入——kb_cmd 不直接依赖 bot 内部（解耦）。
+PersonalAddGuard = Callable[[int, int], Optional[str]]
 
 PREFIXES = ("知识", "/知识", "kb", "/kb")
 
@@ -44,11 +49,14 @@ def handle_kb_command(
     user_id: str,
     text: str,
     can_write: bool = True,
+    personal_add_guard: Optional[PersonalAddGuard] = None,
 ) -> str:
     """执行一条知识命令，返回要发回聊天的文本。
 
     作用域：私聊→个人知识库(user)；群里→本群知识库(room)。
     写操作（添加/删除）在群里需要管理员（can_write）；私聊改自己的不受限。
+    personal_add_guard：个人库「添加」时的会员配额守卫（kb_docs 篇数 + storage_mb），
+      由 bot 注入；群库不走它（群库有自己的容量口径）。缺省不校验（如单测）。
     """
     scope = SCOPE_USER if is_dm else SCOPE_ROOM
     scope_id = user_id if is_dm else room_id
@@ -70,7 +78,8 @@ def handle_kb_command(
     if sub in ("添加", "新增", "add"):
         if need_admin:
             return "只有群管理员能往本群知识库添加文档。"
-        return _add(session, scope, scope_id, where, arg)
+        guard = personal_add_guard if scope == SCOPE_USER else None
+        return _add(session, scope, scope_id, where, arg, guard)
     if sub in ("删除", "删", "del", "rm", "remove"):
         if need_admin:
             return "只有群管理员能删除本群知识库的文档。"
@@ -91,7 +100,10 @@ def _list(session: Session, scope: str, scope_id: str, where: str) -> str:
     return "\n".join(lines)
 
 
-def _add(session: Session, scope: str, scope_id: str, where: str, arg: str) -> str:
+def _add(
+    session: Session, scope: str, scope_id: str, where: str, arg: str,
+    guard: Optional[PersonalAddGuard] = None,
+) -> str:
     if not arg:
         return "用法：知识 添加 <标题> ｜ <正文>"
     segs = [s.strip() for s in re.split(r"[|｜]", arg, maxsplit=1)]
@@ -101,8 +113,15 @@ def _add(session: Session, scope: str, scope_id: str, where: str, arg: str) -> s
         return "缺正文。用法：知识 添加 <标题> ｜ <正文>"
     if len(body) > MAX_DOC_CHARS:
         return f"正文太长（{len(body)} 字），上限 {MAX_DOC_CHARS} 字。请拆成多篇。"
-    if len(kb.list_docs(session, scope=scope, scope_id=scope_id)) >= MAX_DOCS_PER_SCOPE:
+    cur = len(kb.list_docs(session, scope=scope, scope_id=scope_id))
+    if cur >= MAX_DOCS_PER_SCOPE:
         return f"{where}已达数量上限（{MAX_DOCS_PER_SCOPE} 篇），先删一些再加。"
+    # 个人库会员配额（篇数 kb_docs + 存储 storage_mb）：与 UI handle_kb_add 同口径服务端强制，
+    # 否则免费用户绕开 UI、走聊天命令「知识 添加」可加满 200 篇（M4）。
+    if guard is not None:
+        err = guard(cur, len(body))
+        if err:
+            return err
     doc = kb.ingest_document(
         session, scope=scope, scope_id=scope_id, title=title, source="chat", text=body
     )
