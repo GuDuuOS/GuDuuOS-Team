@@ -494,7 +494,10 @@ class CosmacBot:
                 self.client.send_text(room_id, self._gate_denied_text("ai_chat"))
                 return
             # 用量配额（变现第二步）：每天 AI 对话条数。超额提示升级并停在这（不消耗 LLM）。
-            quota_msg = self._rate_quota_blocked(sender, "ai_msg_daily")
+            # L2：这里**只查不扣**——真正出成回复后才计数(见下方 send_text 成功之后)。否则 LLM
+            # 报错/超时/工具循环崩了也照扣，用户白白少一次额度却没得到任何回复(与工具路径"成功
+            # 才扣"、#7 失败兜底同口径)。
+            quota_msg = self._rate_quota_blocked(sender, "ai_msg_daily", consume=False)
             if quota_msg:
                 self.client.send_text(room_id, quota_msg)
                 return
@@ -546,6 +549,8 @@ class CosmacBot:
                     room_id, reply,
                     txn_id=f"cosmac-ai-{event_id}" if event_id else None,
                 )
+                # L2：回复真正发出后才消费当日 AI 对话额度（失败走下面的 except 分支、不扣）。
+                self._rate_quota_blocked(sender, "ai_msg_daily", consume=True)
             except Exception:
                 # 引擎/LLM 本体调用失败（网络错、模型不存在、后端 4xx/5xx 等）：绝不让异常穿透到
                 # handle_transaction —— 那会使其返回 False、Synapse 重发**整批**、整条 Agent run
@@ -682,16 +687,24 @@ class CosmacBot:
         except Exception as e:
             logger.debug("读历史失败（忽略，无短期记忆继续）：%s", e)
             return []
+        # 当前触发消息是**最新**那条(msgs 按旧→新排列，通常在末尾)。要剔的正是它——而不是历史里
+        # 更早的同文本消息。M15：旧实现从最旧端剔第一条匹配，用户重复发"继续/好的"时被剔的是旧的、
+        # 当前这条仍留在历史，随后又被 Agent.run 作为最后的 user 追加 → 模型看到当前输入出现两遍
+        # (还扰乱了时序)。故从**最新端**反向定位、只剔那一条。
+        cur = (cur_body or "").strip()
+        drop_idx = -1
+        for i in range(len(msgs) - 1, -1, -1):
+            b = (msgs[i].get("body") or "").strip()
+            if b == cur and (msgs[i].get("sender") or "") == cur_sender:
+                drop_idx = i
+                break
         out: List[Message] = []
-        dropped_current = False
-        for m in msgs:
+        for i, m in enumerate(msgs):
+            if i == drop_idx:
+                continue
             body = (m.get("body") or "").strip()
             s = m.get("sender") or ""
             if not body:
-                continue
-            # 跳过"当前这条触发消息"(它会作为最后的 user 单独追加，避免重复)
-            if not dropped_current and s == cur_sender and body == (cur_body or "").strip():
-                dropped_current = True
                 continue
             if len(body) > self._HISTORY_CHARS:
                 body = body[: self._HISTORY_CHARS] + "…"
@@ -1348,6 +1361,22 @@ class CosmacBot:
 
     _STORAGE_TTL = 60  # 存储用量缓存(秒)——媒体统计要打 Synapse admin API,别每次都查
 
+    @staticmethod
+    def _blen(text: Optional[str]) -> int:
+        """字符串的 **UTF-8 字节数**（L1：存储配额口径是字节，中文每字 3 字节）。None→0。"""
+        return len((text or "").encode("utf-8"))
+
+    @staticmethod
+    def _sql_byte_len(session: Any):
+        """返回按方言取「文本字节长度」的 SQL 函数（L1）：
+        PostgreSQL(生产) 用 octet_length 精确到字节；SQLite(本地开发) 无此函数，回退 length(字符数)
+        ——本地不硬核算存储配额，够用。这样生产端媒体字节 + 知识库/自建内容字节口径一致(不再字符/字节混加)。
+        """
+        from sqlalchemy import func
+        name = getattr(getattr(session, "bind", None), "dialect", None)
+        name = getattr(name, "name", "") if name is not None else ""
+        return func.octet_length if name == "postgresql" else func.length
+
     def _storage_bytes(self, user_id: str) -> int:
         """本人已用存储字节 = Synapse 媒体(上传的附件/图片/视频) + 个人知识库文本。带 60s 缓存。
 
@@ -1374,8 +1403,9 @@ class CosmacBot:
             from cosmac.db import session_scope
             from cosmac.db.models import SCOPE_USER, KnowledgeChunk
             with session_scope() as s:
+                blen = self._sql_byte_len(s)  # L1：按字节算，与媒体字节口径一致
                 n = s.execute(
-                    select(func.coalesce(func.sum(func.length(KnowledgeChunk.text)), 0))
+                    select(func.coalesce(func.sum(blen(KnowledgeChunk.text)), 0))
                     .where(KnowledgeChunk.scope == SCOPE_USER,
                            KnowledgeChunk.scope_id == user_id)
                 ).scalar()
@@ -1387,16 +1417,17 @@ class CosmacBot:
             from cosmac.db import session_scope
             from cosmac.db.models import SCOPE_USER, Agent as DbAgent, Skill as DbSkill
             with session_scope() as s:
+                blen = self._sql_byte_len(s)
                 n1 = s.execute(
                     select(func.coalesce(func.sum(
-                        func.length(DbSkill.name) + func.length(DbSkill.description)
-                        + func.length(DbSkill.instructions)), 0))
+                        blen(DbSkill.name) + blen(DbSkill.description)
+                        + blen(DbSkill.instructions)), 0))
                     .where(DbSkill.scope == SCOPE_USER, DbSkill.scope_id == user_id)
                 ).scalar()
                 n2 = s.execute(
                     select(func.coalesce(func.sum(
-                        func.length(DbAgent.name) + func.length(DbAgent.description)
-                        + func.length(DbAgent.system_prompt)), 0))
+                        blen(DbAgent.name) + blen(DbAgent.description)
+                        + blen(DbAgent.system_prompt)), 0))
                     .where(DbAgent.scope == SCOPE_USER, DbAgent.scope_id == user_id)
                 ).scalar()
                 total += int(n1 or 0) + int(n2 or 0)
@@ -3152,13 +3183,13 @@ class CosmacBot:
                     if len(text) > MAX_DOC_CHARS:  # 单篇超长：跳过（不截断，避免灌半截脏数据）
                         continue
                     # 存储配额：加这篇会超上限就停（与 handle_kb_add 同口径，本地累加不吃缓存）
-                    if st_limit >= 0 and used_bytes + len(text) > st_limit * 1048576:
+                    if st_limit >= 0 and used_bytes + self._blen(text) > st_limit * 1048576:
                         break
                     kb.ingest_document(
                         s, scope=SCOPE_USER, scope_id=user_id,
                         title=title, source="onboarding", text=text,
                     )
-                    used_bytes += len(text)
+                    used_bytes += self._blen(text)
                     count += 1
                     ingested += 1
         except Exception:
@@ -3191,7 +3222,7 @@ class CosmacBot:
         # 用量配额（变现第二步）：知识库文档数按会员等级限。-1=不限；硬上限 MAX_DOCS_PER_SCOPE 兜底。
         # 存储空间配额(字节):个人库入库走服务端,这里硬管控(附件那条链路只能前端软管控)。
         st_limit = self._quota_limit(user_id, "storage_mb")
-        if st_limit >= 0 and self._storage_bytes(user_id) + len(content) > st_limit * 1048576:
+        if st_limit >= 0 and self._storage_bytes(user_id) + self._blen(content) > st_limit * 1048576:
             return 400, {"error": f"存储空间不足（上限 {st_limit}MB）。删除一些内容或升级会员扩容。"}
         kb_limit = self._quota_limit(user_id, "kb_docs")
         try:
@@ -3209,7 +3240,9 @@ class CosmacBot:
                     title=title, source="upload", text=content,
                 )
                 # 在 session 内取出需要的标量值返回（关闭后惰性加载会报错）
-                return 200, {"ok": True, "id": doc.id, "title": doc.title, "chunks": len(doc.chunks)}
+                out = {"ok": True, "id": doc.id, "title": doc.title, "chunks": len(doc.chunks)}
+            self._storage_cache = {}  # L3：个人库存量变了，作废 60s 缓存（与工坊路径一致）
+            return 200, out
         except Exception:
             logger.exception("知识库入库失败（UI 添加）")
             return 500, {"error": "入库失败（数据库不可用？）"}
@@ -3238,7 +3271,8 @@ class CosmacBot:
                 if doc is None or doc.scope != SCOPE_USER or doc.scope_id != user_id:
                     return 404, {"error": "没找到该文档（或不属于你）"}
                 kb.delete_doc(s, doc_id)
-                return 200, {"ok": True}
+            self._storage_cache = {}  # L3：删了个人库内容，作废存量缓存，「我的额度」即时反映
+            return 200, {"ok": True}
         except Exception:
             logger.exception("知识库删除失败（UI）")
             return 500, {"error": "删除失败"}
@@ -3753,9 +3787,10 @@ class CosmacBot:
                 existing = get_agent(s, SCOPE_USER, user_id, slug)
                 if existing is None and len(list_agents(s, scope=SCOPE_USER, scope_id=user_id)) >= self._MY_ITEMS_MAX:
                     return 400, {"error": f"自建智能体已达上限（{self._MY_ITEMS_MAX} 个），先删一些"}
-                add_chars = len(name) + len(description) + len(prompt)
+                add_chars = self._blen(name) + self._blen(description) + self._blen(prompt)
                 if existing is not None:  # 更新=净增量
-                    add_chars -= len(existing.name) + len(existing.description) + len(existing.system_prompt)
+                    add_chars -= (self._blen(existing.name) + self._blen(existing.description)
+                                  + self._blen(existing.system_prompt))
                 err = self._my_storage_guard(user_id, max(0, add_chars))
                 if err:
                     return 400, {"error": err}
@@ -3842,9 +3877,10 @@ class CosmacBot:
                 existing = get_skill(s, SCOPE_USER, user_id, slug)
                 if existing is None and len(list_skills(s, scope=SCOPE_USER, scope_id=user_id)) >= self._MY_ITEMS_MAX:
                     return 400, {"error": f"自建技能已达上限（{self._MY_ITEMS_MAX} 个），先删一些"}
-                add_chars = len(name) + len(description) + len(instructions)
+                add_chars = self._blen(name) + self._blen(description) + self._blen(instructions)
                 if existing is not None:
-                    add_chars -= len(existing.name) + len(existing.description) + len(existing.instructions)
+                    add_chars -= (self._blen(existing.name) + self._blen(existing.description)
+                                  + self._blen(existing.instructions))
                 err = self._my_storage_guard(user_id, max(0, add_chars))
                 if err:
                     return 400, {"error": err}

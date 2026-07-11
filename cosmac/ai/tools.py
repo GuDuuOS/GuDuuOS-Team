@@ -1454,7 +1454,8 @@ class Toolbox:
                         city=args.get("city") or "",
                         level=args.get("level") or "",
                         perf_rating=args.get("perf_rating") or "",
-                        limit=int(args.get("top_n") or 60),
+                        # 工具喂模型上下文，top_n 夹到 60 上限（页面全量走 handle_hr_employees，L13）
+                        limit=min(int(args.get("top_n") or 60), 60),
                     )
                     data = {
                         "查询": "花名册",

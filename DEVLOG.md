@@ -1,5 +1,20 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-12 — fix:BUG 排查修复(第四批·后端杂项 G4 共 6 项)
+- **G4 后端杂项(step-up/记忆/计量)**:
+  · M14 异地 step-up 429 误判自锁:_issue_code 两种 429 加 code_valid 标记(60s冷却=有效码 vs
+    每小时上限+旧码过期=无有效码),_stepup_gate 据此——无有效码时明确"稍后再试"而非假装发码卡住用户;
+  · M15 _recent_history 从**最新端**剔当前触发消息(旧实现从最旧端剔,用户重复发"继续"时当前输入被
+    喂两遍);
+  · L1 存储改按 UTF-8 字节计量(原按字符,中文低估~3x 且与媒体真实字节混加):_storage_bytes 的 SQL
+    求和用 octet_length(PG)/length(SQLite 回退),Python 侧守卫统一 _blen(encode utf-8);
+  · L2 AI 对话配额改「成功才扣」(原执行前预扣、LLM 失败也计数);
+  · L3 handle_kb_add/handle_kb_delete 入库/删除后作废存储缓存(「我的额度」即时反映);
+  · L13 人事花名册页面全量展示(list_employees 硬上限 60→2000,页面显式传大 limit;query_hr 工具
+    top_n 仍夹 60 保上下文)——原超 60 人列表静默截断、与 summary 全量统计口径打架。
+- 验证:新增 test_recent_history + test_registration(IssueCodeValidityTest);全量 519 项全绿;ruff 通过。
+- **部署:纯后端,git pull + 重启 guduu-bot。** 至此后端 4 组(G1~G4)17 项全部完成,余前端 4 组(G5~G8)。
+
 ## 2026-07-12 — fix:BUG 排查修复(第三批·后端中/低优先 G1~G3 共 11 项)
 - 承接前两批(11 个严重项),负责人拍板"剩余全部都修"。本批后端 3 组：
 - **G1 配额/门控命令入口绕过**:①工坊自建技能端点补 custom_skill 门控(M3) ②「知识 添加」命令补

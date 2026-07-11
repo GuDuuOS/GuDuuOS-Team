@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from cosmac.db import kb
 from cosmac.db.models import SCOPE_ROOM, SCOPE_USER, KnowledgeDoc
 
-# 个人库入库前的会员配额守卫签名：(当前篇数, 本篇正文字符数) -> 超额提示 或 None(放行)。
+# 个人库入库前的会员配额守卫签名：(当前篇数, 本篇正文**UTF-8 字节数**) -> 超额提示 或 None(放行)。
 # 由 bot 用 _quota_limit/_storage_bytes 构建注入——kb_cmd 不直接依赖 bot 内部（解耦）。
 PersonalAddGuard = Callable[[int, int], Optional[str]]
 
@@ -119,7 +119,7 @@ def _add(
     # 个人库会员配额（篇数 kb_docs + 存储 storage_mb）：与 UI handle_kb_add 同口径服务端强制，
     # 否则免费用户绕开 UI、走聊天命令「知识 添加」可加满 200 篇（M4）。
     if guard is not None:
-        err = guard(cur, len(body))
+        err = guard(cur, len(body.encode("utf-8")))  # L1：按字节，与存储配额口径一致
         if err:
             return err
     doc = kb.ingest_document(

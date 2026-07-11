@@ -337,9 +337,14 @@ def _issue_code(key: str, send: Callable[[str], None]) -> Tuple[int, Dict[str, A
         pc.sent_times = [t for t in pc.sent_times if now - t < 3600]
         if pc.last_sent and now - pc.last_sent < _RESEND_COOLDOWN:
             wait = int(_RESEND_COOLDOWN - (now - pc.last_sent))
-            return 429, {"error": f"发送太频繁，请 {wait} 秒后再试", "cooldown": wait}
+            # 冷却中：60s 内刚发过，码(TTL 10min)必然仍有效 → code_valid=True（M14）
+            return 429, {"error": f"发送太频繁，请 {wait} 秒后再试", "cooldown": wait,
+                         "code_valid": True}
         if len(pc.sent_times) >= _MAX_SENDS_PER_HOUR:
-            return 429, {"error": "请求过于频繁，请稍后再试"}
+            # 每小时上限：这次**不发新码**。仅当仍存在未过期的旧码，才算"有有效码可验"——
+            # 否则(旧码已过 TTL)返回 code_valid=False，调用方据此别假装码已发出（M14 自锁修复）。
+            code_valid = bool(pc.code and pc.expires > now)
+            return 429, {"error": "请求过于频繁，请稍后再试", "code_valid": code_valid}
         code = _gen_code()
         pc.code = code
         pc.expires = now + _CODE_TTL
@@ -675,7 +680,13 @@ def _stepup_gate(
         return None
     _revoke_token(hs_url, token)         # 挑战:先撤刚发的 token
     sc, _sb = _issue_code(_key("login", email), lambda c: _send_login_email(email, c))
-    if sc not in (200, 429):             # 429=冷却中,说明码刚发过、仍有效 → 照样进入挑战
+    # M14：区分两种 429——① 60s 冷却(code_valid=True，码刚发过仍有效)→ 照常进挑战；② 每小时发码
+    # 上限且**无有效码**(code_valid=False)→ 这次没发出码、旧码也过期了，绝不能假装码已发让用户对着
+    # 空挑战干等自锁。此时明确告知稍后再试(密码已对，仅安全验证码被限频)。
+    if sc == 429 and not _sb.get("code_valid"):
+        _audit("login", subject=username, ip=client_ip, ok=False, detail="stepup_send_ratelimited")
+        return 429, {"error": "安全验证码发送已达上限，请过一会儿再登录。"}
+    if sc not in (200, 429):             # 其它(如 502 发信失败)
         _audit("login", subject=username, ip=client_ip, ok=False, detail="stepup_send_fail")
         return 502, {"error": "安全验证码发送失败，请稍后重试"}
     _audit("login", subject=username, ip=client_ip, ok=False, detail="stepup_challenge")
