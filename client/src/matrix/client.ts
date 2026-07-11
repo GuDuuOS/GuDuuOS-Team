@@ -2590,6 +2590,10 @@ export async function platformKbDelete(id: number): Promise<void> {
 export interface MyPerson {
   user_id: string; name: string; role: string; expertise: string; note: string; enabled: boolean
   source?: string   // 'global'=管理员后台全局名册叠加来的(平台预设,本人保存后转为个人记录)
+  /** true=这条个人记录**覆盖**了平台预设(同一人后台也设了能力);global_* 为被覆盖的平台值 */
+  overrides_global?: boolean
+  global_role?: string
+  global_expertise?: string
 }
 
 /** 列本人维护的协作人；失败/未登录返回 []。 */

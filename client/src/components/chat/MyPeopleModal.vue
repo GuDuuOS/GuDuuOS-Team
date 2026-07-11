@@ -45,9 +45,12 @@
                   <span class="mp-badge" :class="{ on: r.hasProfile && r.enabled, global: r.isGlobal }">
                     {{ r.hasProfile ? (r.isGlobal ? '平台已设' : r.enabled ? '已设能力' : '停用') : '未设能力' }}
                   </span>
+                  <!-- 同一人后台也设了平台能力,但你的个人备注优先生效——标出来,别让人以为"两边不同步" -->
+                  <span v-if="r.overridesGlobal" class="mp-badge override" :title="`平台设置:${r.globalRole || '—'}｜${r.globalExpertise || '—'}。点「清除」可恢复用平台设置`">已覆盖平台设置</span>
                 </div>
                 <div class="mp-item-uid">{{ r.id }}</div>
                 <div v-if="r.expertise" class="mp-item-exp">擅长：{{ r.expertise }}</div>
+                <div v-if="r.overridesGlobal" class="mp-item-gl">平台设置：{{ r.globalRole || '—' }}｜{{ r.globalExpertise || '—' }}（你的备注优先生效，点「清除」恢复平台设置）</div>
               </div>
               <div class="mp-item-act">
                 <button class="mp-mini" :disabled="busy" @click="startEdit(r)">{{ r.hasProfile ? '编辑能力' : '设置能力' }}</button>
@@ -100,6 +103,8 @@ const { visible, rows, loading, busy, editing, adding, errText, form, close, sta
 .mp-badge { font-size: var(--fs-75); color: var(--text-3); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
 .mp-badge.on { color: #2f7d4f; border-color: #2f7d4f; }
 .mp-badge.global { color: var(--accent); border-color: var(--accent); }
+.mp-badge.override { color: #8a6a3a; border-color: #d9b877; background: #faf3e3; }
+.mp-item-gl { font-size: var(--fs-75); color: var(--text-3); margin-top: 3px; line-height: 1.4; }
 .mp-item-uid { font-size: var(--fs-75); color: var(--text-3); margin-top: 2px; }
 .mp-item-exp { font-size: var(--fs-75); color: var(--text-2); margin-top: 4px; line-height: 1.4; }
 .mp-item-act { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }

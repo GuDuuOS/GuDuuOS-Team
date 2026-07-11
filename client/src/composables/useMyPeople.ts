@@ -55,6 +55,10 @@ export function useMyPeople() {
         enabled: p ? p.enabled : true,
         hasProfile: !!p,
         isGlobal: p?.source === 'global',  // 管理员后台设的平台预设(用户保存即覆盖为个人记录)
+        // 个人记录覆盖了平台预设:UI 标出来并展示被覆盖的平台值;点「清除」即恢复平台设置
+        overridesGlobal: !!p?.overrides_global,
+        globalRole: p?.global_role || '',
+        globalExpertise: p?.global_expertise || '',
       }
     })
   })

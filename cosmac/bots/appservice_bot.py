@@ -1296,11 +1296,14 @@ class CosmacBot:
         全程兜异常，任一来源失败只是少列一类、绝不抛出。
         """
         lines: List[str] = []
-        # — 真人 —（admin 全局名册 + 下达者自己的个人协作人名册，合并去重）
+        # — 真人 —（下达者的个人协作人名册 + admin 全局名册，合并去重）
+        # 优先级=**个人记录优先**:与「我的协作人」endpoint(handle_people_list_mine)同口径——
+        # 用户给联系人写的能力备注覆盖平台预设。此前这里是"全局优先",导致界面显示个人备注、
+        # AI 派单却用平台值,两边不一致(负责人报的"两个入口数据不同步"其中一半根因)。
         try:
-            people = list(self._people_items())
+            people = list(self._personal_people_items(ctx.sender))
             seen_uid = {str(p.get("user_id") or "") for p in people}
-            for p in self._personal_people_items(ctx.sender):
+            for p in self._people_items():
                 if str(p.get("user_id") or "") not in seen_uid:
                     people.append(p)
         except Exception:
@@ -3289,10 +3292,18 @@ class CosmacBot:
         except Exception:
             logger.debug("列个人协作人失败", exc_info=True)
         try:
-            mine_ids = {str(p.get("user_id") or "") for p in out}
+            mine_by_id = {str(p.get("user_id") or ""): p for p in out}
             for gp in self._people_items():
                 uid = str(gp.get("user_id") or "")
-                if not uid or uid in mine_ids:
+                if not uid:
+                    continue
+                if uid in mine_by_id:
+                    # 同一人既有个人记录又有平台预设:个人记录生效(覆盖),但把平台值一并带给前端,
+                    # 让 UI 能标「已覆盖平台设置」并展示被覆盖的内容——否则用户在后台改了平台能力、
+                    # 这里看不到任何变化,以为"两个入口数据不同步"(负责人实报)。
+                    mine_by_id[uid]["overrides_global"] = True
+                    mine_by_id[uid]["global_role"] = str(gp.get("role") or "")
+                    mine_by_id[uid]["global_expertise"] = str(gp.get("expertise") or "")
                     continue
                 out.append({
                     "user_id": uid,

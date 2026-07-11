@@ -82,6 +82,32 @@ class TestCapabilityRegistry(unittest.TestCase):
         self.assertIn("真人", out)
         self.assertIn("AI Agent", out)
 
+    def test_personal_overrides_global_for_same_person(self) -> None:
+        # 同一人「个人协作人备注」与「后台平台预设」并存 → **个人记录优先**(与"我的协作人"
+        # endpoint 同口径)。此前派单名册是全局优先,界面显示个人值、AI 却用平台值,两边不一致。
+        from cosmac.db import session_scope
+        from cosmac.db.person_repo import upsert_person
+
+        with session_scope() as s:
+            upsert_person(s, owner="@u:h", person_id="@xiaoyu:h",
+                          name="小雨", role="后勤", expertise="后勤工作支持")
+        states = {PEOPLE_EVENT_TYPE: {"people": [
+            {"user_id": "@xiaoyu:h", "name": "小雨", "role": "文案",
+             "expertise": "小红书种草", "enabled": True},
+        ]}}
+        out = _bot(states)._list_capabilities_for_tool(ToolContext("!r:h", "@u:h"))
+        self.assertIn("后勤工作支持", out)      # 个人备注生效
+        self.assertNotIn("小红书种草", out)     # 平台值被覆盖,不再重复出现
+
+    def test_global_applies_when_no_personal_record(self) -> None:
+        # 没写个人备注的其他用户,照常看到平台预设
+        states = {PEOPLE_EVENT_TYPE: {"people": [
+            {"user_id": "@xiaoyu:h", "name": "小雨", "role": "文案",
+             "expertise": "小红书种草", "enabled": True},
+        ]}}
+        out = _bot(states)._list_capabilities_for_tool(ToolContext("!r:h", "@other:h"))
+        self.assertIn("小红书种草", out)
+
     def test_filters_deactivated_accounts(self) -> None:
         # 主 AI 不该派给已停用账号：停用集里的人从名册剔除（enabled=True 也照剔，那是 Synapse 层停用）。
         states = {PEOPLE_EVENT_TYPE: {"people": [
