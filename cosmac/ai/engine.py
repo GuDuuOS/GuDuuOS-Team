@@ -84,11 +84,22 @@ class ClaudeSdkEngine:
     Claude Code harness(多轮工具循环/自动重试/上下文管理)。
     """
 
-    def __init__(self, toolbox: Toolbox, get_system: Callable[[], str]) -> None:
+    def __init__(
+        self, toolbox: Toolbox, get_system: Callable[[], str], model_override: str = ""
+    ) -> None:
         """toolbox=业务工具箱(桥接给引擎);get_system=取当前人设的回调
-        (用回调而非快照:后台热更新人设后,下一次 run 自动生效,与 legacy 一致)。"""
+        (用回调而非快照:后台热更新人设后,下一次 run 自动生效,与 legacy 一致)。
+        model_override=**群级模型联动**:本群绑定的智能体若指定了模型,用它替代全局
+        COSMAC_SDK_MODEL——与 legacy 引擎的 _agent_for_model 同语义。传的应是 SDK 端点
+        认识的模型 id;若端点不认(如填了 ark 专属 id),run 会抛错、由 bot 回退 legacy
+        (legacy 在原生 provider 上仍按群模型跑,行为不劣化)。"""
         self.toolbox = toolbox
         self.get_system = get_system
+        self.model_override = (model_override or "").strip()
+
+    def _resolve_model(self) -> str:
+        """本次会话用的模型:群覆盖优先,否则全局 env(默认 deepseek-chat)。独立成方法便于单测。"""
+        return self.model_override or _env("SDK_MODEL", "deepseek-chat")
 
     # ── 对外入口(同步;bot 的线程模型里直接调) ──────────────────────────────
     def run(
@@ -160,7 +171,7 @@ class ClaudeSdkEngine:
         # ── 2) 组 SDK 选项:端点/模型按 env,可从 DeepSeek 一键切 Claude ──
         base_url = _env("SDK_BASE_URL")
         api_key = _env("SDK_API_KEY")
-        model = _env("SDK_MODEL", "deepseek-chat")
+        model = self._resolve_model()  # 群级模型联动:群绑定的模型覆盖全局 SDK_MODEL
         # 默认 16:组班这类多步骤任务(建群→邀人→派单→设RULE→发消息…)一条消息内工具调用
         # 轻松超 8 轮。太小会频繁"达上限"回退 legacy;太大则复杂任务跑更久更费 token。16 折中。
         max_turns = int(_env("SDK_MAX_TURNS", "16") or 16)

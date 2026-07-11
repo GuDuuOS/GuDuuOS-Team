@@ -524,6 +524,7 @@ class CosmacBot:
                 )
                 reply = self._run_agent_engine(
                     agent, text or user_text, tool_ctx, extra_system, history,
+                    model_override=gctx.get("model", ""),  # 群级模型联动:SDK 引擎也认群模型
                 )
                 # 幂等发送：用 event_id 派生固定 txn_id，让 Synapse 据此去重。
                 # 场景：同一事务里若有别的事件失败，handle_transaction 会让 Synapse 重发**整批**，
@@ -1049,7 +1050,9 @@ class CosmacBot:
             logger.exception("按群模型 %s 构建失败，回退默认模型", model)
             return self.agent
 
-    def _run_agent_engine(self, agent, user_text, tool_ctx, extra_system, history):
+    def _run_agent_engine(
+        self, agent, user_text, tool_ctx, extra_system, history, model_override=""
+    ):
         """按 COSMAC_AGENT_ENGINE 选执行引擎跑一条消息。
 
         - claude_sdk:Claude Agent SDK(Claude Code 同款 harness),env 可插拔(P1,
@@ -1064,7 +1067,10 @@ class CosmacBot:
         reporter = _ProgressReporter(self.client, tool_ctx.room_id)
         if sdk_engine_enabled():
             try:
-                eng = ClaudeSdkEngine(self.toolbox, lambda: agent.system_prompt)
+                # 群级模型联动:群绑定的智能体模型传给 SDK 引擎(与 legacy 的 _agent_for_model 同语义)
+                eng = ClaudeSdkEngine(
+                    self.toolbox, lambda: agent.system_prompt, model_override=model_override
+                )
                 reply = eng.run(
                     user_text, tool_ctx, extra_system=extra_system, history=history,
                     progress_cb=reporter,

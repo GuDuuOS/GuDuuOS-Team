@@ -1,5 +1,16 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-11 — feat:群级模型联动(SDK 引擎按群绑定模型选大脑)
+- TODO 点名项:legacy 引擎早支持群模型(_agent_for_model),但 SDK 引擎的模型被全局
+  COSMAC_SDK_MODEL 定死,群绑定的智能体模型不生效。
+- 修:ClaudeSdkEngine 加 model_override(_resolve_model:群覆盖优先,否则 env 默认 deepseek-chat);
+  _run_agent_engine 穿透 gctx.model——群绑定与"专班@协作Agent"(worker 路由改写 gctx.model)两路
+  都覆盖。端点不认的模型(如 ark 专属 id)SDK 会抛错,由既有回退机制转 legacy 在原生 provider
+  上按群模型跑,行为不劣化。
+- 顺手:CLAUDE.md 存储表补 Agent vs Skill 判断规则一句。
+- 验证:test_engine +3(覆盖优先/回退 env/默认值);全量 468 仅剩 3 个既有无关失败。
+- **部署:纯后端,git pull + 重启 guduu-bot(SDK 引擎默认关,生产行为零变化;开引擎后自动生效)。**
+
 ## 2026-07-11 — 重构:5 个"方法论型"Agent 转为预置技能(Agent vs Skill 规则落地)
 - 负责人问"这些该是 Agent 还是 Skill",定规则:有身份能接活→Agent;可复用套路/格式要叠加多角色→Skill
   (绑 Agent 激活,绝不全局注入)。规则写进 docs/agency-agents-import.md 与 agency_agents.py 头注释。

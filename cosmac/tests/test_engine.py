@@ -85,3 +85,30 @@ class EngineFailurePathTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class ModelOverrideTest(unittest.TestCase):
+    """群级模型联动:群绑定模型覆盖全局 SDK_MODEL(负责人点名的 TODO 项)。"""
+
+    def tearDown(self) -> None:
+        os.environ.pop("COSMAC_SDK_MODEL", None)
+
+    def _eng(self, override=""):
+        from cosmac.ai.tools import Toolbox
+
+        class _C:  # 极简假 client:引擎本身不碰它
+            pass
+
+        return ClaudeSdkEngine(Toolbox(_C()), lambda: "", model_override=override)
+
+    def test_override_wins(self) -> None:
+        os.environ["COSMAC_SDK_MODEL"] = "deepseek-chat"
+        self.assertEqual(self._eng("deepseek-reasoner")._resolve_model(), "deepseek-reasoner")
+
+    def test_fallback_to_env(self) -> None:
+        os.environ["COSMAC_SDK_MODEL"] = "deepseek-chat"
+        self.assertEqual(self._eng()._resolve_model(), "deepseek-chat")
+
+    def test_default_when_nothing_set(self) -> None:
+        os.environ.pop("COSMAC_SDK_MODEL", None)
+        self.assertEqual(self._eng("  ")._resolve_model(), "deepseek-chat")
+
