@@ -874,6 +874,32 @@ export async function linkRoomToSpace(spaceId: string, roomId: string): Promise<
   return true
 }
 
+/* ===== 站点页面内容（注册/登录页的「隐私政策 / 帮助中心」）=====
+ * 内容存控制室 state event `cosmac.pages`(后台「页面内容」编辑);未配置时后端回内置默认稿。
+ * 读走 bot 公开端点(注册页未登录也要能看);写走 state event(与其它后台配置同套路)。 */
+const PAGES_EVENT_TYPE = 'cosmac.pages'
+export interface SitePage { title: string; md: string }
+
+/** 公开读页面内容。baseUrl 可省略(已登录时用当前 homeserver);未登录页(AuthView)须显式传。 */
+export async function fetchSitePage(key: 'privacy' | 'help', baseUrl?: string): Promise<SitePage> {
+  const base = (baseUrl || (mx as any)?.baseUrl || '').replace(/\/$/, '')
+  try {
+    const r = await fetch(`${base}/cosmac/page?key=${key}`)
+    if (r.ok) {
+      const j = await r.json().catch(() => ({}))
+      if (j?.md) return { title: String(j.title || ''), md: String(j.md) }
+    }
+  } catch { /* 回落 */ }
+  return { title: key === 'privacy' ? '隐私政策' : '帮助中心', md: '内容加载失败，请稍后重试。' }
+}
+
+/** 写页面内容(管理员,整体覆盖 cosmac.pages)。pages = { privacy: {...}, help: {...} }。 */
+export async function setSitePages(pages: Record<string, SitePage>): Promise<void> {
+  if (!mx) throw new Error('未登录')
+  const rid = await ensureControlRoom()
+  await (mx as any).sendStateEvent(rid, PAGES_EVENT_TYPE, pages, '')
+}
+
 /** 请求后端由 bot 代写 m.space.child（成员无 Space 写权限时的回退）。成功 true。 */
 async function spaceAdoptViaBot(spaceId: string, roomId: string): Promise<boolean> {
   const token = (mx as any)?.getAccessToken?.() || ''

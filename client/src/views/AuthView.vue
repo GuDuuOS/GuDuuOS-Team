@@ -18,10 +18,29 @@ import {
   loginNoStart, loginWithEmailNoStart,
   registerRequestCode, registerVerify,
   resetRequestCode, resetVerify, getAuthConfig,
+  fetchSitePage,
 } from '@/matrix/client'
 
 // homeserver 基址（与 LiveView 保持一致）
 const HS = 'https://hs.cosmac.cc'
+
+// ── 帮助 / 隐私政策 弹层（内容来自后台「页面内容」,未配置回落内置默认稿）──
+const pageOpen = ref<'' | 'privacy' | 'help'>('')
+const pageTitle = ref('')
+const pageBody = ref('')
+const pageLoading = ref(false)
+async function openSitePage(key: 'privacy' | 'help') {
+  pageOpen.value = key
+  pageLoading.value = true
+  pageTitle.value = key === 'privacy' ? '隐私政策' : '帮助中心'
+  try {
+    const p = await fetchSitePage(key, HS)   // 未登录页:显式传 homeserver 基址
+    pageTitle.value = p.title || pageTitle.value
+    pageBody.value = p.md
+  } finally {
+    pageLoading.value = false
+  }
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -394,6 +413,19 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
         <p class="auth-switch" v-if="authMode === 'login'">还没有账号？<a @click="switchAuthMode('register')">注册一个</a> · <a @click="switchAuthMode('reset')">忘记密码？</a></p>
         <p class="auth-switch" v-else-if="authMode === 'register'">已有账号？<a @click="switchAuthMode('login')">去登录</a></p>
         <p class="auth-switch" v-else>想起来了？<a @click="switchAuthMode('login')">返回登录</a></p>
+        <!-- 平台自己的帮助/隐私入口(站内弹层)。人机验证组件里的"隐私·条款"链接是 Cloudflare 的,改不了 -->
+        <p class="auth-links"><a @click="openSitePage('help')">帮助</a> · <a @click="openSitePage('privacy')">隐私政策</a></p>
+      </div>
+    </div>
+
+    <!-- 帮助/隐私政策 弹层（内容在管理后台「页面内容」可编辑,未配置用系统默认稿） -->
+    <div v-if="pageOpen" class="auth-page-mask" @click.self="pageOpen = ''">
+      <div class="auth-page-card">
+        <div class="auth-page-head">
+          <b>{{ pageTitle }}</b>
+          <button class="auth-page-x" @click="pageOpen = ''">×</button>
+        </div>
+        <div class="auth-page-body">{{ pageLoading ? '加载中…' : pageBody }}</div>
       </div>
     </div>
   </div>
@@ -426,6 +458,15 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
 .auth-switch { color: var(--text-3); font-size: 13px; text-align: center; margin: 0; }
 .auth-switch a { color: var(--accent); cursor: pointer; font-weight: 600; }
 .auth-switch a:hover { text-decoration: underline; }
+/* 帮助/隐私政策入口 + 弹层 */
+.auth-links { margin-top: 10px; text-align: center; font-size: 12px; color: var(--text-3); }
+.auth-links a { color: var(--text-3); cursor: pointer; }
+.auth-links a:hover { color: var(--accent); text-decoration: underline; }
+.auth-page-mask { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); display: flex; align-items: center; justify-content: center; z-index: 60; }
+.auth-page-card { width: min(640px, 92vw); max-height: 80vh; background: var(--bg-panel, #fff); border-radius: 14px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18); }
+.auth-page-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border, #eee); font-size: 16px; }
+.auth-page-x { border: 0; background: transparent; font-size: 20px; cursor: pointer; color: var(--text-3, #999); line-height: 1; }
+.auth-page-body { padding: 16px 18px; overflow-y: auto; white-space: pre-wrap; font-size: 13px; line-height: 1.75; color: var(--text, #333); }
 .err { color: var(--danger); font-size: 13px; }
 .ok { color: var(--accent); font-size: 13px; margin: 0; }
 .pw-meter { display: flex; align-items: center; gap: 10px; margin-top: -6px; }

@@ -3118,6 +3118,80 @@ class CosmacBot:
             logger.exception("频道知识库删除失败")
             return 500, {"error": "删除失败"}
 
+    # 注册/登录页「隐私政策 / 帮助中心」的**内置默认稿**——后台没配置时用它,保证页面永远有内容。
+    # 后台「页面内容」编辑后写控制室 cosmac.pages,即覆盖此稿。
+    _DEFAULT_SITE_PAGES: Dict[str, Dict[str, str]] = {
+        "privacy": {
+            "title": "隐私政策",
+            "md": (
+                "CosMac Star 隐私政策\n\n最后更新：2026年7月\n\n"
+                "一、我们收集什么\n"
+                "· 账号信息：用户名、邮箱（用于注册验证与找回密码）。\n"
+                "· 使用数据：你创建的工作区/频道、发送的消息、上传的文件与知识库文档。\n"
+                "· 技术信息：登录 IP、设备与浏览器类型（用于账号安全与异地登录提醒）。\n\n"
+                "二、我们如何使用\n"
+                "· 提供聊天、协作与 AI 助手服务。\n"
+                "· 你与中枢 AI 的对话内容会发送给平台配置的大模型服务商用于生成回复；"
+                "我们不会将其用于广告或出售给第三方。\n"
+                "· 安全审计：识别异常登录与滥用行为。\n\n"
+                "三、存储与安全\n"
+                "· 数据存储在我们租用的云服务器，传输全程 HTTPS 加密。\n"
+                "· 消息与文件按 Matrix 协议存储；运维人员仅在必要时依规访问。\n\n"
+                "四、你的权利\n"
+                "· 可随时修改个人资料、删除自己发送的消息。\n"
+                "· 可联系管理员导出或删除账号数据、停用账号。\n\n"
+                "五、联系我们\n"
+                "· 平台内私信管理员，或发邮件至 support@cosmac.cc。"
+            ),
+        },
+        "help": {
+            "title": "帮助中心",
+            "md": (
+                "帮助中心\n\n"
+                "【快速上手】\n"
+                "1. 注册登录：邮箱验证码注册；忘记密码点登录页「忘记密码」。\n"
+                "2. 创建工作区：首次登录跟随引导即可创建工作区与频道。\n"
+                "3. 邀请成员：工作区设置 → 成员与角色 / 公开分享链接；频道内「频道管理 → 人员」可邀请。\n\n"
+                "【中枢 AI 怎么用】\n"
+                "· 右侧「中枢 AI」面板一句话下达目标，如「帮我建个活动专班并拉人、拆任务」。\n"
+                "· 频道里 @ 它提问；它能建频道、派任务、跑工作流、检索知识库。\n\n"
+                "【任务看板】\n"
+                "· 中枢 AI 拆解的任务出现在「任务看板」，卡片按钮可推进状态（开始/完成/退回）。\n\n"
+                "【知识库】\n"
+                "· 频道管理 → 知识库可上传文本文档，本频道 AI 回答时自动检索。\n\n"
+                "【常见问题】\n"
+                "· 登录提示“账号已停用”：请联系管理员恢复。\n"
+                "· 收不到验证码：检查垃圾邮件，或稍后重试。\n"
+                "· 其它问题：私信管理员或发邮件 support@cosmac.cc。"
+            ),
+        },
+    }
+
+    def handle_site_page(self, key: str) -> Tuple[int, Dict[str, Any]]:
+        """公开读「隐私政策/帮助中心」页面内容(注册/登录页用,**无需登录**)。
+
+        优先级:控制室 cosmac.pages(后台「页面内容」编辑) > 内置默认稿。读不到配置时静默回落
+        默认稿——公开页面绝不能因控制室抖动而空白。只认白名单 key,防拿去当任意读接口。
+        """
+        key = (key or "").strip()
+        if key not in self._DEFAULT_SITE_PAGES:
+            return 404, {"error": "页面不存在"}
+        default = self._DEFAULT_SITE_PAGES[key]
+        try:
+            ctrl = self.client.resolve_alias(self.config.control_room_alias)
+            if ctrl:
+                ev = self.client.get_state_event(ctrl, "cosmac.pages") or {}
+                page = ev.get(key) or {}
+                md = str(page.get("md") or "").strip()
+                if md:
+                    return 200, {
+                        "title": str(page.get("title") or "").strip() or default["title"],
+                        "md": md,
+                    }
+        except Exception:
+            logger.debug("读页面内容配置失败,回落默认稿", exc_info=True)
+        return 200, dict(default)
+
     def handle_space_adopt(
         self, access_token: str, body: Dict[str, Any]
     ) -> Tuple[int, Dict[str, Any]]:
@@ -4319,6 +4393,13 @@ class _Handler(BaseHTTPRequestHandler):
             qs = parse_qs(urlparse(self.path).query)
             room_id = (qs.get("room_id") or [""])[0]
             code, payload = self.bot.handle_kb_room_list(token, room_id)
+            self._send_json(code, payload, cors=True)
+            return
+        # 公开页面内容：隐私政策/帮助中心（?key=privacy|help,无需登录——注册页要用）
+        if self.path.split("?", 1)[0] == "/cosmac/page":
+            from urllib.parse import parse_qs, urlparse
+            qs = parse_qs(urlparse(self.path).query)
+            code, payload = self.bot.handle_site_page((qs.get("key") or [""])[0])
             self._send_json(code, payload, cors=True)
             return
         # 私信提示：查某用户是否已停用（?user_id=）

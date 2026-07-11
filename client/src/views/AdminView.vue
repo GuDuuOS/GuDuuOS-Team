@@ -54,6 +54,9 @@
         <button class="adm-mi" :class="{ active: tab === 'platformKb' }" @click="switchToPlatformKb">
           <span class="adm-mi-ic">📚</span> 平台知识库
         </button>
+        <button class="adm-mi" :class="{ active: tab === 'sitePages' }" @click="switchToSitePages">
+          <span class="adm-mi-ic">📄</span> 页面内容
+        </button>
         <button class="adm-mi" :class="{ active: tab === 'overview' }" @click="switchToOverview">
           <span class="adm-mi-ic">📊</span> 数据概览
         </button>
@@ -1227,6 +1230,43 @@
         </div>
       </template>
 
+      <!-- 页面内容面板：注册/登录页可见的「隐私政策/帮助中心」，存控制室 cosmac.pages -->
+      <template v-else-if="tab === 'sitePages'">
+        <header class="adm-head">
+          <div>
+            <h1 class="adm-h1">页面内容</h1>
+            <p class="adm-hint">编辑注册/登录页「帮助 · 隐私政策」弹层的内容 · 保存后立即生效 · 清空正文则回落系统默认稿</p>
+          </div>
+          <div class="adm-actions">
+            <button class="adm-btn ghost" :disabled="spLoading || spSaving" @click="loadSitePages">重新加载</button>
+            <button class="adm-btn" :disabled="spLoading || spSaving" @click="saveSitePagesAll">{{ spSaving ? '保存中…' : '保存全部' }}</button>
+          </div>
+        </header>
+        <div v-if="spLoading" class="adm-center"><div class="adm-spin" /> 加载页面内容…</div>
+        <div v-else class="adm-form">
+          <div class="adm-skill-edit">
+            <label class="adm-field">
+              <span>隐私政策 · 标题</span>
+              <input v-model.trim="spPrivacy.title" placeholder="隐私政策" />
+            </label>
+            <label class="adm-field">
+              <span>隐私政策 · 正文（纯文本，保留换行显示）</span>
+              <textarea v-model="spPrivacy.md" rows="14" />
+            </label>
+          </div>
+          <div class="adm-skill-edit">
+            <label class="adm-field">
+              <span>帮助中心 · 标题</span>
+              <input v-model.trim="spHelp.title" placeholder="帮助中心" />
+            </label>
+            <label class="adm-field">
+              <span>帮助中心 · 正文（纯文本，保留换行显示）</span>
+              <textarea v-model="spHelp.md" rows="14" />
+            </label>
+          </div>
+        </div>
+      </template>
+
       <!-- 数据概览面板 -->
       <template v-else-if="tab === 'overview'">
         <header class="adm-head">
@@ -1410,6 +1450,9 @@ import {
   AI_TOOL_CATALOG,
   AI_PROVIDERS,
   botId,
+  fetchSitePage,
+  setSitePages,
+  type SitePage,
   type AdminUser,
   type AdminRoom,
   type GlobalSkill,
@@ -1427,7 +1470,7 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 const { success, warn } = useToast()
 
 // 当前管理模块：用户/频道/AI配置/技能库/智能体/规则/工作流/数据概览
-const tab = ref<'users' | 'rooms' | 'ai' | 'skills' | 'agents' | 'people' | 'templates' | 'rules' | 'workflows' | 'gating' | 'quotas' | 'plans' | 'docs' | 'platformKb' | 'overview'>('users')
+const tab = ref<'users' | 'rooms' | 'ai' | 'skills' | 'agents' | 'people' | 'templates' | 'rules' | 'workflows' | 'gating' | 'quotas' | 'plans' | 'docs' | 'platformKb' | 'sitePages' | 'overview'>('users')
 
 /* —— 图文教程（后台编辑全平台图文；前台只读·付费可见）—— */
 function switchToDocs() { tab.value = 'docs' }
@@ -1443,6 +1486,41 @@ const pkbErr = ref('')
 function switchToPlatformKb() {
   tab.value = 'platformKb'
   loadPlatformKb()
+}
+
+// ── 页面内容（注册/登录页 帮助/隐私政策,存控制室 cosmac.pages）──
+const spLoading = ref(false)
+const spSaving = ref(false)
+const spPrivacy = reactive<SitePage>({ title: '', md: '' })
+const spHelp = reactive<SitePage>({ title: '', md: '' })
+function switchToSitePages() {
+  tab.value = 'sitePages'
+  loadSitePages()
+}
+async function loadSitePages() {
+  spLoading.value = true
+  try {
+    // 读**生效内容**(后台配置>默认稿):管理员没配置过时看到的就是默认稿,可在其上直接改
+    const [p, h] = await Promise.all([fetchSitePage('privacy'), fetchSitePage('help')])
+    spPrivacy.title = p.title; spPrivacy.md = p.md
+    spHelp.title = h.title; spHelp.md = h.md
+  } finally {
+    spLoading.value = false
+  }
+}
+async function saveSitePagesAll() {
+  spSaving.value = true
+  try {
+    await setSitePages({
+      privacy: { title: spPrivacy.title, md: spPrivacy.md },
+      help: { title: spHelp.title, md: spHelp.md },
+    })
+    success('已保存', '注册/登录页的「帮助 · 隐私政策」已更新')
+  } catch (e: any) {
+    warn('保存失败', e?.message || '无法写入控制室')
+  } finally {
+    spSaving.value = false
+  }
 }
 async function loadPlatformKb() {
   pkbLoading.value = true
