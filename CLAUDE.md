@@ -92,7 +92,7 @@
 | **全局 AI 配置**（人设/模型/工具开关） | Matrix state event | 已实现：写在控制室 `cosmac.ai.config`（见 §9 / memory `ai-config-control-room`）。 |
 | **每账号轻量配置** | Matrix per-user **account data** | 优先用它：每用户键值、自动同步到客户端、零新基建。撑不住结构化关联时再迁 DB。 |
 | **全局 Skill / Agent 定义**（后台管理） | Matrix state event | 判断规则:有身份能接活→Agent;可复用套路/格式→Skill 绑 Agent(绝不全局注入)。 已定（负责人拍板）：存控制室 `cosmac.skills` / `cosmac.agents`，浏览器(管理后台)写、bot 读——**因为浏览器只能走 Matrix、够不到 DB**，与「全局 AI 配置」同套路。 |
-| **群级 / 个人 Skill**（聊天命令管理） | CosMac Star DB | 群里/私聊用命令建的技能（bot 有 DB 时存这；注入时与上面的全局技能合并）。 |
+| **群级 / 个人 Skill 与用户自建 Agent** | CosMac Star DB | 聊天命令或前台「我的AI工坊」建的（scope=room/user，owner 隔离）；注入/名册时与全局合并、个人覆盖全局；**计入账号存储空间配额**。 |
 | **知识库** | ✅ CosMac Star DB + **pgvector** | 文档分块 + 向量检索(RAG)，state event 存不下也搜不了。**这是上 DB 的最硬理由**。 |
 | **群级 / Agent 记忆**（摘要、长期记忆） | ✅ CosMac Star DB | 派生数据，与原始聊天记录分开存。 |
 | **工作流连接器定义**（模块3，后台编排） | Matrix state event | 已定：存控制室 `cosmac.workflows`（浏览器够不到 DB，同 Skill/Agent）。外部平台 key 只进服务端 env（`COSMAC_WF_<CRED>`），定义里只放凭据名。 |
@@ -125,6 +125,7 @@
 | R | **品牌化 Matrix→CosMac Star** | ⬜ 持续 | 贯穿全程的横切任务，按 §7 三层红线分层改，每碰到呈现层字样就顺手改 |
 
 > 状态符号：⬜未开始 / 🟡进行中 / ✅完成。开工/完成时更新这张表。
+> 已上线功能全貌见 **docs/FEATURES.md**(对外介绍/新人了解用;功能增减顺手更新)。
 
 ---
 
