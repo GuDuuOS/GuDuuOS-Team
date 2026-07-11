@@ -146,7 +146,7 @@ const { open: openCli } = useCli()
 const { open: openProfileHome, visible: profileVisible } = useProfileHome()
 const { open: openPluginStore } = usePluginStore()
 const { open: openAssets } = useCustomAssets()
-const { openSettings, status: myStatus, statusMeta: myStatusMeta } = useUserProfile()
+const { openSettings, status: myStatus, statusMeta: myStatusMeta, refreshIdentity: refreshMyIdentity } = useUserProfile()
 
 // ── 数据看板 ──
 import KpiCard from '@/components/canvas/KpiCard.vue'
@@ -227,7 +227,9 @@ const scopedTasks = computed(() => {
     if (sid) {
       if (sid === activeSpace.value) return true      // 就是本工作区的任务
       if (mySpaceIds.has(sid)) return false           // 属于我的另一个工作区 → 只在那边显示
-      return assignedToMe(t)                          // 归属工作区我进不去,但派给我 → 别弄丢
+      // 归属工作区我进不去,但**派给我 或 我下达的** → 别弄丢(L11:此前只保留"派给我的",
+      // 把"我下达却派给别人、且归属工作区已退出/删除"的任务弄丢了,与后端可见性口径不一致)。
+      return assignedToMe(t) || dispatchedByMe(t)
     }
     // —— 以下为无归属的存量任务：旧口径兜底 ——
     const rid = t.room_id || ''
@@ -254,6 +256,11 @@ function assignedToMe(t: TaskItem): boolean {
     if (first && localPartOf(first) === me) return true
   }
   return false
+}
+/** 这条任务是否由当前登录用户**下达**(sender==本人)——与后端可见性口径一致(L11)。 */
+function dispatchedByMe(t: TaskItem): boolean {
+  const me = localPartOf(currentUserId())
+  return !!me && !!t.sender && localPartOf(t.sender) === me
 }
 /** 取 Matrix user_id 的 localpart：`@duxz01:cosmac.cc` / `duxz01` / `@duxz01` → `duxz01`(小写)。 */
 function localPartOf(s: string): string {
@@ -412,10 +419,15 @@ function switchAiSession(roomId: string) {
 // 删除会话：离开房间；若删的是当前会话，切到下一个（没有则新建）
 async function removeAiSession(roomId: string) {
   if (!confirm('删除这个会话？聊天记录将不再显示。')) return
+  const wasCurrent = roomId === aiRoom.value
+  // L4：先把当前指针移开被删的房，避免下面竞态里 aiSessions[0] 还是它(leave/forget 的 sync 回声
+  // 尚未到达)、又被 switchAiSession 切回去（界面看起来"删除没生效"）。
+  if (wasCurrent) aiRoom.value = ''
   await deleteAiSession(roomId)
   refreshAiSessions()
-  if (roomId === aiRoom.value) {
-    const next = aiSessions.value[0]?.roomId
+  if (wasCurrent) {
+    // 从刷新后的列表里**排除刚删的房**再挑下一个（它可能因回声未到仍在列表里）
+    const next = aiSessions.value.find((s) => s.roomId !== roomId)?.roomId
     if (next) switchAiSession(next)
     else await newAiSession()
   }
@@ -924,7 +936,11 @@ const newChPublic = ref(false)
 const newChCreating = ref(false)
 function openNewChannel() {
   if (!activeSpace.value) { toast('请先选一个工作区', '频道需要归属到某个工作区'); return }
-  newChName.value = ''; newChTopic.value = ''; newChPublic.value = false; newChOpen.value = true
+  newChName.value = ''; newChTopic.value = ''
+  // L6：公开工作区里新建频道**默认公开**——与"任何人凭链接可加入全部频道"的承诺一致，避免凭链接
+  // 进来的人进不去后建的私密频道。用户仍可在弹窗里改回私密。
+  newChPublic.value = spaceJoinRule(activeSpace.value) === 'public'
+  newChOpen.value = true
 }
 /** 频道名归一化(去首尾空格、内部空白折叠成一个、转小写)——用于重名比对。 */
 function normChanName(s: string): string {
@@ -1113,8 +1129,23 @@ function renderMd(raw: string): string {
   })
   // @提及高亮（@用户 或 @用户:服务器）
   s = s.replace(/(^|[\s(])@([a-zA-Z0-9_.\-]+(?::[a-zA-Z0-9_.\-]+)?)/g, '$1<span class="mention">@$2</span>')
-  // 换行
-  s = s.replace(/\n/g, '<br>')
+  // 块级：标题 / 引用 / 无序列表（L8：composer 工具条有这三个按钮，渲染端此前不支持、对方看到
+  // 字面 "## 标题"）。逐行判断，放在换行→<br> 之前；块级行渲染成独立块元素、其间不加 <br>，
+  // 只有相邻的普通行之间才用 <br> 连接。注意此时文本已被 escapeHtml，故 ">" 已是 "&gt;"。
+  const parts = s.split('\n').map((ln) => {
+    let mm = ln.match(/^(#{1,3})\s+(.+)$/)
+    if (mm) return { block: true, html: `<div class="md-h md-h${mm[1].length}">${mm[2]}</div>` }
+    mm = ln.match(/^&gt;\s?(.*)$/)
+    if (mm) return { block: true, html: `<blockquote class="md-quote">${mm[1]}</blockquote>` }
+    mm = ln.match(/^[-*]\s+(.+)$/)
+    if (mm) return { block: true, html: `<div class="md-li">•&nbsp;${mm[1]}</div>` }
+    return { block: false, html: ln }
+  })
+  s = ''
+  parts.forEach((p, i) => {
+    if (i > 0 && !p.block && !parts[i - 1].block) s += '<br>'
+    s += p.html
+  })
   // 还原代码占位
   s = s.replace(/\x00(\d+)\x00/g, (_m, i) => stash[+i])
   return s
@@ -1193,7 +1224,11 @@ function refresh() {
   // 深链到频道时需等房间列表加载好再解析；其余地址不必等。只做一次。
   if (!urlRestored) {
     const needRoom = /^\/s\/[^/]+\/c\//.test(route.path)
-    if (!needRoom || rooms.value.length) {
+    // L7：深链到频道要等房间列表加载好再解析；但**零房间账号**永远等不到 rooms.value.length，
+    // 会导致 urlRestored/syncReady 永不置位、之后所有导航都不再写地址(后退/前进/刷新全失效)。
+    // 故加一个兜底期限：超过它即便房间没到也强制还原(applyFromRoute 对找不到的房会优雅回退看板)。
+    if (!restoreDeadline) restoreDeadline = Date.now() + 3000
+    if (!needRoom || rooms.value.length || Date.now() > restoreDeadline) {
       applyFromRoute()
       urlRestored = true
       syncReady = true // 还原完成后才允许"状态→地址"回写，避免覆盖初始深链
@@ -1250,6 +1285,9 @@ function maybeAcceptInvites() {
 async function afterLogin(uid: string) {
   me.value = uid
   loggedIn.value = true
+  // M12：会话已就绪，按当前账号回填在线状态（从 account data）——setup 时 session 还没好、
+  // 回填不了，不在这里补一次的话刷新后状态点会错显示成"在线"。
+  refreshMyIdentity()
   addingAccount.value = false   // 加账号流程结束（若是）
   board.value = true // 登录后第一屏 = 数据看板
   tasks.value = false
@@ -1258,6 +1296,9 @@ async function afterLogin(uid: string) {
   seenDmIds.clear()
   if (stopUpdates) stopUpdates()   // 若是重新登录，先解绑上一次的
   stopUpdates = onUpdate(refresh)
+  // L7 兜底：若 3.2s 内 sync 事件没再触发 refresh（如零房间账号、深链到不存在的频道），
+  // 主动补一次，确保首屏还原一定发生、URL 同步不会永久锁死。
+  setTimeout(() => { if (!urlRestored) refresh() }, 3200)
   if (stopTyping) stopTyping()
   stopTyping = onTyping(refreshTyping)
   try {
@@ -1408,8 +1449,9 @@ async function checkDmDeliverability(id: string) {
   dmUndeliverable.value = { show: false, deactivated: false }
   try {
     if (!isDirectRoom(id)) return
-    const { peerId, joined } = dmPeerStatus(id)
-    if (!peerId || joined) return   // 对方还在场 → 正常,不提醒
+    const { peerId, joined, pending } = dmPeerStatus(id)
+    // 在场(joined) 或 刚发起待对方接受(pending=invite) → 都正常，不提醒（M10：invite 不是送不达）
+    if (!peerId || joined || pending) return
     // 对方不在场:先标记提醒,再异步确认是不是"已停用"(决定措辞),避免误报
     dmUndeliverable.value = { show: true, deactivated: false }
     const deactivated = await checkUserDeactivated(peerId)
@@ -1439,15 +1481,24 @@ async function toggleFav() {
 async function send() {
   const t = draft.value.trim()
   if (!t || !currentRoom.value) return
-  draft.value = ''
+  const room = currentRoom.value
   const rep = replyTo.value
   const ed = editingId.value
+  // 乐观清空输入/回复/编辑态；M13：发送失败要回填草稿+恢复状态，绝不让用户打的内容凭空消失。
+  draft.value = ''
   replyTo.value = null
   editingId.value = null
-  if (ed) await editMessage(currentRoom.value, ed, t)
-  else if (rep) await sendReply(currentRoom.value, t, rep.id)
-  else await sendText(currentRoom.value, t)
-  setTimeout(refresh, 400)
+  try {
+    if (ed) await editMessage(room, ed, t)
+    else if (rep) await sendReply(room, t, rep.id)
+    else await sendText(room, t)
+    setTimeout(refresh, 400)
+  } catch (err: any) {
+    draft.value = t                      // 回填草稿
+    if (rep) replyTo.value = rep         // 恢复回复目标，方便直接重试
+    if (ed) editingId.value = ed         // 恢复编辑态
+    toast('发送失败', err?.message || '消息没能发出去，请重试')
+  }
 }
 
 // 「我的AI工坊」(自建智能体/技能)弹窗
@@ -1486,11 +1537,18 @@ async function onAttachmentPicked(e: Event) {
 async function aiSend() {
   const t = aiDraft.value.trim()
   if (!t || !aiRoom.value) return
+  const room = aiRoom.value
   aiDraft.value = ''
   // 捎上当前工作区：中枢 AI 是全局 DM，带上它才能基于「当前工作区的文档」做 RAG 答疑。
   const extra = activeSpace.value ? { 'cosmac.doc_space': activeSpace.value } : undefined
-  await sendText(aiRoom.value, t, extra)
-  setTimeout(refresh, 400)
+  try {
+    await sendText(room, t, extra)
+    setTimeout(refresh, 400)
+  } catch (err: any) {
+    aiDraft.value = t   // M13：发送失败回填草稿，别丢用户输入
+    toast('发送失败', err?.message || '消息没能发出去，请重试')
+    return
+  }
 }
 
 // 选择卡点选：把用户选的内容作为普通消息发回该房间，主 AI 据此继续（同打字效果）
@@ -1634,6 +1692,7 @@ const router = useRouter()
 let applyingFromRoute = false // 正在"按地址还原状态"，期间不回写地址（防死循环）
 let syncReady = false         // 首屏还原完成后才开始"状态→地址"
 let urlRestored = false       // 首屏只按地址还原一次（见 refresh）
+let restoreDeadline = 0       // L7：首屏还原兜底期限——零房间账号也不至于永久等房间列表而锁死 URL 同步
 
 /** 由当前导航状态算出对应地址 */
 function computePath(): string {
@@ -1675,8 +1734,12 @@ function applyFromRoute() {
     }
     const roomId = m[3] ? decodeURIComponent(m[3]) : ''
     if (roomId) {
-      // 房间还没加载到 / 不存在 → 退回数据看板，避免空白
-      if (rooms.value.some((r) => r.id === roomId)) openRoom(roomId)
+      // 房间还没加载到 / 不存在 → 退回数据看板，避免空白。
+      // M11：私信(DM)不在 rooms.value 里(listRooms 排除了 DM)，必须同时查 dms.value，否则
+      // 刷新/深链打开私信会因"找不到"落回看板。openRoom 对 DM 同样适用(会自动接受邀请+读历史)。
+      if (rooms.value.some((r) => r.id === roomId) || dms.value.some((d) => d.id === roomId)) {
+        openRoom(roomId)
+      }
       else { board.value = true; tasks.value = false; docs.value = false; org.value = false; currentRoom.value = '' }
     } else if (m[2] === 'tasks') {
       tasks.value = true; board.value = false; docs.value = false; org.value = false; currentRoom.value = ''
@@ -3298,6 +3361,13 @@ onBeforeUnmount(() => {
 .text :deep(a), .ai-bubble :deep(a) { color: var(--info); text-decoration: underline; }
 .text :deep(code.md-code), .ai-bubble :deep(code.md-code) { background: var(--bg-code); padding: 1px 5px; border-radius: 4px; font-family: var(--mono); font-size: 12.5px; }
 .text :deep(pre.md-pre), .ai-bubble :deep(pre.md-pre) { background: var(--bg-code); padding: 10px 12px; border-radius: 8px; font-family: var(--mono); font-size: 12.5px; overflow-x: auto; margin: 6px 0; white-space: pre-wrap; word-break: break-word; }
+/* L8：composer 工具条的 标题/引用/无序列表 现在能正常渲染 */
+.text :deep(.md-h), .ai-bubble :deep(.md-h) { font-weight: 700; margin: 3px 0; }
+.text :deep(.md-h1), .ai-bubble :deep(.md-h1) { font-size: 1.25em; }
+.text :deep(.md-h2), .ai-bubble :deep(.md-h2) { font-size: 1.15em; }
+.text :deep(.md-h3), .ai-bubble :deep(.md-h3) { font-size: 1.05em; }
+.text :deep(blockquote.md-quote), .ai-bubble :deep(blockquote.md-quote) { border-left: 3px solid var(--border); padding: 2px 0 2px 10px; margin: 3px 0; color: var(--text-dim); }
+.text :deep(.md-li), .ai-bubble :deep(.md-li) { padding-left: 4px; }
 .text :deep(strong), .ai-bubble :deep(strong) { font-weight: 700; }
 .text :deep(del), .ai-bubble :deep(del) { opacity: .7; }
 .rich { margin-top: 8px; border: 1px solid var(--border); background: var(--bg-panel); border-radius: 6px; padding: 14px 16px; }

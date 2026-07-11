@@ -2713,6 +2713,9 @@ class CosmacBot:
                         "room_id": t.room_id or "",
                         # 所属工作区：前端任务看板据此按工作区过滤（空=存量无归属，各处显示）
                         "space_id": getattr(t, "space_id", "") or "",
+                        # 下达人：前端按工作区过滤时，"我下达的"(sender==本人)即便派给别人、且归属
+                        # 工作区我进不去，也要显示——否则会弄丢（L11）。
+                        "sender": t.sender or "",
                         # 截止时间（epoch 秒，可空）：看板据它显示"还剩几天/已逾期"。
                         "due_ts": t.due_ts,
                     })

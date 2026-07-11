@@ -1,5 +1,23 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-12 — fix:BUG 排查修复(第五批·前端 G5~G8 共 16 项，收官)
+- 剩余全部前端组，至此 BUG 排查发现的 ~40 项全部修完。
+- **G5 私信体验**:M10 刚发起私信误报"送不达"(dmPeerStatus 把 invite 待接受态当离场→加 pending 区分);
+  M11 私信刷新/深链落回看板(applyFromRoute 同时查 dms.value,DM 不在 rooms 里)。
+- **G6 消息/输入框**:M9 stripReplyFallback 吞掉">"开头的正常消息(只对确有 in_reply_to 的回复才剥
+  fallback);M13 发送失败草稿丢失(乐观清空→失败回填+恢复回复/编辑态+toast);L8 composer 工具条
+  标题/引用/列表现在能正常渲染(renderMd 加块级+样式)。
+- **G7 状态/会话/频道/路由**:M12 在线状态刷新不还原(afterLogin 里补 refreshIdentity);L4 删当前 AI
+  会话竞态又切回(先移开指针+排除刚删房);L5 频道名"@"开头从列表消失(仅无显式名时才按 @ 丢弃);
+  L6 公开工作区新建频道默认继承公开(负责人定);L7 零房间账号深链锁死 URL 同步(加兜底期限+定时器);
+  L11 前端工作区过滤弄丢"我下达的"任务(后端 task 输出补 sender、前端加 dispatchedByMe)。
+- **G8 后台/认证**:L14 入驻模板撞 64KB 上限(persistTemplates 加字节预检+明确提示);L15 唯一管理员
+  停用自己自锁(拦截+禁用按钮);L16 找回密码补弱密码门禁(与注册页同一道);L17 step-up 加"重发验证码"
+  入口;L18 注册后不再多建 device(registerVerify 直接引导会话,老后端无 token 才回退登录)。
+- 验证:全量后端 519 项全绿;client build 通过;后端 test_task_access 覆盖新 sender 字段。
+- **部署:含前端,git pull + 重启 guduu-bot + `cd client && npm run build` + 覆盖 dist。**
+- 至此全部 5 批(严重 11 + 后端 G1~G4 17 + 前端 G5~G8 16 = 44 项)修复完成。
+
 ## 2026-07-12 — fix:BUG 排查修复(第四批·后端杂项 G4 共 6 项)
 - **G4 后端杂项(step-up/记忆/计量)**:
   · M14 异地 step-up 429 误判自锁:_issue_code 两种 429 加 code_valid 标记(60s冷却=有效码 vs

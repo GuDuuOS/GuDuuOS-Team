@@ -275,6 +275,29 @@ async function doLogin() {
   }
 }
 
+/** L17：step-up 挑战里「重新发送验证码」——用当前用户名/邮箱+密码再走一次登录(不带 code)，
+ *  后端据此重新发码(受冷却/每小时上限约束，M14 已修正误判)。避免"没收到码只能退出重来"的自锁。 */
+async function resendStepUpCode() {
+  if (!stepUp.value || loading.value) return
+  error.value = ''; info.value = ''
+  loading.value = true
+  try {
+    const res = loginBy.value === 'email'
+      ? await loginWithEmailNoStart(HS, email.value.trim(), password.value, '')
+      : await loginNoStart(HS, user.value.trim(), password.value, '')
+    if (res?.stepUp) {
+      stepUpHint.value = res.emailHint || stepUpHint.value
+      info.value = '验证码已重新发送，请查收邮箱。'
+    } else {
+      proceed()   // 极少数：这次不再要求 step-up(如已成常用地区) → 直接进
+    }
+  } catch (e: any) {
+    error.value = friendlyLoginError(e)
+  } finally {
+    loading.value = false
+  }
+}
+
 /** 注册：校验 → 验码建号 → 用同一套用户名/密码认证 → 进主应用（LiveView 会触发首次引导）。 */
 async function doRegister() {
   error.value = ''
@@ -289,8 +312,10 @@ async function doRegister() {
   if (password.value !== password2.value) { error.value = '两次输入的密码不一致'; return }
   loading.value = true
   try {
-    await registerVerify(HS, { email: e, code: emailCode.value.trim(), username: u, password: password.value })
-    await loginNoStart(HS, u, password.value)
+    // L18：注册成功即返回可用会话，registerVerify 内部已 saveSession；只有老后端没回 token 时
+    // 才回退登录一次（不再无条件 loginNoStart 多建一个 device/token）。
+    const reg = await registerVerify(HS, { email: e, code: emailCode.value.trim(), username: u, password: password.value })
+    if (!reg?.access_token) await loginNoStart(HS, u, password.value)
     proceed()
   } catch (err: any) {
     error.value = err?.message || String(err)
@@ -306,6 +331,8 @@ async function doResetPassword() {
   if (!e) { error.value = '请填邮箱'; return }
   if (!emailCode.value.trim()) { error.value = '请填邮箱验证码'; return }
   if (password.value.length < 8) { error.value = '新密码至少 8 位'; return }
+  // L16：与注册页同一道弱密码门禁——否则注册拦、重置不拦，用户白跑一次请求才被后端拒。
+  if (pwStrength.value.level <= 1) { error.value = pwStrength.value.warn || '密码太弱，请换一个'; return }
   if (password.value !== password2.value) { error.value = '两次输入的密码不一致'; return }
   loading.value = true
   try {
@@ -368,6 +395,10 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
             <div class="stepup-tip">🔒 检测到新设备/新地点登录，验证码已发送至 <b>{{ stepUpHint }}</b></div>
             <input v-model="stepUpCode" name="login-otp" autocomplete="one-time-code" inputmode="numeric" maxlength="6"
                    placeholder="邮件里的 6 位验证码" @keyup.enter="doLogin" />
+            <!-- L17：没收到码时可原地重发（不必退出重来），重发受后端冷却/每小时上限约束 -->
+            <button type="button" class="stepup-resend" :disabled="loading" @click="resendStepUpCode">
+              没收到？重新发送验证码
+            </button>
           </div>
         </template>
 
