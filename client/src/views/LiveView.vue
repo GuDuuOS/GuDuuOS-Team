@@ -2193,8 +2193,9 @@ onBeforeUnmount(() => {
               <svg v-if="focused" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V3h4M21 7V3h-4M3 17v4h4M21 17v4h-4" /></svg>
               <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M12 3v18M3 12h18" /></svg>
             </button>
-            <!-- ℹ「关于此频道」：复刻 DEMO，开/关右侧频道信息面板（真实成员+技能/知识库/规则总览）-->
-            <button class="ch-ic-btn" :class="{ active: rightPanelVisible }" :title="rightPanelVisible ? '关闭关于此频道' : '关于此频道'" @click="toggleRightPanel">
+            <!-- ℹ「关于此频道」：复刻 DEMO，开/关右侧频道信息面板（真实成员+技能/知识库/规则总览）。
+                 私信不是频道,没有成员/技能/知识库这些概念,故隐藏(与"频道设置/成员管理"同口径)。-->
+            <button v-if="!currentIsDm" class="ch-ic-btn" :class="{ active: rightPanelVisible }" :title="rightPanelVisible ? '关闭关于此频道' : '关于此频道'" @click="toggleRightPanel">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></svg>
             </button>
           </div>
@@ -2337,7 +2338,7 @@ onBeforeUnmount(() => {
       </main>
 
       <!-- 右：关于此频道（复刻 DEMO，ℹ 按钮开关；真实成员 + 技能/知识库/规则总览）-->
-      <RightPanel v-if="rightPanelVisible && currentRoom && !focused" />
+      <RightPanel v-if="rightPanelVisible && currentRoom && !currentIsDm && !focused" />
 
       <!-- 右：数据源面板（数据看板/任务看板头的数据源按钮开关）-->
       <BoardSourcePanel v-if="boardPanelOpen && !focused" />
