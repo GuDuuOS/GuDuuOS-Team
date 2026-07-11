@@ -226,7 +226,37 @@ async function startFrom(opts: {
     mx = null
     throw e
   }
+  // —— 运行中的会话失效监听（启动成功后挂上）——
+  // 上面那套 M_UNKNOWN_TOKEN 判定只覆盖**启动阶段**;若用户正用着、账号被后台停用(Synapse 会吊销
+  // token),此后所有请求静默 401:任务点「开始」没反应、消息发不出,页面却毫无提示(线上实测)。
+  // 这里监听两路信号,一旦确认会话死亡就通知 UI(弹提示→回登录页):
+  //   ① SDK 的 Session.logged_out——任何请求返回 M_UNKNOWN_TOKEN 时由 js-sdk 主动发出;
+  //   ② sync 进入 ERROR 且 errcode 为鉴权失效——双保险(不同版本 SDK 事件行为略有差异)。
+  sessionExpiredFired = false
+  ;(mx as any).on('Session.logged_out', () => fireSessionExpired('M_UNKNOWN_TOKEN'))
+  ;(mx as any).on('sync', (state: string, _prev: string, data: any) => {
+    if (state !== 'ERROR') return
+    const errcode = data?.error?.errcode || data?.error?.data?.errcode
+    if (errcode === 'M_UNKNOWN_TOKEN' || errcode === 'M_USER_DEACTIVATED') fireSessionExpired(errcode)
+  })
   return opts.userId
+}
+
+// —— 会话失效通知：UI 注册回调,收到后弹提示并送回登录页 ——
+let sessionExpiredCb: ((reason: string) => void) | null = null
+let sessionExpiredFired = false   // 每次 startFrom 成功后重置;保证一次会话只通知一次
+/** 注册「登录已失效」回调（LiveView 挂载时调用；重复调用覆盖前一个）。 */
+export function onSessionExpired(cb: (reason: string) => void): void {
+  sessionExpiredCb = cb
+}
+function fireSessionExpired(reason: string): void {
+  if (sessionExpiredFired) return
+  sessionExpiredFired = true
+  // 清掉本机记住的死会话:不清的话回登录页后 restoreSession 又拿它自动登录、无限循环。
+  try { removeCachedAccount(currentUserId()) } catch { /* ignore */ }
+  localStorage.removeItem(SESSION_KEY)
+  try { mx?.stopClient() } catch { /* ignore */ }
+  sessionExpiredCb?.(reason)
 }
 
 // (旧的「登录+立即启动客户端」函数 login()/loginWithEmail() 已删除:它们直连 Synapse、
@@ -2725,17 +2755,21 @@ export async function getTasks(): Promise<TaskItem[]> {
 /** 改任务状态/进度（看板手动操作）。返回是否成功。 */
 export async function updateTask(
   id: number, patch: { status?: string; progress?: number },
-): Promise<boolean> {
+): Promise<{ ok: boolean; error?: string }> {
   const token = (mx as any)?.getAccessToken?.() || ''
-  if (!token) return false
+  if (!token) return { ok: false, error: '登录已失效，请重新登录' }
   try {
     const r = await fetch(`${payBase()}/cosmac/tasks/update`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ id, ...patch }),
     })
-    return r.ok
-  } catch { return false }
+    if (r.ok) return { ok: true }
+    // 把后端真实报错(如 401「登录已失效，请重新登录」/403「无权操作此任务」)带给 UI——
+    // 旧版只回 boolean,点「开始」失败毫无反应,用户以为按钮坏了(线上实测:账号被停用后)。
+    const j = await r.json().catch(() => ({}))
+    return { ok: false, error: j?.error || `操作失败（${r.status}）` }
+  } catch { return { ok: false, error: '网络异常，请稍后重试' } }
 }
 
 /* ===== 文档教学频道（类云文档）=====

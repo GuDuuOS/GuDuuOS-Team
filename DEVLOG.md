@@ -1,5 +1,22 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-11 — fix:账号被停用后全站静默失效——全局「登录已失效」提醒 + 任务按钮报错
+- 现象:成员停留在任务看板时账号被后台停用,点任务「开始」毫无反应;Network 里全是 401
+  「登录已失效，请重新登录」,页面却不给任何提示。
+- 根因(两层):
+  ① updateTask 只回 boolean,moveTask 失败时什么都不做——后端的 401 文案被吞;
+  ② M_UNKNOWN_TOKEN/M_USER_DEACTIVATED 只在**启动阶段**有判定,运行中 token 被吊销
+    (停用账号即吊销)无人监听 → 所有功能静默 401。
+- 修(纯前端):
+  · client.ts:startFrom 成功后挂**运行中会话失效监听**(SDK Session.logged_out + sync ERROR
+    且 errcode 为鉴权失效,双保险);fireSessionExpired 一次性触发:清本机死会话(防 reload 后
+    restoreSession 拿它无限循环)、stopClient、通知 UI。新增 onSessionExpired(cb) 注册口。
+  · LiveView:onMounted 注册回调——toast「登录已失效」(停用账号显示"已被停用,请联系管理员")
+    → 2.2s 后 reload → 无会话自动落到登录页。
+  · updateTask 改回 {ok,error},moveTask 失败 toast 后端真实文案(如「登录已失效」)。
+- 效果:停用账号后,页面几秒内(下一次 sync 即 401)弹提示并回登录页,不再"处处点不动却没人说话"。
+- **部署:纯前端,覆盖 dist 即可。**
+
 ## 2026-07-11 — fix:首次引导时新增的频道没建上(限流吞错)
 - 现象:注册后引导里在默认频道外再加一个(如"每日站会")→ 建完工作台,左栏只有默认频道,新增的不显示。
 - 根因(线上查证):Synapse 里"每日站会"房间**计数=0=根本没建出来**。runCreate 一口气建

@@ -19,6 +19,7 @@ import {
   listCachedAccounts,
   switchToAccount,
   restoreSession,
+  onSessionExpired,
   logout,
   onUpdate,
   onTyping,
@@ -301,8 +302,14 @@ function dueMeta(t: TaskItem): { text: string; cls: string } | null {
 function nextStatus(s: string) { return s === 'todo' ? 'doing' : 'done' }
 function prevStatus(s: string) { return s === 'done' ? 'doing' : 'todo' }
 async function moveTask(t: TaskItem, status: string) {
-  const ok = await updateTask(t.id, { status })
-  if (ok) { t.status = status; if (status === 'done') t.progress = 100 }
+  const res = await updateTask(t.id, { status })
+  if (res.ok) {
+    t.status = status
+    if (status === 'done') t.progress = 100
+  } else {
+    // 把后端真实原因告诉用户(如账号被停用后的「登录已失效，请重新登录」),别让按钮"点了没反应"
+    toast('操作失败', res.error || '请稍后重试')
+  }
 }
 
 
@@ -1694,6 +1701,14 @@ watch(() => route.path, (p) => {
 onMounted(async () => {
   document.addEventListener('click', onDocClick)
   hideRightPanel()  // 「关于此频道」面板在真实客户端默认收起，由频道头 ℹ 按钮开关
+  // 全局会话失效监听:账号被停用/token 被吊销时(运行中),弹明确提示并送回登录页——
+  // 否则所有功能静默 401,用户只觉得"按钮都点不动了"(线上实测:停用后点任务「开始」无反应)。
+  onSessionExpired((reason) => {
+    toast('登录已失效', reason === 'M_USER_DEACTIVATED'
+      ? '你的账号已被停用，请联系管理员。即将返回登录页…'
+      : '请重新登录（账号可能已被停用或在别处退出）。即将返回登录页…')
+    setTimeout(() => window.location.reload(), 2200)  // reload 后无会话 → 自动落到登录页
+  })
   loading.value = true
   // 冷启动若是 /join/:space 邀请链接：先记下目标，登录/恢复会话后 afterLogin 里执行加入。
   const jm = route.path.match(/^\/join\/(.+)$/)
