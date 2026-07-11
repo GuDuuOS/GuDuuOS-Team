@@ -497,7 +497,7 @@ class CosmacBot:
                 gctx = self._group_context(room_id)
                 # 档3b：专班里若点名了某协作 Agent（按名/slug），改用该 worker 的人设/技能/模型
                 # 回这条（任务RULE 不变、仍受约束）；没点名则维持 lead（项目主AI）。
-                gctx = self._apply_worker_routing(text or user_text, gctx)
+                gctx = self._apply_worker_routing(text or user_text, gctx, sender=sender)
                 # 按 (本群, 发起人) 算出本轮 system addendum：人设 + 技能 + 知识库检索片段(RAG)。
                 # 任何失败（DB 没装/没数据/出错）都返回空串、绝不阻断回复（见 _skill_addendum）。
                 # 图文教程答疑：全局图文(付费可读)会在 _kb_context 里按 doc_read 门控自动纳入 RAG，
@@ -992,7 +992,9 @@ class CosmacBot:
             logger.debug("读取本群上下文失败（忽略）：%s", e)
             return out
 
-    def _apply_worker_routing(self, text: str, gctx: Dict[str, Any]) -> Dict[str, Any]:
+    def _apply_worker_routing(
+        self, text: str, gctx: Dict[str, Any], sender: str = ""
+    ) -> Dict[str, Any]:
         """档3b：专班里若消息点名了某个绑定的协作 Agent（按 slug 或显示名），就改用该 worker
         的人设/技能/模型回这条；**任务 RULE 不变**（worker 仍在专班、受同一约束）。
 
@@ -1002,7 +1004,7 @@ class CosmacBot:
         """
         slugs = gctx.get("worker_slugs") or []
         body = (text or "").strip()
-        if not slugs or not body:
+        if not body:
             return gctx
         low = body.lower()
         try:
@@ -1025,6 +1027,21 @@ class CosmacBot:
                 return out
         except Exception as e:
             logger.debug("协作 Agent 路由失败（忽略，用 lead 回应）：%s", e)
+        # 专班 worker 未命中 → 试**发起人自建**智能体(用户自己的"私人 AI 同事",点名即应答)。
+        try:
+            for m in self._my_agent_items(sender):
+                name = str(m.get("name") or "").strip()
+                if (m["slug"] in low) or (bool(name) and name in body):
+                    out = dict(gctx)
+                    out["persona"] = (
+                        f"本条由你以用户自建智能体「{name or m['slug']}」的身份回应，"
+                        f"请按下述人设履职：\n{(m.get('system_prompt') or '').strip()}"
+                    )
+                    out["skill_slugs"] = [str(x) for x in (m.get("skill_slugs") or [])]
+                    out["model"] = (m.get("model") or "").strip()
+                    return out
+        except Exception as e:
+            logger.debug("个人智能体路由失败（忽略）：%s", e)
         return gctx
 
     def _agent_for_model(self, model: str) -> Agent:
@@ -1312,6 +1329,26 @@ class CosmacBot:
                 total += int(n or 0)
         except Exception:
             logger.debug("查知识库用量失败(按0)", exc_info=True)
+        try:
+            from sqlalchemy import func, select
+            from cosmac.db import session_scope
+            from cosmac.db.models import SCOPE_USER, Agent as DbAgent, Skill as DbSkill
+            with session_scope() as s:
+                n1 = s.execute(
+                    select(func.coalesce(func.sum(
+                        func.length(DbSkill.name) + func.length(DbSkill.description)
+                        + func.length(DbSkill.instructions)), 0))
+                    .where(DbSkill.scope == SCOPE_USER, DbSkill.scope_id == user_id)
+                ).scalar()
+                n2 = s.execute(
+                    select(func.coalesce(func.sum(
+                        func.length(DbAgent.name) + func.length(DbAgent.description)
+                        + func.length(DbAgent.system_prompt)), 0))
+                    .where(DbAgent.scope == SCOPE_USER, DbAgent.scope_id == user_id)
+                ).scalar()
+                total += int(n1 or 0) + int(n2 or 0)
+        except Exception:
+            logger.debug("查自建智能体/技能用量失败(按0)", exc_info=True)
         cache[user_id] = (now, total)
         if len(cache) > 2000:
             cache.clear()  # 粗暴防膨胀:缓存本就 60s 失效,清了顶多多查几次
@@ -1444,6 +1481,18 @@ class CosmacBot:
             agents = self._global_agent_items(for_user=ctx.sender)
         except Exception:
             agents = []
+        # 本人自建智能体排最前(用户自己训的"私人 AI 同事",优先被派);同 slug 覆盖全局。
+        # 名字加「我的·」前缀,让用户与主 AI 一眼分清自建与平台预置。
+        try:
+            mine = [
+                dict(m, name=f"我的·{m.get('name') or m['slug']}")
+                for m in self._my_agent_items(ctx.sender)
+            ]
+            if mine:
+                mine_slugs = {m["slug"] for m in mine}
+                agents = mine + [a for a in agents if str(a.get("slug")) not in mine_slugs]
+        except Exception:
+            logger.debug("合并个人智能体进名册失败(忽略)", exc_info=True)
         if agents:
             lines.append("— AI Agent（可绑进专班/派活）—")
             # 上限 200(引入 agency 预置后 80+ 个,50 会漏);描述截 60 字防工具输出膨胀——
@@ -3446,6 +3495,216 @@ class CosmacBot:
             logger.exception("记录用户入驻模板失败")
             return 500, {"error": "记录失败"}
 
+    # ── 用户自建 智能体/技能(scope=user,归属本人账号,计入存储空间;负责人需求) ──
+    _MY_ITEMS_MAX = 50          # 每人 智能体/技能 各最多 50 个(与聊天命令建技能同上限)
+    _MY_PROMPT_MAX = 4000       # 个人智能体人设上限(字符)
+    _MY_INSTR_MAX = 2000        # 个人技能正文上限(与 skill_cmd 一致)
+
+    @staticmethod
+    def _valid_slug(slug: str) -> bool:
+        import re as _re
+        return bool(_re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", slug or ""))
+
+    def _my_storage_guard(self, user_id: str, add_chars: int) -> Optional[str]:
+        """自建内容入库前的存储空间硬管控(与个人知识库同口径)。超限返回提示文案。"""
+        limit_mb = self._quota_limit(user_id, "storage_mb")
+        if limit_mb < 0:
+            return None
+        if self._storage_bytes(user_id) + add_chars > limit_mb * 1048576:
+            return f"存储空间不足（上限 {limit_mb}MB）。删除一些内容或升级会员扩容。"
+        return None
+
+    def handle_my_agents_list(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """列本人自建智能体。需登录。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.models import SCOPE_USER
+            from cosmac.db.repo import list_agents
+
+            with session_scope() as s:
+                out = [{
+                    "slug": a.slug, "name": a.name, "description": a.description,
+                    "system_prompt": a.system_prompt, "model": a.model,
+                    "enabled": a.enabled,
+                } for a in list_agents(s, scope=SCOPE_USER, scope_id=user_id)]
+            return 200, {"agents": out}
+        except Exception:
+            logger.exception("列个人智能体失败")
+            return 500, {"error": "读取失败"}
+
+    def handle_my_agents_save(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """新建/更新本人自建智能体。校验:slug 规范、字段长度、每人 50 个、存储空间。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        slug = str((body or {}).get("slug") or "").strip().lower()
+        if not self._valid_slug(slug):
+            return 400, {"error": "标识(slug)需为小写字母/数字/中划线,64 字符内"}
+        name = str(body.get("name") or "").strip()[:80]
+        description = str(body.get("description") or "").strip()[:300]
+        prompt = str(body.get("system_prompt") or "").strip()
+        model = str(body.get("model") or "").strip()[:128]
+        enabled = body.get("enabled") is not False
+        if not name or not description or not prompt:
+            return 400, {"error": "名称、备注(它是干嘛的)与人设都不能为空——主 AI 靠备注理解何时派给它"}
+        if len(prompt) > self._MY_PROMPT_MAX:
+            return 400, {"error": f"人设过长（上限 {self._MY_PROMPT_MAX} 字符）"}
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.models import SCOPE_USER
+            from cosmac.db.repo import get_agent, list_agents, upsert_agent
+
+            with session_scope() as s:
+                existing = get_agent(s, SCOPE_USER, user_id, slug)
+                if existing is None and len(list_agents(s, scope=SCOPE_USER, scope_id=user_id)) >= self._MY_ITEMS_MAX:
+                    return 400, {"error": f"自建智能体已达上限（{self._MY_ITEMS_MAX} 个），先删一些"}
+                add_chars = len(name) + len(description) + len(prompt)
+                if existing is not None:  # 更新=净增量
+                    add_chars -= len(existing.name) + len(existing.description) + len(existing.system_prompt)
+                err = self._my_storage_guard(user_id, max(0, add_chars))
+                if err:
+                    return 400, {"error": err}
+                upsert_agent(
+                    s, SCOPE_USER, user_id, slug,
+                    name=name, description=description, system_prompt=prompt,
+                    model=model, enabled=enabled,
+                )
+            self._storage_cache = {}  # 内容变了,存量缓存作废
+            return 200, {"ok": True}
+        except Exception:
+            logger.exception("保存个人智能体失败")
+            return 500, {"error": "保存失败"}
+
+    def handle_my_agents_delete(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """删除本人自建智能体(只能删自己的,定位键含 owner,天然越权隔离)。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        slug = str((body or {}).get("slug") or "").strip().lower()
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.models import SCOPE_USER
+            from cosmac.db.repo import delete_agent
+
+            with session_scope() as s:
+                ok = delete_agent(s, SCOPE_USER, user_id, slug)
+            self._storage_cache = {}
+            return (200, {"ok": True}) if ok else (404, {"error": "没有这个智能体"})
+        except Exception:
+            logger.exception("删除个人智能体失败")
+            return 500, {"error": "删除失败"}
+
+    def handle_my_skills_list(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """列本人自建技能(含聊天命令「技能 添加」建的——同一份数据)。需登录。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.models import SCOPE_USER
+            from cosmac.db.repo import list_skills
+
+            with session_scope() as s:
+                out = [{
+                    "slug": k.slug, "name": k.name, "description": k.description,
+                    "instructions": k.instructions, "enabled": k.enabled,
+                } for k in list_skills(s, scope=SCOPE_USER, scope_id=user_id)]
+            return 200, {"skills": out}
+        except Exception:
+            logger.exception("列个人技能失败")
+            return 500, {"error": "读取失败"}
+
+    def handle_my_skills_save(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """新建/更新本人自建技能。个人技能会注入本人每轮对话——单条与总量都有上限。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        slug = str((body or {}).get("slug") or "").strip().lower()
+        if not self._valid_slug(slug):
+            return 400, {"error": "标识(slug)需为小写字母/数字/中划线,64 字符内"}
+        name = str(body.get("name") or "").strip()[:80]
+        description = str(body.get("description") or "").strip()[:300]
+        instructions = str(body.get("instructions") or "").strip()
+        enabled = body.get("enabled") is not False
+        if not instructions:
+            return 400, {"error": "技能正文不能为空"}
+        if len(instructions) > self._MY_INSTR_MAX:
+            return 400, {"error": f"技能正文过长（上限 {self._MY_INSTR_MAX} 字符）"}
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.models import SCOPE_USER
+            from cosmac.db.repo import get_skill, list_skills, upsert_skill
+
+            with session_scope() as s:
+                existing = get_skill(s, SCOPE_USER, user_id, slug)
+                if existing is None and len(list_skills(s, scope=SCOPE_USER, scope_id=user_id)) >= self._MY_ITEMS_MAX:
+                    return 400, {"error": f"自建技能已达上限（{self._MY_ITEMS_MAX} 个），先删一些"}
+                add_chars = len(name) + len(description) + len(instructions)
+                if existing is not None:
+                    add_chars -= len(existing.name) + len(existing.description) + len(existing.instructions)
+                err = self._my_storage_guard(user_id, max(0, add_chars))
+                if err:
+                    return 400, {"error": err}
+                upsert_skill(
+                    s, SCOPE_USER, user_id, slug,
+                    name=name, description=description,
+                    instructions=instructions, enabled=enabled,
+                )
+            self._storage_cache = {}
+            return 200, {"ok": True}
+        except Exception:
+            logger.exception("保存个人技能失败")
+            return 500, {"error": "保存失败"}
+
+    def handle_my_skills_delete(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """删除本人自建技能。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        slug = str((body or {}).get("slug") or "").strip().lower()
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.models import SCOPE_USER
+            from cosmac.db.repo import delete_skill
+
+            with session_scope() as s:
+                ok = delete_skill(s, SCOPE_USER, user_id, slug)
+            self._storage_cache = {}
+            return (200, {"ok": True}) if ok else (404, {"error": "没有这个技能"})
+        except Exception:
+            logger.exception("删除个人技能失败")
+            return 500, {"error": "删除失败"}
+
+    def _my_agent_items(self, owner: str) -> List[Dict[str, Any]]:
+        """本人自建且启用的智能体(名册/@ 路由用)。失败返回空,绝不阻断。"""
+        if not owner:
+            return []
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.models import SCOPE_USER
+            from cosmac.db.repo import list_agents
+
+            with session_scope() as s:
+                return [{
+                    "slug": a.slug, "name": a.name, "description": a.description,
+                    "system_prompt": a.system_prompt, "model": a.model,
+                    "skill_slugs": list(a.skill_slugs or []),
+                } for a in list_agents(s, scope=SCOPE_USER, scope_id=owner, enabled_only=True)]
+        except Exception:
+            logger.debug("读取个人智能体失败(忽略)", exc_info=True)
+            return []
+
     def handle_preset_agents(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """列出**内置预置 Agent 库**(原生班底+agency 引入,给后台「智能体」页展示)。
 
@@ -4361,6 +4620,7 @@ class _Handler(BaseHTTPRequestHandler):
                 or p.startswith("/cosmac/platform-kb/")
                 or p.startswith("/cosmac/people/")
                 or p.startswith("/cosmac/user/")
+                or p.startswith("/cosmac/my/")
                 or p.startswith("/cosmac/space/")
                 or p.startswith("/cosmac/profile/")
                 or p.startswith("/cosmac/usage/")
@@ -4558,6 +4818,15 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(code, payload, cors=True)
             return
         # 我的额度：本人各计量项的 已用/上限（前端「我的额度」展示）
+        # 用户自建 智能体/技能:列表
+        if self.path.split("?", 1)[0] == "/cosmac/my/agents":
+            code, payload = self.bot.handle_my_agents_list(self._bearer())
+            self._send_json(code, payload, cors=True)
+            return
+        if self.path.split("?", 1)[0] == "/cosmac/my/skills":
+            code, payload = self.bot.handle_my_skills_list(self._bearer())
+            self._send_json(code, payload, cors=True)
+            return
         # 存储空间预检(上传附件前调;?bytes=本次文件大小)
         if self.path.split("?", 1)[0] == "/cosmac/usage/storage-check":
             from urllib.parse import parse_qs, urlparse
@@ -4790,6 +5059,24 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "请求无效"}, cors=True)
                 return
             code, payload = self.bot.handle_kb_delete(token, body)
+            self._send_json(code, payload, cors=True)
+            return
+
+        # 用户自建 智能体/技能:保存/删除(归属=本人,天然越权隔离;存储配额硬管控)
+        if path in ("/cosmac/my/agents/save", "/cosmac/my/agents/delete",
+                    "/cosmac/my/skills/save", "/cosmac/my/skills/delete"):
+            token = self._bearer()
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            fn = {
+                "/cosmac/my/agents/save": self.bot.handle_my_agents_save,
+                "/cosmac/my/agents/delete": self.bot.handle_my_agents_delete,
+                "/cosmac/my/skills/save": self.bot.handle_my_skills_save,
+                "/cosmac/my/skills/delete": self.bot.handle_my_skills_delete,
+            }[path]
+            code, payload = fn(token, body)
             self._send_json(code, payload, cors=True)
             return
 

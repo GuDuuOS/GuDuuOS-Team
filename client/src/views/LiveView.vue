@@ -104,6 +104,7 @@ import ChannelAdminModal from '@/components/channel/ChannelAdminModal.vue'
 import KnowledgeModal from '@/components/layout/KnowledgeModal.vue'
 import ChoiceCard from '@/components/chat/ChoiceCard.vue'
 import AttachmentView from '@/components/chat/AttachmentView.vue'
+import MyStudioModal from '@/components/chat/MyStudioModal.vue'
 import MyPeopleModal from '@/components/chat/MyPeopleModal.vue'
 import MyUsageModal from '@/components/layout/MyUsageModal.vue'
 import { useKnowledge } from '@/composables/useKnowledge'
@@ -1449,6 +1450,9 @@ async function send() {
   setTimeout(refresh, 400)
 }
 
+// 「我的AI工坊」(自建智能体/技能)弹窗
+const myStudioOpen = ref(false)
+
 // ── 附件/图片上传 ──
 const fileInputRef = ref<HTMLInputElement>()   // 隐藏的文件选择框
 const uploading = ref(false)
@@ -1793,6 +1797,7 @@ onBeforeUnmount(() => {
             <div class="um-sep" />
             <button class="um-item" @click="onSettings('profile')"><span class="um-ic">👤</span>个人资料</button>
             <button class="um-item" @click="openMyPeople(); userMenuOpen = false"><span class="um-ic">🧑‍🤝‍🧑</span>我的协作人</button>
+            <button class="um-item" @click="myStudioOpen = true; userMenuOpen = false"><span class="um-ic">🎭</span>我的AI工坊</button>
             <button class="um-item" @click="openMyUsage(); userMenuOpen = false"><span class="um-ic">📈</span>我的额度</button>
             <button class="um-item" @click="onSettings('perms')"><span class="um-ic">🔒</span>我的权限</button>
             <button class="um-item" @click="onSettings('share')"><span class="um-ic">🔔</span>数据调用授权</button>
@@ -2486,6 +2491,9 @@ onBeforeUnmount(() => {
     <PluginStoreModal />
     <CustomAssetsModal />
     <UserSettingsModal />
+
+    <!-- 我的AI工坊:自建智能体/技能(归属本人,计入存储) -->
+    <MyStudioModal :visible="myStudioOpen" @close="myStudioOpen = false" />
     <ProfileHome />
     <CliConsole />
     <ChannelAdminModal />

@@ -2572,6 +2572,45 @@ export async function storageCheck(addBytes: number): Promise<{ ok: boolean; err
   } catch { return { ok: true } }
 }
 
+/* ===== 用户自建 智能体/技能(我的AI工坊;归属本人账号,计入存储空间) ===== */
+
+export interface MyAgent {
+  slug: string; name: string; description: string; system_prompt: string
+  model?: string; enabled: boolean
+}
+export interface MySkill {
+  slug: string; name: string; description: string; instructions: string; enabled: boolean
+}
+
+async function _myGet(path: string, key: string): Promise<any[]> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return []
+  try {
+    const r = await fetch(`${payBase()}${path}`, { headers: { Authorization: `Bearer ${token}` } })
+    if (!r.ok) return []
+    const j = await r.json().catch(() => ({}))
+    return Array.isArray(j?.[key]) ? j[key] : []
+  } catch { return [] }
+}
+async function _myPost(path: string, body: any): Promise<void> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) throw new Error('登录已失效，请重新登录')
+  const r = await fetch(`${payBase()}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok || j?.ok === false) throw new Error(j?.error || '操作失败')
+}
+
+export const myAgentsList = () => _myGet('/cosmac/my/agents', 'agents') as Promise<MyAgent[]>
+export const myAgentSave = (a: MyAgent) => _myPost('/cosmac/my/agents/save', a)
+export const myAgentDelete = (slug: string) => _myPost('/cosmac/my/agents/delete', { slug })
+export const mySkillsList = () => _myGet('/cosmac/my/skills', 'skills') as Promise<MySkill[]>
+export const mySkillSave = (s: MySkill) => _myPost('/cosmac/my/skills/save', s)
+export const mySkillDelete = (slug: string) => _myPost('/cosmac/my/skills/delete', { slug })
+
 /* ===== 频道知识库（SCOPE_ROOM：频道管理面板「知识库」页上传的文档，本频道 AI 检索自动命中）===== */
 
 /** 列本频道已上传的知识库文档。失败/无权返回 []。 */
