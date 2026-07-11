@@ -1,5 +1,15 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-11 — 重构:5 个"方法论型"Agent 转为预置技能(Agent vs Skill 规则落地)
+- 负责人问"这些该是 Agent 还是 Skill",定规则:有身份能接活→Agent;可复用套路/格式要叠加多角色→Skill
+  (绑 Agent 激活,绝不全局注入)。规则写进 docs/agency-agents-import.md 与 agency_agents.py 头注释。
+- 按规则转换:会议纪要→meeting-notes、高管摘要→executive-summary、搜索词分析→search-query-analysis、
+  六页轮播→carousel-6slides(新预置技能 4 个,preset_skills 9→13);多平台分发策划并入既有
+  platform-repurpose(补知乎/B站适配)。原 5 个 Agent 移除(122→117,总预置 Agent 125)。
+- 绑定:新技能绑给 10 个相关 Agent(原生 analyst/social + 引入的 小红书/Ins/TikTok/PPC/投放审计/
+  商业战略/幕僚长/项目管家/流程优化/内容策略);test_preset_skills 的"绑定不悬空"断言自动校验。
+- 验证:全量 465 仅剩 3 个既有无关失败。**部署:纯后端,git pull + 重启 guduu-bot。**
+
 ## 2026-07-11 — feat:agency-agents 第二批 47 个预置智能体入库(B档·中文化,引入完收)
 - 第二批筛选:财务 5 全收、学术 6 全收(叙事学/心理学/统计/历史/人类学/地理——服务影视内容创作
   与研究)、医疗收 1(美国监管框架文档 2 个跳过)、专项 54 收 35(剔除 19:开发向/美国特有/

@@ -61,7 +61,7 @@ PRESET_AGENTS: List[Dict[str, Any]] = [
             "你是数据分析师。拿到数据先说结论再给依据：指出关键变化、可能原因、以及 2~3 条"
             "可执行建议。不编造没有的数据，缺数据就说明需要什么。善用对比、占比、趋势。"
         ),
-        "skill_slugs": ["competitor-teardown", "user-persona"],
+        "skill_slugs": ["competitor-teardown", "user-persona", "executive-summary"],
     },
     {
         "slug": "support",
