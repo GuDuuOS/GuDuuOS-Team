@@ -1836,6 +1836,7 @@ const QUOTAS_EVENT_TYPE = 'cosmac.quotas'
 /** 计量项目录：每项按会员等级配上限，-1=不限。group 用于分组展示。 */
 export const QUOTA_CATALOG: { key: string; label: string; unit: string; group: string; defaults: Record<string, number> }[] = [
   { key: 'ai_msg_daily', label: 'AI 对话（每天）', unit: '条/天', group: 'AI', defaults: { free: 30, paid: -1, creator: -1 } },
+  { key: 'storage_mb', label: '存储空间', unit: 'MB', group: '存储', defaults: { free: 100, paid: 1024, creator: 5120 } },
   { key: 'kb_docs', label: '知识库文档数', unit: '篇', group: '知识库', defaults: { free: 5, paid: 200, creator: -1 } },
   { key: 'teams', label: '专班数（一键建专班）', unit: '个', group: '任务编排', defaults: { free: 1, paid: 20, creator: -1 } },
   { key: 'workflow_runs', label: '工作流运行（每月）', unit: '次/月', group: '自动化', defaults: { free: 0, paid: 200, creator: -1 } },
@@ -2554,6 +2555,21 @@ export async function kbDeleteMine(id: number): Promise<void> {
   })
   const j = await r.json().catch(() => ({}))
   if (!r.ok || !j?.ok) throw new Error(j?.error || '删除失败')
+}
+
+/** 上传前的存储空间预检(软管控:附件直连 Synapse,bot 不在链路上,前端配合把关)。
+ *  返回 {ok, used_mb, limit_mb, error?};查询失败按放行处理(别因网络抖动拦住正常上传)。 */
+export async function storageCheck(addBytes: number): Promise<{ ok: boolean; error?: string }> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return { ok: true }
+  try {
+    const r = await fetch(`${payBase()}/cosmac/usage/storage-check?bytes=${Math.max(0, Math.floor(addBytes))}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return { ok: true }
+    const j = await r.json().catch(() => ({}))
+    return { ok: j?.ok !== false, error: j?.error }
+  } catch { return { ok: true } }
 }
 
 /* ===== 频道知识库（SCOPE_ROOM：频道管理面板「知识库」页上传的文档，本频道 AI 检索自动命中）===== */

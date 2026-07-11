@@ -1003,6 +1003,36 @@ def list_deactivated_user_ids(
         return None
 
 
+def get_user_media_bytes(hs_url: str, user_id: str) -> Optional[int]:
+    """查某用户在 Synapse 媒体库的总字节数(上传的附件/图片/视频…)。查不了返回 None。
+
+    用管理 API `GET /_synapse/admin/v1/statistics/users/media?search_term=<uid>`(需 ADMIN_TOKEN),
+    精确匹配 user_id 取 media_length。给「存储空间配额」用——上传路径是客户端直连 Synapse,
+    bot 不在上传链路上,只能事后核算;查不到(未配令牌/网络错)回 None,调用方按 0 处理(不误拦)。
+    """
+    token = _env("ADMIN_TOKEN")
+    if not token:
+        return None
+    base = hs_url.rstrip("/")
+    from urllib.parse import quote
+    url = (
+        f"{base}/_synapse/admin/v1/statistics/users/media"
+        f"?search_term={quote(user_id)}&limit=10"
+    )
+    try:
+        rr = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=_HS_TIMEOUT)
+        if rr.status_code != 200:
+            logger.debug("查用户媒体统计返回 %s", rr.status_code)
+            return None
+        for u in (rr.json().get("users") or []):
+            if u.get("user_id") == user_id:
+                return int(u.get("media_length") or 0)
+        return 0  # 没上传过任何媒体
+    except Exception:
+        logger.debug("查用户媒体统计失败", exc_info=True)
+        return None
+
+
 def reset_request_code(
     email: str, *, client_ip: str = "", turnstile: str = ""
 ) -> Tuple[int, Dict[str, Any]]:

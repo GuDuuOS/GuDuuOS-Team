@@ -1,5 +1,22 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-11 — feat:账号存储空间配额(storage_mb)——附件+个人知识库按会员等级限量
+- 负责人需求:每个账号有自己的存储空间,前台可见、作为收费项(如免费 100M)。
+- 归属审计(现状):个人知识库/协作人/AI对话/专班/工作流均已按账号归属与计量;缺的是**存储字节**维度。
+  归属口径(设计定):算 Synapse 媒体(按上传者)+个人知识库(SCOPE_USER)字节;聊天文字与共享频道库
+  不计(共享资源无法归属个人,文字体积可忽略)。
+- 实现:
+  · QUOTA_CATALOG(前后端) + storage_mb(MB,free 100/paid 1024/creator 5120,后台「用量配额」页可改);
+  · registration.get_user_media_bytes:Synapse admin 统计 API 查每用户媒体总字节(查不到按0,不误拦);
+  · bot._storage_bytes(60s 缓存)=媒体+个人库字节;「我的额度」新增存储行(used MB/limit,进度条自动);
+  · 管控两层:个人知识库入库**服务端硬管控**(累计超限拒,400+升级提示);聊天附件上传是客户端直连
+    Synapse 媒体 API、bot 不在链路上 → 新端点 /cosmac/usage/storage-check 前端上传前**软管控**
+    (超限 toast"存储空间不足…升级会员扩容"并跳过该文件)。
+- 已知边界:附件软管控可被绕过(直调 Matrix API);要硬管控需写 Synapse Module(spam-checker 的
+  媒体回调)——记 TODO,上量/滥用出现再做。
+- 验证:test_storage_quota 5 项;全量 473 仅剩 3 个既有无关失败;build 通过。
+- **部署:git pull + 重启 guduu-bot + 覆盖 dist。**
+
 ## 2026-07-11 — feat:复议补录 5 个地域特有智能体(负责人:地域不作否决理由)
 - 负责人指示:当初因"美国特有/地域过窄"否决的,复议时只按 Agent vs Skill 判(海外用户也要用)。
 - 复议结论:5 个全是有身份能接活的**角色**(读原文确认 healthcare 那两个是完整人设,当初误标"文档"),

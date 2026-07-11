@@ -76,6 +76,7 @@ import {
   userExists,
   dmPeerStatus,
   checkUserDeactivated,
+  storageCheck,
   isServerAdmin,
   ensureControlRoomMembership,
   acceptPendingInvites,
@@ -1463,6 +1464,9 @@ async function onAttachmentPicked(e: Event) {
   try {
     for (const f of files) {
       if (f.size > MAX_UPLOAD) { toast('文件过大', `${f.name} 超过 50MB，未发送`); continue }
+      // 存储空间配额(账号权益):超限就别传了,给明确的升级/清理提示
+      const st = await storageCheck(f.size)
+      if (!st.ok) { toast('存储空间不足', st.error || `${f.name} 未发送,请清理或升级会员`); continue }
       // 按 MIME 判断走图片还是文件：图片进画廊式缩略图，其余当附件下载卡片
       if (f.type.startsWith('image/')) await sendImageFile(currentRoom.value, f)
       else await sendFileAttachment(currentRoom.value, f)

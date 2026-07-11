@@ -31,6 +31,14 @@ QUOTA_CATALOG: List[Dict[str, Any]] = [
         "defaults": {"free": 30, "paid": -1, "creator": -1},
     },
     {
+        # 存储空间(负责人定):每个账号的附件/媒体 + 个人知识库字节数,按会员等级给上限。
+        # 归属口径:Synapse 媒体(上传者=本人) + 个人库(SCOPE_USER)。聊天文字/共享频道库不计
+        # (共享资源无法归属个人;文字体积可忽略)。track=existing:实时算存量,不走计数表。
+        "key": "storage_mb", "label": "存储空间", "unit": "MB",
+        "track": "existing", "period": "total", "group": "存储",
+        "defaults": {"free": 100, "paid": 1024, "creator": 5120},
+    },
+    {
         "key": "kb_docs", "label": "知识库文档数", "unit": "篇",
         "track": "existing", "period": "total", "group": "知识库",
         "defaults": {"free": 5, "paid": 200, "creator": -1},

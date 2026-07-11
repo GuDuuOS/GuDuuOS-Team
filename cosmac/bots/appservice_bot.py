@@ -1276,6 +1276,76 @@ class CosmacBot:
             logger.debug("读取个人协作人名册失败（忽略）", exc_info=True)
             return []
 
+    _STORAGE_TTL = 60  # 存储用量缓存(秒)——媒体统计要打 Synapse admin API,别每次都查
+
+    def _storage_bytes(self, user_id: str) -> int:
+        """本人已用存储字节 = Synapse 媒体(上传的附件/图片/视频) + 个人知识库文本。带 60s 缓存。
+
+        归属口径(负责人定的"每个账号自己的存储空间"):只算能明确归属到个人的——媒体按上传者、
+        知识库按 SCOPE_USER。聊天文字与共享频道库不计(共享资源无法归属个人,文字体积可忽略)。
+        媒体统计查不到(未配 ADMIN_TOKEN/网络错)按 0 处理——宁可少算,不误拦用户。
+        """
+        now = time.time()
+        cache = getattr(self, "_storage_cache", None)
+        if cache is None:
+            cache = self._storage_cache = {}
+        hit = cache.get(user_id)
+        if hit and now - hit[0] < self._STORAGE_TTL:
+            return hit[1]
+        total = 0
+        try:
+            from cosmac import registration
+            media = registration.get_user_media_bytes(self.config.homeserver_url, user_id)
+            total += int(media or 0)
+        except Exception:
+            logger.debug("查媒体用量失败(按0)", exc_info=True)
+        try:
+            from sqlalchemy import func, select
+            from cosmac.db import session_scope
+            from cosmac.db.models import SCOPE_USER, KnowledgeChunk
+            with session_scope() as s:
+                n = s.execute(
+                    select(func.coalesce(func.sum(func.length(KnowledgeChunk.text)), 0))
+                    .where(KnowledgeChunk.scope == SCOPE_USER,
+                           KnowledgeChunk.scope_id == user_id)
+                ).scalar()
+                total += int(n or 0)
+        except Exception:
+            logger.debug("查知识库用量失败(按0)", exc_info=True)
+        cache[user_id] = (now, total)
+        if len(cache) > 2000:
+            cache.clear()  # 粗暴防膨胀:缓存本就 60s 失效,清了顶多多查几次
+        return total
+
+    def handle_storage_check(
+        self, access_token: str, add_bytes: str
+    ) -> Tuple[int, Dict[str, Any]]:
+        """上传前的存储空间预检:现用量+本次字节 是否超本人等级上限。需登录。
+
+        附件上传是客户端直连 Synapse 媒体 API,bot 不在链路上——这是**软管控**(前端配合调用);
+        「我的额度」照实展示用量,超限者由前端拒绝继续上传。limit=-1 不限;管理员永不受限。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        try:
+            add = max(0, int(add_bytes or 0))
+        except (TypeError, ValueError):
+            add = 0
+        limit_mb = self._quota_limit(user_id, "storage_mb")
+        used = self._storage_bytes(user_id)
+        used_mb = round(used / 1048576, 1)
+        if limit_mb < 0:
+            return 200, {"ok": True, "used_mb": used_mb, "limit_mb": -1}
+        ok = (used + add) <= limit_mb * 1048576
+        out: Dict[str, Any] = {"ok": ok, "used_mb": used_mb, "limit_mb": limit_mb}
+        if not ok:
+            out["error"] = (
+                f"存储空间不足：已用 {used_mb}MB / 上限 {limit_mb}MB。"
+                "删除一些附件/知识库文档，或升级会员扩容。"
+            )
+        return 200, out
+
     _DEACT_TTL = 120  # 停用账号集缓存有效期（秒）——名册每轮都可能重建，别每次都翻 Synapse 用户列表
 
     def _deactivated_user_ids(self) -> Optional[set]:
@@ -2969,6 +3039,10 @@ class CosmacBot:
         if len(content) > MAX_DOC_CHARS:
             return 400, {"error": f"正文太长（{len(content)} 字），上限 {MAX_DOC_CHARS} 字，请拆成多篇"}
         # 用量配额（变现第二步）：知识库文档数按会员等级限。-1=不限；硬上限 MAX_DOCS_PER_SCOPE 兜底。
+        # 存储空间配额(字节):个人库入库走服务端,这里硬管控(附件那条链路只能前端软管控)。
+        st_limit = self._quota_limit(user_id, "storage_mb")
+        if st_limit >= 0 and self._storage_bytes(user_id) + len(content) > st_limit * 1048576:
+            return 400, {"error": f"存储空间不足（上限 {st_limit}MB）。删除一些内容或升级会员扩容。"}
         kb_limit = self._quota_limit(user_id, "kb_docs")
         try:
             from cosmac.db import kb, session_scope
@@ -3577,6 +3651,8 @@ class CosmacBot:
                     limit = self._quota_limit(user_id, metric)
                     if q.get("track") == "existing" and metric == "kb_docs":
                         used = len(kb.list_docs(s, scope=SCOPE_USER, scope_id=user_id))
+                    elif q.get("track") == "existing" and metric == "storage_mb":
+                        used = round(self._storage_bytes(user_id) / 1048576, 1)
                     else:
                         used = get_count(
                             s, user_id, metric, period_key(str(q.get("period") or "day"))
@@ -4482,6 +4558,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(code, payload, cors=True)
             return
         # 我的额度：本人各计量项的 已用/上限（前端「我的额度」展示）
+        # 存储空间预检(上传附件前调;?bytes=本次文件大小)
+        if self.path.split("?", 1)[0] == "/cosmac/usage/storage-check":
+            from urllib.parse import parse_qs, urlparse
+            token = self._bearer()
+            qs = parse_qs(urlparse(self.path).query)
+            code, payload = self.bot.handle_storage_check(token, (qs.get("bytes") or ["0"])[0])
+            self._send_json(code, payload, cors=True)
+            return
         if self.path.split("?", 1)[0] == "/cosmac/usage/mine":
             auth = self.headers.get("Authorization", "")
             token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
