@@ -81,5 +81,59 @@ class TestStorageQuota(unittest.TestCase):
         self.assertIn("存储空间不足", payload["error"])
 
 
+class TestOnboardIngestKb(unittest.TestCase):
+    """#3 修复:入驻批量灌库端点必须与 handle_kb_add 套同一批服务端硬闸。"""
+
+    def setUp(self) -> None:
+        init_engine("sqlite://", create_all=True)
+        self.bot = _bot()
+        self.bot._gate_allows = lambda *a, **k: True
+
+    def _count(self) -> int:
+        from cosmac.db import kb, session_scope
+        from cosmac.db.models import SCOPE_USER
+        with session_scope() as s:
+            return len(kb.list_docs(s, scope=SCOPE_USER, scope_id=U))
+
+    def test_knowledge_gate_blocks_all(self) -> None:
+        # 知识库门控未过 → 一篇都不灌(静默,不打断引导)
+        self.bot._gate_allows = lambda *a, **k: False
+        self.bot._quota_limit = lambda uid, key: -1
+        docs = [{"title": f"t{i}", "content": "内容内容"} for i in range(3)]
+        code, payload = self.bot.handle_onboard_ingest_kb("tok", {"docs": docs})
+        self.assertEqual(code, 200)
+        self.assertEqual(payload["ingested"], 0)
+        self.assertEqual(self._count(), 0)
+
+    def test_kb_docs_quota_caps_ingest(self) -> None:
+        # 篇数配额=2 → 传 5 篇只灌 2 篇(免费用户模板知识不会绕过篇数上限)
+        self.bot._quota_limit = lambda uid, key: 2 if key == "kb_docs" else -1
+        docs = [{"title": f"t{i}", "content": "内容内容"} for i in range(5)]
+        code, payload = self.bot.handle_onboard_ingest_kb("tok", {"docs": docs})
+        self.assertEqual(code, 200)
+        self.assertEqual(payload["ingested"], 2)
+        self.assertEqual(self._count(), 2)
+
+    def test_storage_quota_caps_ingest(self) -> None:
+        # 存储配额:桩定起始存量接近 1MB 上限 → 再灌就停
+        self.bot._quota_limit = lambda uid, key: 1 if key == "storage_mb" else -1  # 1MB
+        self.bot._storage_bytes = lambda uid: 1048576 - 5  # type: ignore
+        docs = [{"title": "t", "content": "十个字十个字"}]  # >5 字符
+        code, payload = self.bot.handle_onboard_ingest_kb("tok", {"docs": docs})
+        self.assertEqual(payload["ingested"], 0)
+
+    def test_oversized_doc_skipped(self) -> None:
+        # 单篇超 MAX_DOC_CHARS → 跳过该篇,其余正常灌
+        from cosmac.db.kb_cmd import MAX_DOC_CHARS
+        self.bot._quota_limit = lambda uid, key: -1
+        docs = [
+            {"title": "big", "content": "字" * (MAX_DOC_CHARS + 1)},
+            {"title": "ok", "content": "正常内容"},
+        ]
+        code, payload = self.bot.handle_onboard_ingest_kb("tok", {"docs": docs})
+        self.assertEqual(payload["ingested"], 1)
+        self.assertEqual(self._count(), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

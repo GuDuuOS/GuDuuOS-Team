@@ -533,6 +533,22 @@ class CosmacBot:
                     room_id, reply,
                     txn_id=f"cosmac-ai-{event_id}" if event_id else None,
                 )
+            except Exception:
+                # 引擎/LLM 本体调用失败（网络错、模型不存在、后端 4xx/5xx 等）：绝不让异常穿透到
+                # handle_transaction —— 那会使其返回 False、Synapse 重发**整批**、整条 Agent run
+                # 从头重跑，而循环中途已执行的建群/发消息/邀人等工具**没有幂等键**、会重复副作用
+                #（#7）。这里就地兜住：给用户一条明确失败提示（带 txn_id 幂等，纵使别的事件触发
+                # 重发也不刷屏），然后正常返回——本条事务视为已消化，不再重试。
+                logger.exception("AI 回复失败（引擎/LLM 调用异常），已就地兜底、不重试")
+                try:
+                    self.client.send_text(
+                        room_id,
+                        "😵 抱歉，AI 暂时不可用（可能是模型服务波动或配置异常），请稍后再试一次。",
+                        txn_id=f"cosmac-ai-err-{event_id}" if event_id else None,
+                    )
+                except Exception:
+                    logger.debug("发送 AI 失败提示也失败了（忽略）", exc_info=True)
+                return
             finally:
                 self.client.set_typing(room_id, False)  # 关掉"正在输入…"
             # 长期记忆：回复发完后推进本群滚动摘要（到阈值才后台重摘要，绝不阻塞本次回复）。
@@ -840,11 +856,20 @@ class CosmacBot:
                     global_scopes.append(self._PLATFORM_KB_SCOPE)
             elif src.startswith("user:"):
                 uid = src[5:].strip()
-                if uid and uid not in user_scopes:
+                # 越权防护(#4)：kbScopes 存在房间 state event、任意有写 state 权限的成员都能改，
+                # 绝不能凭它裸读**别人**的个人库。只认「属主本人是当前频道成员」的绑定——这正是
+                # 合法语义（发起人把自己的个人库开放给自己所在的专班）；攻击者在自建房绑
+                # user:@受害者、受害者非本房成员 → is_joined_member 返回 False → 拒绝，不泄漏。
+                # uid==sender（自己的库）直接放行，省一次网络查询。
+                if uid and uid not in user_scopes and (
+                    uid == sender or self.client.is_joined_member(room_id, uid)
+                ):
                     user_scopes.append(uid)
             elif src.startswith("room:"):
                 rid = src[5:].strip()
-                if rid and rid not in room_scopes:
+                # 越权防护(#4)：把某频道库「调进」本频道，只对**当前发言人自己有权访问**(是该频道
+                # 成员)的资料库频道生效——否则任意成员可绑 room:!别人的频道，跨频道读走其知识库。
+                if rid and rid not in room_scopes and self.client.is_joined_member(rid, sender):
                     room_scopes.append(rid)
         try:
             from cosmac.ai.embeddings import get_embedder
@@ -1102,11 +1127,26 @@ class CosmacBot:
                 # legacy 即可,别当故障告警惊动管理员(否则一条复杂任务就误报"引擎挂了/余额不足")。
                 if "maximum number of turns" not in str(exc).lower():
                     self._alert_engine_fallback(exc)
-        reply = agent.run(
-            user_text, tool_ctx, extra_system=extra_system, history=history,
-            progress_cb=reporter,
-        )
-        reporter.finish()
+                # #8：SDK 引擎若**已执行过工具**(reporter.steps 非空 → 建群/邀人/派单等副作用已
+                # 落地、teams 等终身配额已扣),绝不能回退 legacy 从头重跑——那会重复建房、重复
+                # 派单、配额二次扣。reporter 每轮新建,steps 只反映本次。只有一个工具都没跑
+                # (通常首个 LLM 调用就失败;尤其触顶 max_turns 时步骤最多、重跑破坏最大)时，回退
+                # 才无副作用。已动过手就停下、如实告知，让用户决定是否接着做。
+                if reporter.steps:
+                    reporter.finish()
+                    return (
+                        "⚠️ 我在执行过程中已经做了部分操作，但随后遇到故障。为避免重复建群/"
+                        "重复派单，这条先停在这里。请看下已完成的部分，需要我接着把剩下的做完就说一声。"
+                    )
+        try:
+            reply = agent.run(
+                user_text, tool_ctx, extra_system=extra_system, history=history,
+                progress_cb=reporter,
+            )
+        finally:
+            # legacy 引擎抛异常时也要定格"正在执行"卡片，否则它永久卡在"⏳ 正在执行"（#7 连带）。
+            # finish() 自带 event_id/steps 守卫并自兜异常，任何时候调用都安全。
+            reporter.finish()
         return reply
 
     def _alert_engine_fallback(self, exc: Exception) -> None:
@@ -2578,7 +2618,7 @@ class CosmacBot:
         out: List[Dict[str, Any]] = []
         try:
             from cosmac.db import session_scope
-            from cosmac.db.task_repo import list_tasks
+            from cosmac.db.task_repo import list_tasks, list_tasks_for_user
 
             is_admin = self._is_platform_admin(user_id)
             with session_scope() as s:
@@ -2587,10 +2627,16 @@ class CosmacBot:
                 #   其他人=只看**派给自己的**——executor_kind=human 且 executor_ref 是本人;
                 #   旧任务(无类型化执行者)按 assignee 首词==本人 localpart 兜底。
                 # 不再按"本人所在房间"放行——被拉进专班≠能看别人的任务。
-                candidates = list_tasks(s)
                 if is_admin:
-                    visible = candidates
+                    visible = list_tasks(s)  # 管理员看全部（内部统计口径）
                 else:
+                    # #6：先在 DB 层把候选收敛到「本人相关任务」(宽松超集)，再用精确谓词收口——
+                    # 避免旧实现「全局取最新 200 条→再按人过滤」在平台任务超 200 后把「派给我的」
+                    # 挤出窗口而消失。localpart 与 _is_task_assignee 同一提取口径。
+                    localpart = user_id.split(":", 1)[0].lstrip("@").lower()
+                    candidates = list_tasks_for_user(
+                        s, user_id=user_id, localpart=localpart,
+                    )
                     # 可见性 = 本人下达 或 派给本人；与 _can_access_task(改状态鉴权)**共用同一口径**
                     # (_is_task_assignee),保证「看得到 == 改得动」,不再各写一份而悄悄跑偏(线上踩过)。
                     visible = [
@@ -3041,29 +3087,50 @@ class CosmacBot:
         docs = (body or {}).get("docs")
         if not isinstance(docs, list):
             return 400, {"error": "docs 无效"}
+        # 安全（#3）：本端点全信客户端传的 docs，正常引导与恶意刷库无法从请求上区分，故必须套用
+        # 与 handle_kb_add **完全一致**的服务端硬闸——知识库门控 + 单篇字数上限 + 篇数会员配额
+        # + 存储空间配额，否则免费用户可绕开所有闸往个人库灌满 200 篇、每篇近 512KB 的文档。
+        # best-effort：任一道闸拦下只是少灌/不灌，一律回 200 不打断引导（前端本就忽略结果）。
+        if not self._gate_allows(user_id, "knowledge"):
+            return 200, {"ingested": 0}  # 知识库门控未过 → 静默不灌，不用 403 打断引导
+        from cosmac.db.kb_cmd import MAX_DOC_CHARS, MAX_DOCS_PER_SCOPE
+
+        kb_limit = self._quota_limit(user_id, "kb_docs")       # 篇数会员配额（-1=不限）
+        st_limit = self._quota_limit(user_id, "storage_mb")    # 存储空间配额 MB（-1=不限）
+        used_bytes = self._storage_bytes(user_id)              # 起始已用存量（媒体+个人库）
         ingested = 0
         try:
             from cosmac.db import kb, session_scope
-            from cosmac.db.kb_cmd import MAX_DOCS_PER_SCOPE
             from cosmac.db.models import SCOPE_USER
 
             with session_scope() as s:
                 count = len(kb.list_docs(s, scope=SCOPE_USER, scope_id=user_id))
                 for d in docs[:50]:  # 一次最多灌 50 篇，防滥用
+                    # 篇数：会员配额与系统硬上限双闸，任一到顶即停
+                    if kb_limit >= 0 and count >= kb_limit:
+                        break
                     if count >= MAX_DOCS_PER_SCOPE:
                         break
                     title = str((d or {}).get("title") or "").strip()
                     text = str((d or {}).get("content") or "").strip()
                     if not title or not text:
                         continue
+                    if len(text) > MAX_DOC_CHARS:  # 单篇超长：跳过（不截断，避免灌半截脏数据）
+                        continue
+                    # 存储配额：加这篇会超上限就停（与 handle_kb_add 同口径，本地累加不吃缓存）
+                    if st_limit >= 0 and used_bytes + len(text) > st_limit * 1048576:
+                        break
                     kb.ingest_document(
                         s, scope=SCOPE_USER, scope_id=user_id,
                         title=title, source="onboarding", text=text,
                     )
+                    used_bytes += len(text)
                     count += 1
                     ingested += 1
         except Exception:
             logger.exception("入驻知识库入库失败")
+        if ingested:
+            self._storage_cache = {}  # 存量变了，作废 60s 缓存（与 handle_my_* 一致）
         return 200, {"ingested": ingested}
 
     def handle_kb_add(

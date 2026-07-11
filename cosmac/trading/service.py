@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 
 from cosmac.config import PLANS_EVENT_TYPE
 from cosmac.db import order_repo, session_scope
-from cosmac.members import MembersStore, active_tier
+from cosmac.members import MembersStore, active_tier, tier_label, tier_level
 from cosmac.trading.base import PaymentProvider
 from cosmac.trading.manual import ManualProvider
 from cosmac.trading.plans import Plan, find_plan, parse_plans
@@ -126,6 +126,15 @@ class OrderService:
         if prov is None:
             raise OrderError(f"暂不支持的支付渠道 {provider}")
 
+        # 降级保护（#2 资损修复）：当前正持**更高等级**会员时，不允许购买更低档套餐——否则
+        # 支付成功会用低档 tier 覆盖高档、剩余高档天数一并清零。在下单入口就明确拦下（比支付
+        # 后再拒绝体验好、也不用退款）。同档=续费、升级=买更高档，都放行。
+        cur_tier = self._members.get_tier(user_id)
+        if tier_level(cur_tier) > tier_level(plan.tier):
+            raise OrderError(
+                f"你当前是{tier_label(cur_tier)}，无需购买更低档的「{plan.name}」"
+            )
+
         order_no = _gen_order_no()
         with session_scope() as s:
             order_repo.create_order(
@@ -186,13 +195,38 @@ class OrderService:
         # 同一用户串行：读旧到期日 + 算 new_exp + 置 paid + grant 整体不被另一笔回调插队。
         with self._user_lock(user_id):
             # 算到期：续费从原到期日顺延，否则从现在起算
-            base = now
             rec = self._members.get_record(user_id)
-            if rec and active_tier(rec, now) == tier:
-                cur_exp = int(rec.get("expires_ts") or 0)
-                if cur_exp > now:
-                    base = cur_exp
-            new_exp = base + period * _DAY_SECONDS
+            # 降级保护（#2 防御）：下单后、支付前被管理员升到**更高等级**的极端竞态里，绝不能
+            # 用本单的低档 tier 覆盖现有高档会员。此时保留现有高等级不动，仍幂等置 paid（钱已收），
+            # 不再往下走 grant。create_order 已在正常路径拦了降级购买，这里兜住竞态。
+            cur_active = active_tier(rec, now)
+            if tier_level(cur_active) > tier_level(tier):
+                with session_scope() as s:
+                    first = order_repo.mark_paid(
+                        s, order_no, provider_ref=provider_ref, granted_expires_ts=0,
+                    )
+                if not first:
+                    return {"ok": True, "already": True, "order_no": order_no}
+                logger.warning(
+                    "订单 %s 目标等级 %s 低于用户当前 %s，保留高等级不降级",
+                    order_no, tier, cur_active,
+                )
+                return {
+                    "ok": True, "order_no": order_no, "user_id": user_id,
+                    "tier": cur_active, "kept": True,
+                }
+            # 当前是否正持**同档**有效会员（到期的 active_tier 已回落免费，不算同档）。
+            same_tier_active = bool(rec) and active_tier(rec, now) == tier
+            # get_record 的 expires_ts 已过 _as_int，一定是 int；0 = 永久。
+            cur_exp = int(rec.get("expires_ts") or 0) if rec else 0
+            if same_tier_active and cur_exp <= 0:
+                # 当前已是**永久**同档会员（管理员授予 expires_ts=0）：购买绝不能把"永久"
+                # 缩水成"限期"（否则付了钱反而权益变小，#1 资损修复）。保持永久。
+                new_exp = 0
+            else:
+                # 续费顺延：持同档且未到期 → 从原到期日往后顺延；否则从现在起算。
+                base = cur_exp if (same_tier_active and cur_exp > now) else now
+                new_exp = base + period * _DAY_SECONDS
 
             # 原子置 paid（恰好一次）——只有第一笔回调拿到 first=True
             with session_scope() as s:

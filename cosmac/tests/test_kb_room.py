@@ -109,5 +109,56 @@ class TestKbRoom(unittest.TestCase):
         self.assertEqual(code, 400)
 
 
+class TestKbScopeAuthz(unittest.TestCase):
+    """#4 越权防护：kbScopes 绑定的 user:/room: 来源，检索时按成员资格授权，不得裸读他人库。"""
+
+    def setUp(self) -> None:
+        init_engine("sqlite://", create_all=True)
+        self.bot = _bot()
+        self.bot._gate_allows = lambda *a, **k: True  # type: ignore
+
+    def _seed_user_kb(self, uid: str) -> None:
+        from cosmac.db import kb, session_scope
+        from cosmac.db.models import SCOPE_USER
+        with session_scope() as s:
+            kb.ingest_document(
+                s, scope=SCOPE_USER, scope_id=uid,
+                title="机密周报", source="upload",
+                text="季度机密营收数据与复盘要点：营收增长三成，核心指标周报复盘。")
+
+    _Q = "机密 营收 周报 复盘 数据"
+
+    def test_bind_non_member_personal_kb_blocked(self) -> None:
+        # 攻击者在自己的房间绑 user:@受害者；受害者非本房成员 → 检索不到其个人库。
+        self._seed_user_kb(OUT)  # @out 是"受害者"，不在 ROOM 里
+        hits = self.bot._kb_retrieve(
+            ROOM, BOSS, self._Q, bound_sources=[f"user:{OUT}"])
+        titles = [t for t, _txt, _s in hits]
+        self.assertNotIn("机密周报", titles)
+
+    def test_bind_member_personal_kb_allowed(self) -> None:
+        # 合法：属主是本频道成员（发起人把自己的库开放给专班）→ 检索得到。
+        self._seed_user_kb(MEM)  # @mem 是 ROOM 成员
+        hits = self.bot._kb_retrieve(
+            ROOM, BOSS, self._Q, bound_sources=[f"user:{MEM}"])
+        titles = [t for t, _txt, _s in hits]
+        self.assertIn("机密周报", titles)
+
+    def test_bind_room_kb_requires_sender_membership(self) -> None:
+        # 绑 room:!别的频道，但当前发言人不是该频道成员 → 跨频道读被拒。
+        from cosmac.db import kb, session_scope
+        from cosmac.db.models import SCOPE_ROOM
+        with session_scope() as s:
+            kb.ingest_document(
+                s, scope=SCOPE_ROOM, scope_id=OTHER,
+                title="别的频道机密", source="upload",
+                text="季度机密营收数据与复盘要点：营收增长三成，核心指标周报复盘。")
+        # BOSS 不是 OTHER 的成员（FakeClient._members 只把 BOSS/MEM 放进 ROOM）
+        hits = self.bot._kb_retrieve(
+            ROOM, BOSS, self._Q, bound_sources=[f"room:{OTHER}"])
+        titles = [t for t, _txt, _s in hits]
+        self.assertNotIn("别的频道机密", titles)
+
+
 if __name__ == "__main__":
     unittest.main()

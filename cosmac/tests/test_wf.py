@@ -292,5 +292,43 @@ class TestSsrfGuard(unittest.TestCase):
             self.assertNotEqual(wf.check_outbound_url("http://169.254.169.254/"), "")
 
 
+class TestWorkflowSourceKeyConsistency(unittest.TestCase):
+    """#5 修复：同步后台路径的预约与落账必须用同一个 skey（含 slug），否则 queued 占位
+    永不结清、1 小时后被遗孤回收误报"提交队列中断"。"""
+
+    def setUp(self) -> None:
+        from cosmac.ai.tools import Toolbox, ToolContext
+        from cosmac.db import init_engine
+        init_engine("sqlite://", create_all=True)
+        self.tb = Toolbox(client=FakeMxClient())
+        self.ctx = ToolContext(room_id="!r:h", sender="@u:h", source_key="event:$e1:ai")
+
+    def test_record_resolves_reserved_placeholder(self) -> None:
+        from cosmac.db import session_scope
+        from cosmac.db.wf_repo import find_by_source_key, reclaim_orphans
+        from cosmac.db.models import WorkflowRun
+        from sqlalchemy import func, select
+
+        # run_workflow 同步路径里 skey = f"{source_key}:{slug}"
+        skey = f"{self.ctx.source_key}:my-flow"
+        self.assertTrue(
+            self.tb._reserve_workflow_source(skey, "my-flow", "webhook", self.ctx, "in"))
+        # 落账用同一个 skey（本次修复：_record_workflow_run 收 source_key 参数）
+        self.tb._record_workflow_run(
+            "my-flow", "webhook", self.ctx, "in", {"ok": True, "output": "done"},
+            source_key=skey)
+        with session_scope() as s:
+            # 只有一行（占位被 UPDATE 结清，而不是另插一行）
+            n = s.execute(select(func.count()).select_from(WorkflowRun)).scalar()
+            self.assertEqual(n, 1)
+            row = find_by_source_key(s, skey)
+            self.assertIsNotNone(row)
+            self.assertEqual(row.status, "ok")       # 已结清，不再是 queued
+            self.assertEqual(row.output, "done")
+        # 遗孤回收：没有 queued 残留 → 不会误报"提交队列中断"
+        with session_scope() as s:
+            self.assertEqual(reclaim_orphans(s), [])
+
+
 if __name__ == "__main__":
     unittest.main()

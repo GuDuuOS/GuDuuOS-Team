@@ -1,5 +1,36 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-12 — fix:全量 BUG 排查后修复(第一批·后端 8 项，含 2 处资损、2 处越权)
+- 背景:对 docs/FEATURES.md 11 大块做并行代码排查，发现约 40 个真实缺陷。按严重度逐个修，
+  每项都补回归测试、每步全量跑绿(499 项)，不引入新问题。本批为后端(Python)8 项：
+  · **#1 充值把永久会员改写成限期**(trading/service.py):续费顺延对 expires_ts=0(永久)判假、
+    从今天起算 30 天 → 永久会员购买同档后反而缩水。修:永久同档购买保持永久。
+  · **#2 高档会员买低档套餐被降级清零**(trading/service.py):会员只存一个 tier，低档订单覆盖
+    高档、剩余天数蒸发。修:create_order 拦截降级购买(下单即拒)+ on_payment_success 防御(下单后
+    被管理员升级的竞态不降级覆盖)。
+  · **#3 onboard/ingest-kb 端点绕过配额门控**(appservice_bot.py):入驻批量灌库端点缺 knowledge
+    门控/kb_docs 篇数/storage_mb/单篇上限四道闸，免费用户可绕过刷满 200 篇超大文档。修:对齐
+    handle_kb_add 全套硬闸，best-effort 不打断引导。
+  · **#4 kbScopes 击穿知识库隔离**(appservice_bot.py):频道 state 里的 kbScopes 绑 user:/room:
+    来源检索时不校验归属，可读他人个人库/跨频道读频道库。修:_kb_retrieve 按成员资格授权(属主
+    须是本频道成员/发言人须是资料库频道成员)。
+  · **#5 run_workflow 幂等键不一致误报队列中断**(ai/tools.py):同步路径预约用 source_key:slug、
+    落账用 source_key，queued 占位永不结清 → 每次成功 1h 后误报"提交队列中断"、运行记录写脏。
+    修:落账用与预约同一 skey。
+  · **#6 任务看板先截断200再过滤**(appservice_bot.py + task_repo.py):可见性过滤在"全平台最新
+    200条"窗口内做，平台任务超 200 后老用户任务被挤出、看板整块消失。修:新增 list_tasks_for_user
+    把过滤下推到 DB(本人相关任务的超集)，再用精确谓词收口。
+  · **#7 legacy 引擎 LLM 异常无兜底**(appservice_bot.py):LLM 调用异常穿透 → 事务返回 False →
+    Synapse 重发整批 → Agent run 从头重跑 → 已执行工具无幂等键、重复副作用。修:就地兜住异常、
+    给用户失败提示、正常返回不重试;并保证 reporter.finish() 在异常时也定格进度卡。
+  · **#8 SDK 引擎回退 legacy 整单重跑**(appservice_bot.py):SDK 引擎跑到第 N 轮失败后回退 legacy
+    从零重跑，已执行的建群/派单/配额不回滚 → 重复+双扣(触顶 max_turns 时最严重)。修:失败时若
+    reporter.steps 非空(已执行工具)就停下、告知用户，不回退重跑;一步未执行才安全回退。
+- 顺带:修 test_runtime_config 陈旧期望(工具数 16→18，代码早已加 query_hr/query_sales)。
+- 验证:新增/更新回归测试 test_trading/test_storage_quota/test_kb_room/test_wf/test_task_access/
+  test_engine_error_fallback/test_sdk_fallback/test_typing;全量 499 项全绿;ruff 通过。
+- **部署:纯后端，git pull + 重启 guduu-bot 即可，无需 client build。** 前端 #9~#11 下一批。
+
 ## 2026-07-11 — feat:用户自建 智能体/技能「我的AI工坊」——归属账号、计入存储
 - 负责人需求:用户可自建 AI Agent 与 Skill,归属本人账号权益,都计入存储空间。
 - 现状盘点:cosmac_skill/cosmac_agent 表早有 scope=user 设计——个人技能已可用聊天命令建且随人

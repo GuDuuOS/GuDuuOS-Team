@@ -51,7 +51,7 @@ class TestRuntimeConfig(unittest.TestCase):
         before = bot._applied_sig
         bot._apply_runtime_config()
         self.assertEqual(bot._applied_sig, before)
-        self.assertEqual(len(bot.toolbox.specs()), 16)  # 全部 16 个(+list_my_rooms)
+        self.assertEqual(len(bot.toolbox.specs()), 18)  # 全部 18 个(含 query_hr/query_sales)
 
     def test_persona_override_rebuilds_agent(self) -> None:
         # 下发新人设 → 签名变、Agent 被换成新对象、system_prompt 生效
@@ -96,7 +96,7 @@ class TestRuntimeConfig(unittest.TestCase):
         names = [s.name for s in bot.toolbox.specs()]
         self.assertEqual(
             names,
-            ["create_room", "invite_to_room", "list_my_rooms", "create_tasks", "search_knowledge", "web_search", "list_capabilities", "assemble_team", "list_room_tasks", "update_task", "ask_user_choice", "archive_project"],
+            ["create_room", "invite_to_room", "list_my_rooms", "create_tasks", "search_knowledge", "web_search", "query_hr", "query_sales", "list_capabilities", "assemble_team", "list_room_tasks", "update_task", "ask_user_choice", "archive_project"],
         )  # always-on 不受开关约束
         out = bot.toolbox.execute(
             ToolCall(id="x", name="send_message_to_room", arguments={"text": "hi"}),
@@ -131,7 +131,7 @@ class TestRuntimeConfig(unittest.TestCase):
         # create_tasks 是 always-on 核心工具，限制集里也有它；其余受限
         self.assertEqual(
             [s.name for s in bot.toolbox.specs()],
-            ["create_room", "invite_to_room", "list_my_rooms", "create_tasks", "search_knowledge", "web_search", "list_capabilities", "assemble_team", "list_room_tasks", "update_task", "ask_user_choice", "archive_project"],
+            ["create_room", "invite_to_room", "list_my_rooms", "create_tasks", "search_knowledge", "web_search", "query_hr", "query_sales", "list_capabilities", "assemble_team", "list_room_tasks", "update_task", "ask_user_choice", "archive_project"],
         )
 
         def boom(*_a, **_k):
@@ -143,7 +143,7 @@ class TestRuntimeConfig(unittest.TestCase):
         # 关键：仍只剩 create_room(+always-on create_tasks)，没有恢复成全部工具
         self.assertEqual(
             [s.name for s in bot.toolbox.specs()],
-            ["create_room", "invite_to_room", "list_my_rooms", "create_tasks", "search_knowledge", "web_search", "list_capabilities", "assemble_team", "list_room_tasks", "update_task", "ask_user_choice", "archive_project"],
+            ["create_room", "invite_to_room", "list_my_rooms", "create_tasks", "search_knowledge", "web_search", "query_hr", "query_sales", "list_capabilities", "assemble_team", "list_room_tasks", "update_task", "ask_user_choice", "archive_project"],
         )
 
     def test_require_tokens_raises_when_missing(self) -> None:

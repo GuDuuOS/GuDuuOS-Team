@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from cosmac.db.models import Task
@@ -108,6 +108,38 @@ def list_tasks(
             stmt.order_by(Task.id.desc()).limit(limit)
         ).scalars().all()
     )
+
+
+def list_tasks_for_user(
+    session: Session, *, user_id: str, localpart: str, limit: int = 500,
+) -> List[Task]:
+    """列出**某用户可能可见**的任务（本人下达 ∪ 可能派给本人），按 id 倒序。
+
+    专给任务看板用，修 #6：旧实现先 ``list_tasks()`` 全局取最新 200 条、再在 Python 里按人
+    过滤——平台任务总数超过 200 后，某用户的任务会被别人的新任务挤出窗口而整块消失，违背
+    「派给我的任务永远可见」。这里把过滤**下推到 DB**，limit 落在「本人相关任务」上而非全平台。
+
+    executor_ref/assignee 的精确归属判定是模糊的（``_lp`` 提取 localpart、旧任务按 assignee
+    首词兜底），纯 SQL 难精确表达。故这里用 ``LIKE '%localpart%'`` 做**宽松超集**匹配：返回集
+    保证是调用方精确谓词(`_is_task_assignee`)的**超集**（凡 ``_lp(x)==localpart`` 者，x 必含
+    localpart 子串），调用方**必须再用精确谓词收口**去掉过匹配项。宁可多取、绝不漏取。
+    """
+    lp = (localpart or "").strip().lower()
+    conds = [Task.sender == user_id]
+    if lp:
+        like = f"%{lp}%"
+        # 类型化执行者(human)：executor_ref 含本人 localpart（全 id/纯 localpart/带不带 @ 都覆盖）
+        conds.append(and_(
+            Task.executor_kind == "human",
+            func.lower(func.coalesce(Task.executor_ref, "")).like(like),
+        ))
+        # 旧任务无 executor_ref：按 assignee 文本含本人 localpart 兜底
+        conds.append(and_(
+            or_(Task.executor_ref.is_(None), Task.executor_ref == ""),
+            func.lower(func.coalesce(Task.assignee, "")).like(like),
+        ))
+    stmt = select(Task).where(or_(*conds)).order_by(Task.id.desc()).limit(limit)
+    return list(session.execute(stmt).scalars().all())
 
 
 def get_task(session: Session, task_id: int) -> Optional[Task]:

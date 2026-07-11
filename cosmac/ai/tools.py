@@ -1278,7 +1278,9 @@ class Toolbox:
                 r = run_connector(
                     conn, user_input, client=self.client, room_id=ctx.room_id
                 )
-                self._record_workflow_run(slug, platform, ctx, user_input, r)
+                # 落账必须用与预约**同一个** skey（含 slug），否则查不到上面 _reserve 建的 queued
+                # 占位、会另插一行，占位永不结清 → 1 小时后被遗孤回收误报"提交队列中断"（#5）。
+                self._record_workflow_run(slug, platform, ctx, user_input, r, source_key=skey)
                 if not r.get("ok"):
                     self.client.send_text(
                         ctx.room_id, f"⚠️ 工作流「{name}」执行失败：{r.get('error')}"
@@ -1942,8 +1944,15 @@ class Toolbox:
             )
         return "；".join(summary) + "。"
 
-    def _record_workflow_run(self, slug, platform, ctx, user_input, result) -> None:
-        """尽力把运行记录落库；DB 不可用就跳过（不影响已拿到的结果）。"""
+    def _record_workflow_run(
+        self, slug, platform, ctx, user_input, result, source_key: str = ""
+    ) -> None:
+        """尽力把运行记录落库；DB 不可用就跳过（不影响已拿到的结果）。
+
+        ``source_key``：必须与本次运行 _reserve_workflow_source 用的键**完全一致**（同步后台路径
+        传 ``event:<id>:ai:<slug>``），record_run 才能命中并结清那条 queued 占位（#5）。不传则按
+        无来源键处理（直接插一行，不做去重）。
+        """
         try:
             from cosmac.db import session_scope
             from cosmac.db.wf_repo import record_run
@@ -1952,7 +1961,7 @@ class Toolbox:
                 record_run(
                     s, slug=slug, platform=platform, room_id=ctx.room_id,
                     sender=ctx.sender, user_input=user_input, result=result,
-                    source_key=ctx.source_key,
+                    source_key=source_key,
                 )
         except Exception:
             # 运行记录丢失不影响已拿到的结果，但要留痕，否则"为什么没有运行记录"无从排查。
