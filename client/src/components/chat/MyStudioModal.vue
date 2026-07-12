@@ -43,7 +43,12 @@
               <input v-model.trim="agForm.slug" class="cam-input" :disabled="agForm._edit" placeholder="标识 slug(小写字母/数字/中划线,如 my-writer)" />
               <input v-model.trim="agForm.name" class="cam-input" placeholder="名称(如 小说写手)" />
               <input v-model.trim="agForm.description" class="cam-input" placeholder="备注:它是干嘛的、什么时候找它(主 AI 派单就看这句)" />
-              <textarea v-model="agForm.system_prompt" class="cam-input ms-ta" rows="4" maxlength="4000" placeholder="人设:你是…擅长…工作方式…输出…" />
+              <div class="ms-persona-h">
+                <span class="ms-persona-label">人设（system prompt）</span>
+                <button type="button" class="cam-mini" @click="applyPersonaTemplate">套用结构模板</button>
+              </div>
+              <textarea v-model="agForm.system_prompt" class="cam-input ms-ta ms-persona" rows="12" maxlength="4000" placeholder="你是…擅长…工作方式…输出…（可点上方「套用结构模板」按推荐结构写）" />
+              <span class="ms-hint">按 角色定位 / 擅长 / 工作方式 / 输出要求 / 注意事项 五段写更专业；智能体只在被 @/点名时激活、不占日常上下文，可以写详细些（上限 4000 字）。</span>
               <input v-model.trim="agForm.model" class="cam-input" placeholder="模型(可选,留空跟随全局)" />
               <label class="ms-check"><input v-model="agForm.enabled" type="checkbox" /> 启用</label>
               <div class="ms-actions">
@@ -121,6 +126,21 @@ async function load() {
 watch(() => props.visible, (v) => { if (v) { editing.value = false; load() } })
 
 function newAgent() { Object.assign(agForm, { slug: '', name: '', description: '', system_prompt: '', model: '', enabled: true, _edit: false }); editing.value = true; errText.value = '' }
+
+// 结构化人设模板(与后台建智能体同一套五要素骨架)：引导用户写出更专业的自建智能体人设。
+const PERSONA_TEMPLATE = `【角色定位】你是……（一句话说清身份与核心职责）
+【擅长】
+- ……（列 3~5 项具体能力，越具体越好）
+- ……
+【工作方式】拿到任务先……，再……，最后……（你的思考与执行步骤）
+【输出要求】……（输出的格式、结构，必须包含什么；举例更好）
+【注意事项】……（红线/禁忌，如：不编造数据、信息不足先追问）`
+
+function applyPersonaTemplate() {
+  if (agForm.system_prompt.trim()
+      && !confirm('人设框已有内容，套用模板会替换掉它，确定吗？')) return
+  agForm.system_prompt = PERSONA_TEMPLATE
+}
 function editAgent(a: MyAgent) { Object.assign(agForm, { ...a, model: a.model || '', _edit: true }); editing.value = true; errText.value = '' }
 async function saveAgent() {
   busy.value = true; errText.value = ''
@@ -150,6 +170,11 @@ async function delSkill(slug: string) {
 .ms-slug { font-size: 11px; color: var(--text-3); background: var(--bg-hover); border-radius: 4px; padding: 1px 5px; margin-left: 6px; }
 .ms-form { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); }
 .ms-ta { resize: vertical; font-family: inherit; }
+/* 人设编辑器：更大、等宽，写结构化人设更顺手 */
+.ms-persona-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ms-persona-label { font-size: 12px; color: var(--text-2, var(--text)); }
+.ms-persona { min-height: 220px; font-family: var(--mono, ui-monospace, "SF Mono", Menlo, monospace); font-size: 13px; line-height: 1.6; tab-size: 2; }
+.ms-hint { font-size: 12px; color: var(--text-3, var(--text-2)); line-height: 1.5; }
 .ms-check { font-size: 13px; color: var(--text-2); display: inline-flex; gap: 6px; align-items: center; }
 .ms-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .cam-mini { border: 1px solid var(--border); background: var(--bg-panel); border-radius: 7px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
