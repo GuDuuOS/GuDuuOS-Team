@@ -530,10 +530,19 @@
               <span>一句话说明</span>
               <input v-model.trim="agForm.description" placeholder="负责选题与排期" />
             </label>
-            <label class="adm-field">
-              <span>人设（system prompt）</span>
-              <textarea v-model="agForm.system_prompt" rows="4" placeholder="你是…，说话风格…" />
-            </label>
+            <div class="adm-field">
+              <div class="adm-field-h">
+                <span>人设（system prompt）</span>
+                <button type="button" class="adm-btn ghost sm" @click="applyPersonaTemplate">套用结构模板</button>
+              </div>
+              <textarea
+                v-model="agForm.system_prompt"
+                rows="14"
+                class="adm-persona-editor"
+                placeholder="你是…，说话风格…（可点右上「套用结构模板」按推荐结构写）"
+              />
+              <span class="adm-hint">建议按 <b>角色定位 / 擅长 / 工作方式 / 输出要求 / 注意事项</b> 五段写。智能体只在被 @/派单时激活、不占每轮上下文，所以可以写详细、专业些。</span>
+            </div>
             <label class="adm-field">
               <span>模型覆盖（留空 = 跟随全局 AI 配置）</span>
               <input v-model.trim="agForm.model" placeholder="如 claude-opus-4-8（可留空）" />
@@ -2220,6 +2229,21 @@ const presetAgentsSorted = computed(() =>
     (a.division || '').localeCompare(b.division || '', 'zh') || a.slug.localeCompare(b.slug)),
 )
 /** 把某个预置 Agent 拷进编辑器改成自定义(保存后同 slug 覆盖预置) */
+// 结构化人设模板：引导作者按 五要素 写出更专业的智能体人设（比空白框好写、质量高）。
+const PERSONA_TEMPLATE = `【角色定位】你是……（一句话说清身份与核心职责）
+【擅长】
+- ……（列 3~5 项具体能力，越具体越好）
+- ……
+【工作方式】拿到任务先……，再……，最后……（你的思考与执行步骤）
+【输出要求】……（输出的格式、结构，必须包含什么；举例更好）
+【注意事项】……（红线/禁忌，如：不编造数据、信息不足先追问、对外措辞需谨慎）`
+
+function applyPersonaTemplate() {
+  if (agForm.system_prompt.trim()
+      && !confirm('人设框已有内容，套用模板会替换掉它，确定吗？')) return
+  agForm.system_prompt = PERSONA_TEMPLATE
+}
+
 function overridePresetAgent(a: GlobalAgent) {
   Object.assign(agForm, {
     slug: a.slug, name: a.name, description: a.description,
@@ -3261,6 +3285,13 @@ onMounted(check)
 .adm-form .adm-field input:focus,
 .adm-form .adm-field select:focus { outline: none; border-color: var(--accent); }
 .adm-note { font-size: var(--fs-75); color: var(--text-3); font-style: normal; line-height: 1.5; }
+/* 人设编辑器：更大、等宽字体，写长人设/结构模板时更像"正经编辑器" */
+.adm-field-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.adm-field-h > span { font-size: var(--fs-75); color: var(--text-3); }
+.adm-form .adm-field textarea.adm-persona-editor {
+  min-height: 260px; font-family: var(--mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: 13px; line-height: 1.6; tab-size: 2;
+}
 .plan-price-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
 .plan-price-cur { flex: 0 0 84px; font-size: var(--fs-85); color: var(--text-2); }
 .plan-price-row input { flex: 1; }
