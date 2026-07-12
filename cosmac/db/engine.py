@@ -177,6 +177,18 @@ def _heal_business_schema(engine: Engine) -> None:
                         "ALTER TABLE cosmac_task "
                         "ADD COLUMN reminded INTEGER NOT NULL DEFAULT 0"
                     ))
+                # 所属工作区(Space)列：与上面几列同批自愈——旧库(建于 space_id 引入之前)若没手动
+                # 跑 ALTER，主 AI 每次拆任务/建专班的 INSERT 都写 space_id → UndefinedColumn、任务
+                # 编排整块瘫痪。补列 + 补索引(与模型 index=True 对齐)。
+                if "space_id" not in have:
+                    conn.execute(text(
+                        "ALTER TABLE cosmac_task "
+                        "ADD COLUMN space_id VARCHAR(255) NOT NULL DEFAULT ''"
+                    ))
+                    conn.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_cosmac_task_space_id "
+                        "ON cosmac_task (space_id)"
+                    ))
         # 图文页表补列：旧库的 cosmac_doc_page 还没 cover（封面图），补上否则带封面写入报
         # UndefinedColumn。
         if insp.has_table(DocPage.__tablename__):

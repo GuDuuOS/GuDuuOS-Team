@@ -1,5 +1,23 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-12 — fix:第二轮复查补漏(4 项后端·含 1 个潜伏迁移缺口)
+- 44 项修完后又做一轮"对抗式复查+深挖"(4 路并行审：复查自己改动是否引入回归 + 挖第一轮没细看
+  的角落)。多路撞会话额度上限提前失败，我接手自己核完并修：
+  · **【中】cosmac_task 漏 space_id 自动迁移**(db/engine.py)：表自愈块补了 executor_kind/ref/due_ts/
+    reminded，唯独漏 space_id(models.py 有、每次 create_tasks 都写)。旧生产库若没手动 ALTER，重启后
+    拆任务/建专班的 INSERT 全 UndefinedColumn、任务编排瘫痪。按同批模式补 ADD COLUMN + 索引。
+  · **【低中】任务提醒扫描逐条提交**(appservice_bot.py scan_task_reminders)：原整轮一个事务、到末尾
+    才 commit，进程崩在循环中途→本轮 mark_reminded 全回滚→下轮对已提醒任务重复 @ 轰炸。改成每条
+    mark 后即 commit(expire_on_commit=False 已开，安全)。
+  · **【低】控制室降权条件对齐意图**(appservice_bot.py _reconcile_control_members)：to_remove 加下界
+    50≤lvl<100，只清仍有写权限的旧管理员，不误踢 power 0-49。
+  · **【低】submit_background 计数泄漏**(wf.py)：submit() 抛异常(executor 关闭)时 inflight 已 +1 却
+    不减→该池永久虚满。包 try、失败回滚计数+返回 False。
+- 顺带复核确认**非问题**：两个 markdown 渲染器(md.ts/renderMd)先转义+白名单、图片仅 http(s)、
+  头像/图标走 &lt;img&gt;(SVG 不执行脚本)——"SVG XSS"线索不成立；SSRF/异步回调 token/事务去重/
+  order CAS/embeddings 等经核无误。
+- 验证：全量 519 项全绿；ruff 通过。纯后端，git pull + 重启 guduu-bot。
+
 ## 2026-07-12 — fix:BUG 排查修复(第五批·前端 G5~G8 共 16 项，收官)
 - 剩余全部前端组，至此 BUG 排查发现的 ~40 项全部修完。
 - **G5 私信体验**:M10 刚发起私信误报"送不达"(dmPeerStatus 把 invite 待接受态当离场→加 pending 区分);
