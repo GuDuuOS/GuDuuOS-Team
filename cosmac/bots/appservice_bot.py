@@ -1771,13 +1771,15 @@ class CosmacBot:
                 stuck,
             )
 
-        # 待移除：有显式写权限(50≤power<100) 且不在期望管理员集里的成员
+        # 待移除：有显式写权限(50≤power<100) 且不在期望管理员集里的成员。
+        # #3：下界 lvl>=50 对齐注释意图——只清理"仍能写控制室配置(≥50)"的旧管理员；power 0-49 的
+        # 无写权限、不构成安全风险，不误踢(bot 自身移除人时是回落 users_default、不会显式设 0-49)。
         to_remove = [
             uid
             for uid, lvl in users.items()
             if uid != bot
             and isinstance(lvl, int)
-            and lvl < 100
+            and 50 <= lvl < 100
             and uid not in desired
         ]
         # 待补齐：期望集里的**新管理员**（在控制室 power<50 或根本不在）。
@@ -4463,6 +4465,7 @@ class CosmacBot:
                     if not room:
                         # 没挂在任何频道的任务没法"频道内提醒"——直接标记，避免每轮空扫它。
                         mark_reminded(s, t.id, bit)
+                        s.commit()  # 逐条落库（见下方 #2 注释）
                         continue
                     who = self._task_reminder_target(t)
                     when = self._fmt_due(t.due_ts)
@@ -4495,6 +4498,10 @@ class CosmacBot:
                         logger.debug("发任务提醒失败 task=%s room=%s", t.id, room, exc_info=True)
                         continue  # 发失败**不标记**已提醒，下一轮再试
                     mark_reminded(s, t.id, bit)
+                    # #2：**逐条提交**——原来整轮扫描共用一个事务、到最后才 commit，若进程崩在循环
+                    # 中途，本轮所有 mark_reminded 一起回滚，下一轮会对**已发过提醒**的任务重复 @
+                    # 轰炸(逾期任务反复骚扰负责人+下达者)。expire_on_commit=False，逐条 commit 安全。
+                    s.commit()
                     sent += 1
         except Exception:
             logger.debug("扫描任务时效提醒失败（忽略本轮）", exc_info=True)

@@ -64,7 +64,15 @@ def submit_background(fn: Callable[[], None], *, pool: str = "fast") -> bool:
             with _bg_lock:
                 _bg_inflight[pool] -= 1
 
-    _executors[pool].submit(_wrap)
+    try:
+        _executors[pool].submit(_wrap)
+    except Exception:
+        # submit 本身失败(如 executor 已 shutdown → RuntimeError)：上面已 +1 的 inflight 计数
+        # 必须回滚，否则该池计数永久虚高、最终恒 >= _MAX_INFLIGHT 而永久拒绝所有后续任务。
+        with _bg_lock:
+            _bg_inflight[pool] -= 1
+        logger.exception("提交后台工作流任务失败")
+        return False
     return True
 
 
