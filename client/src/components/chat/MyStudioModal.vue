@@ -12,7 +12,8 @@
           <div class="cam-title">我的AI工坊</div>
           <div class="cam-sub">自建你的专属 智能体 与 技能 · 归属你的账号 · 计入存储空间</div>
         </div>
-        <button class="cam-x" @click="close">×</button>
+        <!-- 用共享样式表里的 cam-close(靠右+悬停态);此前误写成不存在的 cam-x,渲染成原生按钮挤在标题旁 -->
+        <button class="cam-close" title="关闭" @click="close">×</button>
       </div>
 
       <div class="cam-tabs">
