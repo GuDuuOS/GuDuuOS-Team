@@ -18,6 +18,7 @@
       <div class="cam-tabs">
         <button class="cam-tab" :class="{ active: tab === 'agents' }" @click="tab = 'agents'">我的智能体 <i>{{ agents.length }}</i></button>
         <button class="cam-tab" :class="{ active: tab === 'skills' }" @click="tab = 'skills'">我的技能 <i>{{ skills.length }}</i></button>
+        <button class="cam-tab" :class="{ active: tab === 'acquired' }" @click="tab = 'acquired'">已获取 <i>{{ acquired.length }}</i></button>
       </div>
 
       <div class="cam-body">
@@ -61,7 +62,7 @@
         </template>
 
         <!-- ═══ 技能 ═══ -->
-        <template v-else>
+        <template v-else-if="tab === 'skills'">
           <div class="cam-help cam-help-top">技能随你的每轮对话自动生效（也可在私聊里用「技能」命令管理，同一份数据）。精简为宜，太长会占对话预算。</div>
           <div v-for="s in skills" :key="s.slug" class="cam-row">
             <div class="cam-row-main">
@@ -91,6 +92,28 @@
           <div v-else class="cam-add"><button class="cam-add-btn" @click="newSkill">＋ 新建技能</button></div>
         </template>
 
+        <!-- ═══ 已获取（AI Agent 商城）═══ -->
+        <template v-else>
+          <div class="cam-help cam-help-top">你从「AI Agent 商城」获取的资源。主 AI 派单时会优先考虑你获取的 AI 同事（名册里标 ★）。</div>
+          <div v-for="it in acquired" :key="it.kind + ':' + it.slug" class="cam-row">
+            <div class="cam-row-main">
+              <div class="cam-row-label">
+                <span class="ms-kind" :style="{ background: CAT_META[it.kind]?.color || '#888' }">{{ CAT_META[it.kind]?.label || it.kind }}</span>
+                {{ it.name }}
+                <span v-if="it.stale" class="cam-tag" style="background:#f6e3e3;color:#b94a4a">已下架</span>
+                <span v-else-if="!it.unlocked" class="cam-tag" style="background:#f4ead9;color:#9a6b1f">需升级会员</span>
+              </div>
+              <div class="cam-row-desc">
+                {{ it.description || '（该资源已不在商城货架上，可移除）' }}
+                <template v-if="it.kind === 'skill' && it.agents.length"> · 随【{{ it.agents.join('/') }}】激活</template>
+              </div>
+            </div>
+            <button class="cam-del" title="移除（不影响使用权限，只是不再优先派单）" @click="removeAcquired(it)">×</button>
+          </div>
+          <p v-if="!acquired.length" class="cam-row-desc" style="padding:8px 2px">还没有获取过商城资源。</p>
+          <div class="cam-add"><button class="cam-add-btn" @click="goMarket">🛒 去 AI Agent 商城逛逛</button></div>
+        </template>
+
         <div class="cam-help">自建内容计入你的存储空间（见「我的额度」）。每类上限 50 个。</div>
       </div>
     </div>
@@ -103,16 +126,20 @@ import '@/styles/admin-modal.css'
 import {
   myAgentsList, myAgentSave, myAgentDelete,
   mySkillsList, mySkillSave, mySkillDelete,
-  type MyAgent, type MySkill,
+  fetchMarketAcquired, setMarketItemAcquired,
+  type MyAgent, type MySkill, type AcquiredItem,
 } from '@/matrix/client'
+import { CAT_META } from '@/data/marketplace'
+import { useMarketplace } from '@/composables/useMarketplace'
 
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 function close() { emit('close') }
 
-const tab = ref<'agents' | 'skills'>('agents')
+const tab = ref<'agents' | 'skills' | 'acquired'>('agents')
 const agents = ref<MyAgent[]>([])
 const skills = ref<MySkill[]>([])
+const acquired = ref<AcquiredItem[]>([])
 const editing = ref(false)
 const busy = ref(false)
 const errText = ref('')
@@ -121,8 +148,23 @@ const skForm = reactive<MySkill & { _edit: boolean }>({ slug: '', name: '', desc
 
 async function load() {
   errText.value = ''
-  ;[agents.value, skills.value] = await Promise.all([myAgentsList(), mySkillsList()])
+  const [a, s, g] = await Promise.all([myAgentsList(), mySkillsList(), fetchMarketAcquired()])
+  agents.value = a
+  skills.value = s
+  acquired.value = g || []
 }
+
+/** 移除一条「已获取」——只是不再优先派单/收藏,不影响资源本身的使用权限。 */
+async function removeAcquired(it: AcquiredItem) {
+  errText.value = ''
+  const err = await setMarketItemAcquired(it.kind, it.slug, false)
+  if (err) { errText.value = err; return }
+  acquired.value = acquired.value.filter((x) => !(x.kind === it.kind && x.slug === it.slug))
+}
+
+/** 「去商城逛逛」:关掉工坊、打开 AI Agent 商城(全局单例弹窗)。 */
+const { open: openMarketplace } = useMarketplace()
+function goMarket() { close(); openMarketplace() }
 watch(() => props.visible, (v) => { if (v) { editing.value = false; load() } })
 
 function newAgent() { Object.assign(agForm, { slug: '', name: '', description: '', system_prompt: '', model: '', enabled: true, _edit: false }); editing.value = true; errText.value = '' }
@@ -168,6 +210,8 @@ async function delSkill(slug: string) {
 
 <style scoped>
 .ms-slug { font-size: 11px; color: var(--text-3); background: var(--bg-hover); border-radius: 4px; padding: 1px 5px; margin-left: 6px; }
+/* 「已获取」行的资源类型小徽章(颜色跟商城分类一致) */
+.ms-kind { font-size: 10px; color: #fff; padding: 1px 7px; border-radius: 999px; margin-right: 4px; font-weight: 600; }
 .ms-form { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); }
 .ms-ta { resize: vertical; font-family: inherit; }
 /* 人设编辑器：更大、等宽，写结构化人设更顺手 */

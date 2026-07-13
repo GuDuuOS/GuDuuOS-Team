@@ -2170,6 +2170,8 @@ export interface MarketCatalogItem {
   access: string
   /** 服务端按发起人（等级/模板/管理员）算好的：当前用户现在就能用吗 */
   unlocked: boolean
+  /** 本人是否已「获取」（存 cosmac DB，主 AI 名册据此优先派单） */
+  acquired: boolean
   /** true=平台内置（官方），false=平台运营在后台配置的 */
   official: boolean
   division?: string
@@ -2207,6 +2209,7 @@ export async function fetchMarketCatalog(): Promise<MarketCatalog | null> {
         description: String(i?.description || ''),
         access: String(i?.access || ''),
         unlocked: !!i?.unlocked,
+        acquired: !!i?.acquired,
         official: !!i?.official,
         division: String(i?.division || ''),
         skill_count: Number(i?.skill_count || 0),
@@ -2222,21 +2225,75 @@ export async function fetchMarketCatalog(): Promise<MarketCatalog | null> {
   } catch { return null }
 }
 
-// 「获取」记录与插件安装记录的 account data 类型（cc.* 前缀=CosMac 客户端自定义，非协议字段）
-const MARKET_ACCOUNT_DATA = 'cc.cosmac.market'
+// 插件安装记录的 account data 类型（cc.* 前缀=CosMac 客户端自定义，非协议字段）
+const MARKET_ACCOUNT_DATA = 'cc.cosmac.market' // 旧版「获取」存这里,现已迁 cosmac DB(仅迁移时读)
 const PLUGINS_ACCOUNT_DATA = 'cc.cosmac.plugins'
 
-/** 读本人已「获取」的商城条目 id 集合（形如 "agent:slug"）。 */
-export function getMarketAcquired(): string[] {
-  try {
-    const c = (mx as any)?.getAccountData?.(MARKET_ACCOUNT_DATA)?.getContent?.() || {}
-    return Array.isArray(c?.acquired) ? c.acquired.map(String) : []
-  } catch { return [] }
+/** 已获取列表里的一条（服务端已对照货架补全名称/描述；stale=资源已下架）。 */
+export interface AcquiredItem {
+  kind: MarketCatalogItem['kind']
+  slug: string
+  name: string
+  description: string
+  unlocked: boolean
+  stale: boolean
+  agents: string[]
 }
 
-/** 整体写回已获取集合（幂等；失败静默——获取只是收藏标记，不值得打断用户）。 */
-export async function setMarketAcquired(ids: string[]): Promise<void> {
-  try { await (mx as any)?.setAccountData?.(MARKET_ACCOUNT_DATA, { acquired: ids }) } catch { /* 忽略 */ }
+/** 拉本人全部「已获取」（我的AI工坊「已获取」区用）。未登录/失败返回 null。 */
+export async function fetchMarketAcquired(): Promise<AcquiredItem[] | null> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return null
+  try {
+    const r = await fetch(`${payBase()}/cosmac/market/acquired`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return null
+    const j = await r.json().catch(() => ({}))
+    const arr = Array.isArray(j?.items) ? j.items : []
+    return arr.map((i: any) => ({
+      kind: String(i?.kind || 'agent') as AcquiredItem['kind'],
+      slug: String(i?.slug || ''),
+      name: String(i?.name || ''),
+      description: String(i?.description || ''),
+      unlocked: !!i?.unlocked,
+      stale: !!i?.stale,
+      agents: Array.isArray(i?.agents) ? i.agents.map(String) : [],
+    })).filter((i: AcquiredItem) => i.slug)
+  } catch { return null }
+}
+
+/** 获取 / 移除获取 某个商城资源（写 cosmac DB，主 AI 名册立刻感知）。
+ *  返回空串=成功，否则是给用户看的错误文案。 */
+export async function setMarketItemAcquired(
+  kind: string, slug: string, acquired: boolean,
+): Promise<string> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return '登录已失效，请重新登录'
+  try {
+    const r = await fetch(`${payBase()}/cosmac/market/acquire`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ kind, slug, acquired }),
+    })
+    const j = await r.json().catch(() => ({}))
+    return r.ok ? '' : String(j?.error || '操作失败，请稍后重试')
+  } catch { return '网络异常，请稍后重试' }
+}
+
+/** 一次性迁移：把旧版存在 account data 里的「已获取」搬进服务端（幂等，尽力而为）。
+ *  旧版只上线过很短时间；迁完打标记不再重复跑。 */
+export async function migrateLegacyAcquired(): Promise<void> {
+  try {
+    const c = (mx as any)?.getAccountData?.(MARKET_ACCOUNT_DATA)?.getContent?.() || {}
+    if (c?.migrated) return
+    const ids: string[] = Array.isArray(c?.acquired) ? c.acquired.map(String) : []
+    for (const id of ids) {
+      const [kind, slug] = id.split(':', 2)
+      if (kind && slug) await setMarketItemAcquired(kind, slug, true)
+    }
+    if (ids.length) await (mx as any)?.setAccountData?.(MARKET_ACCOUNT_DATA, { migrated: true })
+  } catch { /* 迁不动就算了,用户重新点一次获取即可 */ }
 }
 
 /** 读本人在「插件商城」装过的插件 id 列表（刷新/换端恢复插件栏用）。 */

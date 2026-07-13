@@ -546,6 +546,30 @@ class UserTemplate(Base, TimestampMixin):
         return f"<UserTemplate {self.user_id} -> {self.template_slug}>"
 
 
+class MarketAcquisition(Base, TimestampMixin):
+    """「用户 ↔ 已获取的商城资源」:AI Agent 商城里点「获取」的记录。
+
+    为什么落 DB 而不是 account data:主 AI 处理**每条消息**都要按发起人查"他获取了哪些
+    AI 同事"(名册标注/派单优先),bot 读不了别人的 account data;与 UserTemplate 同理。
+    一条 = 某用户获取了某个资源;取消获取即删行。kind 现有 agent/skill/workflow/knowledge。
+    """
+
+    __tablename__ = "cosmac_market_acquired"
+    # 同一用户对同一资源只记一条(重复点「获取」幂等)
+    __table_args__ = (UniqueConstraint("user_id", "kind", "slug", name="uq_market_user_item"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # 账号（@user:domain）
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    # 资源类型:agent / skill / workflow / knowledge
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="agent")
+    # 资源标识(全局智能体/技能的 slug、工作流 slug、知识库文档 id)
+    slug: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+
+    def __repr__(self) -> str:
+        return f"<MarketAcquisition {self.user_id} {self.kind}:{self.slug}>"
+
+
 class Employee(Base, TimestampMixin):
     """员工花名册（人事 / HR 数据）：企业「数据智能」演示与人事问答的底表。
 
