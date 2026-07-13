@@ -1,62 +1,25 @@
-export type MarketCat = 'agent' | 'skill' | 'prompt' | 'workflow' | 'knowledge' | 'mcp'
+/** AI Agent 商城的分类/文案元信息。
+ *  ⚠️ 商品数据不在这里——商城列的是平台**真实资源**（全局智能体/技能/工作流/平台知识库），
+ *  由 bot 端点 /cosmac/market/catalog 按登录人实时返回（含解锁状态），见 client.ts fetchMarketCatalog。 */
 
-export interface MarketItem {
-  id: string
-  name: string
-  cat: MarketCat
-  author: string
-  desc: string
-  installs: string
-  /** 价格（元）；0 表示免费 */
-  price: number
-  tag?: string
-  installed?: boolean
-}
+export type MarketCat = 'agent' | 'skill' | 'workflow' | 'knowledge'
 
-/** 分类元信息：标签 + 主题色 */
+/** 分类元信息：标签 + 主题色（与后端 item.kind 一一对应） */
 export const CAT_META: Record<MarketCat, { label: string; color: string }> = {
-  agent:     { label: 'AI Agent',   color: '#c96442' },
-  skill:     { label: 'Skill',      color: '#6b8e4e' },
-  prompt:    { label: 'Prompt',     color: '#4a7a8c' },
-  workflow:  { label: '工作流',     color: '#b58932' },
-  knowledge: { label: '知识库',     color: '#8a6a8a' },
-  mcp:       { label: 'MCP 连接器', color: '#5a7a8a' }
+  agent:     { label: 'AI 同事',  color: '#c96442' },
+  skill:     { label: '技能',     color: '#6b8e4e' },
+  workflow:  { label: '工作流',   color: '#b58932' },
+  knowledge: { label: '知识库',   color: '#8a6a8a' }
 }
 
-export const marketItems: MarketItem[] = [
-  /* AI Agent */
-  { id: 'a1', name: '爆款标题 Agent', cat: 'agent', author: 'CosMac Star 官方', desc: '结合平台热点与历史爆款，一次给 10 个标题', installs: '3.2k', price: 99, installed: true },
-  { id: 'a2', name: '数据复盘 Agent', cat: 'agent', author: 'CosMac Star 官方', desc: '全平台播放/涨粉/完播比对，定位增长点', installs: '2.1k', price: 69 },
-  { id: 'a3', name: '评论区回复 Agent', cat: 'agent', author: '社区', desc: '批量生成高赞回复，自动标记争议评论', installs: '1.4k', price: 0 },
-  { id: 'a4', name: '发布排期 Agent', cat: 'agent', author: 'CosMac Star 官方', desc: '按流量高峰多平台错峰排期', installs: '980', price: 69 },
-  { id: 'a5', name: '商单报价 Agent', cat: 'agent', author: 'CosMac Star 官方', desc: '按刊例与数据自动出报价与合同', installs: '760', price: 49 },
-
-  /* Skill */
-  { id: 's1', name: '短视频脚本起草', cat: 'skill', author: 'CosMac Star 官方', desc: '选题 → 钩子 → 正文 → 分镜，一键成稿', installs: '1.8k', price: 0, tag: '/script', installed: true },
-  { id: 's2', name: '封面文案识别', cat: 'skill', author: 'CosMac Star 官方', desc: '识别高点击封面与标题套路', installs: '1.1k', price: 19.9, tag: '/cover' },
-  { id: 's3', name: '完播率诊断', cat: 'skill', author: '社区', desc: '定位前 3 秒流失，给钩子优化', installs: '920', price: 19.9, tag: '/data' },
-  { id: 's4', name: '素材库问答检索', cat: 'skill', author: 'CosMac Star 官方', desc: '自然语言检索爆款与脚本', installs: '2.4k', price: 0, tag: '/kb', installed: true },
-  { id: 's5', name: '对标账号拆解', cat: 'skill', author: '社区', desc: '抓取并拆解对标账号选题与节奏', installs: '640', price: 9.9, tag: '/benchmark' },
-
-  /* Prompt */
-  { id: 'p1', name: '短视频脚本模板', cat: 'prompt', author: 'CosMac Star 官方', desc: '标准化钩子 / 正文 / 引导结构', installs: '1.5k', price: 0 },
-  { id: 'p2', name: '爆款选题五问', cat: 'prompt', author: '社区', desc: '逐层追问打磨选题角度', installs: '870', price: 0 },
-  { id: 'p3', name: '小红书文案公式', cat: 'prompt', author: '社区', desc: '种草 / 干货 / 情绪三类模板', installs: '540', price: 9.9 },
-  { id: 'p4', name: '商单脚本框架', cat: 'prompt', author: 'CosMac Star 官方', desc: '软植入不翻车的结构化提纲', installs: '430', price: 9.9 },
-
-  /* 工作流 */
-  { id: 'w1', name: '舆情分级联动', cat: 'workflow', author: 'CosMac Star 官方', desc: '负面评论 → 话术 → 一键置顶澄清', installs: '760', price: 49 },
-  { id: 'w2', name: '成片自动质检', cat: 'workflow', author: 'CosMac Star 官方', desc: '错别字 / 版权 / 违禁词发布前拦截', installs: '520', price: 29 },
-  { id: 'w3', name: '内容日历编排', cat: 'workflow', author: '社区', desc: '选题 / 拍摄 / 剪辑 / 发布自动排期', installs: '410', price: 49 },
-
-  /* 知识库 */
-  { id: 'k1', name: '爆款选题方法库', cat: 'knowledge', author: 'CosMac Star 官方', desc: '328 条 · 实时同步', installs: '2.0k', price: 0, installed: true },
-  { id: 'k2', name: '平台规则与避雷库', cat: 'knowledge', author: '社区', desc: '各平台社区规范 / 广告法', installs: '1.3k', price: 0 },
-  { id: 'k3', name: '对标账号库', cat: 'knowledge', author: '社区', desc: '86 个账号 · 持续拆解', installs: '990', price: 0 },
-
-  /* MCP 连接器 */
-  { id: 'm1', name: '抖音数据连接器', cat: 'mcp', author: 'CosMac Star 官方', desc: '接入创作者后台数据', installs: '1.1k', price: 0, installed: true },
-  { id: 'm2', name: '小红书蒲公英连接器', cat: 'mcp', author: 'CosMac Star 官方', desc: '笔记与商单数据', installs: '880', price: 0 },
-  { id: 'm3', name: '公众号连接器', cat: 'mcp', author: 'CosMac Star 官方', desc: '阅读 / 涨粉 / 留言', installs: '670', price: 0 },
-  { id: 'm4', name: '热榜数据 API', cat: 'mcp', author: '第三方', desc: '全网热点 / 选题输入', installs: '350', price: 19.9 }
-]
+/** 解锁要求（后端 access 字段）→ 商城卡片上的徽标文案与颜色。
+ *  变现模型是会员订阅：付费项不标单价，标「所需会员等级」，点击引导升级会员。 */
+export function accessBadge(access: string): { label: string; cls: 'free' | 'tier' | 'scoped' } {
+  const a = (access || '').trim()
+  if (!a || a === 'public') return { label: '免费', cls: 'free' }
+  if (a === 'paid') return { label: '付费会员', cls: 'tier' }
+  if (a === 'creator') return { label: '创作者会员', cls: 'tier' }
+  if (a.startsWith('tpl:')) return { label: '入驻模板专属', cls: 'scoped' }
+  if (a === 'admin') return { label: '仅管理员', cls: 'scoped' }
+  return { label: '免费', cls: 'free' } // 未知取值与服务端容错口径一致：按所有人可用
+}

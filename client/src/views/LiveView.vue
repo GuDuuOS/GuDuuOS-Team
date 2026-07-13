@@ -125,6 +125,7 @@ import { useMarketplace } from '@/composables/useMarketplace'
 import { useCli } from '@/composables/useCli'
 import { useProfileHome } from '@/composables/useProfileHome'
 import { usePluginStore } from '@/composables/usePluginStore'
+import { usePlugins } from '@/composables/usePlugins'
 import { useCustomAssets, clearCustomAssetsStorage } from '@/composables/useCustomAssets'
 import { useUserProfile, type UserSettingsTab } from '@/composables/useUserProfile'
 import { useChannelAdmin } from '@/composables/useChannelAdmin'
@@ -144,7 +145,10 @@ let onbChecked = false // 首屏只检测一次是否要弹引导
 const { open: openCli } = useCli()
 // profileVisible 接入 URL 同步（个人主页是页面级覆盖层，给它 /me 地址）
 const { open: openProfileHome, visible: profileVisible } = useProfileHome()
-const { open: openPluginStore } = usePluginStore()
+const { open: openPluginStore, restore: restorePlugins } = usePluginStore()
+// 右侧插件栏渲染的「已装插件」——内置 'ai' 有自己的常驻按钮(智),这里只列商城装的
+const { plugins: pluginRail } = usePlugins()
+const installedPlugins = computed(() => pluginRail.filter((p) => p.id !== 'ai'))
 const { open: openAssets } = useCustomAssets()
 const { openSettings, status: myStatus, statusMeta: myStatusMeta, refreshIdentity: refreshMyIdentity } = useUserProfile()
 
@@ -1318,6 +1322,10 @@ async function afterLogin(uid: string) {
   // maybeAcceptInvites 处理,修 bug 9/10/11)。
   maybeAcceptInvites()
   loadStats() // 数据看板真实指标（best-effort）
+  // 插件商城:恢复本人装过的插件到右侧栏(存 account data)。sync 首包可能还没带回
+  // account data,3.5s 后再补一次(restore 幂等,多调无害)。
+  restorePlugins()
+  setTimeout(restorePlugins, 3500)
   refresh()
   // 若是从"社区服务器邀请链接"进来的，登录后执行加入
   if (pendingJoinSpace) { const sid = pendingJoinSpace; pendingJoinSpace = ''; doJoinSpace(sid) }
@@ -2541,6 +2549,15 @@ onBeforeUnmount(() => {
       <nav v-if="!focused" class="plugin-rail">
         <div class="pr-list">
           <div class="pr-icon active" title="中枢 AI" @click="aiOpen = !aiOpen">智</div>
+          <!-- 插件商城装的插件（存 account data,刷新恢复）;点击进商城管理(卸载/换) -->
+          <div
+            v-for="p in installedPlugins"
+            :key="p.id"
+            class="pr-icon"
+            :title="p.title"
+            :style="p.color ? { background: p.color, color: '#fff' } : undefined"
+            @click="onPluginStore"
+          >{{ p.label }}</div>
           <div class="pr-icon plus" title="添加插件" @click="onPluginStore">+</div>
         </div>
         <div class="pr-divider" />
@@ -2549,8 +2566,9 @@ onBeforeUnmount(() => {
       </nav>
     </div>
 
-    <!-- DEMO 弹窗/面板（常驻挂载，内部按各自 composable 的 visible 控制显隐）-->
-    <MarketplaceModal />
+    <!-- 弹窗/面板（常驻挂载，内部按各自 composable 的 visible 控制显隐）-->
+    <!-- AI Agent 商城已接真数据（bot /cosmac/market/catalog）；等级不够点「升级解锁」→ 会员弹窗 -->
+    <MarketplaceModal @upgrade="showMembership = true" />
     <PluginStoreModal />
     <CustomAssetsModal />
     <UserSettingsModal />
