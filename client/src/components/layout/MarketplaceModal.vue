@@ -79,8 +79,8 @@ import { useMarketplace } from '@/composables/useMarketplace'
 import { CAT_META, accessBadge, type MarketCat } from '@/data/marketplace'
 import {
   fetchMarketCatalog,
-  getMarketAcquired,
-  setMarketAcquired,
+  migrateLegacyAcquired,
+  setMarketItemAcquired,
   type MarketCatalogItem,
 } from '@/matrix/client'
 
@@ -98,41 +98,41 @@ const cats: { key: CatKey; label: string }[] = [
 const active = ref<CatKey>('all')
 const q = ref('')
 
-/* —— 真数据：打开弹窗时从 bot 拉平台资源目录（含按本人算好的解锁状态）—— */
+/* —— 真数据：打开弹窗时从 bot 拉平台资源目录（含按本人算好的 解锁/已获取 状态）—— */
 const items = ref<MarketCatalogItem[]>([])
 const loading = ref(false)
 const loadError = ref(false)
-const acquired = ref<Set<string>>(new Set())
 const hint = ref('')
 
 const itemId = (it: MarketCatalogItem) => `${it.kind}:${it.slug}`
-const isAcquired = (it: MarketCatalogItem) => acquired.value.has(itemId(it))
+const isAcquired = (it: MarketCatalogItem) => it.acquired
 const badgeOf = (it: MarketCatalogItem) => accessBadge(it.access)
 
 async function load() {
   loading.value = true
   loadError.value = false
+  await migrateLegacyAcquired() // 旧版 account data 里的获取记录搬进服务端(幂等,一次性)
   const cat = await fetchMarketCatalog()
   loading.value = false
   if (!cat) { loadError.value = true; return }
   items.value = cat.items
-  acquired.value = new Set(getMarketAcquired())
 }
 watch(visible, (v) => { if (v) { hint.value = ''; load() } })
 
-/** 「获取」：记入本人 account data（刷新/换端保留），并给出在聊天里怎么用的指引。 */
-function acquire(it: MarketCatalogItem) {
-  const id = itemId(it)
-  if (!acquired.value.has(id)) {
-    acquired.value = new Set([...acquired.value, id])
-    void setMarketAcquired([...acquired.value])
+/** 「获取」：记入服务端(cosmac DB)——主 AI 名册立刻优先这些同事，我的AI工坊也能看到；
+ *  随后给出在聊天里怎么用的指引。已获取的再点只重放指引。 */
+async function acquire(it: MarketCatalogItem) {
+  if (!it.acquired) {
+    const err = await setMarketItemAcquired(it.kind, it.slug, true)
+    if (err) { hint.value = err; return }
+    it.acquired = true
   }
   hint.value = usageHint(it)
 }
 
 /** 各类资源的使用指引（获取后展示；这些资源都在聊天里用，无需额外安装）。 */
 function usageHint(it: MarketCatalogItem): string {
-  if (it.kind === 'agent') return `已获取「${it.name}」：在频道里 @${it.name}，或让主 AI 把活派给它。`
+  if (it.kind === 'agent') return `已获取「${it.name}」：在频道里 @${it.name}；主 AI 派单会优先考虑你获取的同事。可在「我的AI工坊 · 已获取」管理。`
   if (it.kind === 'skill') {
     if (it.agents?.length) return `已获取「${it.name}」：随 AI 同事【${it.agents.join('/')}】自动激活，@ 它们即可。`
     return it.inject === 'agent'

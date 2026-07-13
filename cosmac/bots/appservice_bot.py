@@ -288,6 +288,8 @@ class CosmacBot:
         self._named_channel_cache: Dict[str, bool] = {}  # 房间是否"实名频道"(私聊/群聊判定用)
         # 用户→入驻模板缓存(资源「可用范围」判定用;5 分钟 TTL,引导完成后很快生效)
         self._user_template_cache: Dict[str, Tuple[str, float]] = {}
+        # 用户→商城「已获取」智能体 slug 缓存(能力名册每条消息都查;获取端点写入时主动失效)
+        self._acquired_cache: Dict[str, Tuple[Set[str], float]] = {}
         # SDK 引擎回退告警的节流时间戳(1小时最多向控制室发一条,防刷屏)
         self._engine_alert_ts: float = 0.0        # 上次读到的配置覆盖
         # —— 任务时效提醒（定时扫描）——扫描间隔 + "快到期"窗口，都可用 env 调；单实例内定时够用。
@@ -1301,6 +1303,31 @@ class CosmacBot:
             self._user_template_cache.clear()
         return slug
 
+    def _acquired_agent_slugs(self, user_id: str) -> Set[str]:
+        """某用户从商城「已获取」的智能体 slug 集合(能力名册标注/排序用)。
+
+        读 cosmac DB(market_repo);带 5 分钟缓存——名册每条消息都可能建,不能每次打 DB。
+        获取端点(handle_market_acquire)写入时会主动 pop 本人缓存,做到"获取完下条消息就生效"。
+        无 DB/查询失败返回空集(名册只是少了优先标注,绝不阻断)。
+        """
+        now = time.monotonic()
+        cached = self._acquired_cache.get(user_id)
+        if cached and now - cached[1] < 300:
+            return cached[0]
+        slugs: Set[str] = set()
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.market_repo import acquired_agent_slugs
+
+            with session_scope() as s:
+                slugs = acquired_agent_slugs(s, user_id)
+        except Exception:
+            logger.debug("读取已获取智能体失败（忽略）", exc_info=True)
+        self._acquired_cache[user_id] = (slugs, now)
+        if len(self._acquired_cache) > 5000:
+            self._acquired_cache.clear()
+        return slugs
+
     def _resource_visible(self, item: Dict[str, Any], user_id: str) -> bool:
         """按资源的「可用范围」(access 字段)判定 user_id 是否可用该技能/智能体。
 
@@ -1568,6 +1595,7 @@ class CosmacBot:
             agents = []
         # 本人自建智能体排最前(用户自己训的"私人 AI 同事",优先被派);同 slug 覆盖全局。
         # 名字加「我的·」前缀,让用户与主 AI 一眼分清自建与平台预置。
+        mine_slugs: Set[str] = set()
         try:
             mine = [
                 dict(m, name=f"我的·{m.get('name') or m['slug']}")
@@ -1578,8 +1606,26 @@ class CosmacBot:
                 agents = mine + [a for a in agents if str(a.get("slug")) not in mine_slugs]
         except Exception:
             logger.debug("合并个人智能体进名册失败(忽略)", exc_info=True)
+        # 商城「已获取」的 AI 同事:排到其余全局项前面(自建仍最前),渲染时标 ★——
+        # 让主 AI 知道"这些是用户亲手挑的",同等条件优先派给它们(负责人定的商城闭环)。
+        acquired: Set[str] = set()
+        try:
+            acquired = self._acquired_agent_slugs(ctx.sender)
+            if acquired:
+                keep = [a for a in agents if str(a.get("slug")) in mine_slugs]
+                got = [a for a in agents
+                       if str(a.get("slug")) not in mine_slugs
+                       and str(a.get("slug")) in acquired]
+                rest = [a for a in agents
+                        if str(a.get("slug")) not in mine_slugs
+                        and str(a.get("slug")) not in acquired]
+                agents = keep + got + rest
+        except Exception:
+            logger.debug("按已获取排序名册失败(忽略)", exc_info=True)
         if agents:
             lines.append("— AI Agent（可绑进专班/派活）—")
+            if acquired:
+                lines.append("· 标 ★ 的是用户在商城「已获取」的 AI 同事：同等条件优先派给它们")
             # 上限 200(引入 agency 预置后 80+ 个,50 会漏);描述截 60 字防工具输出膨胀——
             # 名册只要"够 AI 选对人",完整人设在被指派/@ 时才注入。
             for a in agents[:200]:
@@ -1589,7 +1635,7 @@ class CosmacBot:
                 if len(desc) > 60:
                     desc = desc[:60] + "…"
                 skills = a.get("skill_slugs") or []
-                seg = f"{slug}" + (f"（{name}）" if name else "")
+                seg = ("★" if slug in acquired else "") + f"{slug}" + (f"（{name}）" if name else "")
                 if desc:
                     seg += f"：{desc}"
                 if skills:
@@ -3976,25 +4022,21 @@ class CosmacBot:
         ]
         return 200, {"skills": out}
 
-    def handle_market_catalog(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
-        """「AI Agent 商城」目录:平台**真实资源** + 按发起人标注解锁状态。需登录。
+    def _market_catalog_items(self, user_id: str, is_admin: bool) -> List[Dict[str, Any]]:
+        """构建「AI Agent 商城」目录条目(handle_market_catalog 的主体,抽出来供
+        acquire 校验/已获取列表回显复用——三处必须看到同一份货架)。
 
-        商城不再用前端演示假数据,列的是平台实际存在的四类资源:
+        四类平台真实资源:
           - agent: 全局智能体(内置预置库 + 控制室配置,启用的) → 按每项 access 判定解锁
           - skill: 可绑定技能库(预置 + 控制室,启用的) → 按每项 access 判定解锁
           - workflow: 工作流连接器(控制室,启用的) → 按 workflow_run 功能门控判定
           - knowledge: 平台共享知识库文档 → 按 knowledge 功能门控判定
-        变现模型是**会员订阅**(非单品支付):未解锁项前端引导「升级会员」;解锁判定复用
-        _resource_visible / _gate_allows,与对话注入/能力名册同一套服务端口径。
+        解锁判定复用 _resource_visible / _gate_allows,与对话注入/能力名册同一套服务端口径。
 
-        ⚠️ 安全:只下发「橱窗」字段(名称/描述/分组/解锁状态)。system_prompt、instructions、
+        ⚠️ 安全:只装「橱窗」字段(名称/描述/分组/解锁状态)。system_prompt、instructions、
         工作流 url/cred/graph 是平台资产与密钥线索,解锁与否都**绝不下发**(用是在聊天里用,
         不需要看到底层定义)。access='admin' 的资源对非管理员整条隐藏(永远解锁不了,列出徒增噪音)。
         """
-        user_id = self.client.whoami(access_token)
-        if not user_id:
-            return 401, {"error": "登录已失效，请重新登录"}
-        is_admin = self._is_platform_admin(user_id)
         items: List[Dict[str, Any]] = []
 
         def _push(kind: str, it: Dict[str, Any], unlocked: bool, access: str,
@@ -4075,7 +4117,30 @@ class CosmacBot:
                               kb_unlocked, kb_access, {"official": True})
             except Exception:
                 logger.debug("商城列平台知识库失败(跳过该分类)", exc_info=True)
+        return items
 
+    def handle_market_catalog(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """「AI Agent 商城」目录端点:平台真实资源 + 按发起人标注 解锁/已获取。需登录。
+
+        目录构建见 _market_catalog_items;这里再叠一层本人「已获取」标注(acquired,
+        存 cosmac DB,见 market_repo),前端据此渲染「已获取」态。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        is_admin = self._is_platform_admin(user_id)
+        items = self._market_catalog_items(user_id, is_admin)
+        # 标注已获取(读不到 DB 就全 False,商城照常能逛)
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.market_repo import list_acquired
+
+            with session_scope() as s:
+                got = set(list_acquired(s, user_id))
+            for it in items:
+                it["acquired"] = (it["kind"], it["slug"]) in got
+        except Exception:
+            logger.debug("读取已获取列表失败(按未获取渲染)", exc_info=True)
         tier = self.members.get_tier(user_id)
         return 200, {
             "items": items,
@@ -4083,6 +4148,96 @@ class CosmacBot:
             "tier_label": tier_label(tier),
             "is_admin": is_admin,
         }
+
+    # 商城资源类型全集(acquire 端点校验用)
+    _MARKET_KINDS = ("agent", "skill", "workflow", "knowledge")
+
+    def handle_market_acquire(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """「获取 / 移除获取」某个商城资源。需登录。
+
+        获取时**服务端校验**:资源必须真实存在于当前货架、且对本人已解锁——否则可以
+        绕过前端把"付费会员专属"直接记成已获取(虽然权限本身仍由 access 强制,但
+        名册标注/工坊展示不该被污染)。移除不校验(货架下架了也要能清掉)。
+        写入 cosmac DB(market_repo),并同步失效名册用的缓存,让主 AI 立即感知。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        kind = str((body or {}).get("kind") or "").strip()
+        slug = str((body or {}).get("slug") or "").strip()[:128]
+        want = (body or {}).get("acquired") is not False  # 缺省=获取
+        if kind not in self._MARKET_KINDS or not slug:
+            return 400, {"error": "参数不合法"}
+        if want:
+            is_admin = self._is_platform_admin(user_id)
+            match = next(
+                (i for i in self._market_catalog_items(user_id, is_admin)
+                 if i["kind"] == kind and i["slug"] == slug),
+                None,
+            )
+            if match is None:
+                return 404, {"error": "商城里没有这个资源(可能已下架)"}
+            if not match.get("unlocked"):
+                return 403, {"error": "该资源需要升级会员后才能获取"}
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.market_repo import add_acquired, remove_acquired
+
+            with session_scope() as s:
+                if want:
+                    ok = add_acquired(s, user_id=user_id, kind=kind, slug=slug)
+                    if not ok:
+                        return 400, {"error": "已获取的资源太多了，先移除一些"}
+                else:
+                    remove_acquired(s, user_id=user_id, kind=kind, slug=slug)
+            self._acquired_cache.pop(user_id, None)  # 名册缓存立刻失效,主 AI 下条消息就能感知
+            return 200, {"ok": True, "acquired": want}
+        except Exception:
+            logger.exception("写入已获取记录失败")
+            return 500, {"error": "保存失败，请稍后重试"}
+
+    def handle_market_acquired_list(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """列本人全部「已获取」资源(给「我的AI工坊」的已获取区回显)。需登录。
+
+        逐条对照当前货架补全 名称/描述/解锁态;货架上已找不到的(资源被下架/删除)标
+        stale=True,前端提示并允许移除。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.market_repo import list_acquired
+
+            with session_scope() as s:
+                got = list_acquired(s, user_id)
+        except Exception:
+            logger.exception("读取已获取列表失败")
+            return 500, {"error": "读取失败"}
+        is_admin = self._is_platform_admin(user_id)
+        by_key = {
+            (i["kind"], i["slug"]): i
+            for i in self._market_catalog_items(user_id, is_admin)
+        }
+        out: List[Dict[str, Any]] = []
+        for kind, slug in got:
+            it = by_key.get((kind, slug))
+            if it:
+                out.append({
+                    "kind": kind, "slug": slug,
+                    "name": it["name"], "description": it["description"],
+                    "unlocked": it["unlocked"], "stale": False,
+                    "agents": it.get("agents") or [],
+                })
+            else:
+                out.append({
+                    "kind": kind, "slug": slug, "name": slug,
+                    "description": "", "unlocked": False, "stale": True,
+                    "agents": [],
+                })
+        return 200, {"items": out}
 
     def handle_people_list_mine(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """列本人维护的协作人能力名册。需登录。
@@ -5234,9 +5389,14 @@ class _Handler(BaseHTTPRequestHandler):
             code, payload = self.bot.handle_my_skills_list(self._bearer())
             self._send_json(code, payload, cors=True)
             return
-        # AI Agent 商城目录:平台真实资源(智能体/技能/工作流/知识库)+按发起人标注解锁状态
+        # AI Agent 商城目录:平台真实资源(智能体/技能/工作流/知识库)+按发起人标注解锁/已获取
         if self.path.split("?", 1)[0] == "/cosmac/market/catalog":
             code, payload = self.bot.handle_market_catalog(self._bearer())
+            self._send_json(code, payload, cors=True)
+            return
+        # 本人已获取的商城资源(我的AI工坊「已获取」区回显)
+        if self.path.split("?", 1)[0] == "/cosmac/market/acquired":
+            code, payload = self.bot.handle_market_acquired_list(self._bearer())
             self._send_json(code, payload, cors=True)
             return
         # 存储空间预检(上传附件前调;?bytes=本次文件大小)
@@ -5548,6 +5708,18 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "请求无效"}, cors=True)
                 return
             code, payload = self.bot.handle_onboarding_select(token, body)
+            self._send_json(code, payload, cors=True)
+            return
+
+        # AI Agent 商城:获取/移除某个资源(记入本人账号,主 AI 名册据此优先派单)。
+        if path == "/cosmac/market/acquire":
+            auth = self.headers.get("Authorization", "")
+            token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_market_acquire(token, body)
             self._send_json(code, payload, cors=True)
             return
 
