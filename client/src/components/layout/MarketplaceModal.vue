@@ -4,11 +4,11 @@
       <div class="mkt-head">
         <div class="mkt-title-wrap">
           <span class="mkt-title">AI Agent 商城</span>
-          <span class="mkt-sub">Agent · 技能 · Prompt · 工作流 · 知识库 · 连接器</span>
+          <span class="mkt-sub">AI 同事 · 技能 · 工作流 · 知识库，平台真实资源、获取即用</span>
         </div>
         <div class="mkt-search">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>
-          <input v-model="q" placeholder="搜索 Agent / 技能 / Prompt…" />
+          <input v-model="q" placeholder="搜索 AI 同事 / 技能…" />
         </div>
         <button class="mkt-close" title="关闭" @click="close">×</button>
       </div>
@@ -27,21 +27,44 @@
       </div>
 
       <div class="mkt-body">
-        <div v-if="filtered.length" class="mkt-grid">
-          <div v-for="it in filtered" :key="it.id" class="mkt-card">
+        <!-- 使用指引条：点「获取/已获取」后告诉用户这东西在聊天里怎么用 -->
+        <div v-if="hint" class="mkt-hint">💡 {{ hint }}</div>
+
+        <div v-if="loading" class="mkt-empty">正在加载平台资源…</div>
+        <div v-else-if="loadError" class="mkt-empty">
+          加载失败，请检查网络后
+          <a class="mkt-retry" @click="load">重试</a>
+        </div>
+        <div v-else-if="filtered.length" class="mkt-grid">
+          <div v-for="it in filtered" :key="itemId(it)" class="mkt-card">
             <div class="mkt-card-top">
-              <span class="mkt-badge" :style="{ background: CAT_META[it.cat].color }">{{ CAT_META[it.cat].label }}</span>
-              <span v-if="it.tag" class="mkt-tag">{{ it.tag }}</span>
+              <span class="mkt-badge" :style="{ background: CAT_META[it.kind].color }">{{ CAT_META[it.kind].label }}</span>
+              <span v-if="it.division" class="mkt-tag">{{ it.division }}</span>
+              <span v-else-if="it.kind === 'workflow' && it.platform" class="mkt-tag">{{ it.platform }}</span>
             </div>
             <div class="mkt-name">{{ it.name }}</div>
-            <div class="mkt-desc">{{ it.desc }}</div>
+            <div class="mkt-desc">{{ it.description || descFallback(it) }}</div>
             <div class="mkt-foot">
-              <span class="mkt-price" :class="{ free: !it.price }">{{ it.price ? '¥' + it.price : '免费' }}</span>
-              <button class="mkt-btn" :class="{ on: it.installed }" @click="it.installed = !it.installed">
-                {{ it.installed ? '已获取' : (it.price ? '获取' : '免费获取') }}
-              </button>
+              <span class="mkt-price" :class="badgeOf(it).cls">{{ badgeOf(it).label }}</span>
+              <!-- 三态：可用→获取/已获取；等级不够→升级解锁(弹会员)；模板/管理员专属→只标注不可点 -->
+              <button
+                v-if="it.unlocked"
+                class="mkt-btn"
+                :class="{ on: isAcquired(it) }"
+                @click="acquire(it)"
+              >{{ isAcquired(it) ? '已获取' : '免费获取' }}</button>
+              <button
+                v-else-if="badgeOf(it).cls === 'tier'"
+                class="mkt-btn upgrade"
+                @click="emit('upgrade')"
+              >升级解锁</button>
+              <button v-else class="mkt-btn locked" disabled>专属资源</button>
             </div>
-            <div class="mkt-meta">{{ it.author }} · ↧ {{ it.installs }}</div>
+            <div class="mkt-meta">
+              {{ it.official ? 'CosMac Star 官方' : '平台运营' }}
+              <template v-if="it.kind === 'agent' && it.skill_count">· 内置 {{ it.skill_count }} 项技能</template>
+              <template v-if="it.kind === 'skill' && it.agents?.length">· 随【{{ it.agents.join('/') }}】激活</template>
+            </div>
           </div>
         </div>
         <div v-else class="mkt-empty">没有匹配的内容</div>
@@ -51,38 +74,92 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMarketplace } from '@/composables/useMarketplace'
-import { marketItems, CAT_META, type MarketCat } from '@/data/marketplace'
+import { CAT_META, accessBadge, type MarketCat } from '@/data/marketplace'
+import {
+  fetchMarketCatalog,
+  getMarketAcquired,
+  setMarketAcquired,
+  type MarketCatalogItem,
+} from '@/matrix/client'
 
+const emit = defineEmits<{ (e: 'upgrade'): void }>()
 const { visible, close } = useMarketplace()
 
 type CatKey = MarketCat | 'all'
 const cats: { key: CatKey; label: string }[] = [
   { key: 'all', label: '全部' },
-  { key: 'agent', label: 'AI Agent' },
-  { key: 'skill', label: 'Skill' },
-  { key: 'prompt', label: 'Prompt' },
+  { key: 'agent', label: 'AI 同事' },
+  { key: 'skill', label: '技能' },
   { key: 'workflow', label: '工作流' },
-  { key: 'knowledge', label: '知识库' },
-  { key: 'mcp', label: 'MCP 连接器' }
+  { key: 'knowledge', label: '知识库' }
 ]
 const active = ref<CatKey>('all')
 const q = ref('')
 
-/** 可安装状态可切换，故用响应式副本 */
-const items = reactive(marketItems.map((i) => ({ ...i })))
+/* —— 真数据：打开弹窗时从 bot 拉平台资源目录（含按本人算好的解锁状态）—— */
+const items = ref<MarketCatalogItem[]>([])
+const loading = ref(false)
+const loadError = ref(false)
+const acquired = ref<Set<string>>(new Set())
+const hint = ref('')
+
+const itemId = (it: MarketCatalogItem) => `${it.kind}:${it.slug}`
+const isAcquired = (it: MarketCatalogItem) => acquired.value.has(itemId(it))
+const badgeOf = (it: MarketCatalogItem) => accessBadge(it.access)
+
+async function load() {
+  loading.value = true
+  loadError.value = false
+  const cat = await fetchMarketCatalog()
+  loading.value = false
+  if (!cat) { loadError.value = true; return }
+  items.value = cat.items
+  acquired.value = new Set(getMarketAcquired())
+}
+watch(visible, (v) => { if (v) { hint.value = ''; load() } })
+
+/** 「获取」：记入本人 account data（刷新/换端保留），并给出在聊天里怎么用的指引。 */
+function acquire(it: MarketCatalogItem) {
+  const id = itemId(it)
+  if (!acquired.value.has(id)) {
+    acquired.value = new Set([...acquired.value, id])
+    void setMarketAcquired([...acquired.value])
+  }
+  hint.value = usageHint(it)
+}
+
+/** 各类资源的使用指引（获取后展示；这些资源都在聊天里用，无需额外安装）。 */
+function usageHint(it: MarketCatalogItem): string {
+  if (it.kind === 'agent') return `已获取「${it.name}」：在频道里 @${it.name}，或让主 AI 把活派给它。`
+  if (it.kind === 'skill') {
+    if (it.agents?.length) return `已获取「${it.name}」：随 AI 同事【${it.agents.join('/')}】自动激活，@ 它们即可。`
+    return it.inject === 'agent'
+      ? `已获取「${it.name}」：绑定到智能体后随其激活（后台或我的AI工坊可绑）。`
+      : `已获取「${it.name}」：已全局生效，直接和 AI 对话即可。`
+  }
+  if (it.kind === 'workflow') return `已获取「${it.name}」：对主 AI 说「工作流 跑 ${it.slug}」，或直接描述需求让它自动调用。${it.input_hint ? `输入提示：${it.input_hint}` : ''}`
+  return `已获取「${it.name}」：向 AI 提问相关内容时会自动检索这篇知识。`
+}
+
+/** 后端没填描述时的兜底文案（知识库文档只有标题）。 */
+function descFallback(it: MarketCatalogItem): string {
+  if (it.kind === 'knowledge') return '平台共享知识库文档，问 AI 时自动检索引用'
+  if (it.kind === 'workflow') return '平台预置的自动化工作流，可让主 AI 直接调用'
+  return ''
+}
 
 const filtered = computed(() =>
-  items.filter((i) => {
-    if (active.value !== 'all' && i.cat !== active.value) return false
+  items.value.filter((i) => {
+    if (active.value !== 'all' && i.kind !== active.value) return false
     const k = q.value.trim()
-    if (k && !(i.name.includes(k) || i.desc.includes(k))) return false
+    if (k && !(i.name.includes(k) || i.description.includes(k))) return false
     return true
   })
 )
 function countOf(key: CatKey) {
-  return key === 'all' ? items.length : items.filter((i) => i.cat === key).length
+  return key === 'all' ? items.value.length : items.value.filter((i) => i.kind === key).length
 }
 
 function onKey(e: KeyboardEvent) {
@@ -202,6 +279,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
 .mkt-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
 .mkt-price { font-family: var(--font-heading); font-weight: var(--fw-bold); font-size: var(--fs-200); color: var(--accent); }
 .mkt-price.free { color: var(--ok); }
+.mkt-price.tier { color: var(--accent); }
+.mkt-price.scoped { color: var(--text-3); font-size: var(--fs-100); }
 .mkt-meta { font-size: var(--fs-50); color: var(--text-3); font-family: var(--font-mono); margin-top: 6px; }
 .mkt-btn {
   border: 1px solid var(--accent);
@@ -216,6 +295,20 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
 }
 .mkt-btn:hover { filter: brightness(1.05); }
 .mkt-btn.on { background: transparent; color: var(--text-3); border-color: var(--border); }
+.mkt-btn.upgrade { background: #b58932; border-color: #b58932; }
+.mkt-btn.locked { background: transparent; color: var(--text-3); border-color: var(--border); cursor: default; }
+
+.mkt-hint {
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--accent-soft, var(--border));
+  border-radius: 10px;
+  background: var(--accent-soft, var(--bg-soft));
+  color: var(--text);
+  font-size: var(--fs-75);
+  line-height: 1.6;
+}
+.mkt-retry { color: var(--accent); cursor: pointer; text-decoration: underline; }
 
 .mkt-empty { text-align: center; color: var(--text-3); padding: 60px 0; font-size: var(--fs-100); }
 </style>

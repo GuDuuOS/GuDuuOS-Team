@@ -2156,6 +2156,102 @@ export async function getPresetAgents(): Promise<GlobalAgent[]> {
   } catch { return [] }
 }
 
+/* —— AI Agent 商城：平台真实资源目录（走 bot 端点 /cosmac/market/catalog）——
+ *  普通用户读不了控制室 state，由 bot 代读并按发起人标注解锁状态（access/门控在服务端裁决）。
+ *  「获取」状态存本人 account data（每账号轻量配置的标准位置，刷新/换端不丢）。 */
+
+/** 商城里的一条资源（后端只下发橱窗字段，人设/技能正文/工作流 url 等敏感内容拿不到）。 */
+export interface MarketCatalogItem {
+  kind: 'agent' | 'skill' | 'workflow' | 'knowledge'
+  slug: string
+  name: string
+  description: string
+  /** 解锁要求：''=免费；paid/creator=该会员等级及以上；tpl:…=指定入驻模板；admin=仅管理员 */
+  access: string
+  /** 服务端按发起人（等级/模板/管理员）算好的：当前用户现在就能用吗 */
+  unlocked: boolean
+  /** true=平台内置（官方），false=平台运营在后台配置的 */
+  official: boolean
+  division?: string
+  skill_count?: number
+  /** 技能专用：随哪些 AI 同事激活（使用指引用） */
+  agents?: string[]
+  inject?: string
+  platform?: string
+  input_hint?: string
+}
+
+export interface MarketCatalog {
+  items: MarketCatalogItem[]
+  tier: string
+  tierLabel: string
+  isAdmin: boolean
+}
+
+/** 拉商城目录。未登录/失败返回 null（前端显示重试，绝不回落假数据）。 */
+export async function fetchMarketCatalog(): Promise<MarketCatalog | null> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return null
+  try {
+    const r = await fetch(`${payBase()}/cosmac/market/catalog`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return null
+    const j = await r.json().catch(() => ({}))
+    const arr = Array.isArray(j?.items) ? j.items : []
+    return {
+      items: arr.map((i: any) => ({
+        kind: String(i?.kind || '') as MarketCatalogItem['kind'],
+        slug: String(i?.slug || ''),
+        name: String(i?.name || ''),
+        description: String(i?.description || ''),
+        access: String(i?.access || ''),
+        unlocked: !!i?.unlocked,
+        official: !!i?.official,
+        division: String(i?.division || ''),
+        skill_count: Number(i?.skill_count || 0),
+        agents: Array.isArray(i?.agents) ? i.agents.map(String) : [],
+        inject: String(i?.inject || ''),
+        platform: String(i?.platform || ''),
+        input_hint: String(i?.input_hint || ''),
+      })).filter((i: MarketCatalogItem) => i.slug && i.kind),
+      tier: String(j?.tier || 'free'),
+      tierLabel: String(j?.tier_label || '免费会员'),
+      isAdmin: !!j?.is_admin,
+    }
+  } catch { return null }
+}
+
+// 「获取」记录与插件安装记录的 account data 类型（cc.* 前缀=CosMac 客户端自定义，非协议字段）
+const MARKET_ACCOUNT_DATA = 'cc.cosmac.market'
+const PLUGINS_ACCOUNT_DATA = 'cc.cosmac.plugins'
+
+/** 读本人已「获取」的商城条目 id 集合（形如 "agent:slug"）。 */
+export function getMarketAcquired(): string[] {
+  try {
+    const c = (mx as any)?.getAccountData?.(MARKET_ACCOUNT_DATA)?.getContent?.() || {}
+    return Array.isArray(c?.acquired) ? c.acquired.map(String) : []
+  } catch { return [] }
+}
+
+/** 整体写回已获取集合（幂等；失败静默——获取只是收藏标记，不值得打断用户）。 */
+export async function setMarketAcquired(ids: string[]): Promise<void> {
+  try { await (mx as any)?.setAccountData?.(MARKET_ACCOUNT_DATA, { acquired: ids }) } catch { /* 忽略 */ }
+}
+
+/** 读本人在「插件商城」装过的插件 id 列表（刷新/换端恢复插件栏用）。 */
+export function getInstalledPlugins(): string[] {
+  try {
+    const c = (mx as any)?.getAccountData?.(PLUGINS_ACCOUNT_DATA)?.getContent?.() || {}
+    return Array.isArray(c?.installed) ? c.installed.map(String) : []
+  } catch { return [] }
+}
+
+/** 整体写回已装插件列表（失败静默，最多退化成"刷新后要重装"）。 */
+export async function setInstalledPlugins(ids: string[]): Promise<void> {
+  try { await (mx as any)?.setAccountData?.(PLUGINS_ACCOUNT_DATA, { installed: ids }) } catch { /* 忽略 */ }
+}
+
 /** 读全局智能体列表（控制室 state event）；房间/事件不存在时返回 []。 */
 export async function getGlobalAgents(): Promise<GlobalAgent[]> {
   if (!mx) return []

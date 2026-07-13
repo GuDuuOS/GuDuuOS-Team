@@ -47,6 +47,7 @@ from cosmac.config import (
 from cosmac.members import (
     GATE_ADMIN,
     MEMBER_TIERS,
+    TIER_FREE,
     GatingStore,
     MembersStore,
     gate_capability_label,
@@ -3975,6 +3976,114 @@ class CosmacBot:
         ]
         return 200, {"skills": out}
 
+    def handle_market_catalog(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """「AI Agent 商城」目录:平台**真实资源** + 按发起人标注解锁状态。需登录。
+
+        商城不再用前端演示假数据,列的是平台实际存在的四类资源:
+          - agent: 全局智能体(内置预置库 + 控制室配置,启用的) → 按每项 access 判定解锁
+          - skill: 可绑定技能库(预置 + 控制室,启用的) → 按每项 access 判定解锁
+          - workflow: 工作流连接器(控制室,启用的) → 按 workflow_run 功能门控判定
+          - knowledge: 平台共享知识库文档 → 按 knowledge 功能门控判定
+        变现模型是**会员订阅**(非单品支付):未解锁项前端引导「升级会员」;解锁判定复用
+        _resource_visible / _gate_allows,与对话注入/能力名册同一套服务端口径。
+
+        ⚠️ 安全:只下发「橱窗」字段(名称/描述/分组/解锁状态)。system_prompt、instructions、
+        工作流 url/cred/graph 是平台资产与密钥线索,解锁与否都**绝不下发**(用是在聊天里用,
+        不需要看到底层定义)。access='admin' 的资源对非管理员整条隐藏(永远解锁不了,列出徒增噪音)。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        is_admin = self._is_platform_admin(user_id)
+        items: List[Dict[str, Any]] = []
+
+        def _push(kind: str, it: Dict[str, Any], unlocked: bool, access: str,
+                  extra: Optional[Dict[str, Any]] = None) -> None:
+            """统一装一条商城条目(只放安全字段;敏感字段在调用处就没传进来)。"""
+            row: Dict[str, Any] = {
+                "kind": kind,
+                "slug": str(it.get("slug") or it.get("id") or ""),
+                "name": str(it.get("name") or it.get("title") or ""),
+                "description": str(it.get("description") or ""),
+                "access": access,
+                "unlocked": bool(unlocked),
+                "official": bool(it.get("preset")),  # 预置=官方内置;其余=平台运营在后台配的
+            }
+            if extra:
+                row.update(extra)
+            items.append(row)
+
+        # —— 智能体:预置+控制室合并(启用的),逐条按 access 判定 ——
+        agents = self._global_agent_items()
+        for a in agents:
+            access = str(a.get("access") or "").strip()
+            if access == "admin" and not is_admin:
+                continue
+            _push("agent", a, self._resource_visible(a, user_id), access, {
+                "division": str(a.get("division") or ""),
+                # 只给绑定技能的数量,不给技能明细(卡片展示"内置 N 项技能"够了)
+                "skill_count": len(a.get("skill_slugs") or []),
+            })
+
+        # —— 技能:可绑定技能库(预置+控制室),附「随哪些 AI 同事激活」供使用指引 ——
+        # preset_skills() 的原始条目不带 preset 标记(handle_preset_skills 是展示时补的),
+        # 这里按 slug 对照预置库判定「官方」,否则预置技能会错标成"平台运营"。
+        from cosmac.ai.preset_skills import preset_skills
+
+        preset_skill_slugs = {str(p.get("slug")) for p in preset_skills()}
+        by_skill: Dict[str, List[str]] = {}
+        for a in agents:
+            for sl in (a.get("skill_slugs") or []):
+                by_skill.setdefault(str(sl), []).append(str(a.get("name") or a.get("slug")))
+        for s in self._skill_library():
+            access = str(s.get("access") or "").strip()
+            if access == "admin" and not is_admin:
+                continue
+            _push("skill", s, self._resource_visible(s, user_id), access, {
+                "agents": by_skill.get(str(s.get("slug")), []),
+                "inject": str(s.get("inject") or ""),
+                "official": bool(s.get("preset")) or str(s.get("slug")) in preset_skill_slugs,
+            })
+
+        # —— 工作流:控制室连接器(启用的)。解锁=workflow_run 门控(全局一道闸,非逐项)。
+        #    门槛=仅管理员(workflow_run 的默认值)时对非管理员整类隐藏,同 access='admin' 资源的口径 ——
+        wf_unlocked = self._gate_allows(user_id, "workflow_run")
+        wf_required = self.gating.required("workflow_run")
+        # 门槛 free=人人可用,前端语义上等于 access=''(免费)
+        wf_access = "" if wf_required == TIER_FREE else str(wf_required)
+        if is_admin or wf_required != GATE_ADMIN:
+            for w in self._workflow_defs():
+                _push("workflow", w, wf_unlocked, wf_access, {
+                    "platform": str(w.get("platform") or "webhook"),
+                    "input_hint": str(w.get("input_hint") or ""),
+                    "official": True,  # 连接器都是平台后台配的,统一标官方
+                })
+
+        # —— 平台共享知识库:按篇列出。解锁=knowledge 门控。无 DB 时安静跳过。
+        #    同上:门槛=仅管理员时对非管理员整类隐藏 ——
+        kb_unlocked = self._gate_allows(user_id, "knowledge")
+        kb_required = self.gating.required("knowledge")
+        kb_access = "" if kb_required == TIER_FREE else str(kb_required)
+        if is_admin or kb_required != GATE_ADMIN:
+            try:
+                from cosmac.db import kb, session_scope
+                from cosmac.db.models import SCOPE_GLOBAL
+
+                with session_scope() as s:
+                    for d in kb.list_docs(s, scope=SCOPE_GLOBAL, scope_id=self._PLATFORM_KB_SCOPE):
+                        _push("knowledge", {"slug": f"kbdoc-{d.id}", "name": d.title},
+                              kb_unlocked, kb_access, {"official": True})
+            except Exception:
+                logger.debug("商城列平台知识库失败(跳过该分类)", exc_info=True)
+
+        tier = self.members.get_tier(user_id)
+        return 200, {
+            "items": items,
+            "tier": tier,
+            "tier_label": tier_label(tier),
+            "is_admin": is_admin,
+        }
+
     def handle_people_list_mine(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """列本人维护的协作人能力名册。需登录。
 
@@ -4913,6 +5022,7 @@ class _Handler(BaseHTTPRequestHandler):
                 or p.startswith("/cosmac/people/")
                 or p.startswith("/cosmac/user/")
                 or p.startswith("/cosmac/my/")
+                or p.startswith("/cosmac/market/")   # AI Agent 商城目录（带 Authorization 的 GET 要预检）
                 or p.startswith("/cosmac/space/")
                 or p.startswith("/cosmac/profile/")
                 or p.startswith("/cosmac/usage/")
@@ -5122,6 +5232,11 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if self.path.split("?", 1)[0] == "/cosmac/my/skills":
             code, payload = self.bot.handle_my_skills_list(self._bearer())
+            self._send_json(code, payload, cors=True)
+            return
+        # AI Agent 商城目录:平台真实资源(智能体/技能/工作流/知识库)+按发起人标注解锁状态
+        if self.path.split("?", 1)[0] == "/cosmac/market/catalog":
+            code, payload = self.bot.handle_market_catalog(self._bearer())
             self._send_json(code, payload, cors=True)
             return
         # 存储空间预检(上传附件前调;?bytes=本次文件大小)

@@ -1,5 +1,31 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-13 — feat:AI Agent 商城真实化(接平台真实资源+会员解锁)+插件商城持久化
+- 背景:两个商城此前都是**前端演示假数据**——AI Agent 商城列虚构商品、「获取」只改内存;
+  插件商城的安装刷新即丢,且"已装插件"根本没渲染到插件栏。负责人拍板方向:**接真实资源+
+  会员订阅解锁**(不做单品 ¥ 支付——那是模块4没通的真钱链路)。
+- 后端(appservice_bot.py):新增 `GET /cosmac/market/catalog`(+CORS 预检)。返回四类**平台
+  真实资源**:全局智能体(预置+控制室)、可绑定技能库、工作流连接器、平台共享知识库;每项带
+  access + unlocked(复用 _resource_visible/_gate_allows,与对话注入/能力名册同一服务端口径)。
+  安全:只下发橱窗字段,**system_prompt/instructions/工作流 url/cred 绝不下发**;access=admin
+  资源对非管理员整条隐藏(含 workflow_run/knowledge 门槛=admin 时整类隐藏)。
+  新增单测 cosmac/tests/test_market_catalog.py(5 项:401/解锁标注/管理员可见性/敏感字段不泄露)。
+- 前端:
+  · MarketplaceModal 重写数据层:打开时拉真目录(加载/失败重试,绝不回落假数据);分类改真实四类
+    (AI 同事/技能/工作流/知识库);价格位改「免费/付费会员/创作者会员」徽章;未解锁→「升级解锁」
+    直接弹会员弹窗(LiveView @upgrade→showMembership);已解锁→「免费获取」记入 account data
+    `cc.cosmac.market`(刷新/换端保留)并给使用指引(@名字/随谁激活/工作流怎么跑)。
+  · data/marketplace.ts 假商品数据全删,只留分类元信息+access 徽章映射。
+  · 插件商城:安装状态持久化到 account data `cc.cosmac.plugins`,登录后 restore(幂等,3.5s 兜底
+    重试等 sync);**LiveView 插件栏补渲染已装插件**(此前 usePlugins 列表没人消费,装了看不见)。
+- 本地端到端验证(本地 Synapse+bot+迷你反代模拟 nginx /cosmac/ 路由):alice 拉到 143 条真实
+  资源(130 预置 Agent+13 技能)、获取→account data 落盘→刷新恢复、插件装→插件栏出图标→刷新
+  仍在;顺手修了预置技能在商城错标"平台运营"(preset_skills 原始条目不带 preset 标记,按 slug
+  对照)。cosmac 全量 524 测试通过,client build(vue-tsc)通过。
+- 已知边界:插件商城里各插件本身仍是演示位(热点雷达等无真实面板),本次只把"获取/安装/恢复"
+  链路做真;AI Agent 商城的付费项解锁走会员订阅,单品定价不做(与变现模型一致)。
+- 部署:含前端+后端,需 client dist + 重启 guduu-bot。
+
 ## 2026-07-12 — feat:后台建智能体 人设编辑器增强(结构化模板+大编辑器)
 - 负责人反馈:建智能体的表单太简单、人设框太小,写不出有深度的 agent。定方向=结构化人设+大编辑器。
 - 改动(AdminView 智能体表单):
