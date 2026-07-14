@@ -475,7 +475,11 @@ class CosmacBot:
                 self.client.joined_member_count(room_id) <= 2
                 and not self._room_is_named_channel(room_id)
             )
-            if not is_dm and not self._is_bot_mentioned(content):
+            # 群聊触发有两条路:① 叫主 AI 本尊(@/名字开头);② **点名某个可路由的智能体**
+            # (专班绑定 worker / 本人自建 / 商城已获取)——负责人实测「@copywriter 润色」没
+            # 反应的根因就是此前只有 ①,消息在这被丢弃,根本走不到档3b 的 worker 路由。
+            if (not is_dm and not self._is_bot_mentioned(content)
+                    and not self._agent_mention_hit(room_id, sender, user_text)):
                 return
             logger.info(
                 "[房间 %s|%s] %s: %s",
@@ -1096,6 +1100,27 @@ class CosmacBot:
                     return out
         except Exception as e:
             logger.debug("个人智能体路由失败（忽略）：%s", e)
+        # 自建也未命中 → 试发起人**商城已获取**的全局智能体。只认显式 @点名(@slug/@名字):
+        # 名字常是"文案"这类日常词,若按"正文包含"匹配,用户请主 AI"帮我写文案"就会被
+        # 错切到 copywriter 人设。access 无需再查——已获取入库时服务端已校验解锁。
+        try:
+            for slug in self._acquired_agent_slugs(sender):
+                agent = self._find_global_agent(slug)
+                if not agent:
+                    continue
+                name = str(agent.get("name") or "").strip()
+                if (f"@{slug.lower()}" not in low) and not (name and f"@{name}" in body):
+                    continue
+                out = dict(gctx)
+                out["persona"] = (
+                    f"本条由你以协作智能体「{name or slug}」的身份回应，"
+                    f"请按下述人设履职：\n{(agent.get('system_prompt') or '').strip()}"
+                )
+                out["skill_slugs"] = [str(s) for s in (agent.get("skill_slugs") or [])]
+                out["model"] = (agent.get("model") or "").strip()
+                return out
+        except Exception as e:
+            logger.debug("已获取智能体路由失败（忽略）：%s", e)
         return gctx
 
     def _agent_for_model(self, model: str) -> Agent:
@@ -1980,6 +2005,51 @@ class CosmacBot:
             "@CosMac",
             "CosMac",                        # 直接打名字开头就算叫它
         ]
+
+    def _agent_mention_hit(self, room_id: str, sender: str, body: str) -> bool:
+        """群聊补充触发:这条消息是否**点名**了一个可路由的智能体。
+
+        与 _apply_worker_routing 配对:这里判"要不要应答",那里判"以谁的人设答"。
+        可路由集合 = 本频道绑定的专班 worker ∪ 发起人自建 ∪ 发起人商城「已获取」。
+        命中规则(防误触发,比路由的"正文包含"严):
+          - worker/自建(显式绑定,预期强):消息以 名字/slug 开头,或正文任意处 @名字/@slug;
+          - 已获取的全局智能体:只认显式 @点名(名字可能是"文案"这类常用词,
+            正文包含或开头匹配都会让 AI 在人聊天时乱入)。
+        全程兜异常返回 False——本判定失败只是退回"要 @ 主 AI 才应答"的旧行为。
+        """
+        body = (body or "").strip()
+        if not body:
+            return False
+        low = body.lower()
+
+        def _hit(slug: str, name: str, at_only: bool) -> bool:
+            """单个候选的命中判定。at_only=True 时只认 @点名。"""
+            slug = (slug or "").strip().lower()
+            name = (name or "").strip()
+            if slug and (f"@{slug}" in low or (not at_only and low.startswith(slug))):
+                return True
+            if name and (f"@{name}" in body or (not at_only and body.startswith(name))):
+                return True
+            return False
+
+        try:
+            # ① 本频道绑定的专班 worker(读一次 room state;非专班频道列表为空、开销即止)
+            for slug in (self._group_context(room_id).get("worker_slugs") or []):
+                agent = self._find_global_agent(str(slug))
+                if _hit(str(slug), str((agent or {}).get("name") or ""), at_only=False):
+                    return True
+            # ② 发起人自建智能体(工坊承诺"任意频道输入它的名字就由它应答")
+            for m in self._my_agent_items(sender):
+                if _hit(str(m.get("slug") or ""), str(m.get("name") or ""), at_only=False):
+                    return True
+            # ③ 发起人商城「已获取」的全局智能体(商城指引"在频道里 @它")——只认 @点名
+            for slug in self._acquired_agent_slugs(sender):
+                agent = self._find_global_agent(slug)
+                if _hit(slug, str((agent or {}).get("name") or ""), at_only=True):
+                    return True
+        except Exception:
+            logger.debug("智能体点名判定失败(退回仅 @ 主AI 触发)", exc_info=True)
+        return False
 
     def _is_bot_mentioned(self, content: Dict[str, Any]) -> bool:
         """判断这条消息是否在叫主 AI（被 @ 或以它的名字开头）。"""
