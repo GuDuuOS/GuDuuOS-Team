@@ -106,6 +106,28 @@ class TestAssembleTeam(unittest.TestCase):
         self.assertIn("open", content.get("agentSlugs", []))
         self.assertIn("越权班", out)  # 专班仍建成，只是没绑受限的 vip
 
+    def test_agent_tasks_trigger_auto_execute(self) -> None:
+        # 派给 AI 同事的任务要触发自动执行回调(负责人需求:派了就干,不等人 @);
+        # 人工任务不触发。回调收到的是这批任务里 agent 类的 task id。
+        calls: list = []
+        self.tb.auto_execute_agent_tasks = (
+            lambda room, sender, ids, rule: calls.append((room, sender, list(ids), rule))
+        )
+        out = self._run({
+            "project": "抓阄执行班",
+            "task_rule": "按时交付",
+            "tasks": [
+                {"title": "制定规则", "executor_kind": "agent", "executor_ref": "copywriter"},
+                {"title": "现场主持", "executor_kind": "human", "executor_ref": "@a:h"},
+            ],
+        })
+        self.assertEqual(len(calls), 1)
+        room, sender, ids, rule = calls[0]
+        self.assertEqual(room, "!team:h")
+        self.assertEqual(len(ids), 1)  # 只有 agent 那条
+        self.assertEqual(rule, "按时交付")
+        self.assertIn("已自动开始执行", out)  # 回灌里告知模型别让用户手动催
+
     def test_slug_variants_resolve_to_library_slug(self) -> None:
         # 负责人线上实测:库里是 marketing-campaign,模型写 marketing_campaign(下划线),
         # 精确匹配被误报"库里没有"→技能没绑上。宽容解析:_/-、大小写、中文名都要认。
