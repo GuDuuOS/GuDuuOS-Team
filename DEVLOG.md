@@ -1,5 +1,16 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-14 — feat:频道输入框 @ 补全(成员+AI Agent)
+- 负责人需求:主 AI 拆完任务、Agent 进了频道后,用户在输入框打 @ 要能看到并选中
+  「频道里的人和 AI Agent」。此前前端只有 @xxx 染色,没有任何补全。
+- LiveView composer 新增 @ 补全面板:打 @(或点工具条 @按钮)弹候选,候选四类=
+  频道成员(真人/主AI) + 本频道绑定协作 Agent(channel_config.agentSlugs,名字经商城
+  目录映射) + 我自建 + 我已获取(后三类 bot 侧 @名字 即应答,档3b+_agent_mention_hit)。
+  支持连打过滤、↑↓/Enter/Tab/鼠标选中(插入「@名字 」)、Esc/失焦关闭;候选池按频道
+  懒构建缓存。Enter 发送改经统一 onComposerKeydown(面板开时 Enter=选中,不发送)。
+- 本地端到端实测:面板弹出/过滤/键盘+鼠标选中/发送后 bot 按「已获取 @点名」应答
+  (顺带验证了上一条触发修复的真实链路)。vue-tsc + build 过。部署:纯前端 dist。
+
 ## 2026-07-14 — fix:频道里 @智能体名 不触发应答(负责人线上实测报的)
 - 根因:群聊应答闸门 `_is_bot_mentioned` 只认「叫主 AI 本尊」;`@copywriter …` 在闸门处
   被丢弃,**根本走不到**档3b 的 worker 路由——工坊/商城指引"输入它的名字即可"与实现不符。
