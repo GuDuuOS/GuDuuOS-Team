@@ -1,5 +1,15 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-14 — fix:组班绑资源 slug 精确匹配太脆(负责人线上实测报的)
+- 现象:库里明明有技能 marketing-campaign(后台可见),建专班却提示「技能:
+  marketing_campaign 库里没有、未能绑定」——模型凭记忆写 slug,下划线/中划线一字
+  之差,assemble_team 的**精确匹配**就把它当缺口剔了,技能没绑进频道。
+- 修法:新增宽容解析 _resolve_resource_slugs——两边 strip+小写+`_`→`-` 规范化后再比,
+  解析成功替换成库里的**真 slug** 再写配置;known_agents/known_skills 注入升级为
+  dict[slug→名称],按**中文名**(如「营销活动策划」)点名也能解析。真没有的照旧报缺口。
+  lead/worker/skill 三处同口径。旧 set 签名仍兼容(测试桩不用改)。
+- 新增 1 项单测(变体解析+真缺口仍报),全量 532 过。纯后端,部署需重启 guduu-bot。
+
 ## 2026-07-14 — feat:频道输入框 @ 补全(成员+AI Agent)
 - 负责人需求:主 AI 拆完任务、Agent 进了频道后,用户在输入框打 @ 要能看到并选中
   「频道里的人和 AI Agent」。此前前端只有 @xxx 染色,没有任何补全。
