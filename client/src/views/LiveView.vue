@@ -290,6 +290,14 @@ const projects = computed(() => {
     return { goal, total: ts.length, done, pct }
   })
 })
+// 已完成项目折叠(负责人建议):100% 完成的项目卡收进"已完成"折叠区,别占满首屏。
+// 判定用 done===total(任务全部完成),不用 pct(进行中任务的 progress 平均也可能凑到 100)。
+const doneProjectsOpen = ref(false)
+const activeProjects = computed(() => projects.value.filter((p) => !(p.total > 0 && p.done === p.total)))
+const doneProjects = computed(() => projects.value.filter((p) => p.total > 0 && p.done === p.total))
+// 展开条件:手动展开,或当前选中的项目恰好是已完成的(否则选中卡被折叠藏起来,状态看不见)
+const showDoneProjects = computed(() =>
+  doneProjectsOpen.value || doneProjects.value.some((p) => p.goal === activeGoal.value))
 const visibleTasks = computed(() =>
   activeGoal.value ? scopedTasks.value.filter((t) => (t.goal || '未归类') === activeGoal.value) : scopedTasks.value)
 function tasksByStatus(s: string) { return visibleTasks.value.filter((t) => t.status === s) }
@@ -2313,7 +2321,7 @@ onBeforeUnmount(() => {
                 <div class="proj-meta">{{ scopedTasks.length }} 个任务 · {{ projects.length }} 个项目</div>
               </button>
               <button
-                v-for="p in projects" :key="p.goal"
+                v-for="p in activeProjects" :key="p.goal"
                 class="proj-card" :class="{ active: activeGoal === p.goal }"
                 @click="activeGoal = p.goal"
               >
@@ -2321,6 +2329,26 @@ onBeforeUnmount(() => {
                 <div class="proj-bar"><div class="proj-bar-fill" :style="{ width: p.pct + '%' }" /></div>
                 <div class="proj-meta">{{ p.done }}/{{ p.total }} 完成 · {{ p.pct }}%</div>
               </button>
+              <!-- 已完成项目折叠区:默认收起,点开才展示(负责人建议,防 100% 的卡占满首屏) -->
+              <button
+                v-if="doneProjects.length"
+                class="proj-card proj-fold" :class="{ open: showDoneProjects }"
+                @click="doneProjectsOpen = !doneProjectsOpen"
+              >
+                <div class="proj-name">✅ 已完成项目 {{ doneProjects.length }} 个</div>
+                <div class="proj-meta">{{ showDoneProjects ? '点击收起 ▲' : '点击展开 ▼' }}</div>
+              </button>
+              <template v-if="showDoneProjects">
+                <button
+                  v-for="p in doneProjects" :key="p.goal"
+                  class="proj-card proj-done" :class="{ active: activeGoal === p.goal }"
+                  @click="activeGoal = p.goal"
+                >
+                  <div class="proj-name">🎬 {{ p.goal }}</div>
+                  <div class="proj-bar"><div class="proj-bar-fill" :style="{ width: p.pct + '%' }" /></div>
+                  <div class="proj-meta">{{ p.done }}/{{ p.total }} 完成 · {{ p.pct }}%</div>
+                </button>
+              </template>
             </div>
 
             <div class="kanban">
@@ -3259,6 +3287,11 @@ onBeforeUnmount(() => {
 .proj-card:hover { box-shadow: 0 3px 12px rgba(0,0,0,.07); }
 .proj-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .proj-card.all { flex: 0 0 auto; min-width: 160px; background: var(--bg-soft); }
+/* 已完成项目折叠区:入口卡淡绿提示,展开后的已完成卡整体淡化(它们不再是关注重点) */
+.proj-fold { flex: 0 0 auto; min-width: 160px; background: var(--bg-soft); border-style: dashed; }
+.proj-fold .proj-name { color: var(--ok, #4a8c5c); }
+.proj-done { opacity: .62; }
+.proj-done:hover, .proj-done.active { opacity: 1; }
 .proj-name { font-size: var(--fs-100); font-weight: var(--fw-bold); color: var(--text); line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .proj-bar { height: 6px; background: var(--bg-soft); border-radius: 4px; margin: 10px 0 7px; overflow: hidden; }
 .proj-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--warn, #e0883a)); border-radius: 4px; transition: width .3s ease; }
