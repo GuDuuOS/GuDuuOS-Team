@@ -3117,7 +3117,8 @@ onBeforeUnmount(() => {
 .user-chip.open .avatar { box-shadow: 0 0 0 2px var(--accent); }
 .user-chip:hover .avatar { filter: brightness(1.05); }
 .online-dot { position: absolute; right: 0; bottom: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--ok); border: 2px solid var(--bg-soft); }
-.um-pop { position: absolute; top: calc(100% + 8px); right: 0; z-index: 60; width: 280px; padding: 8px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 36px rgba(0,0,0,.14); }
+/* max-height+滚动:切换账号列表多于一屏时菜单会超出视口,底部「退出登录」被遮挡且滚不到(负责人报的) */
+.um-pop { position: absolute; top: calc(100% + 8px); right: 0; z-index: 60; width: 280px; padding: 8px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 36px rgba(0,0,0,.14); max-height: calc(100vh - 72px); overflow-y: auto; overscroll-behavior: contain; }
 .um-head { display: flex; align-items: center; gap: 10px; padding: 8px; }
 .um-ava { width: 38px; height: 38px; border-radius: 9px; background: var(--accent); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 600; }
 .um-name { font-size: 14px; font-weight: 700; word-break: break-all; }
