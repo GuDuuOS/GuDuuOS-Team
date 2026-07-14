@@ -119,10 +119,10 @@ def _parse_due_to_epoch(raw: str) -> Optional[int]:
     """把日期字符串解析成 epoch 秒（任务截止时间）。解析不了返回 None。
 
     支持：'YYYY-MM-DD'（只给日期 → 默认当天 23:59）/ 'YYYY-MM-DD HH:MM' / 'YYYY-MM-DD HH:MM:SS'，
-    '/' 与 'T' 分隔也认。用**系统本地时区**（datetime.timestamp() 对 naive 时间按本地时区换算）——
-    与提醒扫描比较用的 time.time() 同一时钟，避免差几个小时。
+    '/' 与 'T' 分隔也认。按**产品时区**(tzutil,默认北京时间)换算——模型给的时刻语义上是
+    用户时区;此前按服务器本地时区,UTC 服务器上会偏 8 小时(负责人实测:AI 报时差 8 小时)。
     """
-    from datetime import datetime
+    from cosmac.tzutil import parse_local_to_epoch
 
     s = (raw or "").strip().replace("/", "-").replace("T", " ")
     for fmt, date_only in (
@@ -130,13 +130,12 @@ def _parse_due_to_epoch(raw: str) -> Optional[int]:
         ("%Y-%m-%d %H:%M", False),
         ("%Y-%m-%d", True),
     ):
-        try:
-            dt = datetime.strptime(s, fmt)
-        except ValueError:
-            continue
         if date_only:
-            dt = dt.replace(hour=23, minute=59, second=0)
-        return int(dt.timestamp())
+            ts = parse_local_to_epoch(s + " 23:59", "%Y-%m-%d %H:%M")
+        else:
+            ts = parse_local_to_epoch(s, fmt)
+        if ts is not None:
+            return ts
     return None
 
 

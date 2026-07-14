@@ -1,5 +1,17 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-15 — fix:AI 报当前时间差 8 小时——统一按产品时区(负责人报的)
+- 现象:用户 11:05,AI 说"现在已经是 03:04"。根因:GCP 服务器时区是 UTC,三处时间
+  都用了服务器时区——①注入模型的【当前时间】(localtime);②任务截止时间解析
+  (_parse_due_to_epoch 按 naive timestamp,"今天11:30"被存成 UTC 11:30=北京 19:30,
+  到期提醒也跟着偏);③提醒文案的截止时间显示(_fmt_due localtime)。
+- 修法:新建 `cosmac/tzutil.py` 产品时区工具(默认 Asia/Shanghai,env COSMAC_TZ 可覆盖,
+  加载失败退回固定 UTC+8;中文星期)。三处统一走它:now_text/parse_local_to_epoch/fmt_ts。
+  前端看板时间是浏览器本地渲染、本就正确,不动。
+- 顺带修 3 个旧测试的隐含假设(用测试机时区断言,UTC 机器上恒挂——线上 bug 的镜像),
+  改用产品时区还原断言;新增 test_tzutil.py 5 项(含 TZ 差值断言,不依赖测试机时区)。
+  全量 548 项在 TZ=UTC 与本机双环境跑过。纯后端,部署需重启 guduu-bot。
+
 ## 2026-07-15 — feat:方案B·P1——AI 同事独立账号(傀儡),像真成员一样进频道
 - 负责人拍板从方案A(单 bot 多人设)升级方案B。P1 落地:每个协作 Agent 一个
   **appservice 傀儡账号** `@guduu-ai-<slug>`(落在注册文件 namespace `@guduu.*` 内,

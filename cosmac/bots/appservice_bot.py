@@ -822,7 +822,10 @@ class CosmacBot:
             )
             wf_text = self._preset_workflows_text(gctx.get("workflow_slugs") or [])
             # 当前时间：让模型能把"3天后/下周五"这类相对期限换算成绝对日期（拆任务设 due 用）。
-            now_text = "【当前时间】" + time.strftime("%Y-%m-%d %H:%M（%A）", time.localtime())
+            # 按产品时区(默认北京时间,见 tzutil)——服务器是 UTC,直接 localtime 会差 8 小时
+            from cosmac.tzutil import now_text as _tz_now
+
+            now_text = "【当前时间】" + _tz_now()
             # 时间 → 交互准则(内置基线) → 平台规则 → 任务RULE → 人设 → 用户偏好 → 长期记忆 → 技能 → 知识库 → 预置工作流
             return "\n\n".join(
                 p for p in (
@@ -4972,11 +4975,13 @@ class CosmacBot:
     # —— 任务时效提醒（定时扫描）：快到期/逾期在任务所属频道内 @ 负责人提醒 ——
 
     def _fmt_due(self, ts: Optional[int]) -> str:
-        """把截止 epoch 秒格式化成 'MM-DD HH:MM'（服务器本地时区），给提醒文案用。"""
+        """把截止 epoch 秒格式化成 'MM-DD HH:MM'（**产品时区**，见 tzutil），给提醒文案用。"""
         if not ts:
             return "截止时间"
         try:
-            return time.strftime("%m-%d %H:%M", time.localtime(int(ts)))
+            from cosmac.tzutil import fmt_ts
+
+            return fmt_ts(int(ts))
         except Exception:
             return "截止时间"
 
