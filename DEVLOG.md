@@ -1,5 +1,17 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-15 — fix(运维):工作区图标上传后裂图——Synapse 认证媒体拦了 <img>
+- 现象(负责人报):工作区设置上传图片,预览/保存后图标都裂。排查:上传成功(mxc 正常)、
+  m.room.avatar 写入成功——**坏的是显示**。Synapse 1.12+ 默认 `enable_authenticated_media:
+  true`,新上传媒体走旧 `/_matrix/media/v3/*` 匿名端点直接 404,而 `<img>` 带不了
+  Authorization 头 → 裂图(本地 1.141 复现实锤:未认证 404 / 带 token 200)。
+- 修法(权衡后选服务端放开):线上 `/opt/guduu/synapse/homeserver.yaml` 加
+  `enable_authenticated_media: false` + 重启 guduu-synapse。本地已验证:关掉后**冻结期
+  已上传的媒体也恢复匿名访问**——线上已传的图不用重传。不选前端 `?access_token=` 拼 URL
+  (用户复制图片地址=交出登录凭证);要收紧再上 Service Worker 认证(Element Web 方案)。
+  mxc id 为高熵随机串,等于不可猜链接,当前规模可接受。本地 run/synapse 同步加了此配置。
+- 纯服务器配置变更,无代码改动、无需部署 dist/bot。
+
 ## 2026-07-14 — fix:组班绑资源 slug 精确匹配太脆(负责人线上实测报的)
 - 现象:库里明明有技能 marketing-campaign(后台可见),建专班却提示「技能:
   marketing_campaign 库里没有、未能绑定」——模型凭记忆写 slug,下划线/中划线一字
