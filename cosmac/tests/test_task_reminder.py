@@ -144,18 +144,15 @@ class TestTaskReminder(unittest.TestCase):
     def test_parse_due(self):
         self.assertIsNone(_parse_due_to_ts(""))
         self.assertIsNone(_parse_due_to_ts("下周三"))  # 相对词不解析
-        import time as _t
+        # 断言按产品时区还原(fmt_ts)——解析已改产品时区,用 localtime(机器时区)在
+        # UTC 机器上会差 8 小时(线上时区 bug 的镜像)。
+        from cosmac.tzutil import fmt_ts
         ts = _parse_due_to_ts("2026-07-15")
         self.assertIsNotNone(ts)
-        tm = _t.localtime(ts)
         # L10：建任务与改期统一口径，date-only → 当天 23:59（原建任务路径曾用 18:00）
-        self.assertEqual(
-            (tm.tm_year, tm.tm_mon, tm.tm_mday, tm.tm_hour, tm.tm_min),
-            (2026, 7, 15, 23, 59),
-        )
+        self.assertEqual(fmt_ts(ts, "%Y-%m-%d %H:%M"), "2026-07-15 23:59")
         ts2 = _parse_due_to_ts("2026-07-15 09:30")
-        tm2 = _t.localtime(ts2)
-        self.assertEqual((tm2.tm_hour, tm2.tm_min), (9, 30))
+        self.assertEqual(fmt_ts(ts2, "%H:%M"), "09:30")
 
 
 if __name__ == "__main__":

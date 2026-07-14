@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import unittest
-from datetime import datetime
 
 from cosmac.ai.tools import (
     Toolbox, ToolCall, ToolContext, _parse_due_to_epoch, _parse_due_to_ts,
@@ -23,16 +22,18 @@ class _C:
 
 
 class TestParseDue(unittest.TestCase):
+    # 断言用产品时区还原(fmt_ts)而非 datetime.fromtimestamp(测试机时区)——
+    # 解析已改按产品时区(北京),UTC 机器上用机器时区断言会差 8 小时(线上 bug 镜像)。
     def test_date_only_defaults_to_end_of_day(self) -> None:
+        from cosmac.tzutil import fmt_ts
         ep = _parse_due_to_epoch("2025-07-11")
         self.assertIsNotNone(ep)
-        dt = datetime.fromtimestamp(ep)
-        self.assertEqual((dt.year, dt.month, dt.day, dt.hour, dt.minute), (2025, 7, 11, 23, 59))
+        self.assertEqual(fmt_ts(ep, "%Y-%m-%d %H:%M"), "2025-07-11 23:59")
 
     def test_date_time(self) -> None:
+        from cosmac.tzutil import fmt_ts
         ep = _parse_due_to_epoch("2025-07-11 10:00")
-        dt = datetime.fromtimestamp(ep)
-        self.assertEqual((dt.hour, dt.minute), (10, 0))
+        self.assertEqual(fmt_ts(ep, "%H:%M"), "10:00")
 
     def test_slash_and_t_separators(self) -> None:
         self.assertIsNotNone(_parse_due_to_epoch("2025/07/11"))
@@ -63,11 +64,12 @@ class TestUpdateTaskDue(unittest.TestCase):
                                ToolContext(ROOM, "@u:h"))
 
     def test_set_due_date(self) -> None:
+        from cosmac.tzutil import fmt_ts
         out = self._update({"due": "2025-07-11 10:00"})
         self.assertIn("截止改为", out)
         with session_scope() as s:
-            dt = datetime.fromtimestamp(get_task(s, self.tid).due_ts)
-        self.assertEqual((dt.year, dt.month, dt.day, dt.hour, dt.minute), (2025, 7, 11, 10, 0))
+            ts = get_task(s, self.tid).due_ts
+        self.assertEqual(fmt_ts(ts, "%Y-%m-%d %H:%M"), "2025-07-11 10:00")
 
     def test_clear_due_date(self) -> None:
         self._update({"due": "2025-07-11"})
