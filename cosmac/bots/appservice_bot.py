@@ -268,6 +268,8 @@ class CosmacBot:
             for s in self._skill_library()
             if s.get("slug") and (for_user is None or self._resource_visible(s, for_user))
         }
+        # AI 任务自动执行器:专班派单后,派给 AI 同事的任务后台自动执行(产出发频道+回填看板)
+        self.toolbox.auto_execute_agent_tasks = self._auto_execute_agent_tasks
         self.agent = Agent(
             llm=self.llm,
             toolbox=self.toolbox,
@@ -1354,6 +1356,127 @@ class CosmacBot:
         if len(self._acquired_cache) > 5000:
             self._acquired_cache.clear()
         return slugs
+
+    # ═══ AI 任务自动执行(负责人需求:任务派给 AI 同事后要真的被执行) ═══
+
+    # 一轮自动执行最多跑几个 AI 任务(防模型拆出超长清单把 LLM 额度烧穿;超出的留看板可 @ 手动要)
+    _AUTO_EXEC_MAX = 8
+
+    def _auto_execute_agent_tasks(
+        self, room_id: str, sender: str, task_ids: List[int], task_rule: str = ""
+    ) -> None:
+        """assemble_team 注入的自动执行入口:起后台 daemon 线程逐个执行,不阻塞建班回复。"""
+        th = threading.Thread(
+            target=self._run_agent_tasks,
+            args=(room_id, sender, list(task_ids), task_rule),
+            daemon=True,
+            name="agent-task-runner",
+        )
+        th.start()
+
+    def _run_agent_tasks(
+        self, room_id: str, sender: str, task_ids: List[int], task_rule: str
+    ) -> None:
+        """按拆解顺序逐个执行「派给 AI 同事」的任务:worker 人设+任务内容 → LLM 产出 →
+        发进专班频道 → 回填任务看板(done/进度/result)。
+
+        设计取舍(方案A 单 bot 多人设,够用即止):
+        - **纯生成、不带工具**:自动执行只产出交付物文本,不给建群/发消息等工具——防后台
+          线程里的自动循环做出不可控操作;要动手的活仍由用户在频道里指挥主 AI。
+        - **链式上下文**:把此前任务的产出摘要传给后续任务(如"风险分析"能基于"规则文档"),
+          按拆解顺序天然满足常见依赖;失败的跳过、不阻断后面的任务。
+        - **失败兜底**:单个任务 LLM 失败 → 看板留 todo + result 记原因 + 频道提示可 @ 重试。
+        """
+        done_n = 0
+        prior: List[str] = []  # 已完成任务的产出摘要(喂给后续任务当上下文)
+        for tid in task_ids[: self._AUTO_EXEC_MAX]:
+            title, goal, slug = "", "", ""
+            try:
+                from cosmac.db import session_scope
+                from cosmac.db.task_repo import get_task, update_task
+
+                with session_scope() as s:
+                    t = get_task(s, tid)
+                    if not t or t.executor_kind != "agent" or t.status == "done":
+                        continue
+                    title, goal, slug = t.title, t.goal, t.executor_ref
+                    update_task(s, tid, status="doing", progress=10)
+            except Exception:
+                logger.exception("自动执行:读取任务 #%s 失败", tid)
+                continue
+            agent_def = self._find_global_agent(slug) or {}
+            name = str(agent_def.get("name") or slug)
+            out = ""
+            err = "模型无输出"
+            try:
+                sp = str(agent_def.get("system_prompt") or "").strip()
+                system = (
+                    f"你是专班协作智能体「{name}」。你的人设与职责:\n{sp}\n\n"
+                    + (f"本专班任务约束(RULE,必须遵守):\n{task_rule}\n\n" if task_rule else "")
+                    + "现在独立完成下述任务,直接输出**可交付的最终成果**"
+                    "(不要寒暄、不要提问;信息不足时按合理假设完成并在文末注明假设)。"
+                )
+                user = f"专班目标:{goal}\n你的任务:{title}"
+                if prior:
+                    user += "\n\n此前同事已交付的成果(供你衔接,不要重复):\n" + "\n---\n".join(prior[-3:])
+                llm = self._agent_for_model(str(agent_def.get("model") or "").strip()).llm
+                out = (llm.complete([
+                    Message(role="system", content=system),
+                    Message(role="user", content=user),
+                ]) or "").strip()
+            except Exception as e:
+                logger.exception("自动执行:任务 #%s LLM 生成失败", tid)
+                out = ""
+                err = str(e)[:120]
+            if out:
+                try:
+                    self.client.send_text(
+                        room_id, f"🤖【{name}】交付任务#{tid}《{title}》：\n\n{out}"
+                    )
+                except Exception:
+                    logger.debug("自动执行:产出发频道失败(看板照常回填)", exc_info=True)
+                try:
+                    from cosmac.db import session_scope
+                    from cosmac.db.task_repo import update_task
+
+                    with session_scope() as s:
+                        update_task(s, tid, status="done", progress=100, result=out[:2000])
+                    done_n += 1
+                    prior.append(f"《{title}》({name}):{out[:500]}")
+                except Exception:
+                    logger.exception("自动执行:任务 #%s 回填看板失败", tid)
+            else:
+                # 失败:看板退回 todo 并记录原因,频道提示可手动重试——绝不能假装完成
+                try:
+                    from cosmac.db import session_scope
+                    from cosmac.db.task_repo import update_task
+
+                    with session_scope() as s:
+                        update_task(
+                            s, tid, status="todo", progress=0,
+                            result=f"自动执行失败({err}),可在频道 @{name} 重试",
+                        )
+                except Exception:
+                    logger.debug("自动执行:失败状态回填失败", exc_info=True)
+                try:
+                    self.client.send_text(
+                        room_id,
+                        f"⚠️ 任务#{tid}《{title}》自动执行失败，已退回待办。"
+                        f"可稍后在频道里 @{name} 让它重做，或改派他人。",
+                    )
+                except Exception:
+                    pass
+        # 收尾汇报:让频道里的人知道这轮自动执行的整体结果(全部失败也如实说)
+        try:
+            total = min(len(task_ids), self._AUTO_EXEC_MAX)
+            skipped = len(task_ids) - total
+            tail = f"(还有 {skipped} 个超出单轮上限,留在看板可 @ 对应 AI 手动执行)" if skipped > 0 else ""
+            self.client.send_text(
+                room_id,
+                f"📋 AI 同事本轮任务执行完毕：成功 {done_n}/{total}，看板已更新{tail}。",
+            )
+        except Exception:
+            pass
 
     def _resource_visible(self, item: Dict[str, Any], user_id: str) -> bool:
         """按资源的「可用范围」(access 字段)判定 user_id 是否可用该技能/智能体。

@@ -177,6 +177,11 @@ class Toolbox:
         # 不传 → 全量(无发起人上下文的场景)。
         self.known_agents: Optional[Callable[..., Any]] = None
         self.known_skills: Optional[Callable[..., Any]] = None
+        # AI 任务自动执行器(bot 注入):专班派单后,executor_kind='agent' 的任务交给对应
+        # AI 同事**自动执行**(后台线程:人设+任务生成产出→发进专班→回填看板)。
+        # 签名 (room_id, sender, task_ids, task_rule) -> None。None=不自动执行(仅落看板)。
+        # 负责人需求:任务分配给 Agent 后要真的被执行,而不是躺在看板上等人 @。
+        self.auto_execute_agent_tasks: Optional[Callable[..., None]] = None
         # 「群名→room_id」解析用的房名缓存(room_id → (名字, 时间戳);5 分钟 TTL,见 _resolve_room_by_name)
         self._room_name_cache: Dict[str, tuple] = {}
         # 房间类型缓存(room_id → 'ai'/'dm'/'channel';建房标记不变,永久缓存,见 _room_kind)
@@ -1969,8 +1974,28 @@ class Toolbox:
                         space_id=ctx.space_id,   # 专班归到发起人当时所在的工作区
                     )
                     n_tasks = len(created)
+                    # 收集「派给 AI 同事」的任务 id(在 session 内取,防 detached)——
+                    # 下面交给自动执行器后台跑,让"分配给 Agent 的任务真的被执行"。
+                    agent_task_ids = [
+                        t.id for t in created
+                        if t.executor_kind == "agent" and t.executor_ref
+                    ]
             except Exception:
                 logger.exception("派任务进专班失败")
+                agent_task_ids = []
+        else:
+            agent_task_ids = []
+        # AI 任务自动执行(负责人需求:派了就干,不等人 @):后台线程执行、不阻塞本轮回复。
+        # 回调未注入/触发失败只影响"自动",看板照常,可在频道 @该 AI 手动要产出。
+        auto_started = False
+        if agent_task_ids and self.auto_execute_agent_tasks:
+            try:
+                self.auto_execute_agent_tasks(
+                    room_id, ctx.sender, agent_task_ids, task_rule
+                )
+                auto_started = True
+            except Exception:
+                logger.exception("启动 AI 任务自动执行失败(看板不受影响)")
 
         # 开班消息发进频道（用**去重后的真实频道名**，别再说成撞名的那个）
         parts = [f"🗂 专班「{channel_name}」已组建。"]
@@ -2004,6 +2029,11 @@ class Toolbox:
             )
         if n_tasks:
             parts.append(f"已派 {n_tasks} 个任务，详见任务看板。")
+        if auto_started:
+            parts.append(
+                f"🤖 其中 {len(agent_task_ids)} 个任务由 AI 同事执行——已自动开工，"
+                "产出会陆续发到本频道并回填任务看板。"
+            )
         # M7：开班消息发送包异常——此刻房间已建、配额已扣、任务已派，绝不能因发消息网络错让异常
         # 穿透到 execute()→模型收到"工具出错请重试"→撞名再建一个专班、任务重复派、配额二次扣。
         try:
@@ -2048,6 +2078,11 @@ class Toolbox:
                 if task_rule else "无任务RULE"
             )
         summary.append(f"派 {n_tasks} 个任务" if n_tasks else "暂未派任务")
+        if auto_started:
+            summary.append(
+                f"其中 {len(agent_task_ids)} 个派给 AI 同事的任务已自动开始执行"
+                "(产出稍后陆续发进专班、回填看板——转述时告诉用户不用手动催)"
+            )
         if missing:
             summary.append(
                 "⚠️ 以下资源库里没有、未绑定：" + "；".join(missing)
