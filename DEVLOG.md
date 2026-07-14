@@ -1,5 +1,12 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-15 — fix:用户菜单超屏不能滚,「退出登录」被遮挡(负责人报的)
+- 现象:切换账号列表一多,右上角用户菜单(.um-pop)高度超出视口,底部「退出登录」
+  被截掉且滚轮无效——无法退出登录。
+- 修法:.um-pop 加 max-height: calc(100vh - 72px) + overflow-y:auto +
+  overscroll-behavior:contain(防滚动穿透到页面)。本地矮视口(420px)实测:菜单
+  内部可滚、「退出登录」完整可见可点。纯前端,部署 dist。
+
 ## 2026-07-15 — fix(运维):工作区图标上传后裂图——Synapse 认证媒体拦了 <img>
 - 现象(负责人报):工作区设置上传图片,预览/保存后图标都裂。排查:上传成功(mxc 正常)、
   m.room.avatar 写入成功——**坏的是显示**。Synapse 1.12+ 默认 `enable_authenticated_media:
