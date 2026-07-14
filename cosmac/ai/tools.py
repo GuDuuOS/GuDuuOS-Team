@@ -38,6 +38,45 @@ _STATUS_ALIASES = {
 }
 
 
+def _resolve_resource_slugs(
+    wanted: List[str], known: Any
+) -> Tuple[List[str], List[str]]:
+    """把模型给的资源标识解析成库里的**真 slug**(assemble_team 绑 Agent/Skill 用)。
+
+    背景(负责人线上实测):库里是 ``marketing-campaign``,模型凭记忆写成
+    ``marketing_campaign``,精确匹配判"库里没有"→技能被剔、绑定失败。LLM 生成的
+    标识常有 下划线/中划线、大小写 这类无害变体,匹配必须宽容:
+      - 规范化比较:两边都 strip+小写+``_``→``-`` 后再比;
+      - 名称兜底:known 若是 dict[slug→名称],还可按中文名(如「营销活动策划」)匹配。
+
+    参数 known: set[slug] 或 dict[slug→名称]。
+    返回 (resolved, bad):resolved=解析成功的真 slug(保序去重);bad=真没有的原词。
+    """
+    names: Dict[str, str] = (
+        dict(known) if isinstance(known, dict) else {str(k): "" for k in (known or set())}
+    )
+
+    def norm(x: Any) -> str:
+        return str(x or "").strip().lower().replace("_", "-")
+
+    idx: Dict[str, str] = {}
+    for slug, name in names.items():
+        idx.setdefault(norm(slug), slug)
+        if norm(name):
+            idx.setdefault(norm(name), slug)
+    resolved: List[str] = []
+    bad: List[str] = []
+    seen: Set[str] = set()
+    for w in wanted:
+        hit = idx.get(norm(w))
+        if hit is None:
+            bad.append(w)
+        elif hit not in seen:
+            seen.add(hit)
+            resolved.append(hit)
+    return resolved, bad
+
+
 def _normalize_task_status(raw: Any) -> Any:
     """把模型/用户给的状态词归一化到合法值；空→None(不改)；非法→原样返回(调用方据此报错)。"""
     s = str(raw or "").strip().lower()
@@ -130,13 +169,14 @@ class Toolbox:
         # 用量配额**消费**钩子：由 bot 注入。签名 (sender, tool_name) -> None。工具在真正
         # 做成事的那一刻调用（如专班房建成、工作流真正提交），失败路径不扣。
         self.quota_consume: Optional[Callable[[str, str], None]] = None
-        # 资源存在性校验回调(bot 注入):返回库里现有的 Agent/Skill slug 集合。
+        # 资源存在性校验回调(bot 注入):返回库里现有的 Agent/Skill——
+        # 集合 set[slug] 或映射 dict[slug→名称] 都接受(映射可支持按中文名匹配)。
         # assemble_team 用它识别"库里没有的资源"并**提醒用户缺口**,而不是静默写进配置后失效
         # (负责人设计:组班资源必须来自库;没有的要提醒,可能需要先到后台添加)。None=跳过校验。
         # 可选 for_user 参数:传发起人 id → 只返回其 access 够得到的资源(M2 越权过滤);
         # 不传 → 全量(无发起人上下文的场景)。
-        self.known_agents: Optional[Callable[..., Set[str]]] = None
-        self.known_skills: Optional[Callable[..., Set[str]]] = None
+        self.known_agents: Optional[Callable[..., Any]] = None
+        self.known_skills: Optional[Callable[..., Any]] = None
         # 「群名→room_id」解析用的房名缓存(room_id → (名字, 时间戳);5 分钟 TTL,见 _resolve_room_by_name)
         self._room_name_cache: Dict[str, tuple] = {}
         # 房间类型缓存(room_id → 'ai'/'dm'/'channel';建房标记不变,永久缓存,见 _room_kind)
@@ -1810,22 +1850,28 @@ class Toolbox:
         except Exception:
             known_a = None
         if known_a is not None:
-            if lead and lead not in known_a:
-                missing.append(f"项目主AI人设「{lead}」(已回退内置编排人设)")
-                lead = ""
-            bad_w = [w for w in workers if w not in known_a]
+            # 宽容解析(下划线/中划线/大小写/按名称),解析成功即替换成库里的真 slug——
+            # 否则模型写 marketing_campaign(库里是 marketing-campaign)就被误报"库里没有"。
+            if lead:
+                ok_l, bad_l = _resolve_resource_slugs([lead], known_a)
+                if bad_l:
+                    missing.append(f"项目主AI人设「{lead}」(已回退内置编排人设)")
+                    lead = ""
+                else:
+                    lead = ok_l[0]
+            resolved_w, bad_w = _resolve_resource_slugs(workers, known_a)
             if bad_w:
                 missing.append("协作AI:" + "、".join(bad_w))
-                workers = [w for w in workers if w in known_a]
+            workers = resolved_w
         try:
             known_s = self.known_skills(ctx.sender) if self.known_skills else None
         except Exception:
             known_s = None
         if known_s is not None:
-            bad_s = [s for s in skills if s not in known_s]
+            resolved_s, bad_s = _resolve_resource_slugs(skills, known_s)
             if bad_s:
                 missing.append("技能:" + "、".join(bad_s))
-                skills = [s for s in skills if s in known_s]
+            skills = resolved_s
 
         # —— 任务 RULE 保底:模型没给约束时自动生成基础版,专班绝不"裸奔" ——
         # (负责人设计:到了频道后,频道主AI要受本专班任务约束——RULE 是频道自治的宪法,不能缺。)

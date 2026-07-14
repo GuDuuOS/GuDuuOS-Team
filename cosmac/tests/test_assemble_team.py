@@ -106,6 +106,26 @@ class TestAssembleTeam(unittest.TestCase):
         self.assertIn("open", content.get("agentSlugs", []))
         self.assertIn("越权班", out)  # 专班仍建成，只是没绑受限的 vip
 
+    def test_slug_variants_resolve_to_library_slug(self) -> None:
+        # 负责人线上实测:库里是 marketing-campaign,模型写 marketing_campaign(下划线),
+        # 精确匹配被误报"库里没有"→技能没绑上。宽容解析:_/-、大小写、中文名都要认。
+        self.tb.known_agents = lambda for_user=None: {"planner": "选题策划"}
+        self.tb.known_skills = lambda for_user=None: {"marketing-campaign": "营销活动策划"}
+        out = self._run({
+            "project": "抓阄班",
+            "lead_agent": "Planner",                    # 大小写变体 → 认
+            "skills": ["marketing_campaign", "营销活动策划"],  # 下划线变体+中文名 → 都认并去重
+        })
+        _room, _etype, content = self.client.states[0]
+        self.assertEqual(content["persona"]["agentSlug"], "planner")  # 解析成库里真 slug
+        self.assertEqual(content["persona"]["skill_slugs"], ["marketing-campaign"])
+        self.assertNotIn("库里没有", out)  # 不再误报缺口
+        # 真没有的仍要报缺口、不写进配置
+        out2 = self._run({"project": "抓阄班2", "skills": ["ghost-skill"]})
+        self.assertIn("ghost-skill", out2)
+        _room2, _etype2, content2 = self.client.states[1]
+        self.assertNotIn("skill_slugs", content2.get("persona", {}))
+
     def test_knowledge_bound_into_channel(self) -> None:
         # 知识库"调进频道":owner→发起人个人库对全班开放;platform→平台共享库。
         # 写进 channel_config.kbScopes,频道分身检索时纳入(见 _group_context/_kb_retrieve)。

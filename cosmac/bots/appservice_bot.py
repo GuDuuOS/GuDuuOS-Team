@@ -255,14 +255,16 @@ class CosmacBot:
         # M2 越权修复:带 for_user 时按发起人 access 过滤——发起人**够不到**的受限智能体不进可见集,
         # assemble_team 里点名它当 lead/worker 会被当"缺口"剔除(不注入其付费人设),堵住"点名绕过
         # 名册过滤"。for_user=None 保持全量(供无发起人上下文的场景)。
+        # 返回 dict[slug→名称](而非纯 slug 集合):assemble_team 的宽容解析据此支持
+        # 按中文名匹配(模型有时写「营销活动策划」而非 slug),精确 slug 匹配照常。
         self.toolbox.known_agents = lambda for_user=None: {
-            str(a.get("slug") or "")
+            str(a.get("slug") or ""): str(a.get("name") or "")
             for a in self._global_agent_items()
             if a.get("slug") and (for_user is None or self._resource_visible(a, for_user))
         }
         # 用 _skill_library(含预置技能):否则主 AI 组班时绑预置技能会被误报"库里没有"
         self.toolbox.known_skills = lambda for_user=None: {
-            str(s.get("slug") or "")
+            str(s.get("slug") or ""): str(s.get("name") or "")
             for s in self._skill_library()
             if s.get("slug") and (for_user is None or self._resource_visible(s, for_user))
         }
