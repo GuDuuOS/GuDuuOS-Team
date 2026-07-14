@@ -270,6 +270,8 @@ class CosmacBot:
         }
         # AI 任务自动执行器:专班派单后,派给 AI 同事的任务后台自动执行(产出发频道+回填看板)
         self.toolbox.auto_execute_agent_tasks = self._auto_execute_agent_tasks
+        # 方案B:建专班时把协作 Agent 的傀儡账号拉进频道(注册→邀请→join,幂等)
+        self.toolbox.ensure_worker_in_room = self._ensure_worker_in_room
         self.agent = Agent(
             llm=self.llm,
             toolbox=self.toolbox,
@@ -294,6 +296,8 @@ class CosmacBot:
         self._user_template_cache: Dict[str, Tuple[str, float]] = {}
         # 用户→商城「已获取」智能体 slug 缓存(能力名册每条消息都查;获取端点写入时主动失效)
         self._acquired_cache: Dict[str, Tuple[Set[str], float]] = {}
+        # AI 同事傀儡账号缓存(slug → MXID;空串=注册失败,重启前不重试)
+        self._worker_account_cache: Dict[str, str] = {}
         # SDK 引擎回退告警的节流时间戳(1小时最多向控制室发一条,防刷屏)
         self._engine_alert_ts: float = 0.0        # 上次读到的配置覆盖
         # —— 任务时效提醒（定时扫描）——扫描间隔 + "快到期"窗口，都可用 env 调；单实例内定时够用。
@@ -435,8 +439,9 @@ class CosmacBot:
         event_type = event.get("type", "")
         room_id = event.get("room_id", "")
 
-        # 忽略主 AI 自己发的消息，否则会无限自我回复
-        if sender == self.config.bot_user_id:
+        # 忽略主 AI 自己发的消息，否则会无限自我回复;
+        # 方案B:AI 同事傀儡账号发的消息同样忽略——否则傀儡交付产出会触发 bot 再应答,自转不停
+        if sender == self.config.bot_user_id or self._worker_slug_of(sender):
             return
 
         # 1) 被邀请进群 → 自动加入
@@ -482,8 +487,11 @@ class CosmacBot:
             # 群聊触发有两条路:① 叫主 AI 本尊(@/名字开头);② **点名某个可路由的智能体**
             # (专班绑定 worker / 本人自建 / 商城已获取)——负责人实测「@copywriter 润色」没
             # 反应的根因就是此前只有 ①,消息在这被丢弃,根本走不到档3b 的 worker 路由。
+            mentioned_ids = [
+                str(u) for u in ((content.get("m.mentions") or {}).get("user_ids") or [])
+            ]
             if (not is_dm and not self._is_bot_mentioned(content)
-                    and not self._agent_mention_hit(room_id, sender, user_text)):
+                    and not self._agent_mention_hit(room_id, sender, user_text, mentioned_ids)):
                 return
             logger.info(
                 "[房间 %s|%s] %s: %s",
@@ -556,10 +564,22 @@ class CosmacBot:
                 # 幂等发送：用 event_id 派生固定 txn_id，让 Synapse 据此去重。
                 # 场景：同一事务里若有别的事件失败，handle_transaction 会让 Synapse 重发**整批**，
                 # 已成功的这条 AI 回复会被重新处理；固定 txn_id 保证群里不会冒出两条同样的回复。
-                self.client.send_text(
-                    room_id, reply,
-                    txn_id=f"cosmac-ai-{event_id}" if event_id else None,
-                )
+                # 方案B:worker 路由若解析出傀儡账号(as_user),回复以该 AI 同事本人身份发——
+                # 时间线上显示它的名字/头像;傀儡发送失败退回主 AI 身份,绝不丢回复。
+                as_user = str(gctx.get("as_user") or "")
+                sent_ok = False
+                if as_user:
+                    sent_ok = bool(self.client.send_text_as(
+                        room_id, reply, as_user,
+                        txn_id=f"cosmac-ai-{event_id}" if event_id else None,
+                    ))
+                if not sent_ok:
+                    # 兜底 txn 带 -fb 后缀:防"傀儡实际已发成功但响应丢失"时,主 AI 复用同
+                    # txn 被 Synapse 去重成静默——宁可极端情况下重复一条,不可丢回复。
+                    self.client.send_text(
+                        room_id, reply,
+                        txn_id=f"cosmac-ai-fb-{event_id}" if event_id else None,
+                    )
                 # L2：回复真正发出后才消费当日 AI 对话额度（失败走下面的 except 分支、不扣）。
                 self._rate_quota_blocked(sender, "ai_msg_daily", consume=True)
             except Exception:
@@ -1069,24 +1089,36 @@ class CosmacBot:
         if not body:
             return gctx
         low = body.lower()
+
+        def _worker_gctx(agent: Dict[str, Any], slug: str) -> Dict[str, Any]:
+            """按某协作 Agent 组装本条的 gctx(人设/技能/模型 + 方案B 傀儡身份)。"""
+            name = str(agent.get("name") or "").strip()
+            out = dict(gctx)
+            out["persona"] = (
+                f"本条由你以协作智能体「{name or slug}」的身份回应，"
+                f"请按下述人设履职：\n{(agent.get('system_prompt') or '').strip()}"
+            )
+            out["skill_slugs"] = [str(s) for s in (agent.get("skill_slugs") or [])]
+            out["model"] = (agent.get("model") or "").strip()
+            # 方案B:回复以该 AI 同事的傀儡账号身份发(账号建不了则留空=主 AI 身份兜底)
+            out["as_user"] = self._ensure_worker_account(slug)
+            return out
+
         try:
             for slug in slugs:
                 agent = self._find_global_agent(str(slug))
                 if not agent:
                     continue
                 name = str(agent.get("name") or "").strip()
-                hit = (str(slug).lower() in low) or (bool(name) and name in body)
+                hit = (
+                    (str(slug).lower() in low)
+                    or (bool(name) and name in body)
+                    # 方案B:@ 了它的傀儡账号(前端 mention pill 的正文形态是完整 MXID)
+                    or (self._worker_user_id(str(slug)) in body)
+                )
                 if not hit:
                     continue
-                sp = (agent.get("system_prompt") or "").strip()
-                out = dict(gctx)
-                out["persona"] = (
-                    f"本条由你以协作智能体「{name or slug}」的身份回应，"
-                    f"请按下述人设履职：\n{sp}"
-                )
-                out["skill_slugs"] = [str(s) for s in (agent.get("skill_slugs") or [])]
-                out["model"] = (agent.get("model") or "").strip()
-                return out
+                return _worker_gctx(agent, str(slug))
         except Exception as e:
             logger.debug("协作 Agent 路由失败（忽略，用 lead 回应）：%s", e)
         # 专班 worker 未命中 → 试**发起人自建**智能体(用户自己的"私人 AI 同事",点名即应答)。
@@ -1113,16 +1145,11 @@ class CosmacBot:
                 if not agent:
                     continue
                 name = str(agent.get("name") or "").strip()
-                if (f"@{slug.lower()}" not in low) and not (name and f"@{name}" in body):
+                if ((f"@{slug.lower()}" not in low)
+                        and not (name and f"@{name}" in body)
+                        and (self._worker_user_id(slug) not in body)):
                     continue
-                out = dict(gctx)
-                out["persona"] = (
-                    f"本条由你以协作智能体「{name or slug}」的身份回应，"
-                    f"请按下述人设履职：\n{(agent.get('system_prompt') or '').strip()}"
-                )
-                out["skill_slugs"] = [str(s) for s in (agent.get("skill_slugs") or [])]
-                out["model"] = (agent.get("model") or "").strip()
-                return out
+                return _worker_gctx(agent, slug)
         except Exception as e:
             logger.debug("已获取智能体路由失败（忽略）：%s", e)
         return gctx
@@ -1357,6 +1384,67 @@ class CosmacBot:
             self._acquired_cache.clear()
         return slugs
 
+    # ═══ 方案B:AI 同事傀儡账号(每个协作 Agent 一个独立 Matrix 账号) ═══
+    # 命名 @guduu-ai-<slug>:<域>——落在 appservice namespace(@guduu.*)内,注册文件无需改。
+    # 傀儡像真成员一样出现在频道成员列表,消息以它自己的名字/头像发,@ 它即由它应答。
+
+    _PUPPET_PREFIX = "guduu-ai-"
+
+    def _worker_user_id(self, slug: str) -> str:
+        """协作 Agent slug → 傀儡账号完整 MXID(仅拼名,不保证已注册)。"""
+        return f"@{self._PUPPET_PREFIX}{slug}:{self.config.server_name}"
+
+    def _worker_slug_of(self, user_id: str) -> str:
+        """反解:MXID 是本产品的 AI 傀儡账号则返回其 agent slug,否则空串。"""
+        uid = str(user_id or "")
+        prefix = f"@{self._PUPPET_PREFIX}"
+        if not uid.startswith(prefix):
+            return ""
+        return uid[len(prefix):].split(":", 1)[0]
+
+    def _ensure_worker_account(self, slug: str) -> str:
+        """确保某协作 Agent 的傀儡账号存在(注册幂等)并设好显示名;返回 MXID,失败空串。
+
+        结果按 slug 缓存(进程生命周期):注册/设名只做一次,失败也缓存空串防止每条
+        消息都重试打爆 Synapse——bot 重启后自然重试。
+        """
+        cached = self._worker_account_cache.get(slug)
+        if cached is not None:
+            return cached
+        uid = ""
+        try:
+            if self.client.register_appservice_user(f"{self._PUPPET_PREFIX}{slug}"):
+                uid = self._worker_user_id(slug)
+                agent = self._find_global_agent(slug) or {}
+                name = str(agent.get("name") or slug)
+                # 显示名失败不阻断(profiles 表缺行的 Synapse bug 见 memory,重启可重试)
+                self.client.set_displayname_as(uid, name)
+        except Exception:
+            logger.exception("确保 AI 同事账号失败 slug=%s", slug)
+            uid = ""
+        self._worker_account_cache[slug] = uid
+        return uid
+
+    def _ensure_worker_in_room(self, room_id: str, slug: str) -> str:
+        """把某协作 Agent 的傀儡账号拉进频道(注册→邀请→join,全幂等)。
+
+        assemble_team 建专班时逐个调用,让 AI 同事**真的出现在成员列表里**(方案B)。
+        返回傀儡 MXID;任一步失败返回空串(专班照常,退回方案A 的"人设应答"不阻断)。
+        """
+        uid = self._ensure_worker_account(slug)
+        if not uid:
+            return ""
+        try:
+            self.client.invite_user(room_id, uid)  # 已在房/重复邀请由 join 兜底
+        except Exception:
+            logger.debug("邀请傀儡 %s 进 %s 失败(继续尝试 join)", uid, room_id, exc_info=True)
+        try:
+            if self.client.join_room_as(room_id, uid):
+                return uid
+        except Exception:
+            logger.exception("傀儡 %s join %s 失败", uid, room_id)
+        return ""
+
     # ═══ AI 任务自动执行(负责人需求:任务派给 AI 同事后要真的被执行) ═══
 
     # 一轮自动执行最多跑几个 AI 任务(防模型拆出超长清单把 LLM 额度烧穿;超出的留看板可 @ 手动要)
@@ -1430,9 +1518,22 @@ class CosmacBot:
                 err = str(e)[:120]
             if out:
                 try:
-                    self.client.send_text(
-                        room_id, f"🤖【{name}】交付任务#{tid}《{title}》：\n\n{out}"
-                    )
+                    # 方案B:产出以该 AI 同事的傀儡账号身份发(时间线显示它的名字/头像);
+                    # 傀儡不可用(账号建不了/不在房)退回主 AI 代打署名,绝不丢产出。
+                    puppet = ""
+                    try:
+                        puppet = self._ensure_worker_in_room(room_id, slug)
+                    except Exception:
+                        puppet = ""
+                    sent = None
+                    if puppet:
+                        sent = self.client.send_text_as(
+                            room_id, f"📦 交付任务#{tid}《{title}》：\n\n{out}", puppet
+                        )
+                    if not sent:
+                        self.client.send_text(
+                            room_id, f"🤖【{name}】交付任务#{tid}《{title}》：\n\n{out}"
+                        )
                 except Exception:
                     logger.debug("自动执行:产出发频道失败(看板照常回填)", exc_info=True)
                 try:
@@ -2131,7 +2232,10 @@ class CosmacBot:
             "CosMac",                        # 直接打名字开头就算叫它
         ]
 
-    def _agent_mention_hit(self, room_id: str, sender: str, body: str) -> bool:
+    def _agent_mention_hit(
+        self, room_id: str, sender: str, body: str,
+        mentioned_ids: Optional[List[str]] = None,
+    ) -> bool:
         """群聊补充触发:这条消息是否**点名**了一个可路由的智能体。
 
         与 _apply_worker_routing 配对:这里判"要不要应答",那里判"以谁的人设答"。
@@ -2139,16 +2243,25 @@ class CosmacBot:
         命中规则(防误触发,比路由的"正文包含"严):
           - worker/自建(显式绑定,预期强):消息以 名字/slug 开头,或正文任意处 @名字/@slug;
           - 已获取的全局智能体:只认显式 @点名(名字可能是"文案"这类常用词,
-            正文包含或开头匹配都会让 AI 在人聊天时乱入)。
+            正文包含或开头匹配都会让 AI 在人聊天时乱入);
+          - 方案B:m.mentions/正文里出现某 AI 同事的**傀儡 MXID**(@guduu-ai-<slug>:域)
+            = 最明确的点名,任何类别都算命中(mentioned_ids 由调用方传 m.mentions)。
         全程兜异常返回 False——本判定失败只是退回"要 @ 主 AI 才应答"的旧行为。
         """
         body = (body or "").strip()
+        # 方案B 最短路径:标准 m.mentions 里直接 @ 了某个傀儡账号
+        for uid in (mentioned_ids or []):
+            if self._worker_slug_of(uid):
+                return True
         if not body:
             return False
         low = body.lower()
 
         def _hit(slug: str, name: str, at_only: bool) -> bool:
             """单个候选的命中判定。at_only=True 时只认 @点名。"""
+            puppet = self._worker_user_id(slug)
+            if puppet and puppet in body:
+                return True  # 正文里出现傀儡 MXID(@pill 的 fallback 形态)
             slug = (slug or "").strip().lower()
             name = (name or "").strip()
             if slug and (f"@{slug}" in low or (not at_only and low.startswith(slug))):

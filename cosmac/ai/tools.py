@@ -182,6 +182,9 @@ class Toolbox:
         # 签名 (room_id, sender, task_ids, task_rule) -> None。None=不自动执行(仅落看板)。
         # 负责人需求:任务分配给 Agent 后要真的被执行,而不是躺在看板上等人 @。
         self.auto_execute_agent_tasks: Optional[Callable[..., None]] = None
+        # 方案B(bot 注入):把协作 Agent 的**傀儡账号**拉进专班频道(注册→邀请→join)。
+        # 签名 (room_id, slug) -> 傀儡MXID(失败空串)。None/失败=退回方案A(人设应答),不阻断。
+        self.ensure_worker_in_room: Optional[Callable[[str, str], str]] = None
         # 「群名→room_id」解析用的房名缓存(room_id → (名字, 时间戳);5 分钟 TTL,见 _resolve_room_by_name)
         self._room_name_cache: Dict[str, tuple] = {}
         # 房间类型缓存(room_id → 'ai'/'dm'/'channel';建房标记不变,永久缓存,见 _room_kind)
@@ -1955,6 +1958,17 @@ class Toolbox:
             logger.exception("写专班频道配置失败（M7）")
             config_ok = False
 
+        # 方案B:把每个协作 Agent 的傀儡账号拉进专班——AI 同事真的出现在成员列表里,
+        # 消息以它自己的名字发。失败(账号建不了/namespace 不符)退回方案A 人设应答,不阻断。
+        joined_workers: List[str] = []
+        if workers and self.ensure_worker_in_room:
+            for w in workers:
+                try:
+                    if self.ensure_worker_in_room(room_id, w):
+                        joined_workers.append(w)
+                except Exception:
+                    logger.debug("拉 AI 同事 %s 进专班失败(退回人设应答)", w, exc_info=True)
+
         # 派任务卡进这个专班（作用域 = 新频道）
         n_tasks = 0
         task_items = args.get("tasks") or []
@@ -2009,7 +2023,10 @@ class Toolbox:
             # 只有频道配置真写进去了，才宣称人设/协作/知识库/RULE 已生效（M7）
             parts.append(f"项目主AI：{lead}" if lead else "项目主AI：内置编排人设")
             if workers:
-                parts.append("AI 协作：" + "、".join(workers))
+                joined = set(joined_workers)
+                parts.append("AI 协作：" + "、".join(
+                    (w + "(已进频道)") if w in joined else w for w in workers
+                ))
             if kb_labels:
                 parts.append("已把知识库调进本频道（全体成员/AI 可检索）：" + "、".join(kb_labels))
             if task_rule:
