@@ -82,6 +82,10 @@ import {
   acceptPendingInvites,
   isProjectArchived,
   botId,
+  getChannelConfig,
+  fetchMarketCatalog,
+  fetchMarketAcquired,
+  myAgentsList,
   type LiveRoom,
   type LiveMsg,
   type LiveSpace,
@@ -1663,8 +1667,127 @@ const tb = reactive({
   code: () => wrap('`', '`', '代码'),
   quote: () => prefixLine('> '),
   ul: () => prefixLine('- '),
-  at: () => { insertText('@'); toast('@ 提及', '可 @ 成员或 @ 某个 Agent') },
+  // 插入 @ 并立刻弹出候选(成员+本频道 AI Agent),与手打 @ 同一套补全
+  at: () => { insertText('@'); nextTick(detectMention) },
 })
+
+/* ── @ 补全：输入框打 @ 弹出「频道成员 + AI Agent」候选 ──────────────
+ * 候选四类:频道成员(真人/主AI) / 本频道绑定的协作 Agent(专班 worker) /
+ * 我自建的智能体 / 我商城已获取的智能体。后三类 bot 侧已支持 @名字 路由应答
+ * (档3b + _agent_mention_hit),这里补前端入口——负责人需求:拆完任务 Agent
+ * 进了频道,用户在输入框 @ 时要能看到并选中它们。
+ * 选中插入「@名字 」纯文本(worker/自建/已获取按名字路由;真人靠渲染层染色)。 */
+interface MentionCand { key: string; label: string; sub: string; isAgent: boolean }
+const mentionOpen = ref(false)
+const mentionQuery = ref('')
+const mentionIdx = ref(0)
+const mentionStart = ref(-1)              // draft 里触发这次补全的 @ 位置
+const mentionPool = ref<MentionCand[]>([])   // 本频道的完整候选池(懒构建,切频道失效)
+const mentionPoolRoom = ref('')              // 候选池对应的频道(失效判定)
+let marketAgentNames: Map<string, string> | null = null // slug→名字(商城目录,会话级缓存)
+
+/** 构建本频道候选池(首次触发 @ 时拉一次;失败只影响该类候选,绝不阻断输入)。 */
+async function buildMentionPool() {
+  const room = currentRoom.value
+  const pool: MentionCand[] = []
+  const seenAgent = new Set<string>()
+  // ① 频道成员(真人 + 主 AI)
+  for (const m of channelMembers.value) {
+    if (m.pending) continue
+    pool.push({ key: 'u:' + m.id, label: m.name, sub: m.isBot ? '主 AI' : '成员', isAgent: !!m.isBot })
+  }
+  // slug→名字 映射(本频道 worker 与已获取都要用;目录仅拉一次)
+  if (!marketAgentNames) {
+    try {
+      const cat = await fetchMarketCatalog()
+      marketAgentNames = new Map(
+        (cat?.items || []).filter((i) => i.kind === 'agent').map((i) => [i.slug, i.name]),
+      )
+    } catch { marketAgentNames = null }
+  }
+  // ② 本频道绑定的协作 Agent(专班 worker,建专班时写进 channel_config.agentSlugs)
+  try {
+    for (const s of (getChannelConfig(room)?.agentSlugs || []) as string[]) {
+      if (!s || seenAgent.has(s)) continue
+      seenAgent.add(s)
+      pool.push({ key: 'a:' + s, label: marketAgentNames?.get(s) || s, sub: '本频道 AI', isAgent: true })
+    }
+  } catch { /* 读不到配置就没有这一类 */ }
+  // ③ 我自建的智能体(任意频道点名即应答)
+  try {
+    for (const a of await myAgentsList()) {
+      if (seenAgent.has(a.slug)) continue
+      seenAgent.add(a.slug)
+      pool.push({ key: 'my:' + a.slug, label: a.name || a.slug, sub: '我的 AI', isAgent: true })
+    }
+  } catch { /* 未登录/接口失败,略过 */ }
+  // ④ 我商城已获取的智能体(任意频道 @点名即应答)
+  try {
+    for (const g of (await fetchMarketAcquired()) || []) {
+      if (g.kind !== 'agent' || g.stale || seenAgent.has(g.slug)) continue
+      seenAgent.add(g.slug)
+      pool.push({ key: 'got:' + g.slug, label: g.name || g.slug, sub: '已获取', isAgent: true })
+    }
+  } catch { /* 同上 */ }
+  mentionPool.value = pool
+  mentionPoolRoom.value = room
+}
+
+/** 过滤后的候选(名字/来源包含关键字,最多 8 条;查询为空列全部)。 */
+const mentionList = computed(() => {
+  const q = mentionQuery.value.trim().toLowerCase()
+  const hit = q
+    ? mentionPool.value.filter((c) => c.label.toLowerCase().includes(q) || c.key.slice(c.key.indexOf(':') + 1).toLowerCase().includes(q))
+    : mentionPool.value
+  return hit.slice(0, 8)
+})
+
+/** 检测光标前是否正在打「@关键字」,是则打开/刷新补全面板。 */
+async function detectMention() {
+  const ta = taRef.value
+  if (!ta || !currentRoom.value) { mentionOpen.value = false; return }
+  const upto = draft.value.slice(0, ta.selectionStart)
+  const at = upto.lastIndexOf('@')
+  // @ 必须存在,且其前面是行首/空白/常见标点(避免邮箱等误触发)
+  if (at < 0 || (at > 0 && !/[\s(（,，:：、]/.test(upto[at - 1]))) { mentionOpen.value = false; return }
+  const q = upto.slice(at + 1)
+  // @ 后已出现空白(点名已完成)或太长 → 不再补全
+  if (/\s/.test(q) || q.length > 24) { mentionOpen.value = false; return }
+  if (mentionPoolRoom.value !== currentRoom.value) await buildMentionPool()
+  mentionStart.value = at
+  mentionQuery.value = q
+  mentionIdx.value = 0
+  mentionOpen.value = mentionList.value.length > 0
+}
+
+/** 选中一条候选:把「@关键字」替换成「@名字 」,光标停在其后。 */
+function pickMention(c: MentionCand) {
+  const ta = taRef.value
+  if (!ta) return
+  const insert = '@' + c.label + ' '
+  const tail = draft.value.slice(ta.selectionStart)
+  draft.value = draft.value.slice(0, mentionStart.value) + insert + tail
+  mentionOpen.value = false
+  const caret = mentionStart.value + insert.length
+  nextTick(() => { ta.focus(); ta.setSelectionRange(caret, caret) })
+}
+
+/** 输入框统一按键处理:补全面板打开时接管 ↑↓/Enter/Tab/Esc,否则维持原行为。 */
+function onComposerKeydown(e: KeyboardEvent) {
+  if (mentionOpen.value) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); mentionIdx.value = (mentionIdx.value + 1) % mentionList.value.length; return }
+    if (e.key === 'ArrowUp') { e.preventDefault(); mentionIdx.value = (mentionIdx.value - 1 + mentionList.value.length) % mentionList.value.length; return }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      const c = mentionList.value[mentionIdx.value]
+      if (c) { e.preventDefault(); pickMention(c); return }
+    }
+    if (e.key === 'Escape') { e.preventDefault(); mentionOpen.value = false; return }
+  }
+  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
+    e.preventDefault(); send(); return
+  }
+  if (e.key === 'Escape') { editingId.value ? cancelEdit() : cancelReply() }
+}
 
 // ── 顶栏按钮 / 应用切换 / 工作区工具 ──────────────────
 // 升级会员弹窗（模块4 交易系统 · 用户侧）
@@ -2377,13 +2500,30 @@ onBeforeUnmount(() => {
             <span class="reply-bar-txt">✏️ 正在<b>编辑</b>消息 · Enter 保存，Esc 取消</span>
             <button class="reply-bar-x" title="取消编辑" @click="cancelEdit">×</button>
           </div>
+          <!-- @ 补全面板:成员 + 本频道/我的/已获取 AI Agent(↑↓选,Enter/Tab/点击确认) -->
+          <div v-if="mentionOpen" class="mention-pop">
+            <button
+              v-for="(c, i) in mentionList"
+              :key="c.key"
+              class="mention-item"
+              :class="{ active: i === mentionIdx }"
+              @mousedown.prevent="pickMention(c)"
+              @mouseenter="mentionIdx = i"
+            >
+              <span class="mention-ava" :class="{ agent: c.isAgent }">{{ c.isAgent ? '智' : initials(c.label) }}</span>
+              <span class="mention-name">{{ c.label }}</span>
+              <span class="mention-sub">{{ c.sub }}</span>
+            </button>
+          </div>
           <div class="composer-box">
             <textarea
               ref="taRef"
               v-model="draft"
               :placeholder="currentIsDm ? `发消息给 ${currentName}` : `发送到 #${currentName}；叫主 AI 试：CosMac 建专班 测试专班`"
-              @keydown.enter.exact.prevent="send"
-              @keydown.esc="editingId ? cancelEdit() : cancelReply()"
+              @keydown="onComposerKeydown"
+              @input="detectMention"
+              @click="detectMention"
+              @blur="mentionOpen = false"
             />
             <div class="composer-toolbar">
               <div class="tb-left">
@@ -3403,8 +3543,29 @@ onBeforeUnmount(() => {
 .rich .kv .v.human { color: var(--warn); }
 
 /* Composer */
-.composer { flex-shrink: 0; padding: 8px var(--content-pad-x) 14px; background: var(--bg); }
+.composer { position: relative; flex-shrink: 0; padding: 8px var(--content-pad-x) 14px; background: var(--bg); }
 .composer-box { border: 1px solid var(--border); border-radius: 12px; background: var(--bg-panel); overflow: hidden; transition: border-color .12s ease, box-shadow .12s ease; }
+/* ── @ 补全面板(停靠在整个 composer 上方;composer-box 有 overflow:hidden 不能挂里面) ── */
+.mention-pop {
+  position: absolute; bottom: calc(100% + 6px); left: 14px; z-index: 60;
+  min-width: 260px; max-width: 360px; max-height: 264px; overflow-y: auto;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.16); padding: 4px;
+}
+.mention-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 8px; border: none; background: transparent; border-radius: 7px;
+  cursor: pointer; text-align: left;
+}
+.mention-item.active { background: var(--bg-hover); }
+.mention-ava {
+  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-soft); color: var(--text-2); font-size: 10px; font-weight: 700;
+}
+.mention-ava.agent { background: var(--accent); color: #fff; }
+.mention-name { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-sub { margin-left: auto; font-size: 11px; color: var(--text-3); flex-shrink: 0; }
 .composer-box:focus-within { border-color: var(--ws-active); box-shadow: 0 0 0 3px var(--ws-active-soft); }
 .composer textarea { width: 100%; border: none; background: transparent; outline: none; resize: none; font-family: var(--font-body); font-size: 14px; color: var(--text); min-height: 38px; line-height: 1.55; padding: 10px 14px 4px; display: block; }
 .composer textarea::placeholder { color: var(--text-dim); }
