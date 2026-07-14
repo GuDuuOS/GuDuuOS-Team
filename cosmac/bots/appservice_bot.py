@@ -822,10 +822,16 @@ class CosmacBot:
             )
             wf_text = self._preset_workflows_text(gctx.get("workflow_slugs") or [])
             # 当前时间：让模型能把"3天后/下周五"这类相对期限换算成绝对日期（拆任务设 due 用）。
-            # 按产品时区(默认北京时间,见 tzutil)——服务器是 UTC,直接 localtime 会差 8 小时
+            # 按产品时区(默认北京时间,见 tzutil)——服务器是 UTC,直接 localtime 会差 8 小时。
+            # 附未来两周「日期↔星期」对照表:模型心算未来日期的星期常错(线上写过
+            # "7月18日(周五)"实际是周六),涉及日期的文案让它照抄对照表,不许自己推。
             from cosmac.tzutil import now_text as _tz_now
+            from cosmac.tzutil import weekday_table
 
-            now_text = "【当前时间】" + _tz_now()
+            now_text = (
+                "【当前时间】" + _tz_now()
+                + "\n未来两周星期对照(写日期时照抄,别自己推算):" + weekday_table()
+            )
             # 时间 → 交互准则(内置基线) → 平台规则 → 任务RULE → 人设 → 用户偏好 → 长期记忆 → 技能 → 知识库 → 预置工作流
             return "\n\n".join(
                 p for p in (

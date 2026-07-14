@@ -49,6 +49,19 @@ class TestTzUtil(unittest.TestCase):
         os.environ["COSMAC_TZ"] = "Not/AZone"
         self.assertIsNotNone(parse_local_to_epoch("2026-07-14 11:30", "%Y-%m-%d %H:%M"))
 
+    def test_weekday_table(self) -> None:
+        # 对照表:从明天起 N 天,格式 MM-DD周X,星期与 zoneinfo 权威推算一致
+        from datetime import datetime, timedelta
+        from cosmac.tzutil import product_tz, weekday_table
+        os.environ["COSMAC_TZ"] = "Asia/Shanghai"
+        table = weekday_table(14)
+        items = table.split(" ")
+        self.assertEqual(len(items), 14)
+        wd = "一二三四五六日"
+        for i, it in enumerate(items, start=1):
+            d = datetime.now(product_tz()) + timedelta(days=i)
+            self.assertEqual(it, f"{d.strftime('%m-%d')}周{wd[d.weekday()]}")
+
     def test_due_parse_uses_product_tz(self) -> None:
         # 任务截止解析(_parse_due_to_epoch)同口径:date-only 默认当天 23:59
         os.environ["COSMAC_TZ"] = "Asia/Shanghai"
