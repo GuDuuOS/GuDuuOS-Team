@@ -1,5 +1,24 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-15 — feat:方案B·P1——AI 同事独立账号(傀儡),像真成员一样进频道
+- 负责人拍板从方案A(单 bot 多人设)升级方案B。P1 落地:每个协作 Agent 一个
+  **appservice 傀儡账号** `@guduu-ai-<slug>`(落在注册文件 namespace `@guduu.*` 内,
+  **Synapse 配置零改动**;线上部署前需确认 registration 的 regex 同构)。
+- 后端:MatrixClient 新增 register_appservice_user/set_displayname_as/join_room_as/
+  send_text_as(?user_id= 伪装,as_token 仍走 Authorization 头);bot
+  `_ensure_worker_account`(注册幂等+显示名=智能体名,结果按 slug 缓存)+
+  `_ensure_worker_in_room`(邀请+join,失败退回方案A 人设应答不阻断);assemble_team
+  建班时逐个把 worker 傀儡拉进频道(开班消息标"已进频道");@傀儡(m.mentions/正文
+  MXID)触发应答且以傀儡身份发(gctx.as_user,失败回退主 AI 身份+独立 txn 防丢);
+  自动执行(档6)产出也以傀儡身份发;**回环防护**:bot 忽略傀儡自己的消息。
+- 前端:isAiWorkerId 判定——成员列表傀儡按"智"渲染;用户管理列表过滤 AI 账号
+  (防污染统计/误停用);AdminView 成员弹窗标「AI 同事·slug」。
+- 真 Synapse 端到端实测:注册→显示名→邀请→join→伪装发送(sender=傀儡)全通;
+  profiles 500 坑未触发(正常注册流程自带 profile 行)。9 项新单测,全量 543 过。
+- P2 待做:前端 @ 补全插真 mention pill、单聊傀儡、Agent 头像、傀儡退频道清理。
+- 部署:前端 dist + 重启 guduu-bot;先确认线上 /opt/guduu/synapse 的 appservice
+  registration namespace regex 为 `@guduu.*:cosmac\\.cc`(不符需改+重启 synapse)。
+
 ## 2026-07-15 — feat:AI 任务自动执行——派给 AI 同事的任务真的被执行(模块3.5 补闭环)
 - 负责人线上实测报:专班任务派给 copywriter 后没人执行、超时告警;此前架构里 worker
   只在被 @ 时应答,"派单"只是看板记录,没有执行环(Task 表注释里的 P2 一直没做)。

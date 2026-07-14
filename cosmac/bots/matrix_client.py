@@ -35,14 +35,15 @@ class MatrixClient:
         # 避免本来 2 人的私聊被误判成群聊→bot 因"没被 @"而沉默（可用性 bug）。
         self._member_count_cache: Dict[str, int] = {}
 
-    def _url(self, path: str) -> str:
+    def _url(self, path: str, as_user: str = "") -> str:
         """拼出完整的 API URL，只在查询参数里带 user_id（身份标识，非密钥）。
 
-        - user_id：明确以主 AI（@guduu）的身份操作（appservice 可代理其名下用户）。
+        - user_id：以谁的身份操作——缺省主 AI（@guduu）;传 ``as_user`` 则以该
+          **傀儡账号**(方案B 的 AI 同事独立账号,同在 appservice namespace 下)操作。
         - 鉴权（as_token）走 Authorization 头，见 __init__ 的 Session，不进 URL。
         """
         sep = "&" if "?" in path else "?"
-        return f"{self.homeserver_url}{path}{sep}user_id={quote(self.bot_user_id)}"
+        return f"{self.homeserver_url}{path}{sep}user_id={quote(as_user or self.bot_user_id)}"
 
     def _txn_id(self) -> str:
         """生成一个唯一的事务 id（Matrix 要求发送类请求带上，用于去重）。"""
@@ -79,6 +80,70 @@ class MatrixClient:
             logger.info("已向房间 %s 发送消息, event_id=%s", room_id, event_id)
             return event_id
         logger.warning("向房间 %s 发消息失败: %s %s", room_id, resp.status_code, resp.text)
+        return None
+
+    # ═══ 傀儡账号(方案B:每个 AI 同事一个独立 Matrix 账号,像真成员一样在频道里) ═══
+
+    def register_appservice_user(self, localpart: str) -> bool:
+        """注册一个 appservice 名下的傀儡账号(m.login.application_service)。
+
+        幂等:已存在(M_USER_IN_USE)也算成功。localpart 必须落在注册文件 namespace
+        (@guduu.* )内,否则 Synapse 拒绝(M_EXCLUSIVE)。
+        """
+        url = f"{self.homeserver_url}/_matrix/client/v3/register"
+        body = {"type": "m.login.application_service", "username": localpart}
+        try:
+            resp = self._session.post(url, json=body, timeout=10)
+            if resp.status_code == 200:
+                logger.info("已注册 AI 同事账号 @%s", localpart)
+                return True
+            if resp.status_code == 400 and "M_USER_IN_USE" in resp.text:
+                return True  # 已存在,幂等成功
+            logger.warning("注册 AI 同事账号 %s 失败: %s %s", localpart, resp.status_code, resp.text)
+        except requests.RequestException:
+            logger.warning("注册 AI 同事账号 %s 网络失败", localpart, exc_info=True)
+        return False
+
+    def set_displayname_as(self, user_id: str, displayname: str) -> bool:
+        """给名下傀儡账号设置显示名(带 ?user_id= 伪装;失败只记日志,不阻断)。"""
+        url = self._url(
+            f"/_matrix/client/v3/profile/{quote(user_id)}/displayname", as_user=user_id
+        )
+        try:
+            resp = self._session.put(url, json={"displayname": displayname}, timeout=10)
+            return resp.status_code == 200
+        except requests.RequestException:
+            logger.debug("设置傀儡显示名失败 %s", user_id, exc_info=True)
+            return False
+
+    def join_room_as(self, room_id: str, user_id: str) -> bool:
+        """让傀儡账号加入房间(通常在主 AI 邀请它之后调)。"""
+        url = self._url(f"/_matrix/client/v3/rooms/{quote(room_id)}/join", as_user=user_id)
+        try:
+            resp = self._session.post(url, json={}, timeout=10)
+            if resp.status_code == 200:
+                return True
+            logger.warning("傀儡 %s 加入 %s 失败: %s %s", user_id, room_id, resp.status_code, resp.text)
+        except requests.RequestException:
+            logger.warning("傀儡 %s 加入 %s 网络失败", user_id, room_id, exc_info=True)
+        return False
+
+    def send_text_as(
+        self, room_id: str, text: str, user_id: str, txn_id: Optional[str] = None
+    ) -> Optional[str]:
+        """以傀儡账号身份发一条文本消息(时间线上显示为该 AI 同事本人,而非主 AI 代打)。"""
+        txn = txn_id or self._txn_id()
+        url = self._url(
+            f"/_matrix/client/v3/rooms/{quote(room_id)}/send/m.room.message/{txn}",
+            as_user=user_id,
+        )
+        try:
+            resp = self._session.put(url, json={"msgtype": "m.text", "body": text}, timeout=10)
+            if resp.status_code == 200:
+                return resp.json().get("event_id")
+            logger.warning("以 %s 身份发消息失败: %s %s", user_id, resp.status_code, resp.text)
+        except requests.RequestException:
+            logger.warning("以 %s 身份发消息网络失败", user_id, exc_info=True)
         return None
 
     def edit_text(self, room_id: str, event_id: str, new_text: str) -> bool:

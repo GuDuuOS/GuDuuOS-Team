@@ -106,6 +106,26 @@ class TestAssembleTeam(unittest.TestCase):
         self.assertIn("open", content.get("agentSlugs", []))
         self.assertIn("越权班", out)  # 专班仍建成，只是没绑受限的 vip
 
+    def test_workers_pulled_into_room_as_puppets(self) -> None:
+        # 方案B:建专班时把每个协作 Agent 的傀儡账号拉进频道(注入回调);
+        # 失败的不进"已进频道"名单,专班照常(退回方案A 人设应答)。
+        pulled: list = []
+
+        def _pull(room: str, slug: str) -> str:
+            if slug == "broken":
+                return ""  # 模拟账号建不了
+            pulled.append((room, slug))
+            return f"@guduu-ai-{slug}:h"
+
+        self.tb.ensure_worker_in_room = _pull
+        self.tb.known_agents = lambda for_user=None: {"copywriter", "broken"}
+        self._run({"project": "傀儡班", "worker_agents": ["copywriter", "broken"]})
+        self.assertEqual(pulled, [("!team:h", "copywriter")])
+        # 开班消息:进了频道的标注"已进频道",失败的不标(退回人设应答)
+        opening = "\n".join(t for _r, t in self.client.sent)
+        self.assertIn("copywriter(已进频道)", opening)
+        self.assertNotIn("broken(已进频道)", opening)
+
     def test_agent_tasks_trigger_auto_execute(self) -> None:
         # 派给 AI 同事的任务要触发自动执行回调(负责人需求:派了就干,不等人 @);
         # 人工任务不触发。回调收到的是这批任务里 agent 类的 task id。

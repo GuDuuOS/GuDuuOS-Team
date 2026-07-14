@@ -1003,7 +1003,8 @@ export function listRoomMembers(roomId: string): { id: string; name: string; isB
   const joined = (room.getJoinedMembers() || []).map((m: any) => ({
     id: m.userId,
     name: m.name || m.userId,
-    isBot: m.userId === botId(),
+    // 主 AI 与 AI 同事傀儡账号(方案B,@guduu-ai-*)都按 bot 渲染(头像「智」)
+    isBot: m.userId === botId() || isAiWorkerId(m.userId),
   }))
   const invited = ((room as any).getMembersWithMembership?.('invite') || []).map((m: any) => ({
     id: m.userId,
@@ -1266,6 +1267,9 @@ export async function listUsers(): Promise<AdminUser[]> {
       `/_synapse/admin/v2/users?from=${from}&limit=${limit}&guests=false&deactivated=true`,
     )
     for (const u of data.users || []) {
+      // AI 同事傀儡账号(方案B,@guduu-ai-*)不进「用户管理」——它们不是真实用户,
+      // 混进来会污染账号统计,管理员误停用还会弄哑对应智能体。
+      if (isAiWorkerId(u.name)) continue
       const localpart = (u.name || '').replace(/^@/, '').split(':')[0]
       out.push({
         id: u.name,
@@ -3489,6 +3493,11 @@ const BOT_LOCALPART = 'guduu'
  */
 export function botId(): string {
   return `@${BOT_LOCALPART}:${serverName()}`
+}
+
+/** 该 MXID 是否为「AI 同事傀儡账号」(方案B:@guduu-ai-<slug>:域,appservice 名下)。 */
+export function isAiWorkerId(userId: string): boolean {
+  return String(userId || '').startsWith('@guduu-ai-')
 }
 
 /** 找到我和主 AI 的私聊房间（仅两人）；没有返回 null。 */
