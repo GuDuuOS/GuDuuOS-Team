@@ -425,9 +425,9 @@
           </div>
 
           <!-- 预置技能库（平台内置，随对应 AI 同事激活；可覆盖为自定义）-->
-          <div v-if="presetSkills.length" class="adm-preset-block">
+          <div v-if="presetSkillsFiltered.length" class="adm-preset-block">
             <div class="adm-preset-h">
-              <span>🧩 预置技能库</span>
+              <span>🧩 预置技能库{{ skSearch ? `（匹配 ${presetSkillsFiltered.length}/${presetSkills.length}）` : '' }}</span>
               <span class="adm-preset-sub">平台内置、<b>改不动</b> · 已绑给对应 AI 同事，@ 或指派它时自动激活，不占每轮上下文。想改某个 → 点「覆盖为自定义」复制成<b>可编辑副本</b>（同标识），你改完保存后<b>用你这份</b>。</span>
             </div>
             <table class="adm-table">
@@ -435,7 +435,7 @@
                 <tr><th>标识</th><th>名称</th><th>说明</th><th>随谁激活</th><th>操作</th></tr>
               </thead>
               <tbody>
-                <tr v-for="s in presetSkills" :key="'p-' + s.slug">
+                <tr v-for="s in presetSkillsFiltered" :key="'p-' + s.slug">
                   <td class="adm-nowrap"><code>{{ s.slug }}</code></td>
                   <td class="adm-nowrap">
                     {{ s.name || '—' }}
@@ -613,9 +613,9 @@
           </table>
 
           <!-- 预置智能体库（平台内置：原生班底 + agency 引入·已中文化；同标识新建即覆盖）-->
-          <div v-if="presetAgents.length" class="adm-preset-block">
+          <div v-if="presetAgentsFiltered.length" class="adm-preset-block">
             <div class="adm-preset-h">
-              <span>🎭 预置智能体库（{{ presetAgents.length }}）</span>
+              <span>🎭 预置智能体库（{{ agSearch ? `匹配 ${presetAgentsFiltered.length}/${presetAgents.length}` : presetAgents.length }}）</span>
               <span class="adm-preset-sub">平台内置、写死在代码里<b>改不动</b> · 主 AI 拆任务时名册可见、可直接 @/指派。想改某个 → 点「覆盖为自定义」把它复制成一份<b>可编辑副本</b>（同标识），你改完保存后平台就<b>用你这份</b>（不再用内置那份）。</span>
             </div>
             <table class="adm-table">
@@ -623,7 +623,7 @@
                 <tr><th>分组</th><th>标识</th><th>名称</th><th>备注（用户与主 AI 都看这个）</th><th>操作</th></tr>
               </thead>
               <tbody>
-                <tr v-for="a in presetAgentsSorted" :key="'pa-' + a.slug">
+                <tr v-for="a in presetAgentsFiltered" :key="'pa-' + a.slug">
                   <td class="adm-nowrap">{{ a.division || '通用班底' }}</td>
                   <td class="adm-nowrap"><code>{{ a.slug }}</code></td>
                   <td class="adm-nowrap">
@@ -2864,8 +2864,21 @@ const { query: chSearch, filtered: chFiltered } = useListSearch(rooms, (r) => `$
 // 技能 / 智能体 / 模板 / 工作流 / 套餐：按 启用/停用 筛
 const skEn = useEnabledFilter<GlobalSkill>()
 const { query: skSearch, filtered: skFiltered } = useListSearch(skills, (s) => `${s.name} ${s.slug} ${s.description}`, skEn.predicate)
+// 预置库也要接同一个搜索框(负责人报"技能库不支持搜索"——其实只过滤了自定义列表,
+// 页面大头的预置区纹丝不动,体感就是搜索坏了)。预置区不受启用筛选影响(只读展示)。
+const presetSkillsFiltered = computed(() => {
+  const q = skSearch.value.trim().toLowerCase()
+  if (!q) return presetSkills.value
+  return presetSkills.value.filter((s) => `${s.name} ${s.slug} ${s.description}`.toLowerCase().includes(q))
+})
 const agEn = useEnabledFilter<GlobalAgent>()
 const { query: agSearch, filtered: agFiltered } = useListSearch(agents, (a) => `${a.name} ${a.slug} ${a.description}`, agEn.predicate)
+// 同技能库:预置智能体区也接搜索(保持既有排序)
+const presetAgentsFiltered = computed(() => {
+  const q = agSearch.value.trim().toLowerCase()
+  if (!q) return presetAgentsSorted.value
+  return presetAgentsSorted.value.filter((a) => `${a.name} ${a.slug} ${a.description}`.toLowerCase().includes(q))
+})
 const tpEn = useEnabledFilter<OnboardingTemplateDef>()
 const { query: tpSearch, filtered: tpFiltered } = useListSearch(templates, (t) => `${t.label} ${t.key} ${t.desc}`, tpEn.predicate)
 const wfEn = useEnabledFilter<WorkflowDef>()
