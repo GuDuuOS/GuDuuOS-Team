@@ -46,6 +46,22 @@ def fmt_ts(ts: int, fmt: str = "%m-%d %H:%M") -> str:
     return datetime.fromtimestamp(int(ts), product_tz()).strftime(fmt)
 
 
+def weekday_table(days: int = 14) -> str:
+    """未来 N 天的「日期↔星期」紧凑对照表(从明天起),注入给模型防星期算错。
+
+    背景(负责人线上实测):模型写公告"7月18日(周五)",实际是周六——LLM 心算未来
+    日期的星期不可靠,直接把对照表喂给它,涉及日期的文案照抄即可。
+    形如:07-15周三 07-16周四 …(约 7 字符/天,14 天 ≈ 100 字符,注入成本可忽略)。
+    """
+    tz = product_tz()
+    today = datetime.now(tz)
+    parts = []
+    for i in range(1, days + 1):
+        d = today + timedelta(days=i)
+        parts.append(f"{d.strftime('%m-%d')}{_WEEKDAYS[d.weekday()]}")
+    return " ".join(parts)
+
+
 def parse_local_to_epoch(s: str, fmt: str) -> Optional[int]:
     """按产品时区把 naive 时间字符串解析成 epoch 秒(解析失败返回 None)。
 
