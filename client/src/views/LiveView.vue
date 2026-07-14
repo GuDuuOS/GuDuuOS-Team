@@ -300,7 +300,12 @@ const showDoneProjects = computed(() =>
   doneProjectsOpen.value || doneProjects.value.some((p) => p.goal === activeGoal.value))
 const visibleTasks = computed(() =>
   activeGoal.value ? scopedTasks.value.filter((t) => (t.goal || '未归类') === activeGoal.value) : scopedTasks.value)
-function tasksByStatus(s: string) { return visibleTasks.value.filter((t) => t.status === s) }
+// 列内按截止时间升序(负责人建议:最紧急的排最前);无截止时间的沉底,同截止按 id 稳定
+function tasksByStatus(s: string) {
+  return visibleTasks.value
+    .filter((t) => t.status === s)
+    .sort((a, b) => ((a.due_ts || Infinity) - (b.due_ts || Infinity)) || (a.id - b.id))
+}
 // 档2 类型化执行者 → 看板小标签（人/AI/工作流）；none 或无 ref 返回空、不显示
 function execLabel(t: TaskItem): string {
   const ref = (t.executor_ref || '').trim()
