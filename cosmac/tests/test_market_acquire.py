@@ -16,9 +16,11 @@ from typing import Optional
 from cosmac.ai.tools import ToolContext
 from cosmac.bots.appservice_bot import CosmacBot
 from cosmac.config import CosmacConfig
+from cosmac.config import CHANNEL_CONFIG_EVENT_TYPE
 from cosmac.db import init_engine
 
 CTRL = "!ctrl:h"
+TEAM_ROOM = "!team:h"  # 绑定了 copywriter 当 worker 的"专班"频道
 U = "@u:h"
 OTHER = "@other:h"
 
@@ -40,6 +42,8 @@ class _C:
     def get_state_event(self, room_id, etype, state_key=""):
         if room_id == CTRL and etype == "cosmac.agents":
             return {"agents": AGENTS}
+        if room_id == TEAM_ROOM and etype == CHANNEL_CONFIG_EVENT_TYPE:
+            return {"agentSlugs": ["pub-agent"]}  # 专班绑定 pub-agent 当 worker
         return None
 
     def set_displayname(self, *a, **k):
@@ -115,6 +119,34 @@ class TestMarketAcquire(unittest.TestCase):
             self.assertTrue(p["items"][0]["stale"])
         finally:
             AGENTS[0]["enabled"] = True
+
+    def test_group_trigger_by_agent_mention(self) -> None:
+        """群聊补充触发(_agent_mention_hit):点名可路由智能体才应答,防误触发。"""
+        room = "!plain:h"  # 普通频道,没绑 worker
+        # 未获取、非专班、无自建 → @copywriter 不触发(可路由集合为空)
+        self.assertFalse(self.bot._agent_mention_hit(room, U, "@pub-agent 帮忙润色"))
+        # 专班频道:绑定的 worker 按 @slug / slug开头 都触发
+        self.assertTrue(self.bot._agent_mention_hit(TEAM_ROOM, U, "@pub-agent 帮忙润色"))
+        self.assertTrue(self.bot._agent_mention_hit(TEAM_ROOM, U, "pub-agent 进度如何"))
+        self.assertTrue(self.bot._agent_mention_hit(TEAM_ROOM, U, "@公共智能体 帮忙润色"))
+        self.assertFalse(self.bot._agent_mention_hit(TEAM_ROOM, U, "今天天气不错"))
+        # 商城获取后:任意频道 @点名 触发;但名字只出现在正文(不带@)不触发(防日常词乱入)
+        self.bot.handle_market_acquire("tok", {"kind": "agent", "slug": "pub-agent"})
+        self.assertTrue(self.bot._agent_mention_hit(room, U, "@pub-agent 帮忙润色"))
+        self.assertTrue(self.bot._agent_mention_hit(room, U, "请 @公共智能体 帮忙润色"))
+        self.assertFalse(self.bot._agent_mention_hit(room, U, "帮我找公共智能体聊聊"))
+        # 别人没获取,同一条消息不触发
+        self.assertFalse(self.bot._agent_mention_hit(room, OTHER, "@pub-agent 帮忙润色"))
+
+    def test_routing_falls_back_to_acquired_agent(self) -> None:
+        """路由(_apply_worker_routing):非专班频道里 @已获取的智能体 → 切到它的人设。"""
+        self.bot.handle_market_acquire("tok", {"kind": "agent", "slug": "pub-agent"})
+        gctx = {"worker_slugs": [], "persona": "", "skill_slugs": [], "model": ""}
+        out = self.bot._apply_worker_routing("@pub-agent 帮忙润色", dict(gctx), sender=U)
+        self.assertIn("公共智能体", out["persona"])  # 切到已获取智能体的人设
+        # 不带 @ 只提到名字 → 不切(仍是 lead)
+        out2 = self.bot._apply_worker_routing("帮我写个公共智能体介绍", dict(gctx), sender=U)
+        self.assertEqual(out2["persona"], "")
 
     def test_roster_marks_acquired_with_star(self) -> None:
         ctx = ToolContext(room_id="!r:h", sender=U, is_dm=True)
