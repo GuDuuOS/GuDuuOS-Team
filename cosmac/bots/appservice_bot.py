@@ -1166,10 +1166,16 @@ class CosmacBot:
             for m in self._my_agent_items(sender):
                 if _hit(str(m.get("slug") or ""), str(m.get("name") or ""), "mine"):
                     return str(m.get("slug") or ""), m, "mine"
-            # ③ 发起人商城「已获取」的全局智能体(商城指引"在频道里 @它")——只认 @点名
+            # ③ 发起人商城「已获取」的全局智能体(商城指引"在频道里 @它")——只认 @点名。
+            # ⚠️ access 必须**每次实时校验**(评审 #2):获取那一刻的校验只保证当时解锁,
+            # 会员到期回落/管理员事后收紧 access 后,已获取记录仍在——不查就成了
+            # "获取一次终身可用",付费门控被架空。(worker=管理员显式绑进频道的授权、
+            # mine=用户自己的,均不查,与资源权限既有口径一致。)
             for slug in self._acquired_agent_slugs(sender):
                 agent = self._find_global_agent(slug)
-                if agent and _hit(slug, str(agent.get("name") or ""), "acquired"):
+                if not agent or not self._resource_visible(agent, sender):
+                    continue
+                if _hit(slug, str(agent.get("name") or ""), "acquired"):
                     return slug, agent, "global"
         except Exception:
             logger.debug("可路由智能体匹配失败(忽略)", exc_info=True)

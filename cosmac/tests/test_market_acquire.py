@@ -165,6 +165,25 @@ class TestMarketAcquire(unittest.TestCase):
             pill_body, dict(gctx), sender=U, mentioned_ids=mentions)
         self.assertIn("公共智能体", out2["persona"])
 
+    def test_acquired_rechecks_access_on_use(self) -> None:
+        """评审 #2 回归:已获取的受限智能体,使用时刻仍要过 access——会员到期即失效。"""
+        from cosmac.db import session_scope
+        from cosmac.db.market_repo import add_acquired
+
+        # 模拟"付费期内获取过 paid-agent"(直插 DB,绕过端点的获取时校验)
+        with session_scope() as s:
+            add_acquired(s, user_id=U, kind="agent", slug="paid-agent")
+        gctx = {"worker_slugs": [], "persona": "", "skill_slugs": [], "model": ""}
+        # 现在 tier=free(见 _bot 桩):@ 它不触发、不路由——不再"获取一次终身可用"
+        self.assertFalse(self.bot._agent_mention_hit("!plain:h", U, "@paid-agent 干活"))
+        out = self.bot._apply_worker_routing("@paid-agent 干活", dict(gctx), sender=U)
+        self.assertEqual(out["persona"], "")
+        # 会员恢复付费 → 立即可用(access 每次实时判定)
+        self.bot.members.get_tier = lambda uid: "paid"  # type: ignore
+        self.assertTrue(self.bot._agent_mention_hit("!plain:h", U, "@paid-agent 干活"))
+        out2 = self.bot._apply_worker_routing("@paid-agent 干活", dict(gctx), sender=U)
+        self.assertIn("付费智能体", out2["persona"])
+
     def test_word_boundary_prevents_casual_trigger(self) -> None:
         """评审 #4 回归:worker 名是日常词时,「名字+后续汉字」不算点名,不乱入人聊天。"""
         # TEAM_ROOM 绑定 pub-agent(名「公共智能体」)当 worker
