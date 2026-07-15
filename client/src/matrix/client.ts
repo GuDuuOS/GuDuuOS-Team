@@ -3716,6 +3716,29 @@ function roomUnreadCount(r: any, myId: string): number {
   }
 }
 
+/** 专班归档记录(管理后台「归档记录」页;bot 代读 cosmac DB,仅平台管理员)。 */
+export interface AdminArchive {
+  id: number
+  room_id: string
+  goal: string
+  summary: string
+  tasks: any[]
+  done_count: number
+  total_count: number
+  archived_by: string
+  archived_at: string
+}
+
+export async function fetchAdminArchives(): Promise<AdminArchive[]> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  const r = await fetch(`${payBase()}/cosmac/admin/archives`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || `读取归档失败(${r.status})`)
+  return (j.archives || []) as AdminArchive[]
+}
+
 /* —— 联系人备注(私信管理):存本人 account data(每账号轻量配置的标准位置,多端同步)。
  *    形如 { aliases: { "@peer:host": "备注名" } };备注只影响自己看到的显示,对方无感。 */
 const CONTACTS_ACCOUNT_DATA = 'cc.cosmac.contacts'
