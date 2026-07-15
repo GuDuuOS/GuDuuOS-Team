@@ -590,6 +590,18 @@ class CosmacBot:
                 extra_system = self._scope_directive(is_dm) + (
                     ("\n\n" + extra_system) if extra_system else ""
                 )
+                # 频道感知(负责人报:中枢 AI 在多频道切换时把上一频道的约束带进当前频道):
+                # 全局会话横跨多个频道话题,前端随消息捎「当前所在频道」,历史消息也带同款
+                # 标记(见 _recent_history 的〔当时在频道:X〕前缀)——在此明确告诫按频道区分。
+                if is_dm:
+                    active_room = str(content.get("cosmac.active_room_name") or "").strip()
+                    where = f"用户此刻正在查看频道「{active_room}」。" if active_room else ""
+                    extra_system += (
+                        f"\n\n【频道上下文纪律】{where}你们的对话历史横跨多个频道/项目"
+                        "(历史消息前的〔当时在频道:X〕标记了当时的频道)。回答本条时:"
+                        "只依据用户本条消息与其当前频道的语境;**其他频道的规则、约束、任务、"
+                        "人设一律不得带入**,除非用户明确提到。不确定用户指哪个频道时,先确认再答。"
+                    )
                 # 短期记忆：把本房间最近的对话(不含当前这条)喂给模型，主 AI 才"记得"上文。
                 history = self._recent_history(room_id, sender, user_text)
                 # 本群若绑定的智能体指定了模型 → 用该模型的 Agent 回这条（否则用默认 Agent）。
@@ -792,6 +804,12 @@ class CosmacBot:
             if len(body) > self._HISTORY_CHARS:
                 body = body[: self._HISTORY_CHARS] + "…"
             role = "assistant" if s == self.config.bot_user_id else "user"
+            # 频道感知(负责人报:中枢 AI 把上一频道的约束带进新频道):全局会话的历史
+            # 横跨多个频道话题,给带频道标记的 user 消息加「〔当时在频道:X〕」前缀,
+            # 让模型能分清历史各段分别属于哪个频道,不再张冠李戴。
+            ar = str(m.get("active_room") or "").strip()
+            if role == "user" and ar:
+                body = f"〔当时在频道:{ar}〕{body}"
             out.append(Message(role=role, content=body))
         return out[-self._HISTORY_LIMIT:]
 

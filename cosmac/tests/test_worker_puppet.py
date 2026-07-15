@@ -130,6 +130,18 @@ class TestWorkerPuppet(unittest.TestCase):
         # 正文含傀儡 MXID → 触发(哪怕该 agent 不在任何绑定集合里,MXID=最明确点名)
         self.assertFalse(self.bot._agent_mention_hit(ROOM, U, "今天天气不错", []))
 
+    def test_history_tags_active_room(self) -> None:
+        """频道感知回归:历史里带频道标记的 user 消息加〔当时在频道:X〕前缀,防串扰。"""
+        self.bot.client.get_messages = lambda room, limit=20: [  # type: ignore
+            {"sender": U, "body": "规则是报价要审批", "active_room": "讲座活动专班"},
+            {"sender": "@guduu:h", "body": "收到", "active_room": ""},
+            {"sender": U, "body": "现在这个频道呢", "active_room": "手护宝宝项目"},
+        ]
+        hist = self.bot._recent_history("!ai:h", U, "无关当前条")
+        self.assertEqual(hist[0].content, "〔当时在频道:讲座活动专班〕规则是报价要审批")
+        self.assertEqual(hist[1].content, "收到")  # bot 消息不加前缀
+        self.assertEqual(hist[2].content, "〔当时在频道:手护宝宝项目〕现在这个频道呢")
+
     def test_worker_slug_of_and_loop_guard(self) -> None:
         # 反解:傀儡 MXID → slug(on_event 用它忽略傀儡自己的消息,防自触发循环)
         self.assertEqual(self.bot._worker_slug_of("@guduu-ai-copywriter:h"), "copywriter")
