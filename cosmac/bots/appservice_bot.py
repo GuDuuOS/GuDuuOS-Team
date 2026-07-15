@@ -530,9 +530,13 @@ class CosmacBot:
                 self._apply_runtime_config()
                 # 本群上下文读一次（人设/绑定技能/模型覆盖），供 addendum 与选模型共用。
                 gctx = self._group_context(room_id)
-                # 档3b：专班里若点名了某协作 Agent（按名/slug），改用该 worker 的人设/技能/模型
-                # 回这条（任务RULE 不变、仍受约束）；没点名则维持 lead（项目主AI）。
-                gctx = self._apply_worker_routing(text or user_text, gctx, sender=sender)
+                # 档3b：消息点名了某可路由智能体(worker/自建/已获取)→ 以它的人设/技能/模型
+                # 回这条(任务RULE 不变);没点名维持 lead。⚠️ 传**原始正文** user_text +
+                # m.mentions——与触发判定同一输入(text 被 _strip_mention 剥过句首 @,
+                # 用它路由会让「@文案 …」永远切不到已获取智能体,评审 #1)。
+                gctx = self._apply_worker_routing(
+                    user_text, gctx, sender=sender, mentioned_ids=mentioned_ids,
+                )
                 # 按 (本群, 发起人) 算出本轮 system addendum：人设 + 技能 + 知识库检索片段(RAG)。
                 # 任何失败（DB 没装/没数据/出错）都返回空串、绝不阻断回复（见 _skill_addendum）。
                 # 图文教程答疑：全局图文(付费可读)会在 _kb_context 里按 doc_read 门控自动纳入 RAG，
@@ -1083,85 +1087,125 @@ class CosmacBot:
             logger.debug("读取本群上下文失败（忽略）：%s", e)
             return out
 
-    def _apply_worker_routing(
-        self, text: str, gctx: Dict[str, Any], sender: str = ""
-    ) -> Dict[str, Any]:
-        """档3b：专班里若消息点名了某个绑定的协作 Agent（按 slug 或显示名），就改用该 worker
-        的人设/技能/模型回这条；**任务 RULE 不变**（worker 仍在专班、受同一约束）。
+    @staticmethod
+    def _starts_with_word(body: str, token: str) -> bool:
+        """body 是否以 token「成词」开头:token 后必须是串尾或非字母数字。
 
-        没点名、或非专班（worker_slugs 为空）→ 原样返回 lead（项目主AI）的 gctx。
-        方案A（单 bot 多人设）：worker 不是独立 Matrix 账号，靠在正文里匹配名/slug 路由。
-        匹配多个时取第一个；全程兜异常，绝不阻断回复。
+        防日常词乱入(评审 #4):worker 名「设计」——「设计 你好」命中,
+        「设计稿我下午传给你」不命中(后跟汉字/字母=只是词头,不是点名)。
         """
-        slugs = gctx.get("worker_slugs") or []
-        body = (text or "").strip()
-        if not body:
-            return gctx
+        if not token or not body.startswith(token):
+            return False
+        rest = body[len(token):]
+        return (not rest) or (not rest[0].isalnum())
+
+    def _match_routable_agent(
+        self, worker_slugs: List[str], sender: str, body: str,
+        mentioned_ids: Optional[List[str]] = None, for_trigger: bool = True,
+    ) -> Optional[Tuple[str, Dict[str, Any], str]]:
+        """在「可路由智能体」集合里找这条消息点名的那一个——**单一事实源**。
+
+        触发判定(_agent_mention_hit,要不要应答)与人设路由(_apply_worker_routing,
+        以谁应答)都消费本函数。此前两处各写一套候选枚举+命中规则,且路由拿到的是
+        剥过句首 @ 的文本,导致「触发了却路由不到、落回主 AI 人设」(评审 #1);
+        统一后两边输入相同,且 trigger 规则 ⊆ route 规则,触发命中必能路由到。
+
+        候选(按优先级):worker_slugs(本频道绑定,由调用方传入——触发侧读 room state,
+        路由侧直接用 gctx 里现成的,免重复读) → 发起人自建 → 发起人商城已获取。
+        命中规则:
+          - m.mentions / 正文里出现傀儡 MXID(@guduu-ai-<slug>:域):最明确,直接命中;
+          - @slug / @名字(正文任意位置):显式点名,命中;
+          - slug/名字 成词开头(_starts_with_word):仅 worker/自建;已获取不认开头
+            (名字常是「文案」这类日常词,商城指引本来就是"@ 它");
+          - for_trigger=False(路由模式)额外放宽 worker/自建:正文**包含** slug/名字
+            也算——消息已因 @ 主 AI 被应答,保留档3b"提到谁就以谁的人设答"的旧行为。
+        返回 (slug, agent定义, 'global'|'mine');未命中/异常返回 None(绝不阻断)。
+        """
+        body = (body or "").strip()
         low = body.lower()
+        # ⓪ 方案B 最短路径:m.mentions 里直接 @ 了某个傀儡账号(现代客户端 pill,
+        # 正文里可能只有显示名——这正是评审 #1 的 mention pill 场景)
+        try:
+            for uid in (mentioned_ids or []):
+                slug = self._worker_slug_of(uid)
+                if not slug:
+                    continue
+                agent = self._find_global_agent(slug)
+                if agent:
+                    return slug, agent, "global"
+        except Exception:
+            logger.debug("按 m.mentions 匹配傀儡失败(忽略)", exc_info=True)
+        if not body:
+            return None
 
-        def _worker_gctx(agent: Dict[str, Any], slug: str) -> Dict[str, Any]:
-            """按某协作 Agent 组装本条的 gctx(人设/技能/模型 + 方案B 傀儡身份)。"""
-            name = str(agent.get("name") or "").strip()
-            out = dict(gctx)
-            out["persona"] = (
-                f"本条由你以协作智能体「{name or slug}」的身份回应，"
-                f"请按下述人设履职：\n{(agent.get('system_prompt') or '').strip()}"
-            )
-            out["skill_slugs"] = [str(s) for s in (agent.get("skill_slugs") or [])]
-            out["model"] = (agent.get("model") or "").strip()
-            # 方案B:回复以该 AI 同事的傀儡账号身份发(账号建不了则留空=主 AI 身份兜底)
-            out["as_user"] = self._ensure_worker_account(slug)
-            return out
+        def _hit(slug: str, name: str, kind: str) -> bool:
+            """单个候选的命中判定(kind: worker/mine/acquired)。"""
+            if self._worker_user_id(slug) in body:
+                return True  # 正文里出现傀儡 MXID(@pill 的 fallback 形态)
+            slug_l = (slug or "").strip().lower()
+            name = (name or "").strip()
+            if slug_l and f"@{slug_l}" in low:
+                return True
+            if name and f"@{name}" in body:
+                return True
+            if kind != "acquired":  # worker/自建:成词开头也算点名
+                if self._starts_with_word(low, slug_l) or self._starts_with_word(body, name):
+                    return True
+                if not for_trigger:  # 路由模式再放宽:正文包含(档3b 旧行为)
+                    if (slug_l and slug_l in low) or (name and name in body):
+                        return True
+            return False
 
         try:
-            for slug in slugs:
+            # ① 本频道绑定的专班 worker(非专班频道列表为空、开销即止)
+            for slug in (worker_slugs or []):
                 agent = self._find_global_agent(str(slug))
-                if not agent:
-                    continue
-                name = str(agent.get("name") or "").strip()
-                hit = (
-                    (str(slug).lower() in low)
-                    or (bool(name) and name in body)
-                    # 方案B:@ 了它的傀儡账号(前端 mention pill 的正文形态是完整 MXID)
-                    or (self._worker_user_id(str(slug)) in body)
-                )
-                if not hit:
-                    continue
-                return _worker_gctx(agent, str(slug))
-        except Exception as e:
-            logger.debug("协作 Agent 路由失败（忽略，用 lead 回应）：%s", e)
-        # 专班 worker 未命中 → 试**发起人自建**智能体(用户自己的"私人 AI 同事",点名即应答)。
-        try:
+                if agent and _hit(str(slug), str(agent.get("name") or ""), "worker"):
+                    return str(slug), agent, "global"
+            # ② 发起人自建智能体(工坊承诺"任意频道点它的名字就由它应答")
             for m in self._my_agent_items(sender):
-                name = str(m.get("name") or "").strip()
-                if (m["slug"] in low) or (bool(name) and name in body):
-                    out = dict(gctx)
-                    out["persona"] = (
-                        f"本条由你以用户自建智能体「{name or m['slug']}」的身份回应，"
-                        f"请按下述人设履职：\n{(m.get('system_prompt') or '').strip()}"
-                    )
-                    out["skill_slugs"] = [str(x) for x in (m.get("skill_slugs") or [])]
-                    out["model"] = (m.get("model") or "").strip()
-                    return out
-        except Exception as e:
-            logger.debug("个人智能体路由失败（忽略）：%s", e)
-        # 自建也未命中 → 试发起人**商城已获取**的全局智能体。只认显式 @点名(@slug/@名字):
-        # 名字常是"文案"这类日常词,若按"正文包含"匹配,用户请主 AI"帮我写文案"就会被
-        # 错切到 copywriter 人设。access 无需再查——已获取入库时服务端已校验解锁。
-        try:
+                if _hit(str(m.get("slug") or ""), str(m.get("name") or ""), "mine"):
+                    return str(m.get("slug") or ""), m, "mine"
+            # ③ 发起人商城「已获取」的全局智能体(商城指引"在频道里 @它")——只认 @点名
             for slug in self._acquired_agent_slugs(sender):
                 agent = self._find_global_agent(slug)
-                if not agent:
-                    continue
-                name = str(agent.get("name") or "").strip()
-                if ((f"@{slug.lower()}" not in low)
-                        and not (name and f"@{name}" in body)
-                        and (self._worker_user_id(slug) not in body)):
-                    continue
-                return _worker_gctx(agent, slug)
-        except Exception as e:
-            logger.debug("已获取智能体路由失败（忽略）：%s", e)
-        return gctx
+                if agent and _hit(slug, str(agent.get("name") or ""), "acquired"):
+                    return slug, agent, "global"
+        except Exception:
+            logger.debug("可路由智能体匹配失败(忽略)", exc_info=True)
+        return None
+
+    def _apply_worker_routing(
+        self, text: str, gctx: Dict[str, Any], sender: str = "",
+        mentioned_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """档3b：消息点名了某个可路由智能体(专班 worker/自建/已获取)时,改用它的
+        人设/技能/模型回这条;**任务 RULE 不变**。没点名 → 原样返回 lead 的 gctx。
+
+        ⚠️ text 必须传**原始正文**(与触发判定同一输入,别传 _strip_mention 后的——
+        句首 @ 被剥会让「@文案 …」路由不到,评审 #1);匹配逻辑见 _match_routable_agent。
+        """
+        match = self._match_routable_agent(
+            gctx.get("worker_slugs") or [], sender, text,
+            mentioned_ids=mentioned_ids, for_trigger=False,
+        )
+        if not match:
+            return gctx
+        slug, agent, kind = match
+        name = str(agent.get("name") or "").strip()
+        out = dict(gctx)
+        label = "用户自建智能体" if kind == "mine" else "协作智能体"
+        out["persona"] = (
+            f"本条由你以{label}「{name or slug}」的身份回应，"
+            f"请按下述人设履职：\n{(agent.get('system_prompt') or '').strip()}"
+        )
+        out["skill_slugs"] = [str(s) for s in (agent.get("skill_slugs") or [])]
+        out["model"] = (agent.get("model") or "").strip()
+        if kind == "global":
+            # 方案B:回复以该 AI 同事的傀儡账号身份发(账号建不了则留空=主 AI 兜底);
+            # 自建智能体是用户私有的,不建全局傀儡(评审 #10:同名 slug 会跨用户共享)。
+            out["as_user"] = self._ensure_worker_account(slug)
+        return out
 
     def _agent_for_model(self, model: str) -> Agent:
         """按「本群模型覆盖」拿一个 Agent：没覆盖或与当前一致 → 用 self.agent；
@@ -2245,58 +2289,20 @@ class CosmacBot:
         self, room_id: str, sender: str, body: str,
         mentioned_ids: Optional[List[str]] = None,
     ) -> bool:
-        """群聊补充触发:这条消息是否**点名**了一个可路由的智能体。
+        """群聊补充触发:这条消息是否**点名**了一个可路由的智能体(要不要应答)。
 
-        与 _apply_worker_routing 配对:这里判"要不要应答",那里判"以谁的人设答"。
-        可路由集合 = 本频道绑定的专班 worker ∪ 发起人自建 ∪ 发起人商城「已获取」。
-        命中规则(防误触发,比路由的"正文包含"严):
-          - worker/自建(显式绑定,预期强):消息以 名字/slug 开头,或正文任意处 @名字/@slug;
-          - 已获取的全局智能体:只认显式 @点名(名字可能是"文案"这类常用词,
-            正文包含或开头匹配都会让 AI 在人聊天时乱入);
-          - 方案B:m.mentions/正文里出现某 AI 同事的**傀儡 MXID**(@guduu-ai-<slug>:域)
-            = 最明确的点名,任何类别都算命中(mentioned_ids 由调用方传 m.mentions)。
-        全程兜异常返回 False——本判定失败只是退回"要 @ 主 AI 才应答"的旧行为。
+        薄封装:候选枚举与命中规则全在 _match_routable_agent(与人设路由共享同一份
+        逻辑,评审 #1 的"触发了却路由不到"由此断根)。worker 列表在这里读 room state
+        (路由侧复用 gctx 里现成的,不重读)。异常返回 False=退回"要 @ 主 AI 才应答"。
         """
-        body = (body or "").strip()
-        # 方案B 最短路径:标准 m.mentions 里直接 @ 了某个傀儡账号
-        for uid in (mentioned_ids or []):
-            if self._worker_slug_of(uid):
-                return True
-        if not body:
-            return False
-        low = body.lower()
-
-        def _hit(slug: str, name: str, at_only: bool) -> bool:
-            """单个候选的命中判定。at_only=True 时只认 @点名。"""
-            puppet = self._worker_user_id(slug)
-            if puppet and puppet in body:
-                return True  # 正文里出现傀儡 MXID(@pill 的 fallback 形态)
-            slug = (slug or "").strip().lower()
-            name = (name or "").strip()
-            if slug and (f"@{slug}" in low or (not at_only and low.startswith(slug))):
-                return True
-            if name and (f"@{name}" in body or (not at_only and body.startswith(name))):
-                return True
-            return False
-
         try:
-            # ① 本频道绑定的专班 worker(读一次 room state;非专班频道列表为空、开销即止)
-            for slug in (self._group_context(room_id).get("worker_slugs") or []):
-                agent = self._find_global_agent(str(slug))
-                if _hit(str(slug), str((agent or {}).get("name") or ""), at_only=False):
-                    return True
-            # ② 发起人自建智能体(工坊承诺"任意频道输入它的名字就由它应答")
-            for m in self._my_agent_items(sender):
-                if _hit(str(m.get("slug") or ""), str(m.get("name") or ""), at_only=False):
-                    return True
-            # ③ 发起人商城「已获取」的全局智能体(商城指引"在频道里 @它")——只认 @点名
-            for slug in self._acquired_agent_slugs(sender):
-                agent = self._find_global_agent(slug)
-                if _hit(slug, str((agent or {}).get("name") or ""), at_only=True):
-                    return True
+            workers = self._group_context(room_id).get("worker_slugs") or []
+            return self._match_routable_agent(
+                workers, sender, body, mentioned_ids=mentioned_ids, for_trigger=True,
+            ) is not None
         except Exception:
             logger.debug("智能体点名判定失败(退回仅 @ 主AI 触发)", exc_info=True)
-        return False
+            return False
 
     def _is_bot_mentioned(self, content: Dict[str, Any]) -> bool:
         """判断这条消息是否在叫主 AI（被 @ 或以它的名字开头）。"""
