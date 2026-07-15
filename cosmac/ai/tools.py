@@ -770,10 +770,21 @@ class Toolbox:
         self._register(
             name="list_room_tasks",
             description=(
-                "列出**当前频道**的任务（含编号 id、状态、执行者、结果/批注）。"
-                "跟踪进度、要审核或更新某条任务前，先调它看清有哪些任务、各自到哪一步。"
+                "列出某频道的任务（含编号 id、状态、执行者、结果/批注）。"
+                "跟踪进度、要审核或更新某条任务前，先调它看清有哪些任务、各自到哪一步。\n"
+                "room 不传=当前频道;用户点名了别的频道(如在私聊里问「查XX专班的任务进度」)"
+                "就把用户说的**频道名原样**传进 room——名字解析我来做(精确匹配优先),"
+                "**不要**自己去频道清单里猜相近的名字(「讲座活动」≠「讲座活动专班」是两个频道)。"
             ),
-            parameters={"type": "object", "properties": {}},
+            parameters={
+                "type": "object",
+                "properties": {
+                    "room": {
+                        "type": "string",
+                        "description": "要查的频道名或 room_id(可选;缺省=当前频道)。照抄用户说的完整名字。",
+                    },
+                },
+            },
             fn=self._tool_list_room_tasks,
         )
 
@@ -1619,15 +1630,43 @@ class Toolbox:
         return "已把选项发给用户，等 TA 点选后我再继续。"
 
     def _tool_list_room_tasks(self, args: Dict[str, Any], ctx: ToolContext) -> str:
-        """列出本频道任务（档4）：给项目主AI 跟踪/审核用。绝不抛异常。"""
+        """列出频道任务（档4）：给项目主AI/中枢AI 跟踪/审核用。绝不抛异常。
+
+        room 参数(评审后补,负责人线上实测):此前只能查"当前频道",在中枢 AI 私聊里问
+        「查XX专班的进度」时模型只能看频道清单猜名字,把「讲座活动专班」猜成了前缀相近的
+        「讲座活动」母频道。现在按名字精确解析(撞名列候选);查别的频道要求发起人是
+        该频道成员(防越权翻别人频道的任务)。
+        """
+        target = str(args.get("room") or "").strip()
+        room_id = ctx.room_id
+        label = "本频道"
+        if target and target != ctx.room_id:
+            if target.startswith("!"):
+                room_id = target
+            else:
+                rid, err = self._resolve_room_by_name(target)
+                if not rid:
+                    return err or f"没找到叫「{target}」的频道。"
+                room_id = rid
+            label = f"频道「{target}」"
+            # 越权防护:查非当前频道时,发起人必须在目标频道里(任务标题/结果不该对外泄露)
+            try:
+                member_ids = {
+                    str(m.get("user_id") or "")
+                    for m in (self.client.get_members(room_id) or [])
+                }
+                if ctx.sender not in member_ids:
+                    return f"你不在{label}里,看不了它的任务(先加入该频道)。"
+            except Exception:
+                return "确认频道成员失败(服务波动?),请稍后再试或到该频道里问我。"
         try:
             from cosmac.db import session_scope
             from cosmac.db.task_repo import list_tasks
 
             with session_scope() as s:
-                rows = list_tasks(s, room_ids=[ctx.room_id])
+                rows = list_tasks(s, room_ids=[room_id])
                 if not rows:
-                    return "本频道还没有任务。"
+                    return f"{label}还没有任务。"
                 lines = []
                 done = 0
                 for t in rows:
@@ -1643,7 +1682,7 @@ class Toolbox:
                     lines.append(seg)
                 total = len(rows)
             # 完成度抬头：让项目主AI 一眼看清节点进度；全部完成时提示走归档收尾
-            head = f"本频道任务（完成度 {done}/{total}）："
+            head = f"{label}任务（完成度 {done}/{total}）："
             if done == total:
                 head += "\n✅ 所有节点已完成——可征得用户同意后用 archive_project 归档收尾、关闭频道。"
             return head + "\n" + "\n".join(lines)
