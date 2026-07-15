@@ -82,6 +82,7 @@ import {
   acceptPendingInvites,
   isProjectArchived,
   botId,
+  aiWorkerSlug,
   contactAlias,
   setContactAlias,
   getChannelConfig,
@@ -1740,9 +1741,17 @@ async function buildMentionPool() {
   const room = currentRoom.value
   const pool: MentionCand[] = []
   const seenAgent = new Set<string>()
-  // ① 频道成员(真人 + 主 AI)
+  // ① 频道成员(真人 + 主 AI + AI 同事傀儡账号)。傀儡按 slug 记入 seenAgent——
+  // 它们同时还会出现在下面 ② 的 agentSlugs 里,不去重会在候选里出现两次。
   for (const m of channelMembers.value) {
     if (m.pending) continue
+    const slug = aiWorkerSlug(m.id)
+    if (slug) {
+      if (seenAgent.has(slug)) continue
+      seenAgent.add(slug)
+      pool.push({ key: 'a:' + slug, label: m.name, sub: '本频道 AI', isAgent: true })
+      continue
+    }
     pool.push({ key: 'u:' + m.id, label: m.name, sub: m.isBot ? '主 AI' : '成员', isAgent: !!m.isBot })
   }
   // slug→名字 映射(本频道 worker 与已获取都要用;目录仅拉一次)
@@ -1788,7 +1797,9 @@ const mentionList = computed(() => {
   const hit = q
     ? mentionPool.value.filter((c) => c.label.toLowerCase().includes(q) || c.key.slice(c.key.indexOf(':') + 1).toLowerCase().includes(q))
     : mentionPool.value
-  return hit.slice(0, 8)
+  // 上限 30(面板自身可滚动):此前 8 条把成员多的频道里后面的 AI 同事整个截掉了
+  // (负责人实测:@ 列表里少了社媒运营/数据分析,滑到底也没有)
+  return hit.slice(0, 30)
 })
 
 /** 检测光标前是否正在打「@关键字」,是则打开/刷新补全面板。 */
