@@ -114,6 +114,8 @@ class TestMarketAcquire(unittest.TestCase):
     def test_stale_when_item_removed_from_shelf(self) -> None:
         self.bot.handle_market_acquire("tok", {"kind": "agent", "slug": "pub-agent"})
         AGENTS[0]["enabled"] = False  # 资源被后台停用(下架)
+        # 全局智能体列表有 20 秒缓存(评审#3);真实场景由控制室 state 事件失效,这里手动模拟
+        self.bot._agents_items_cache = ([], float("-inf"))
         try:
             _, p = self.bot.handle_market_acquired_list("tok")
             self.assertTrue(p["items"][0]["stale"])

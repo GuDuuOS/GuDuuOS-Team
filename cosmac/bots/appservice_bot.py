@@ -298,6 +298,17 @@ class CosmacBot:
         self._acquired_cache: Dict[str, Tuple[Set[str], float]] = {}
         # AI 同事傀儡账号缓存(slug → MXID;空串=注册失败,重启前不重试)
         self._worker_account_cache: Dict[str, str] = {}
+        # ═══ 群消息热路径缓存(评审 #3):@智能体触发判定跑在**每条**群消息上,
+        # 其依赖的 全局agent/技能库(控制室 state)、群配置(room state)、自建agent(DB)
+        # 此前每次都发 HTTP/SQL——活跃群 20 条闲聊≈数百次串行请求。═══
+        # 全局 agent/技能原始合并列表(20 秒 TTL,与后台「保存后约 20 秒热生效」同口径)
+        self._agents_items_cache: Tuple[List[Dict[str, Any]], float] = ([], float("-inf"))
+        self._skills_items_cache: Tuple[List[Dict[str, Any]], float] = ([], float("-inf"))
+        # 群配置缓存(room_id → (gctx, ts)):20 秒 TTL 兜底 + 收到 channel_config
+        # state 事件时**精确失效**(改绑定零延迟生效,见 _handle_event)
+        self._gctx_cache: Dict[str, Tuple[Dict[str, Any], float]] = {}
+        # 自建智能体缓存(owner → (列表, ts)):5 分钟 TTL,工坊保存/删除端点写入时失效
+        self._my_agents_cache: Dict[str, Tuple[List[Dict[str, Any]], float]] = {}
         # SDK 引擎回退告警的节流时间戳(1小时最多向控制室发一条,防刷屏)
         self._engine_alert_ts: float = 0.0        # 上次读到的配置覆盖
         # —— 任务时效提醒（定时扫描）——扫描间隔 + "快到期"窗口，都可用 env 调；单实例内定时够用。
@@ -458,6 +469,20 @@ class CosmacBot:
         #     power 只有 50)做不到的——同级互相无法降权/踢出，所以交给 100 的 bot 执行。
         if event_type == CONTROL_ADMINS_EVENT_TYPE and event.get("state_key") is not None:
             self._reconcile_control_members(room_id, event.get("content", {}))
+            return
+
+        # 1c) 本房频道配置(channel_config)变了 → 群配置缓存精确失效:
+        #     改绑定/人设/RULE 零延迟生效(缓存另有 20 秒 TTL 兜底事件丢失,评审 #3)。
+        if event_type == CHANNEL_CONFIG_EVENT_TYPE and event.get("state_key") is not None:
+            self._gctx_cache.pop(room_id, None)
+            return
+
+        # 1d) 后台改了全局智能体/技能(控制室 state)→ 20 秒缓存提前失效,即刻热生效
+        if event_type == AGENTS_EVENT_TYPE and event.get("state_key") is not None:
+            self._agents_items_cache = ([], float("-inf"))
+            return
+        if event_type == SKILLS_EVENT_TYPE and event.get("state_key") is not None:
+            self._skills_items_cache = ([], float("-inf"))
             return
 
         # 2) 群里的文本消息
@@ -1042,7 +1067,20 @@ class CosmacBot:
         优先级：① 绑定了全局智能体(persona.agentSlug) → 用它的人设 + 绑定技能 + 模型覆盖；
                 ② 否则用本群自定义人设(persona.prompt)。都没有 → 空。
         失败一律返回空 dict（绝不阻断回复）。
+        20 秒缓存(评审 #3):点名判定跑在每条群消息上,不能每条都读 room state;
+        收到本房 channel_config state 事件时精确失效(改绑定零延迟,见 _handle_event)。
         """
+        cached = self._gctx_cache.get(room_id)
+        if cached and time.monotonic() - cached[1] < 20:
+            return dict(cached[0])
+        out = self._group_context_uncached(room_id)
+        self._gctx_cache[room_id] = (out, time.monotonic())
+        if len(self._gctx_cache) > 5000:
+            self._gctx_cache.clear()
+        return dict(out)
+
+    def _group_context_uncached(self, room_id: str) -> Dict[str, Any]:
+        """_group_context 的真实读取体(缓存壳见上)。"""
         out: Dict[str, Any] = {
             "persona": "", "skill_slugs": [], "model": "", "task_rule": "",
             "worker_slugs": [], "workflow_slugs": [], "kb_scopes": [],
@@ -1343,6 +1381,11 @@ class CosmacBot:
             Agent 绑定、被 @/指派时才随该 Agent 激活(_agent_skill_items),平时零注入。
         合并规则同 _global_agent_items:预置打底,控制室**同 slug 覆盖**、新 slug 追加。
         """
+        # 20 秒缓存(评审 #3,与 _global_agent_items 同款):绑定解析在应答路径反复调,
+        # 此前每次 resolve_alias+get_state_event 两次 HTTP。
+        items, ts = self._skills_items_cache
+        if time.monotonic() - ts < 20:
+            return list(items)
         from cosmac.ai.preset_skills import preset_skills
 
         merged: Dict[str, Dict[str, Any]] = {s["slug"]: s for s in preset_skills()}
@@ -1355,7 +1398,9 @@ class CosmacBot:
                         merged[str(s["slug"])] = s
         except Exception as e:
             logger.debug("读取控制室技能失败(仅用预置技能库):%s", e)
-        return [s for s in merged.values() if s.get("enabled", True)]
+        items = [s for s in merged.values() if s.get("enabled", True)]
+        self._skills_items_cache = (items, time.monotonic())
+        return list(items)
 
     def _agent_skill_items(self, slugs: List[str]) -> List[Dict[str, Any]]:
         """把「智能体绑定的技能 slug」解析成技能字典——从**技能库**(预置+控制室)里 slug 命中的启用项。
@@ -1375,24 +1420,30 @@ class CosmacBot:
         for_user 非空时按资源「可用范围」(access 字段)过滤——能力名册等"以发起人身份看资源"
         的场景传它;绑群解析等"管理员显式配置"的场景不传(绑定即授权)。
         """
-        from cosmac.ai.presets import preset_agents
+        # 20 秒缓存(评审 #3):本函数在每条群消息的点名判定/路由/名册里被反复调,
+        # 此前每次 resolve_alias+get_state_event 两次 HTTP。缓存**未过滤**的合并列表
+        # (for_user 过滤便宜、在缓存之上做);TTL 与后台「保存后约 20 秒热生效」同口径。
+        items, ts = self._agents_items_cache
+        if time.monotonic() - ts >= 20:
+            from cosmac.ai.presets import preset_agents
 
-        # 预置打底：slug → item
-        merged: Dict[str, Dict[str, Any]] = {a["slug"]: a for a in preset_agents()}
-        # 控制室配置覆盖/追加（不论 enabled，先并进来，最后按 enabled 过滤——这样后台可停用预置）
-        try:
-            ctrl = self.client.resolve_alias(self.config.control_room_alias)
-            if ctrl:
-                ev = self.client.get_state_event(ctrl, AGENTS_EVENT_TYPE) or {}
-                for a in (ev.get("agents") or []):
-                    if isinstance(a, dict) and a.get("slug"):
-                        merged[str(a["slug"])] = a
-        except Exception as e:
-            logger.debug("读取全局智能体列表失败（仅用预置）：%s", e)
-        out = [a for a in merged.values() if a.get("enabled", True)]
+            # 预置打底：slug → item
+            merged: Dict[str, Dict[str, Any]] = {a["slug"]: a for a in preset_agents()}
+            # 控制室配置覆盖/追加（不论 enabled，先并进来，最后按 enabled 过滤——这样后台可停用预置）
+            try:
+                ctrl = self.client.resolve_alias(self.config.control_room_alias)
+                if ctrl:
+                    ev = self.client.get_state_event(ctrl, AGENTS_EVENT_TYPE) or {}
+                    for a in (ev.get("agents") or []):
+                        if isinstance(a, dict) and a.get("slug"):
+                            merged[str(a["slug"])] = a
+            except Exception as e:
+                logger.debug("读取全局智能体列表失败（仅用预置）：%s", e)
+            items = [a for a in merged.values() if a.get("enabled", True)]
+            self._agents_items_cache = (items, time.monotonic())
         if for_user:
-            out = [a for a in out if self._resource_visible(a, for_user)]
-        return out
+            return [a for a in items if self._resource_visible(a, for_user)]
+        return list(items)
 
     def _user_template(self, user_id: str) -> str:
         """查某用户注册引导时选的入驻模板 slug(资源「指定模板可用」据此判定)。
@@ -4181,6 +4232,7 @@ class CosmacBot:
                     model=model, enabled=enabled,
                 )
             self._storage_cache = {}  # 内容变了,存量缓存作废
+            self._my_agents_cache.pop(user_id, None)  # 自建列表缓存失效,点名路由立即感知
             return 200, {"ok": True}
         except Exception:
             logger.exception("保存个人智能体失败")
@@ -4202,6 +4254,7 @@ class CosmacBot:
             with session_scope() as s:
                 ok = delete_agent(s, SCOPE_USER, user_id, slug)
             self._storage_cache = {}
+            self._my_agents_cache.pop(user_id, None)  # 同保存:删除也立即生效
             return (200, {"ok": True}) if ok else (404, {"error": "没有这个智能体"})
         except Exception:
             logger.exception("删除个人智能体失败")
@@ -4298,9 +4351,24 @@ class CosmacBot:
             return 500, {"error": "删除失败"}
 
     def _my_agent_items(self, owner: str) -> List[Dict[str, Any]]:
-        """本人自建且启用的智能体(名册/@ 路由用)。失败返回空,绝不阻断。"""
+        """本人自建且启用的智能体(名册/@ 路由用)。失败返回空,绝不阻断。
+
+        5 分钟缓存(评审 #3):点名判定每条群消息都调,不能每条打一次 DB——口径同
+        _acquired_agent_slugs;工坊保存/删除端点写入时主动失效(改完立即生效)。
+        """
         if not owner:
             return []
+        cached = self._my_agents_cache.get(owner)
+        if cached and time.monotonic() - cached[1] < 300:
+            return cached[0]
+        items = self._my_agent_items_uncached(owner)
+        self._my_agents_cache[owner] = (items, time.monotonic())
+        if len(self._my_agents_cache) > 5000:
+            self._my_agents_cache.clear()
+        return items
+
+    def _my_agent_items_uncached(self, owner: str) -> List[Dict[str, Any]]:
+        """_my_agent_items 的真实 DB 读取体(缓存壳见上)。"""
         try:
             from cosmac.db import session_scope
             from cosmac.db.models import SCOPE_USER
