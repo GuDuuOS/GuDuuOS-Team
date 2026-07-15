@@ -285,8 +285,9 @@ const projects = computed(() => {
   }
   return [...m.entries()].map(([goal, ts]) => {
     const done = ts.filter((t) => t.status === 'done').length
-    // 项目完成度：已完成算 100%，其余按各自 progress 平均
-    const pct = Math.round(ts.reduce((s, t) => s + (t.status === 'done' ? 100 : t.progress), 0) / ts.length)
+    // 项目完成度 = 已完成任务数占比,与旁边「n/m 完成」同一口径(负责人报:旧算法把
+    // 进行中任务的 progress 也平均进来,6/7 显示成 87%,读起来像四舍五入算错了)
+    const pct = ts.length ? Math.round((done / ts.length) * 100) : 0
     return { goal, total: ts.length, done, pct }
   })
 })
