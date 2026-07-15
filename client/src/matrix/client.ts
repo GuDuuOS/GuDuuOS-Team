@@ -3500,6 +3500,13 @@ export function isAiWorkerId(userId: string): boolean {
   return String(userId || '').startsWith('@guduu-ai-')
 }
 
+/** 傀儡 MXID → 智能体 slug(@guduu-ai-copywriter:域 → copywriter);非傀儡返回空串。 */
+export function aiWorkerSlug(userId: string): string {
+  const uid = String(userId || '')
+  if (!uid.startsWith('@guduu-ai-')) return ''
+  return uid.slice('@guduu-ai-'.length).split(':')[0]
+}
+
 /** 找到我和主 AI 的私聊房间（仅两人）；没有返回 null。 */
 export function findBotDm(): string | null {
   if (!mx) return null
