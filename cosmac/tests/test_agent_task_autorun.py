@@ -138,6 +138,31 @@ class TestAgentTaskAutorun(unittest.TestCase):
         self.assertEqual(_task(ids[1]).status, "done")
         self.assertEqual(len(self.llm.calls), 1)
 
+    def test_quota_stops_execution(self) -> None:
+        """评审 #5 回归:发起人当日 AI 额度用完 → 停止剩余任务并在频道说明,成功才扣额。"""
+        consumed: List[bool] = []
+
+        def _quota(user_id, metric, consume=True):
+            # 前 1 次放行;之后按"额度用完"拦。consume=True 的调用单独记数。
+            if consume:
+                consumed.append(True)
+                return None
+            return None if len(consumed) < 1 else "额度用完"
+
+        self.bot._rate_quota_blocked = _quota  # type: ignore
+        ids = _mk_tasks([
+            {"title": f"任务{i}", "executor_kind": "agent", "executor_ref": "copywriter"}
+            for i in range(3)
+        ])
+        self.bot._run_agent_tasks(ROOM, U, ids, task_rule="")
+        # 只执行了第 1 个(成功后扣 1 次额度),后 2 个因超额停住、留在看板
+        self.assertEqual(len(self.llm.calls), 1)
+        self.assertEqual(consumed, [True])
+        self.assertEqual(_task(ids[0]).status, "done")
+        self.assertEqual(_task(ids[1]).status, "todo")
+        texts = [x[1] for x in self.bot.client.sent]
+        self.assertTrue(any("额度已用完" in x for x in texts))
+
     def test_round_cap(self) -> None:
         items = [{"title": f"任务{i}", "executor_kind": "agent", "executor_ref": "copywriter"}
                  for i in range(10)]

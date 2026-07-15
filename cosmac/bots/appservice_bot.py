@@ -1586,8 +1586,19 @@ class CosmacBot:
         - **失败兜底**:单个任务 LLM 失败 → 看板留 todo + result 记原因 + 频道提示可 @ 重试。
         """
         done_n = 0
+        quota_stopped = False
         prior: List[str] = []  # 已完成任务的产出摘要(喂给后续任务当上下文)
         for tid in task_ids[: self._AUTO_EXEC_MAX]:
+            # 配额(评审 #5):每个任务的 LLM 生成计入发起人的当日 AI 对话额度——
+            # 否则自动执行成了不计量的 LLM 消费通道(一次组班后台烧 8 次生成)。
+            # 先查不扣(成功产出后才 consume,与对话路径"成功才扣"同口径);超额即停,
+            # 剩余任务留看板可明日再跑或 @ 对应 AI 手动执行。
+            try:
+                if self._rate_quota_blocked(sender, "ai_msg_daily", consume=False):
+                    quota_stopped = True
+                    break
+            except Exception:
+                logger.debug("自动执行:配额检查失败(放行)", exc_info=True)
             title, goal, slug = "", "", ""
             try:
                 from cosmac.db import session_scope
@@ -1656,6 +1667,11 @@ class CosmacBot:
                     prior.append(f"《{title}》({name}):{out[:500]}")
                 except Exception:
                     logger.exception("自动执行:任务 #%s 回填看板失败", tid)
+                # 产出成功才消费配额(评审 #5,与对话路径同口径:失败不扣)
+                try:
+                    self._rate_quota_blocked(sender, "ai_msg_daily", consume=True)
+                except Exception:
+                    logger.debug("自动执行:配额消费失败(忽略)", exc_info=True)
             else:
                 # 失败:看板退回 todo 并记录原因,频道提示可手动重试——绝不能假装完成
                 try:
@@ -1682,6 +1698,8 @@ class CosmacBot:
             total = min(len(task_ids), self._AUTO_EXEC_MAX)
             skipped = len(task_ids) - total
             tail = f"(还有 {skipped} 个超出单轮上限,留在看板可 @ 对应 AI 手动执行)" if skipped > 0 else ""
+            if quota_stopped:
+                tail += "⚠️ 发起人当日 AI 额度已用完,剩余任务留在看板——明日自动恢复额度后可 @ 对应 AI 执行,或升级会员提升额度。"
             self.client.send_text(
                 room_id,
                 f"📋 AI 同事本轮任务执行完毕：成功 {done_n}/{total}，看板已更新{tail}。",
