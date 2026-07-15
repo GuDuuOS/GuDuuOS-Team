@@ -560,7 +560,12 @@ class MatrixClient:
                 body = content.get("body")
                 if not body:
                     continue
-                msgs.append({"sender": ev.get("sender", ""), "body": body})
+                msgs.append({
+                    "sender": ev.get("sender", ""), "body": body,
+                    # 前端随消息捎的「用户当时所在频道」(全局中枢 AI 的频道感知,
+                    # 见 aiSend 的 cosmac.active_room_name);老消息/频道消息没有=空串
+                    "active_room": str(content.get("cosmac.active_room_name") or ""),
+                })
             msgs.reverse()  # 倒成旧→新，读起来顺
             return msgs
         except requests.RequestException as exc:

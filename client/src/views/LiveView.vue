@@ -1610,9 +1610,16 @@ async function aiSend() {
   const room = aiRoom.value
   aiDraft.value = ''
   // 捎上当前工作区：中枢 AI 是全局 DM，带上它才能基于「当前工作区的文档」做 RAG 答疑。
-  const extra = activeSpace.value ? { 'cosmac.doc_space': activeSpace.value } : undefined
+  // 再捎「当前所在频道」(频道感知):全局会话横跨多频道话题,bot 据此在历史里分段标注
+  // + 告诫模型别把上一频道的规则/约束带进当前频道(负责人报的串扰问题)。看板态不带。
+  const extra: Record<string, any> = {}
+  if (activeSpace.value) extra['cosmac.doc_space'] = activeSpace.value
+  if (currentRoom.value && currentName.value) {
+    extra['cosmac.active_room'] = currentRoom.value
+    extra['cosmac.active_room_name'] = currentName.value
+  }
   try {
-    await sendText(room, t, extra)
+    await sendText(room, t, Object.keys(extra).length ? extra : undefined)
     setTimeout(refresh, 400)
   } catch (err: any) {
     aiDraft.value = t   // M13：发送失败回填草稿，别丢用户输入
