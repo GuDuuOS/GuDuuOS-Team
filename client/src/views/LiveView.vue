@@ -376,7 +376,7 @@ const aiSessions = ref<AiSession[]>([])
 function refreshAiSessions() { aiSessions.value = listAiSessions() }
 
 // ── 真人私信(DM):渲染在侧栏"私信"区,点开在主区聊天(头部/输入框走简化私聊样式) ──
-const dms = ref<{ id: string; name: string; avatar: string; peerId?: string; pending?: boolean; fromPeer?: boolean; unread?: number }[]>([])
+const dms = ref<{ id: string; name: string; avatar: string; peerId?: string; fav?: boolean; pending?: boolean; fromPeer?: boolean; unread?: number }[]>([])
 // 新私信通知(QA:对方发起私信毫无提示,接收方不知道):首轮加载只记不弹(老私信不轰炸),
 // 之后 sync 里**新出现的、对方发起的**私信房弹一条通知;正打开着那间房的不弹。
 let dmSeeded = false
@@ -1531,11 +1531,19 @@ async function toggleFav() {
   const r = rooms.value.find((x) => x.id === id)
   const prevFav = r?.fav
   if (r) r.fav = next
+  // 私信同理(负责人报"私信收藏无效"):乐观改 dms 条目并按 收藏优先 重排,联系人即时置顶
+  const d = dms.value.find((x) => x.id === id)
+  const prevDmFav = d?.fav
+  if (d) {
+    d.fav = next || undefined
+    dms.value = [...dms.value].sort((a, b) => Number(!!b.fav) - Number(!!a.fav))
+  }
   try {
     await setFavourite(id, next)
   } catch (e: any) {
     fav.value = !next
     if (r) r.fav = prevFav   // 失败回滚
+    if (d) { d.fav = prevDmFav; refreshDms() }
     toast('收藏失败', e?.message || String(e))
   }
 }
@@ -2264,6 +2272,8 @@ onBeforeUnmount(() => {
               <div v-for="d in dms" :key="d.id" class="cs-item dm-row" :class="{ active: currentRoom === d.id, unread: (d.unread || 0) > 0 }" @click="openRoom(d.id)" :title="d.pending ? '新私信邀请,点开即接受' : ''">
                 <span class="cs-dm-av">{{ initials(d.name) }}</span>
                 <span class="cs-label">{{ d.name }}</span>
+                <!-- 收藏的联系人:标 ⭐ 并置顶(此前收藏对私信无可见效果) -->
+                <span v-if="d.fav" class="cs-dm-fav" title="已收藏">★</span>
                 <span v-if="d.pending" class="cs-dm-new">新</span>
                 <span v-else-if="(d.unread || 0) > 0" class="cs-dm-unread">{{ d.unread! > 99 ? '99+' : d.unread }}</span>
               </div>
@@ -3158,6 +3168,8 @@ onBeforeUnmount(() => {
 .ch-vis.dm { background: #fdf1e3; color: var(--accent); border: 1px solid #f0ddc2; }
 /* 私信列表"新邀请"红标 */
 .cs-dm-new { flex-shrink: 0; font-size: 10px; font-weight: 700; color: #fff; background: #c0392b; border-radius: 999px; padding: 1px 6px; }
+/* 已收藏联系人的星标(与头部收藏星同色系) */
+.cs-dm-fav { flex-shrink: 0; font-size: 12px; color: var(--accent); }
 /* 私信未读:红色计数徽章 + 未读行名字加粗 */
 .cs-dm-unread { flex-shrink: 0; min-width: 16px; height: 16px; padding: 0 5px; border-radius: 8px; background: #c0392b; color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
 .dm-row.unread .cs-label { font-weight: 700; color: var(--text); }

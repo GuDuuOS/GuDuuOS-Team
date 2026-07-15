@@ -3762,12 +3762,13 @@ export async function setContactAlias(userId: string, alias: string): Promise<vo
   await (mx as any).setAccountData(CONTACTS_ACCOUNT_DATA, { aliases })
 }
 
-export function listDirectMessages(): { id: string; name: string; avatar: string; peerId?: string; pending?: boolean; fromPeer?: boolean; unread?: number }[] {
+export function listDirectMessages(): { id: string; name: string; avatar: string; peerId?: string; fav?: boolean; pending?: boolean; fromPeer?: boolean; unread?: number }[] {
   if (!mx) return []
   const myId = (mx as any).getUserId?.() || ''
   const out: {
     id: string; name: string; avatar: string
     pending?: boolean; fromPeer?: boolean; unread?: number; peerId: string; ts: number
+    fav?: boolean
   }[] = []
   for (const r of mx.getRooms()) {
     try {
@@ -3797,12 +3798,15 @@ export function listDirectMessages(): { id: string; name: string; avatar: string
         fromPeer: fromPeer || undefined,
         unread: roomUnreadCount(r, myId) || undefined,
         peerId: peer?.userId || '',
+        // 收藏(m.favourite 标签):私信分组里收藏的联系人置顶+标 ⭐——此前收藏对
+        // 私信完全无可见效果(收藏分组只收频道),负责人报"收藏无效"。
+        fav: isFavourite(r.roomId) || undefined,
         ts: r.getLastActiveTimestamp?.() || 0,
       })
     } catch { /* 跳过读不出的房 */ }
   }
-  // 按对方去重:最近活跃优先(有新消息的房 ts 最大,自然赢过历史空房);无 peerId 的不去重
-  out.sort((a, b) => b.ts - a.ts)
+  // 收藏的联系人置顶;组内按最近活跃排(有新消息的房 ts 最大,自然赢过历史空房)
+  out.sort((a, b) => (Number(!!b.fav) - Number(!!a.fav)) || (b.ts - a.ts))
   const seen = new Set<string>()
   const deduped = out.filter((d) => {
     if (!d.peerId) return true
