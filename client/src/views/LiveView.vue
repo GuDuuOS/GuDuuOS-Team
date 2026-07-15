@@ -395,6 +395,13 @@ function refreshDms() {
       }
     }
   }
+  // 正在看的会话:新到的消息即视为已读——本地清零徽章 + 补发已读回执(负责人报:
+  // 会话开着时来消息,未读数一直挂着不消。此前只在打开会话那一刻标过一次已读。)
+  const cur = list.find((d) => d.id === currentRoom.value)
+  if (cur?.unread) {
+    cur.unread = undefined
+    void markRoomRead(cur.id)
+  }
   dms.value = list
 }
 /** 私信管理:给当前联系人改备注名(存本人 account data,只影响自己看到的显示)。 */
