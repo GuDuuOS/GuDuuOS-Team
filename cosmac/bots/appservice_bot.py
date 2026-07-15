@@ -3056,6 +3056,50 @@ class CosmacBot:
             logger.debug("读人事花名册失败", exc_info=True)
         return 200, out
 
+    def handle_admin_archives(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """列全部专班归档记录(管理后台「归档记录」页)。仅平台管理员。
+
+        归档存 cosmac DB `cosmac_project_archive`(archive_project 工具写入),浏览器
+        够不到 DB——bot 代读(与 admin/emails 同套路)。时间按产品时区格式化后下发,
+        前端直接展示,免时区换算。附任务快照(tasks),前端点开可看每条任务的结果。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(user_id):
+            return 403, {"error": "仅平台管理员可查看归档记录"}
+        try:
+            from datetime import timezone as _tz
+
+            from cosmac.db import session_scope
+            from cosmac.db.archive_repo import list_archives
+            from cosmac.tzutil import fmt_ts
+
+            out = []
+            with session_scope() as s:
+                for r in list_archives(s, room_ids=None, limit=200):
+                    # created_at 存的是 naive UTC(TimestampMixin)——补时区再转 epoch
+                    try:
+                        ts = int(r.created_at.replace(tzinfo=_tz.utc).timestamp())
+                        when = fmt_ts(ts, "%Y-%m-%d %H:%M")
+                    except Exception:
+                        when = ""
+                    out.append({
+                        "id": r.id,
+                        "room_id": r.room_id,
+                        "goal": r.goal,
+                        "summary": r.summary,
+                        "tasks": list(r.tasks or []),
+                        "done_count": r.done_count,
+                        "total_count": r.total_count,
+                        "archived_by": r.archived_by,
+                        "archived_at": when,
+                    })
+            return 200, {"archives": out}
+        except Exception:
+            logger.exception("读取归档记录失败")
+            return 500, {"error": "读取归档记录失败(数据库不可用?)"}
+
     def handle_admin_emails(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """管理后台:列「用户名 localpart → 邮箱」映射(给用户列表显示邮箱)。**仅平台管理员**。
 
@@ -5791,6 +5835,11 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         # 管理后台：用户名→邮箱 映射（仅平台管理员;用户列表显示邮箱用）
+        # 专班归档记录(管理后台「归档记录」页,仅管理员)
+        if self.path.split("?", 1)[0] == "/cosmac/admin/archives":
+            code, payload = self.bot.handle_admin_archives(self._bearer())
+            self._send_json(code, payload, cors=True)
+            return
         if self.path.split("?", 1)[0] == "/cosmac/admin/emails":
             code, payload = self.bot.handle_admin_emails(self._bearer())
             self._send_json(code, payload, cors=True)

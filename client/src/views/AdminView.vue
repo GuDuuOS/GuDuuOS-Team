@@ -57,6 +57,9 @@
         <button class="adm-mi" :class="{ active: tab === 'sitePages' }" @click="switchToSitePages">
           <span class="adm-mi-ic">📄</span> 页面内容
         </button>
+        <button class="adm-mi" :class="{ active: tab === 'archives' }" @click="switchToArchives">
+          <span class="adm-mi-ic">🗂️</span> 归档记录
+        </button>
         <button class="adm-mi" :class="{ active: tab === 'overview' }" @click="switchToOverview">
           <span class="adm-mi-ic">📊</span> 数据概览
         </button>
@@ -1324,6 +1327,66 @@
         </div>
       </template>
 
+      <!-- 归档记录面板:专班归档(archive_project)的复盘/审计入口 -->
+      <template v-else-if="tab === 'archives'">
+        <header class="adm-head">
+          <div>
+            <h1 class="adm-h1">归档记录</h1>
+            <p class="adm-hint">专班收尾归档的项目档案（总目标 / 任务快照 / 收尾摘要）· 供复盘与审计回查</p>
+          </div>
+          <div class="adm-actions">
+            <button class="adm-btn ghost" :disabled="arcLoading" @click="loadArchives">
+              {{ arcLoading ? '刷新中…' : '刷新' }}
+            </button>
+          </div>
+        </header>
+
+        <div class="adm-filters">
+          <input v-model.trim="arcSearch" class="adm-search" placeholder="🔍 搜索项目目标 / 归档人 / 频道 ID…" />
+          <span class="adm-filter-n">{{ arcFiltered.length }} / {{ archives.length }}</span>
+        </div>
+
+        <div v-if="arcLoading" class="adm-center"><div class="adm-spin" /> 加载中…</div>
+        <template v-else>
+          <table v-if="arcFiltered.length" class="adm-table">
+            <thead>
+              <tr><th>项目目标</th><th>完成度</th><th>归档人</th><th>归档时间</th><th>操作</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="a in arcFiltered" :key="a.id">
+                <td class="adm-skill-desc">{{ a.goal || '（未记录目标）' }}<div class="adm-dim" style="font-size:11px">{{ a.room_id }}</div></td>
+                <td class="adm-nowrap">{{ a.done_count }}/{{ a.total_count }}</td>
+                <td class="adm-nowrap">{{ a.archived_by || '—' }}</td>
+                <td class="adm-nowrap">{{ a.archived_at || '—' }}</td>
+                <td class="adm-row-actions"><button class="adm-btn ghost sm" @click="arcOpen = a">查看详情</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else class="adm-center" style="padding:40px 0;color:var(--text-3)">还没有归档记录。专班任务全部完成后，让主 AI「归档收尾」即会生成一条档案。</div>
+        </template>
+
+        <!-- 归档详情弹窗:收尾摘要 + 任务快照 -->
+        <div v-if="arcOpen" class="adm-mask" @click.self="arcOpen = null">
+          <div class="adm-modal">
+            <div class="adm-modal-h">🗂️ {{ arcOpen.goal || '归档详情' }}</div>
+            <div class="adm-mlist">
+              <p class="adm-hint">{{ arcOpen.room_id }} · {{ arcOpen.done_count }}/{{ arcOpen.total_count }} 完成 · {{ arcOpen.archived_by }} 于 {{ arcOpen.archived_at }} 归档</p>
+              <h3 class="adm-arc-h">收尾摘要</h3>
+              <p class="adm-arc-summary">{{ arcOpen.summary || '（无摘要）' }}</p>
+              <h3 class="adm-arc-h">任务快照（{{ (arcOpen.tasks || []).length }}）</h3>
+              <div v-for="(t, i) in (arcOpen.tasks || [])" :key="i" class="adm-arc-task">
+                <b>#{{ t.id ?? i + 1 }}</b> [{{ t.status || '—' }}] {{ t.title || '' }}
+                <span v-if="t.executor_ref" class="adm-dim">（{{ t.executor_kind }}:{{ t.executor_ref }}）</span>
+                <div v-if="t.result" class="adm-dim" style="margin-top:2px">结果：{{ String(t.result).slice(0, 300) }}</div>
+              </div>
+            </div>
+            <div class="adm-modal-f">
+              <button class="adm-btn ghost" @click="arcOpen = null">关闭</button>
+            </div>
+          </div>
+        </div>
+      </template>
+
       <!-- 数据概览面板 -->
       <template v-else-if="tab === 'overview'">
         <header class="adm-head">
@@ -1511,6 +1574,8 @@ import {
   AI_PROVIDERS,
   botId,
   isAiWorkerId,
+  fetchAdminArchives,
+  type AdminArchive,
   getPresetAgents,
   fetchSitePage,
   setSitePages,
@@ -1532,10 +1597,31 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 const { success, warn } = useToast()
 
 // 当前管理模块：用户/频道/AI配置/技能库/智能体/规则/工作流/数据概览
-const tab = ref<'users' | 'rooms' | 'ai' | 'skills' | 'agents' | 'people' | 'templates' | 'rules' | 'workflows' | 'gating' | 'quotas' | 'plans' | 'docs' | 'platformKb' | 'sitePages' | 'overview'>('users')
+const tab = ref<'users' | 'rooms' | 'ai' | 'skills' | 'agents' | 'people' | 'templates' | 'rules' | 'workflows' | 'gating' | 'quotas' | 'plans' | 'docs' | 'platformKb' | 'sitePages' | 'archives' | 'overview'>('users')
 
 /* —— 图文教程（后台编辑全平台图文；前台只读·付费可见）—— */
 function switchToDocs() { tab.value = 'docs' }
+
+/* —— 归档记录(专班收尾档案,bot 代读 cosmac DB;负责人需求:归档在库里没有查看入口) —— */
+const archives = ref<AdminArchive[]>([])
+const arcLoading = ref(false)
+const arcLoaded = ref(false)
+const arcOpen = ref<AdminArchive | null>(null)
+const { query: arcSearch, filtered: arcFiltered } = useListSearch(
+  archives, (a) => `${a.goal} ${a.room_id} ${a.archived_by}`,
+)
+async function loadArchives() {
+  arcLoading.value = true
+  try {
+    archives.value = await fetchAdminArchives()
+    arcLoaded.value = true
+  } catch (e: any) {
+    warn('读取归档失败', e?.message || String(e))
+  } finally {
+    arcLoading.value = false
+  }
+}
+function switchToArchives() { tab.value = 'archives'; if (!arcLoaded.value) loadArchives() }
 
 // —— 平台共享知识库（管理员维护，组班可绑）——
 const platformKbDocs = ref<{ id: number; title: string; source: string }[]>([])
@@ -3135,6 +3221,10 @@ onMounted(check)
 .adm-skill-desc { color: var(--text-2); }
 .adm-skill-desc, .adm-table { /* 说明列吃满剩余宽;表格强制满宽 */ }
 .adm-table { table-layout: auto; }
+/* —— 归档记录 —— */
+.adm-arc-h { font-size: var(--fs-100); font-weight: 700; color: var(--text); margin: 12px 0 6px; }
+.adm-arc-summary { font-size: var(--fs-100); color: var(--text-2); line-height: 1.7; white-space: pre-wrap; background: var(--bg-soft); border-radius: 8px; padding: 10px 12px; }
+.adm-arc-task { font-size: var(--fs-75); color: var(--text-2); padding: 7px 0; border-bottom: 1px dashed var(--border-soft); line-height: 1.6; }
 /* 短内容列(标识/名称等)禁折行——两三个字/带连字符的 slug 不许竖排 */
 .adm-nowrap { white-space: nowrap; }
 /* 入驻模板表单：两列网格 + 知识库文档行 */
