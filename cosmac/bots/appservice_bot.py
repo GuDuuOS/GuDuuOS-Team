@@ -37,6 +37,7 @@ from cosmac.config import (
     AI_CONFIG_EVENT_TYPE,
     CHANNEL_CONFIG_EVENT_TYPE,
     CONTROL_ADMINS_EVENT_TYPE,
+    MEMBER_EVENT_TYPE,
     ONBOARDING_TEMPLATES_EVENT_TYPE,
     PEOPLE_EVENT_TYPE,
     RULES_EVENT_TYPE,
@@ -298,6 +299,21 @@ class CosmacBot:
         self._acquired_cache: Dict[str, Tuple[Set[str], float]] = {}
         # AI 同事傀儡账号缓存(slug → MXID;空串=注册失败,重启前不重试)
         self._worker_account_cache: Dict[str, str] = {}
+        # 傀儡「已在房」缓存((room_id, slug)):免每次发送前重复 邀请+join 两个 HTTP
+        self._worker_in_room_cache: Set[Tuple[str, str]] = set()
+        # 平台管理员判定缓存(user_id → (是否, ts)):60 秒 TTL + power_levels 事件清表(评审 #9)
+        self._admin_flag_cache: Dict[str, Tuple[bool, float]] = {}
+        # ═══ 群消息热路径缓存(评审 #3):@智能体触发判定跑在**每条**群消息上,
+        # 其依赖的 全局agent/技能库(控制室 state)、群配置(room state)、自建agent(DB)
+        # 此前每次都发 HTTP/SQL——活跃群 20 条闲聊≈数百次串行请求。═══
+        # 全局 agent/技能原始合并列表(20 秒 TTL,与后台「保存后约 20 秒热生效」同口径)
+        self._agents_items_cache: Tuple[List[Dict[str, Any]], float] = ([], float("-inf"))
+        self._skills_items_cache: Tuple[List[Dict[str, Any]], float] = ([], float("-inf"))
+        # 群配置缓存(room_id → (gctx, ts)):20 秒 TTL 兜底 + 收到 channel_config
+        # state 事件时**精确失效**(改绑定零延迟生效,见 _handle_event)
+        self._gctx_cache: Dict[str, Tuple[Dict[str, Any], float]] = {}
+        # 自建智能体缓存(owner → (列表, ts)):5 分钟 TTL,工坊保存/删除端点写入时失效
+        self._my_agents_cache: Dict[str, Tuple[List[Dict[str, Any]], float]] = {}
         # SDK 引擎回退告警的节流时间戳(1小时最多向控制室发一条,防刷屏)
         self._engine_alert_ts: float = 0.0        # 上次读到的配置覆盖
         # —— 任务时效提醒（定时扫描）——扫描间隔 + "快到期"窗口，都可用 env 调；单实例内定时够用。
@@ -460,6 +476,31 @@ class CosmacBot:
             self._reconcile_control_members(room_id, event.get("content", {}))
             return
 
+        # 1c) 本房频道配置(channel_config)变了 → 群配置缓存精确失效:
+        #     改绑定/人设/RULE 零延迟生效(缓存另有 20 秒 TTL 兜底事件丢失,评审 #3)。
+        if event_type == CHANNEL_CONFIG_EVENT_TYPE and event.get("state_key") is not None:
+            self._gctx_cache.pop(room_id, None)
+            return
+
+        # 1d) 后台改了全局智能体/技能(控制室 state)→ 20 秒缓存提前失效,即刻热生效
+        if event_type == AGENTS_EVENT_TYPE and event.get("state_key") is not None:
+            self._agents_items_cache = ([], float("-inf"))
+            return
+        if event_type == SKILLS_EVENT_TYPE and event.get("state_key") is not None:
+            self._skills_items_cache = ([], float("-inf"))
+            return
+        # 1e) 会员等级/控制室权限变了 → 相关 60 秒缓存清表,变更即刻生效(评审 #9)。
+        #     后台直改 state 不经 grant(),只有这里能感知;变更低频,整表清无碍。
+        if event_type == MEMBER_EVENT_TYPE and event.get("state_key") is not None:
+            try:
+                self.members.invalidate_cache()
+            except Exception:
+                pass
+            return
+        if event_type == "m.room.power_levels" and event.get("state_key") is not None:
+            self._admin_flag_cache.clear()
+            # 不 return:power_levels 变化极少,后续无消息处理逻辑,直接落到默认忽略
+
         # 2) 群里的文本消息
         if event_type == "m.room.message":
             content = event.get("content", {})
@@ -530,9 +571,13 @@ class CosmacBot:
                 self._apply_runtime_config()
                 # 本群上下文读一次（人设/绑定技能/模型覆盖），供 addendum 与选模型共用。
                 gctx = self._group_context(room_id)
-                # 档3b：专班里若点名了某协作 Agent（按名/slug），改用该 worker 的人设/技能/模型
-                # 回这条（任务RULE 不变、仍受约束）；没点名则维持 lead（项目主AI）。
-                gctx = self._apply_worker_routing(text or user_text, gctx, sender=sender)
+                # 档3b：消息点名了某可路由智能体(worker/自建/已获取)→ 以它的人设/技能/模型
+                # 回这条(任务RULE 不变);没点名维持 lead。⚠️ 传**原始正文** user_text +
+                # m.mentions——与触发判定同一输入(text 被 _strip_mention 剥过句首 @,
+                # 用它路由会让「@文案 …」永远切不到已获取智能体,评审 #1)。
+                gctx = self._apply_worker_routing(
+                    user_text, gctx, sender=sender, mentioned_ids=mentioned_ids,
+                )
                 # 按 (本群, 发起人) 算出本轮 system addendum：人设 + 技能 + 知识库检索片段(RAG)。
                 # 任何失败（DB 没装/没数据/出错）都返回空串、绝不阻断回复（见 _skill_addendum）。
                 # 图文教程答疑：全局图文(付费可读)会在 _kb_context 里按 doc_read 门控自动纳入 RAG，
@@ -567,6 +612,13 @@ class CosmacBot:
                 # 方案B:worker 路由若解析出傀儡账号(as_user),回复以该 AI 同事本人身份发——
                 # 时间线上显示它的名字/头像;傀儡发送失败退回主 AI 身份,绝不丢回复。
                 as_user = str(gctx.get("as_user") or "")
+                if as_user:
+                    # 发送前确保傀儡在本房(评审#7:普通频道 @ 已获取智能体/旧专班里
+                    # 傀儡从未 join,不在房 send_text_as 必 403)。带在房缓存,平时零开销;
+                    # 拉不进房(权限等)则清空 as_user,直接走主 AI 身份,省一次注定失败的请求。
+                    _slug = self._worker_slug_of(as_user)
+                    if _slug and not self._ensure_worker_in_room(room_id, _slug):
+                        as_user = ""
                 sent_ok = False
                 if as_user:
                     sent_ok = bool(self.client.send_text_as(
@@ -1038,7 +1090,20 @@ class CosmacBot:
         优先级：① 绑定了全局智能体(persona.agentSlug) → 用它的人设 + 绑定技能 + 模型覆盖；
                 ② 否则用本群自定义人设(persona.prompt)。都没有 → 空。
         失败一律返回空 dict（绝不阻断回复）。
+        20 秒缓存(评审 #3):点名判定跑在每条群消息上,不能每条都读 room state;
+        收到本房 channel_config state 事件时精确失效(改绑定零延迟,见 _handle_event)。
         """
+        cached = self._gctx_cache.get(room_id)
+        if cached and time.monotonic() - cached[1] < 20:
+            return dict(cached[0])
+        out = self._group_context_uncached(room_id)
+        self._gctx_cache[room_id] = (out, time.monotonic())
+        if len(self._gctx_cache) > 5000:
+            self._gctx_cache.clear()
+        return dict(out)
+
+    def _group_context_uncached(self, room_id: str) -> Dict[str, Any]:
+        """_group_context 的真实读取体(缓存壳见上)。"""
         out: Dict[str, Any] = {
             "persona": "", "skill_slugs": [], "model": "", "task_rule": "",
             "worker_slugs": [], "workflow_slugs": [], "kb_scopes": [],
@@ -1083,85 +1148,131 @@ class CosmacBot:
             logger.debug("读取本群上下文失败（忽略）：%s", e)
             return out
 
-    def _apply_worker_routing(
-        self, text: str, gctx: Dict[str, Any], sender: str = ""
-    ) -> Dict[str, Any]:
-        """档3b：专班里若消息点名了某个绑定的协作 Agent（按 slug 或显示名），就改用该 worker
-        的人设/技能/模型回这条；**任务 RULE 不变**（worker 仍在专班、受同一约束）。
+    @staticmethod
+    def _starts_with_word(body: str, token: str) -> bool:
+        """body 是否以 token「成词」开头:token 后必须是串尾或非字母数字。
 
-        没点名、或非专班（worker_slugs 为空）→ 原样返回 lead（项目主AI）的 gctx。
-        方案A（单 bot 多人设）：worker 不是独立 Matrix 账号，靠在正文里匹配名/slug 路由。
-        匹配多个时取第一个；全程兜异常，绝不阻断回复。
+        防日常词乱入(评审 #4):worker 名「设计」——「设计 你好」命中,
+        「设计稿我下午传给你」不命中(后跟汉字/字母=只是词头,不是点名)。
         """
-        slugs = gctx.get("worker_slugs") or []
-        body = (text or "").strip()
-        if not body:
-            return gctx
+        if not token or not body.startswith(token):
+            return False
+        rest = body[len(token):]
+        return (not rest) or (not rest[0].isalnum())
+
+    def _match_routable_agent(
+        self, worker_slugs: List[str], sender: str, body: str,
+        mentioned_ids: Optional[List[str]] = None, for_trigger: bool = True,
+    ) -> Optional[Tuple[str, Dict[str, Any], str]]:
+        """在「可路由智能体」集合里找这条消息点名的那一个——**单一事实源**。
+
+        触发判定(_agent_mention_hit,要不要应答)与人设路由(_apply_worker_routing,
+        以谁应答)都消费本函数。此前两处各写一套候选枚举+命中规则,且路由拿到的是
+        剥过句首 @ 的文本,导致「触发了却路由不到、落回主 AI 人设」(评审 #1);
+        统一后两边输入相同,且 trigger 规则 ⊆ route 规则,触发命中必能路由到。
+
+        候选(按优先级):worker_slugs(本频道绑定,由调用方传入——触发侧读 room state,
+        路由侧直接用 gctx 里现成的,免重复读) → 发起人自建 → 发起人商城已获取。
+        命中规则:
+          - m.mentions / 正文里出现傀儡 MXID(@guduu-ai-<slug>:域):最明确,直接命中;
+          - @slug / @名字(正文任意位置):显式点名,命中;
+          - slug/名字 成词开头(_starts_with_word):仅 worker/自建;已获取不认开头
+            (名字常是「文案」这类日常词,商城指引本来就是"@ 它");
+          - for_trigger=False(路由模式)额外放宽 worker/自建:正文**包含** slug/名字
+            也算——消息已因 @ 主 AI 被应答,保留档3b"提到谁就以谁的人设答"的旧行为。
+        返回 (slug, agent定义, 'global'|'mine');未命中/异常返回 None(绝不阻断)。
+        """
+        body = (body or "").strip()
         low = body.lower()
+        # ⓪ 方案B 最短路径:m.mentions 里直接 @ 了某个傀儡账号(现代客户端 pill,
+        # 正文里可能只有显示名——这正是评审 #1 的 mention pill 场景)
+        try:
+            for uid in (mentioned_ids or []):
+                slug = self._worker_slug_of(uid)
+                if not slug:
+                    continue
+                agent = self._find_global_agent(slug)
+                if agent:
+                    return slug, agent, "global"
+        except Exception:
+            logger.debug("按 m.mentions 匹配傀儡失败(忽略)", exc_info=True)
+        if not body:
+            return None
 
-        def _worker_gctx(agent: Dict[str, Any], slug: str) -> Dict[str, Any]:
-            """按某协作 Agent 组装本条的 gctx(人设/技能/模型 + 方案B 傀儡身份)。"""
-            name = str(agent.get("name") or "").strip()
-            out = dict(gctx)
-            out["persona"] = (
-                f"本条由你以协作智能体「{name or slug}」的身份回应，"
-                f"请按下述人设履职：\n{(agent.get('system_prompt') or '').strip()}"
-            )
-            out["skill_slugs"] = [str(s) for s in (agent.get("skill_slugs") or [])]
-            out["model"] = (agent.get("model") or "").strip()
-            # 方案B:回复以该 AI 同事的傀儡账号身份发(账号建不了则留空=主 AI 身份兜底)
-            out["as_user"] = self._ensure_worker_account(slug)
-            return out
+        def _hit(slug: str, name: str, kind: str) -> bool:
+            """单个候选的命中判定(kind: worker/mine/acquired)。"""
+            if self._worker_user_id(slug) in body:
+                return True  # 正文里出现傀儡 MXID(@pill 的 fallback 形态)
+            slug_l = (slug or "").strip().lower()
+            name = (name or "").strip()
+            if slug_l and f"@{slug_l}" in low:
+                return True
+            if name and f"@{name}" in body:
+                return True
+            if kind != "acquired":  # worker/自建:成词开头也算点名
+                if self._starts_with_word(low, slug_l) or self._starts_with_word(body, name):
+                    return True
+                if not for_trigger:  # 路由模式再放宽:正文包含(档3b 旧行为)
+                    if (slug_l and slug_l in low) or (name and name in body):
+                        return True
+            return False
 
         try:
-            for slug in slugs:
+            # ① 本频道绑定的专班 worker(非专班频道列表为空、开销即止)
+            for slug in (worker_slugs or []):
                 agent = self._find_global_agent(str(slug))
-                if not agent:
-                    continue
-                name = str(agent.get("name") or "").strip()
-                hit = (
-                    (str(slug).lower() in low)
-                    or (bool(name) and name in body)
-                    # 方案B:@ 了它的傀儡账号(前端 mention pill 的正文形态是完整 MXID)
-                    or (self._worker_user_id(str(slug)) in body)
-                )
-                if not hit:
-                    continue
-                return _worker_gctx(agent, str(slug))
-        except Exception as e:
-            logger.debug("协作 Agent 路由失败（忽略，用 lead 回应）：%s", e)
-        # 专班 worker 未命中 → 试**发起人自建**智能体(用户自己的"私人 AI 同事",点名即应答)。
-        try:
+                if agent and _hit(str(slug), str(agent.get("name") or ""), "worker"):
+                    return str(slug), agent, "global"
+            # ② 发起人自建智能体(工坊承诺"任意频道点它的名字就由它应答")
             for m in self._my_agent_items(sender):
-                name = str(m.get("name") or "").strip()
-                if (m["slug"] in low) or (bool(name) and name in body):
-                    out = dict(gctx)
-                    out["persona"] = (
-                        f"本条由你以用户自建智能体「{name or m['slug']}」的身份回应，"
-                        f"请按下述人设履职：\n{(m.get('system_prompt') or '').strip()}"
-                    )
-                    out["skill_slugs"] = [str(x) for x in (m.get("skill_slugs") or [])]
-                    out["model"] = (m.get("model") or "").strip()
-                    return out
-        except Exception as e:
-            logger.debug("个人智能体路由失败（忽略）：%s", e)
-        # 自建也未命中 → 试发起人**商城已获取**的全局智能体。只认显式 @点名(@slug/@名字):
-        # 名字常是"文案"这类日常词,若按"正文包含"匹配,用户请主 AI"帮我写文案"就会被
-        # 错切到 copywriter 人设。access 无需再查——已获取入库时服务端已校验解锁。
-        try:
+                if _hit(str(m.get("slug") or ""), str(m.get("name") or ""), "mine"):
+                    return str(m.get("slug") or ""), m, "mine"
+            # ③ 发起人商城「已获取」的全局智能体(商城指引"在频道里 @它")——只认 @点名。
+            # ⚠️ access 必须**每次实时校验**(评审 #2):获取那一刻的校验只保证当时解锁,
+            # 会员到期回落/管理员事后收紧 access 后,已获取记录仍在——不查就成了
+            # "获取一次终身可用",付费门控被架空。(worker=管理员显式绑进频道的授权、
+            # mine=用户自己的,均不查,与资源权限既有口径一致。)
             for slug in self._acquired_agent_slugs(sender):
                 agent = self._find_global_agent(slug)
-                if not agent:
+                if not agent or not self._resource_visible(agent, sender):
                     continue
-                name = str(agent.get("name") or "").strip()
-                if ((f"@{slug.lower()}" not in low)
-                        and not (name and f"@{name}" in body)
-                        and (self._worker_user_id(slug) not in body)):
-                    continue
-                return _worker_gctx(agent, slug)
-        except Exception as e:
-            logger.debug("已获取智能体路由失败（忽略）：%s", e)
-        return gctx
+                if _hit(slug, str(agent.get("name") or ""), "acquired"):
+                    return slug, agent, "global"
+        except Exception:
+            logger.debug("可路由智能体匹配失败(忽略)", exc_info=True)
+        return None
+
+    def _apply_worker_routing(
+        self, text: str, gctx: Dict[str, Any], sender: str = "",
+        mentioned_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """档3b：消息点名了某个可路由智能体(专班 worker/自建/已获取)时,改用它的
+        人设/技能/模型回这条;**任务 RULE 不变**。没点名 → 原样返回 lead 的 gctx。
+
+        ⚠️ text 必须传**原始正文**(与触发判定同一输入,别传 _strip_mention 后的——
+        句首 @ 被剥会让「@文案 …」路由不到,评审 #1);匹配逻辑见 _match_routable_agent。
+        """
+        match = self._match_routable_agent(
+            gctx.get("worker_slugs") or [], sender, text,
+            mentioned_ids=mentioned_ids, for_trigger=False,
+        )
+        if not match:
+            return gctx
+        slug, agent, kind = match
+        name = str(agent.get("name") or "").strip()
+        out = dict(gctx)
+        label = "用户自建智能体" if kind == "mine" else "协作智能体"
+        out["persona"] = (
+            f"本条由你以{label}「{name or slug}」的身份回应，"
+            f"请按下述人设履职：\n{(agent.get('system_prompt') or '').strip()}"
+        )
+        out["skill_slugs"] = [str(s) for s in (agent.get("skill_slugs") or [])]
+        out["model"] = (agent.get("model") or "").strip()
+        if kind == "global":
+            # 方案B:回复以该 AI 同事的傀儡账号身份发(账号建不了则留空=主 AI 兜底);
+            # 自建智能体是用户私有的,不建全局傀儡(评审 #10:同名 slug 会跨用户共享)。
+            out["as_user"] = self._ensure_worker_account(slug)
+        return out
 
     def _agent_for_model(self, model: str) -> Agent:
         """按「本群模型覆盖」拿一个 Agent：没覆盖或与当前一致 → 用 self.agent；
@@ -1293,6 +1404,11 @@ class CosmacBot:
             Agent 绑定、被 @/指派时才随该 Agent 激活(_agent_skill_items),平时零注入。
         合并规则同 _global_agent_items:预置打底,控制室**同 slug 覆盖**、新 slug 追加。
         """
+        # 20 秒缓存(评审 #3,与 _global_agent_items 同款):绑定解析在应答路径反复调,
+        # 此前每次 resolve_alias+get_state_event 两次 HTTP。
+        items, ts = self._skills_items_cache
+        if time.monotonic() - ts < 20:
+            return list(items)
         from cosmac.ai.preset_skills import preset_skills
 
         merged: Dict[str, Dict[str, Any]] = {s["slug"]: s for s in preset_skills()}
@@ -1305,7 +1421,9 @@ class CosmacBot:
                         merged[str(s["slug"])] = s
         except Exception as e:
             logger.debug("读取控制室技能失败(仅用预置技能库):%s", e)
-        return [s for s in merged.values() if s.get("enabled", True)]
+        items = [s for s in merged.values() if s.get("enabled", True)]
+        self._skills_items_cache = (items, time.monotonic())
+        return list(items)
 
     def _agent_skill_items(self, slugs: List[str]) -> List[Dict[str, Any]]:
         """把「智能体绑定的技能 slug」解析成技能字典——从**技能库**(预置+控制室)里 slug 命中的启用项。
@@ -1325,24 +1443,30 @@ class CosmacBot:
         for_user 非空时按资源「可用范围」(access 字段)过滤——能力名册等"以发起人身份看资源"
         的场景传它;绑群解析等"管理员显式配置"的场景不传(绑定即授权)。
         """
-        from cosmac.ai.presets import preset_agents
+        # 20 秒缓存(评审 #3):本函数在每条群消息的点名判定/路由/名册里被反复调,
+        # 此前每次 resolve_alias+get_state_event 两次 HTTP。缓存**未过滤**的合并列表
+        # (for_user 过滤便宜、在缓存之上做);TTL 与后台「保存后约 20 秒热生效」同口径。
+        items, ts = self._agents_items_cache
+        if time.monotonic() - ts >= 20:
+            from cosmac.ai.presets import preset_agents
 
-        # 预置打底：slug → item
-        merged: Dict[str, Dict[str, Any]] = {a["slug"]: a for a in preset_agents()}
-        # 控制室配置覆盖/追加（不论 enabled，先并进来，最后按 enabled 过滤——这样后台可停用预置）
-        try:
-            ctrl = self.client.resolve_alias(self.config.control_room_alias)
-            if ctrl:
-                ev = self.client.get_state_event(ctrl, AGENTS_EVENT_TYPE) or {}
-                for a in (ev.get("agents") or []):
-                    if isinstance(a, dict) and a.get("slug"):
-                        merged[str(a["slug"])] = a
-        except Exception as e:
-            logger.debug("读取全局智能体列表失败（仅用预置）：%s", e)
-        out = [a for a in merged.values() if a.get("enabled", True)]
+            # 预置打底：slug → item
+            merged: Dict[str, Dict[str, Any]] = {a["slug"]: a for a in preset_agents()}
+            # 控制室配置覆盖/追加（不论 enabled，先并进来，最后按 enabled 过滤——这样后台可停用预置）
+            try:
+                ctrl = self.client.resolve_alias(self.config.control_room_alias)
+                if ctrl:
+                    ev = self.client.get_state_event(ctrl, AGENTS_EVENT_TYPE) or {}
+                    for a in (ev.get("agents") or []):
+                        if isinstance(a, dict) and a.get("slug"):
+                            merged[str(a["slug"])] = a
+            except Exception as e:
+                logger.debug("读取全局智能体列表失败（仅用预置）：%s", e)
+            items = [a for a in merged.values() if a.get("enabled", True)]
+            self._agents_items_cache = (items, time.monotonic())
         if for_user:
-            out = [a for a in out if self._resource_visible(a, for_user)]
-        return out
+            return [a for a in items if self._resource_visible(a, for_user)]
+        return list(items)
 
     def _user_template(self, user_id: str) -> str:
         """查某用户注册引导时选的入驻模板 slug(资源「指定模板可用」据此判定)。
@@ -1437,18 +1561,26 @@ class CosmacBot:
     def _ensure_worker_in_room(self, room_id: str, slug: str) -> str:
         """把某协作 Agent 的傀儡账号拉进频道(注册→邀请→join,全幂等)。
 
-        assemble_team 建专班时逐个调用,让 AI 同事**真的出现在成员列表里**(方案B)。
-        返回傀儡 MXID;任一步失败返回空串(专班照常,退回方案A 的"人设应答"不阻断)。
+        assemble_team 建专班时逐个调用,让 AI 同事**真的出现在成员列表里**(方案B);
+        应答/交付以傀儡身份发送前也要调(评审 #7:不在房 send_text_as 必 403——
+        普通频道 @ 已获取智能体、方案B上线前建的旧专班都属此列)。
+        「已在房」按 (room, slug) 缓存,后续调用零 HTTP。
+        返回傀儡 MXID;任一步失败返回空串(退回主 AI 身份兜底,不阻断)。
         """
         uid = self._ensure_worker_account(slug)
         if not uid:
             return ""
+        if (room_id, slug) in self._worker_in_room_cache:
+            return uid
         try:
             self.client.invite_user(room_id, uid)  # 已在房/重复邀请由 join 兜底
         except Exception:
             logger.debug("邀请傀儡 %s 进 %s 失败(继续尝试 join)", uid, room_id, exc_info=True)
         try:
             if self.client.join_room_as(room_id, uid):
+                self._worker_in_room_cache.add((room_id, slug))
+                if len(self._worker_in_room_cache) > 20000:
+                    self._worker_in_room_cache.clear()
                 return uid
         except Exception:
             logger.exception("傀儡 %s join %s 失败", uid, room_id)
@@ -1485,8 +1617,19 @@ class CosmacBot:
         - **失败兜底**:单个任务 LLM 失败 → 看板留 todo + result 记原因 + 频道提示可 @ 重试。
         """
         done_n = 0
+        quota_stopped = False
         prior: List[str] = []  # 已完成任务的产出摘要(喂给后续任务当上下文)
         for tid in task_ids[: self._AUTO_EXEC_MAX]:
+            # 配额(评审 #5):每个任务的 LLM 生成计入发起人的当日 AI 对话额度——
+            # 否则自动执行成了不计量的 LLM 消费通道(一次组班后台烧 8 次生成)。
+            # 先查不扣(成功产出后才 consume,与对话路径"成功才扣"同口径);超额即停,
+            # 剩余任务留看板可明日再跑或 @ 对应 AI 手动执行。
+            try:
+                if self._rate_quota_blocked(sender, "ai_msg_daily", consume=False):
+                    quota_stopped = True
+                    break
+            except Exception:
+                logger.debug("自动执行:配额检查失败(放行)", exc_info=True)
             title, goal, slug = "", "", ""
             try:
                 from cosmac.db import session_scope
@@ -1501,7 +1644,40 @@ class CosmacBot:
             except Exception:
                 logger.exception("自动执行:读取任务 #%s 失败", tid)
                 continue
+            # 执行者解析(评审 #10):先查全局库;查不到再查**发起人自建**(模型会把任务派给
+            # 名册里"我的·"智能体)——用其真实人设执行,但不建全局傀儡(私有资源,同名 slug
+            # 会跨用户共享账号)。两处都没有 → 不执行,留看板并如实提示,绝不拿空人设硬跑。
             agent_def = self._find_global_agent(slug) or {}
+            is_global = bool(agent_def)
+            if not agent_def:
+                try:
+                    agent_def = next(
+                        (m for m in self._my_agent_items(sender)
+                         if str(m.get("slug") or "") == str(slug)), {},
+                    )
+                except Exception:
+                    agent_def = {}
+            if not agent_def:
+                try:
+                    from cosmac.db import session_scope
+                    from cosmac.db.task_repo import update_task
+
+                    with session_scope() as s:
+                        update_task(
+                            s, tid, status="todo", progress=0,
+                            result=f"自动执行跳过:执行者「{slug}」不在智能体库(可能已删除/写错)",
+                        )
+                except Exception:
+                    logger.debug("自动执行:未知执行者状态回填失败", exc_info=True)
+                try:
+                    self.client.send_text(
+                        room_id,
+                        f"⚠️ 任务#{tid}《{title}》的执行者「{slug}」不在智能体库，已留在看板。"
+                        "可到任务看板改派，或让管理员在后台补建该智能体。",
+                    )
+                except Exception:
+                    pass
+                continue
             name = str(agent_def.get("name") or slug)
             out = ""
             err = "模型无输出"
@@ -1529,11 +1705,13 @@ class CosmacBot:
                 try:
                     # 方案B:产出以该 AI 同事的傀儡账号身份发(时间线显示它的名字/头像);
                     # 傀儡不可用(账号建不了/不在房)退回主 AI 代打署名,绝不丢产出。
+                    # 自建智能体(非 global)不建傀儡(评审 #10),直接主 AI 署名。
                     puppet = ""
-                    try:
-                        puppet = self._ensure_worker_in_room(room_id, slug)
-                    except Exception:
-                        puppet = ""
+                    if is_global:
+                        try:
+                            puppet = self._ensure_worker_in_room(room_id, slug)
+                        except Exception:
+                            puppet = ""
                     sent = None
                     if puppet:
                         sent = self.client.send_text_as(
@@ -1555,6 +1733,11 @@ class CosmacBot:
                     prior.append(f"《{title}》({name}):{out[:500]}")
                 except Exception:
                     logger.exception("自动执行:任务 #%s 回填看板失败", tid)
+                # 产出成功才消费配额(评审 #5,与对话路径同口径:失败不扣)
+                try:
+                    self._rate_quota_blocked(sender, "ai_msg_daily", consume=True)
+                except Exception:
+                    logger.debug("自动执行:配额消费失败(忽略)", exc_info=True)
             else:
                 # 失败:看板退回 todo 并记录原因,频道提示可手动重试——绝不能假装完成
                 try:
@@ -1581,6 +1764,8 @@ class CosmacBot:
             total = min(len(task_ids), self._AUTO_EXEC_MAX)
             skipped = len(task_ids) - total
             tail = f"(还有 {skipped} 个超出单轮上限,留在看板可 @ 对应 AI 手动执行)" if skipped > 0 else ""
+            if quota_stopped:
+                tail += "⚠️ 发起人当日 AI 额度已用完,剩余任务留在看板——明日自动恢复额度后可 @ 对应 AI 执行,或升级会员提升额度。"
             self.client.send_text(
                 room_id,
                 f"📋 AI 同事本轮任务执行完毕：成功 {done_n}/{total}，看板已更新{tail}。",
@@ -2245,58 +2430,20 @@ class CosmacBot:
         self, room_id: str, sender: str, body: str,
         mentioned_ids: Optional[List[str]] = None,
     ) -> bool:
-        """群聊补充触发:这条消息是否**点名**了一个可路由的智能体。
+        """群聊补充触发:这条消息是否**点名**了一个可路由的智能体(要不要应答)。
 
-        与 _apply_worker_routing 配对:这里判"要不要应答",那里判"以谁的人设答"。
-        可路由集合 = 本频道绑定的专班 worker ∪ 发起人自建 ∪ 发起人商城「已获取」。
-        命中规则(防误触发,比路由的"正文包含"严):
-          - worker/自建(显式绑定,预期强):消息以 名字/slug 开头,或正文任意处 @名字/@slug;
-          - 已获取的全局智能体:只认显式 @点名(名字可能是"文案"这类常用词,
-            正文包含或开头匹配都会让 AI 在人聊天时乱入);
-          - 方案B:m.mentions/正文里出现某 AI 同事的**傀儡 MXID**(@guduu-ai-<slug>:域)
-            = 最明确的点名,任何类别都算命中(mentioned_ids 由调用方传 m.mentions)。
-        全程兜异常返回 False——本判定失败只是退回"要 @ 主 AI 才应答"的旧行为。
+        薄封装:候选枚举与命中规则全在 _match_routable_agent(与人设路由共享同一份
+        逻辑,评审 #1 的"触发了却路由不到"由此断根)。worker 列表在这里读 room state
+        (路由侧复用 gctx 里现成的,不重读)。异常返回 False=退回"要 @ 主 AI 才应答"。
         """
-        body = (body or "").strip()
-        # 方案B 最短路径:标准 m.mentions 里直接 @ 了某个傀儡账号
-        for uid in (mentioned_ids or []):
-            if self._worker_slug_of(uid):
-                return True
-        if not body:
-            return False
-        low = body.lower()
-
-        def _hit(slug: str, name: str, at_only: bool) -> bool:
-            """单个候选的命中判定。at_only=True 时只认 @点名。"""
-            puppet = self._worker_user_id(slug)
-            if puppet and puppet in body:
-                return True  # 正文里出现傀儡 MXID(@pill 的 fallback 形态)
-            slug = (slug or "").strip().lower()
-            name = (name or "").strip()
-            if slug and (f"@{slug}" in low or (not at_only and low.startswith(slug))):
-                return True
-            if name and (f"@{name}" in body or (not at_only and body.startswith(name))):
-                return True
-            return False
-
         try:
-            # ① 本频道绑定的专班 worker(读一次 room state;非专班频道列表为空、开销即止)
-            for slug in (self._group_context(room_id).get("worker_slugs") or []):
-                agent = self._find_global_agent(str(slug))
-                if _hit(str(slug), str((agent or {}).get("name") or ""), at_only=False):
-                    return True
-            # ② 发起人自建智能体(工坊承诺"任意频道输入它的名字就由它应答")
-            for m in self._my_agent_items(sender):
-                if _hit(str(m.get("slug") or ""), str(m.get("name") or ""), at_only=False):
-                    return True
-            # ③ 发起人商城「已获取」的全局智能体(商城指引"在频道里 @它")——只认 @点名
-            for slug in self._acquired_agent_slugs(sender):
-                agent = self._find_global_agent(slug)
-                if _hit(slug, str((agent or {}).get("name") or ""), at_only=True):
-                    return True
+            workers = self._group_context(room_id).get("worker_slugs") or []
+            return self._match_routable_agent(
+                workers, sender, body, mentioned_ids=mentioned_ids, for_trigger=True,
+            ) is not None
         except Exception:
             logger.debug("智能体点名判定失败(退回仅 @ 主AI 触发)", exc_info=True)
-        return False
+            return False
 
     def _is_bot_mentioned(self, content: Dict[str, Any]) -> bool:
         """判断这条消息是否在叫主 AI（被 @ 或以它的名字开头）。"""
@@ -4169,6 +4316,7 @@ class CosmacBot:
                     model=model, enabled=enabled,
                 )
             self._storage_cache = {}  # 内容变了,存量缓存作废
+            self._my_agents_cache.pop(user_id, None)  # 自建列表缓存失效,点名路由立即感知
             return 200, {"ok": True}
         except Exception:
             logger.exception("保存个人智能体失败")
@@ -4190,6 +4338,7 @@ class CosmacBot:
             with session_scope() as s:
                 ok = delete_agent(s, SCOPE_USER, user_id, slug)
             self._storage_cache = {}
+            self._my_agents_cache.pop(user_id, None)  # 同保存:删除也立即生效
             return (200, {"ok": True}) if ok else (404, {"error": "没有这个智能体"})
         except Exception:
             logger.exception("删除个人智能体失败")
@@ -4286,9 +4435,24 @@ class CosmacBot:
             return 500, {"error": "删除失败"}
 
     def _my_agent_items(self, owner: str) -> List[Dict[str, Any]]:
-        """本人自建且启用的智能体(名册/@ 路由用)。失败返回空,绝不阻断。"""
+        """本人自建且启用的智能体(名册/@ 路由用)。失败返回空,绝不阻断。
+
+        5 分钟缓存(评审 #3):点名判定每条群消息都调,不能每条打一次 DB——口径同
+        _acquired_agent_slugs;工坊保存/删除端点写入时主动失效(改完立即生效)。
+        """
         if not owner:
             return []
+        cached = self._my_agents_cache.get(owner)
+        if cached and time.monotonic() - cached[1] < 300:
+            return cached[0]
+        items = self._my_agent_items_uncached(owner)
+        self._my_agents_cache[owner] = (items, time.monotonic())
+        if len(self._my_agents_cache) > 5000:
+            self._my_agents_cache.clear()
+        return items
+
+    def _my_agent_items_uncached(self, owner: str) -> List[Dict[str, Any]]:
+        """_my_agent_items 的真实 DB 读取体(缓存壳见上)。"""
         try:
             from cosmac.db import session_scope
             from cosmac.db.models import SCOPE_USER
@@ -4339,7 +4503,9 @@ class CosmacBot:
         ]
         return 200, {"skills": out}
 
-    def _market_catalog_items(self, user_id: str, is_admin: bool) -> List[Dict[str, Any]]:
+    def _market_catalog_items(
+        self, user_id: str, is_admin: bool, only_kind: str = ""
+    ) -> List[Dict[str, Any]]:
         """构建「AI Agent 商城」目录条目(handle_market_catalog 的主体,抽出来供
         acquire 校验/已获取列表回显复用——三处必须看到同一份货架)。
 
@@ -4373,67 +4539,75 @@ class CosmacBot:
             items.append(row)
 
         # —— 智能体:预置+控制室合并(启用的),逐条按 access 判定 ——
-        agents = self._global_agent_items()
-        for a in agents:
-            access = str(a.get("access") or "").strip()
-            if access == "admin" and not is_admin:
-                continue
-            _push("agent", a, self._resource_visible(a, user_id), access, {
-                "division": str(a.get("division") or ""),
-                # 只给绑定技能的数量,不给技能明细(卡片展示"内置 N 项技能"够了)
-                "skill_count": len(a.get("skill_slugs") or []),
-            })
+        # only_kind(评审 #9):acquire 校验单条资源时只建对应类别,别为一次校验重建全货架。
+        # 技能段要用 agents 算「随谁激活」,故 agent/skill 两类都需要 agents 列表。
+        agents = (
+            self._global_agent_items() if only_kind in ("", "agent", "skill") else []
+        )
+        if not only_kind or only_kind == "agent":
+            for a in agents:
+                access = str(a.get("access") or "").strip()
+                if access == "admin" and not is_admin:
+                    continue
+                _push("agent", a, self._resource_visible(a, user_id), access, {
+                    "division": str(a.get("division") or ""),
+                    # 只给绑定技能的数量,不给技能明细(卡片展示"内置 N 项技能"够了)
+                    "skill_count": len(a.get("skill_slugs") or []),
+                })
 
         # —— 技能:可绑定技能库(预置+控制室),附「随哪些 AI 同事激活」供使用指引 ——
         # preset_skills() 的原始条目不带 preset 标记(handle_preset_skills 是展示时补的),
         # 这里按 slug 对照预置库判定「官方」,否则预置技能会错标成"平台运营"。
-        from cosmac.ai.preset_skills import preset_skills
+        if not only_kind or only_kind == "skill":
+            from cosmac.ai.preset_skills import preset_skills
 
-        preset_skill_slugs = {str(p.get("slug")) for p in preset_skills()}
-        by_skill: Dict[str, List[str]] = {}
-        for a in agents:
-            for sl in (a.get("skill_slugs") or []):
-                by_skill.setdefault(str(sl), []).append(str(a.get("name") or a.get("slug")))
-        for s in self._skill_library():
-            access = str(s.get("access") or "").strip()
-            if access == "admin" and not is_admin:
-                continue
-            _push("skill", s, self._resource_visible(s, user_id), access, {
-                "agents": by_skill.get(str(s.get("slug")), []),
-                "inject": str(s.get("inject") or ""),
-                "official": bool(s.get("preset")) or str(s.get("slug")) in preset_skill_slugs,
-            })
+            preset_skill_slugs = {str(p.get("slug")) for p in preset_skills()}
+            by_skill: Dict[str, List[str]] = {}
+            for a in agents:
+                for sl in (a.get("skill_slugs") or []):
+                    by_skill.setdefault(str(sl), []).append(str(a.get("name") or a.get("slug")))
+            for s in self._skill_library():
+                access = str(s.get("access") or "").strip()
+                if access == "admin" and not is_admin:
+                    continue
+                _push("skill", s, self._resource_visible(s, user_id), access, {
+                    "agents": by_skill.get(str(s.get("slug")), []),
+                    "inject": str(s.get("inject") or ""),
+                    "official": bool(s.get("preset")) or str(s.get("slug")) in preset_skill_slugs,
+                })
 
         # —— 工作流:控制室连接器(启用的)。解锁=workflow_run 门控(全局一道闸,非逐项)。
         #    门槛=仅管理员(workflow_run 的默认值)时对非管理员整类隐藏,同 access='admin' 资源的口径 ——
-        wf_unlocked = self._gate_allows(user_id, "workflow_run")
-        wf_required = self.gating.required("workflow_run")
-        # 门槛 free=人人可用,前端语义上等于 access=''(免费)
-        wf_access = "" if wf_required == TIER_FREE else str(wf_required)
-        if is_admin or wf_required != GATE_ADMIN:
-            for w in self._workflow_defs():
-                _push("workflow", w, wf_unlocked, wf_access, {
-                    "platform": str(w.get("platform") or "webhook"),
-                    "input_hint": str(w.get("input_hint") or ""),
-                    "official": True,  # 连接器都是平台后台配的,统一标官方
-                })
+        if not only_kind or only_kind == "workflow":
+            wf_unlocked = self._gate_allows(user_id, "workflow_run")
+            wf_required = self.gating.required("workflow_run")
+            # 门槛 free=人人可用,前端语义上等于 access=''(免费)
+            wf_access = "" if wf_required == TIER_FREE else str(wf_required)
+            if is_admin or wf_required != GATE_ADMIN:
+                for w in self._workflow_defs():
+                    _push("workflow", w, wf_unlocked, wf_access, {
+                        "platform": str(w.get("platform") or "webhook"),
+                        "input_hint": str(w.get("input_hint") or ""),
+                        "official": True,  # 连接器都是平台后台配的,统一标官方
+                    })
 
         # —— 平台共享知识库:按篇列出。解锁=knowledge 门控。无 DB 时安静跳过。
         #    同上:门槛=仅管理员时对非管理员整类隐藏 ——
-        kb_unlocked = self._gate_allows(user_id, "knowledge")
-        kb_required = self.gating.required("knowledge")
-        kb_access = "" if kb_required == TIER_FREE else str(kb_required)
-        if is_admin or kb_required != GATE_ADMIN:
-            try:
-                from cosmac.db import kb, session_scope
-                from cosmac.db.models import SCOPE_GLOBAL
+        if not only_kind or only_kind == "knowledge":
+            kb_unlocked = self._gate_allows(user_id, "knowledge")
+            kb_required = self.gating.required("knowledge")
+            kb_access = "" if kb_required == TIER_FREE else str(kb_required)
+            if is_admin or kb_required != GATE_ADMIN:
+                try:
+                    from cosmac.db import kb, session_scope
+                    from cosmac.db.models import SCOPE_GLOBAL
 
-                with session_scope() as s:
-                    for d in kb.list_docs(s, scope=SCOPE_GLOBAL, scope_id=self._PLATFORM_KB_SCOPE):
-                        _push("knowledge", {"slug": f"kbdoc-{d.id}", "name": d.title},
-                              kb_unlocked, kb_access, {"official": True})
-            except Exception:
-                logger.debug("商城列平台知识库失败(跳过该分类)", exc_info=True)
+                    with session_scope() as s:
+                        for d in kb.list_docs(s, scope=SCOPE_GLOBAL, scope_id=self._PLATFORM_KB_SCOPE):
+                            _push("knowledge", {"slug": f"kbdoc-{d.id}", "name": d.title},
+                                  kb_unlocked, kb_access, {"official": True})
+                except Exception:
+                    logger.debug("商城列平台知识库失败(跳过该分类)", exc_info=True)
         return items
 
     def handle_market_catalog(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
@@ -4489,8 +4663,9 @@ class CosmacBot:
             return 400, {"error": "参数不合法"}
         if want:
             is_admin = self._is_platform_admin(user_id)
+            # only_kind(评审 #9):校验单条资源只建对应类别,不为一次点击重建全货架
             match = next(
-                (i for i in self._market_catalog_items(user_id, is_admin)
+                (i for i in self._market_catalog_items(user_id, is_admin, only_kind=kind)
                  if i["kind"] == kind and i["slug"] == slug),
                 None,
             )
@@ -5156,7 +5331,20 @@ class CosmacBot:
         """是否**平台管理员** = 在控制室里 power≥50。用于工作流这类"用服务端共享凭据、
         触发付费/外部操作"的授权——不分 DM/群，堵住"和 bot 开个 DM 就能跑"的绕过。
         非控制室成员/读不到一律视为否（保守拒绝）。
+        60 秒缓存(评审 #9):资源可见性/商城目录逐条调它,每次 2 趟 HTTP 太贵;
+        控制室 power_levels 变更事件到达时清表(见 _handle_event),平时 60 秒兜底。
         """
+        cached = self._admin_flag_cache.get(user_id)
+        if cached and time.monotonic() - cached[1] < 60:
+            return cached[0]
+        flag = self._is_platform_admin_uncached(user_id)
+        self._admin_flag_cache[user_id] = (flag, time.monotonic())
+        if len(self._admin_flag_cache) > 10000:
+            self._admin_flag_cache.clear()
+        return flag
+
+    def _is_platform_admin_uncached(self, user_id: str) -> bool:
+        """_is_platform_admin 的真实读取体(缓存壳见上)。"""
         try:
             ctrl = self.client.resolve_alias(self.config.control_room_alias)
             if not ctrl:

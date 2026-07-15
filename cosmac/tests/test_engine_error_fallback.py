@@ -42,7 +42,7 @@ class TestEngineErrorFallback(unittest.TestCase):
         bot._rate_quota_blocked = lambda *a, **k: None  # type: ignore
         bot._apply_runtime_config = lambda: None  # type: ignore
         bot._group_context = lambda rid: {"model": ""}  # type: ignore
-        bot._apply_worker_routing = lambda text, gctx, sender: gctx  # type: ignore
+        bot._apply_worker_routing = lambda text, gctx, sender, mentioned_ids=None: gctx  # type: ignore
         bot._skill_addendum = lambda *a, **k: ""  # type: ignore
         bot._recent_history = lambda *a, **k: []  # type: ignore
         bot._agent_for_model = lambda m: object()  # type: ignore

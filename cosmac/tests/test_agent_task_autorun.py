@@ -138,6 +138,58 @@ class TestAgentTaskAutorun(unittest.TestCase):
         self.assertEqual(_task(ids[1]).status, "done")
         self.assertEqual(len(self.llm.calls), 1)
 
+    def test_mine_agent_executes_without_puppet(self) -> None:
+        """评审 #10 回归:派给发起人自建智能体 → 用其真实人设执行,但不注册全局傀儡。"""
+        registered: List[str] = []
+        self.bot.client.register_appservice_user = (  # type: ignore
+            lambda lp: registered.append(lp) or True)
+        self.bot._my_agent_items = lambda owner: [  # type: ignore
+            {"slug": "my-writer", "name": "小说写手", "system_prompt": "你是我的写手", "model": ""}
+        ] if owner == U else []
+        ids = _mk_tasks([{"title": "写一章", "executor_kind": "agent", "executor_ref": "my-writer"}])
+        self.bot._run_agent_tasks(ROOM, U, ids, task_rule="")
+        self.assertEqual(_task(ids[0]).status, "done")
+        # 自建人设进了 system 消息;没有为它注册傀儡账号
+        self.assertIn("你是我的写手", self.llm.calls[0][0].content)
+        self.assertEqual(registered, [])
+
+    def test_unknown_executor_skipped_with_notice(self) -> None:
+        """评审 #10 回归:执行者 slug 全局/自建都查不到 → 不硬跑,留看板+频道提示。"""
+        self.bot._my_agent_items = lambda owner: []  # type: ignore
+        ids = _mk_tasks([{"title": "神秘任务", "executor_kind": "agent", "executor_ref": "ghost"}])
+        self.bot._run_agent_tasks(ROOM, U, ids, task_rule="")
+        t = _task(ids[0])
+        self.assertEqual(t.status, "todo")
+        self.assertIn("不在智能体库", t.result)
+        self.assertEqual(len(self.llm.calls), 0)  # 没拿空人设烧 LLM
+        texts = [x[1] for x in self.bot.client.sent]
+        self.assertTrue(any("不在智能体库" in x for x in texts))
+
+    def test_quota_stops_execution(self) -> None:
+        """评审 #5 回归:发起人当日 AI 额度用完 → 停止剩余任务并在频道说明,成功才扣额。"""
+        consumed: List[bool] = []
+
+        def _quota(user_id, metric, consume=True):
+            # 前 1 次放行;之后按"额度用完"拦。consume=True 的调用单独记数。
+            if consume:
+                consumed.append(True)
+                return None
+            return None if len(consumed) < 1 else "额度用完"
+
+        self.bot._rate_quota_blocked = _quota  # type: ignore
+        ids = _mk_tasks([
+            {"title": f"任务{i}", "executor_kind": "agent", "executor_ref": "copywriter"}
+            for i in range(3)
+        ])
+        self.bot._run_agent_tasks(ROOM, U, ids, task_rule="")
+        # 只执行了第 1 个(成功后扣 1 次额度),后 2 个因超额停住、留在看板
+        self.assertEqual(len(self.llm.calls), 1)
+        self.assertEqual(consumed, [True])
+        self.assertEqual(_task(ids[0]).status, "done")
+        self.assertEqual(_task(ids[1]).status, "todo")
+        texts = [x[1] for x in self.bot.client.sent]
+        self.assertTrue(any("额度已用完" in x for x in texts))
+
     def test_round_cap(self) -> None:
         items = [{"title": f"任务{i}", "executor_kind": "agent", "executor_ref": "copywriter"}
                  for i in range(10)]

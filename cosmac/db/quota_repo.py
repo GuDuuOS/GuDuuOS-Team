@@ -16,12 +16,21 @@ from cosmac.db.models import UsageCounter
 
 
 def period_key(period: str, now: Optional[datetime] = None) -> str:
-    """按周期算出计数键。day=YYYY-MM-DD（UTC）/ month=YYYY-MM / 其它=""（不分周期）。"""
-    d = now or datetime.utcnow()
+    """按周期算出计数键。day=YYYY-MM-DD / month=YYYY-MM / 其它=""（不分周期）。
+
+    日/月的切换点按**产品时区**(tzutil,默认北京时间)——此前用 UTC,「当日额度」
+    在北京时间早上 8 点才重置、0:00-8:00 的用量记进"昨天"(评审 #8);用户与运营
+    都按北京时间理解"每日",账必须同一时钟。切换上线的那一天,旧 UTC 键的当日
+    计数会被视作新的一天(用户当天额度小赚一次),一次性、可接受。
+    """
+    if now is None:
+        from cosmac.tzutil import product_tz
+
+        now = datetime.now(product_tz())
     if period == "day":
-        return d.strftime("%Y-%m-%d")
+        return now.strftime("%Y-%m-%d")
     if period == "month":
-        return d.strftime("%Y-%m")
+        return now.strftime("%Y-%m")
     return ""
 
 

@@ -114,6 +114,8 @@ class TestMarketAcquire(unittest.TestCase):
     def test_stale_when_item_removed_from_shelf(self) -> None:
         self.bot.handle_market_acquire("tok", {"kind": "agent", "slug": "pub-agent"})
         AGENTS[0]["enabled"] = False  # 资源被后台停用(下架)
+        # 全局智能体列表有 20 秒缓存(评审#3);真实场景由控制室 state 事件失效,这里手动模拟
+        self.bot._agents_items_cache = ([], float("-inf"))
         try:
             _, p = self.bot.handle_market_acquired_list("tok")
             self.assertTrue(p["items"][0]["stale"])
@@ -147,6 +149,52 @@ class TestMarketAcquire(unittest.TestCase):
         # 不带 @ 只提到名字 → 不切(仍是 lead)
         out2 = self.bot._apply_worker_routing("帮我写个公共智能体介绍", dict(gctx), sender=U)
         self.assertEqual(out2["persona"], "")
+
+    def test_trigger_and_route_share_inputs(self) -> None:
+        """评审 #1 回归:触发命中的输入形态,路由必须同样命中(单一匹配源)。"""
+        self.bot.handle_market_acquire("tok", {"kind": "agent", "slug": "pub-agent"})
+        gctx = {"worker_slugs": [], "persona": "", "skill_slugs": [], "model": ""}
+        # 场景一:句首 @(此前 handler 把剥过 @ 的文本传给路由 → 路由 miss);
+        # 现在 handler 统一传原始正文,路由直接收原文即应命中。
+        raw = "@pub-agent 帮忙润色这段"
+        self.assertTrue(self.bot._agent_mention_hit("!plain:h", U, raw))
+        out = self.bot._apply_worker_routing(raw, dict(gctx), sender=U)
+        self.assertIn("公共智能体", out["persona"])
+        # 场景二:mention pill(正文只有显示名、MXID 在 m.mentions)——触发与路由都吃 mentions。
+        pill_body, mentions = "公共智能体 帮忙润色", ["@guduu-ai-pub-agent:h"]
+        self.assertTrue(self.bot._agent_mention_hit("!plain:h", U, pill_body, mentions))
+        out2 = self.bot._apply_worker_routing(
+            pill_body, dict(gctx), sender=U, mentioned_ids=mentions)
+        self.assertIn("公共智能体", out2["persona"])
+
+    def test_acquired_rechecks_access_on_use(self) -> None:
+        """评审 #2 回归:已获取的受限智能体,使用时刻仍要过 access——会员到期即失效。"""
+        from cosmac.db import session_scope
+        from cosmac.db.market_repo import add_acquired
+
+        # 模拟"付费期内获取过 paid-agent"(直插 DB,绕过端点的获取时校验)
+        with session_scope() as s:
+            add_acquired(s, user_id=U, kind="agent", slug="paid-agent")
+        gctx = {"worker_slugs": [], "persona": "", "skill_slugs": [], "model": ""}
+        # 现在 tier=free(见 _bot 桩):@ 它不触发、不路由——不再"获取一次终身可用"
+        self.assertFalse(self.bot._agent_mention_hit("!plain:h", U, "@paid-agent 干活"))
+        out = self.bot._apply_worker_routing("@paid-agent 干活", dict(gctx), sender=U)
+        self.assertEqual(out["persona"], "")
+        # 会员恢复付费 → 立即可用(access 每次实时判定)
+        self.bot.members.get_tier = lambda uid: "paid"  # type: ignore
+        self.assertTrue(self.bot._agent_mention_hit("!plain:h", U, "@paid-agent 干活"))
+        out2 = self.bot._apply_worker_routing("@paid-agent 干活", dict(gctx), sender=U)
+        self.assertIn("付费智能体", out2["persona"])
+
+    def test_word_boundary_prevents_casual_trigger(self) -> None:
+        """评审 #4 回归:worker 名是日常词时,「名字+后续汉字」不算点名,不乱入人聊天。"""
+        # TEAM_ROOM 绑定 pub-agent(名「公共智能体」)当 worker
+        self.assertFalse(self.bot._agent_mention_hit(
+            TEAM_ROOM, U, "公共智能体们最近都很忙"))   # 名字后跟汉字=词头,不触发
+        self.assertTrue(self.bot._agent_mention_hit(
+            TEAM_ROOM, U, "公共智能体 请出个方案"))     # 成词(后跟空白)→ 触发
+        self.assertTrue(self.bot._agent_mention_hit(
+            TEAM_ROOM, U, "公共智能体，请出个方案"))    # 成词(后跟标点)→ 触发
 
     def test_roster_marks_acquired_with_star(self) -> None:
         ctx = ToolContext(room_id="!r:h", sender=U, is_dm=True)
