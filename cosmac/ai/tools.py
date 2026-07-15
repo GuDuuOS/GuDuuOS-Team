@@ -304,8 +304,9 @@ class Toolbox:
         self._register(
             name="create_room",
             description=(
-                "创建一个**新的**群聊/房间，并自动把当前请求人拉进去。"
-                "当用户想要『建群/开个专班/新建一个频道』时调用。"
+                "创建一个**新的**群聊/频道，并自动把当前请求人拉进去;可**顺带**把知识库"
+                "调进频道(knowledge)并设频道规则(rule)——用户要『建个频道(带某某知识库/"
+                "定个规则)』时用它一步到位,**不要**为了绑知识库/规则而去建专班。"
                 "⚠️ 只用于**从零新建**：想把人拉进**已有**的群（含当前群）必须用 invite_to_room，"
                 "绝不要为了邀请人而再建一个同名新群。"
             ),
@@ -323,6 +324,19 @@ class Toolbox:
                             "可选。除请求人外还要邀请的用户 id 列表"
                             "（完整格式如 @bob:host）。没有就留空。"
                         ),
+                    },
+                    "knowledge": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "可选。要调进频道的知识库来源:'owner'=发起人个人库、"
+                            "'platform'=平台共享库、或某个资料库频道的名字/room_id。"
+                            "调进后全频道对话可检索。"
+                        ),
+                    },
+                    "rule": {
+                        "type": "string",
+                        "description": "可选。本频道的行为规则/约束(如『对外报价需主管确认』),AI 在本频道会遵守。",
                     },
                 },
                 "required": ["name"],
@@ -696,8 +710,14 @@ class Toolbox:
             description=(
                 "为一个项目**一键组建专班频道**：建频道 → 拉真人成员 → 绑定 AI（项目主AI + 协作Agent）"
                 "→ 设本专班的任务 RULE → 装技能 → 把子任务派进去。"
-                "要拉团队干活的目标就**直接用本工具**（先调 list_capabilities 看有谁可用），"
-                "**在 tasks 里一并把子任务带上**——它会把任务直接派进新专班。"
+                "⚠️ **先征得同意再建**：建专班=新建频道+拉人+派任务，动作重、会占用户的频道列表。"
+                "只有用户**本轮明确说了**『建专班/建项目组/拉个团队』才可直接调；"
+                "否则(比如你自己判断这个目标值得开专班)**必须先用 ask_user_choice 询问**"
+                "(选项如『建专班推进』『就在当前频道处理』)，用户选了建才调。"
+                "只是回答问题/写材料/绑知识库或规则，**不要**建专班——绑资源用 create_room(带 knowledge/rule)"
+                "或直接在当前频道处理。"
+                "确定要建时：先调 list_capabilities 看有谁可用，**在 tasks 里一并把子任务带上**——"
+                "它会把任务直接派进新专班。"
                 "⚠️ 对同一目标**不要再单独调 create_tasks**（否则任务重复成两份、一份还留在原对话里）。"
                 "成员/Agent/技能**必须来自 list_capabilities 名册,绝不要编造名册里没有的**——"
                 "库里没有的资源会被剔除并向用户提示缺口。"
@@ -893,6 +913,42 @@ class Toolbox:
 
     # —— 各工具的具体执行（转发到 MatrixClient）——
 
+    def _resolve_kb_scopes(
+        self, ctx: ToolContext, knowledge: Any
+    ) -> Tuple[List[str], List[str]]:
+        """把模型给的知识库来源列表解析成前缀化 kbScopes(user:/room:/platform)。
+
+        建专班(assemble_team)与普通建频道(create_room)共用——负责人需求:建频道时
+        就能把知识库调进去,不必为绑资源升级成建专班。
+        返回 (scopes, labels):labels 给回执/开班消息展示,解析失败的项以提示形式留在
+        labels 里(不进 scopes),让模型能如实转告"哪个库没找到"。
+        """
+        kb_raw = [str(k).strip() for k in (knowledge or []) if str(k).strip()]
+        kb_scopes: List[str] = []
+        kb_labels: List[str] = []
+        for k in kb_raw:
+            low = k.lower()
+            if low in ("owner", "self", "me", ctx.sender.lower()):
+                scope = f"user:{ctx.sender}"
+                label = "发起人个人库"
+            elif low == "platform":
+                scope = "platform"
+                label = "平台共享库"
+            elif k.startswith("!"):  # 已是 room_id
+                scope = f"room:{k}"
+                label = k
+            else:  # 当作资料库频道名,解析成 room_id
+                rid, _err = self._resolve_room_by_name(k)
+                if not rid:
+                    kb_labels.append(f"「{k}」(没找到这个知识库频道,已跳过)")
+                    continue
+                scope = f"room:{rid}"
+                label = k
+            if scope not in kb_scopes:
+                kb_scopes.append(scope)
+                kb_labels.append(label)
+        return kb_scopes, kb_labels
+
     def _tool_create_room(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         name = (args.get("name") or "新群").strip()
         # 默认把发起人拉进新群，再并上模型额外指定的邀请人（去重）
@@ -901,6 +957,33 @@ class Toolbox:
         room_id = self.client.create_room(name, invitees=invitees, admins=[ctx.sender])
         if not room_id:
             return f"建群「{name}」失败了（创建房间接口返回错误）。"
+        # 顺带绑资源(负责人需求:建频道时就把知识库/规则调进去,不必为此建专班)。
+        # 写失败如实报告,不宣称"已绑"。
+        kb_scopes, kb_labels = self._resolve_kb_scopes(ctx, args.get("knowledge"))
+        rule = str(args.get("rule") or "").strip()
+        bind_note = ""
+        if kb_scopes or rule:
+            content: Dict[str, Any] = {}
+            if kb_scopes:
+                content["kbScopes"] = kb_scopes
+            if rule:
+                content["taskRule"] = rule
+            try:
+                ok = bool(self.client.set_state_event(
+                    room_id, CHANNEL_CONFIG_EVENT_TYPE, content
+                ))
+            except Exception:
+                logger.exception("建群顺带绑资源失败")
+                ok = False
+            if ok:
+                parts = []
+                if kb_labels:
+                    parts.append("知识库:" + "、".join(kb_labels))
+                if rule:
+                    parts.append("频道规则已设")
+                bind_note = "；已绑定 " + "；".join(parts)
+            else:
+                bind_note = "；⚠️ 知识库/规则写入失败,可稍后说「给这个频道重新绑定」重试"
         # 关键：bot 建房后用户只是被「邀请」、且新房没挂进任何工作区(Space)——前端频道树按
         # 「当前工作区的子房间」过滤，所以不发信号卡的话，用户那边根本看不到这个群（=显示成功却
         # "没建成"的真相）。复用 team_created 信号卡：前端收到会自动 join 新房 + 挂进当前工作区，
@@ -915,7 +998,7 @@ class Toolbox:
             logger.debug("发送建群信号卡失败（忽略）", exc_info=True)
         return (
             f"已成功创建群「{name}」（room_id={room_id}），"
-            f"并已邀请：{', '.join(invitees)}。"
+            f"并已邀请：{', '.join(invitees)}{bind_note}。"
         )
 
     def _room_kind(self, room_id: str) -> str:
@@ -1958,30 +2041,7 @@ class Toolbox:
 
         # —— 把知识库"调进"这个频道:解析成前缀化来源(user:/room:/platform),写进 kbScopes ——
         # 频道里所有人对话时都会检索这些来源(见 _group_context/_kb_retrieve),知识库真正"放进频道"。
-        kb_raw = [str(k).strip() for k in (args.get("knowledge") or []) if str(k).strip()]
-        kb_scopes: List[str] = []
-        kb_labels: List[str] = []
-        for k in kb_raw:
-            low = k.lower()
-            if low in ("owner", "self", "me", ctx.sender.lower()):
-                scope = f"user:{ctx.sender}"
-                label = "发起人个人库"
-            elif low == "platform":
-                scope = "platform"
-                label = "平台共享库"
-            elif k.startswith("!"):  # 已是 room_id
-                scope = f"room:{k}"
-                label = k
-            else:  # 当作资料库频道名,解析成 room_id
-                rid, err = self._resolve_room_by_name(k)
-                if not rid:
-                    kb_labels.append(f"「{k}」(没找到这个知识库频道,已跳过)")
-                    continue
-                scope = f"room:{rid}"
-                label = k
-            if scope not in kb_scopes:
-                kb_scopes.append(scope)
-                kb_labels.append(label)
+        kb_scopes, kb_labels = self._resolve_kb_scopes(ctx, args.get("knowledge"))
         if kb_scopes:
             content["kbScopes"] = kb_scopes
 

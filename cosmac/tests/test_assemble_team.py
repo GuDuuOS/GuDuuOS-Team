@@ -106,6 +106,29 @@ class TestAssembleTeam(unittest.TestCase):
         self.assertIn("open", content.get("agentSlugs", []))
         self.assertIn("越权班", out)  # 专班仍建成，只是没绑受限的 vip
 
+    def test_create_room_binds_knowledge_and_rule(self) -> None:
+        # 负责人需求:普通建频道就能把知识库/规则调进去,不必为绑资源建专班。
+        out = self.tb.execute(
+            ToolCall(id="x", name="create_room", arguments={
+                "name": "资料频道", "knowledge": ["owner", "platform"], "rule": "对外资料需审核",
+            }),
+            ToolContext("!cur:h", "@owner:h"),
+        )
+        room, etype, content = self.client.states[0]
+        self.assertEqual(room, "!team:h")
+        self.assertEqual(etype, CHANNEL_CONFIG_EVENT_TYPE)
+        self.assertIn("user:@owner:h", content["kbScopes"])
+        self.assertIn("platform", content["kbScopes"])
+        self.assertEqual(content["taskRule"], "对外资料需审核")
+        self.assertIn("已绑定", out)
+        # 不带 knowledge/rule 时不写 channel_config(不引入空配置)
+        self.client.states.clear()
+        self.tb.execute(
+            ToolCall(id="y", name="create_room", arguments={"name": "普通频道"}),
+            ToolContext("!cur:h", "@owner:h"),
+        )
+        self.assertFalse(self.client.states)
+
     def test_workers_pulled_into_room_as_puppets(self) -> None:
         # 方案B:建专班时把每个协作 Agent 的傀儡账号拉进频道(注入回调);
         # 失败的不进"已进频道"名单,专班照常(退回方案A 人设应答)。
