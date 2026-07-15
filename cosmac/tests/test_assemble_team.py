@@ -249,6 +249,28 @@ class TestTaskReviewTools(unittest.TestCase):
         self.assertIn("出图", out)
         self.assertIn(f"#{self.tid}", out)
 
+    def test_list_room_tasks_by_room_name(self) -> None:
+        """负责人线上实测:私聊里问「查XX专班进度」要能按名字精确解析到该频道。
+
+        撞前缀场景:「讲座活动」与「讲座活动专班」并存,传全名必须命中专班而非母频道;
+        查非当前频道要求发起人是该频道成员(越权防护)。
+        """
+        c = self.tb.client
+        NAMES = {"!mother:h": "讲座活动", "!team:h": "讲座活动专班"}
+        c.joined_rooms = lambda: list(NAMES)  # type: ignore
+        c.get_state_event = (  # type: ignore
+            lambda rid, etype, *a: {"name": NAMES[rid]} if etype == "m.room.name" and rid in NAMES else None
+        )
+        members = {"!team:h": [{"user_id": "@owner:h"}], "!mother:h": [{"user_id": "@other:h"}]}
+        c.get_members = lambda rid: members.get(rid, [])  # type: ignore
+        # 在私聊房(非任务所在频道)里点名查「讲座活动专班」→ 精确命中,列出它的任务
+        out = self._exec("list_room_tasks", {"room": "讲座活动专班"}, room="!dm:h")
+        self.assertIn("写文案", out)
+        self.assertIn("讲座活动专班", out)
+        # 传母频道名 → 解析到母频道,但发起人不在里面 → 拒绝(不泄露任务)
+        out2 = self._exec("list_room_tasks", {"room": "讲座活动"}, room="!dm:h")
+        self.assertIn("你不在", out2)
+
     def test_update_task_approve(self) -> None:
         # 审核通过 → done + 回填结果
         out = self._exec("update_task", {"task_id": self.tid, "status": "done", "result": "已交付链接X"})
