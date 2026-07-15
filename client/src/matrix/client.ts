@@ -3709,7 +3709,30 @@ function roomUnreadCount(r: any, myId: string): number {
   }
 }
 
-export function listDirectMessages(): { id: string; name: string; avatar: string; pending?: boolean; fromPeer?: boolean; unread?: number }[] {
+/* —— 联系人备注(私信管理):存本人 account data(每账号轻量配置的标准位置,多端同步)。
+ *    形如 { aliases: { "@peer:host": "备注名" } };备注只影响自己看到的显示,对方无感。 */
+const CONTACTS_ACCOUNT_DATA = 'cc.cosmac.contacts'
+
+/** 读某联系人的备注名;没设过返回空串。 */
+export function contactAlias(userId: string): string {
+  try {
+    const c = (mx as any)?.getAccountData?.(CONTACTS_ACCOUNT_DATA)?.getContent?.() || {}
+    return String((c.aliases || {})[userId] || '')
+  } catch { return '' }
+}
+
+/** 设置/清除某联系人的备注名(空串=清除,恢复对方原显示名)。 */
+export async function setContactAlias(userId: string, alias: string): Promise<void> {
+  if (!mx || !userId) return
+  const c = (mx as any)?.getAccountData?.(CONTACTS_ACCOUNT_DATA)?.getContent?.() || {}
+  const aliases: Record<string, string> = { ...(c.aliases || {}) }
+  const v = alias.trim().slice(0, 40)
+  if (v) aliases[userId] = v
+  else delete aliases[userId]
+  await (mx as any).setAccountData(CONTACTS_ACCOUNT_DATA, { aliases })
+}
+
+export function listDirectMessages(): { id: string; name: string; avatar: string; peerId?: string; pending?: boolean; fromPeer?: boolean; unread?: number }[] {
   if (!mx) return []
   const myId = (mx as any).getUserId?.() || ''
   const out: {
@@ -3728,7 +3751,8 @@ export function listDirectMessages(): { id: string; name: string; avatar: string
       const others = (r.getJoinedMembers?.() || []).filter((m: any) => m.userId !== myId)
       const invited = ((r as any).getMembersWithMembership?.('invite') || []).filter((m: any) => m.userId !== myId)
       const peer = others[0] || invited[0]
-      const name = peer?.name || peer?.userId || r.name || '私信'
+      // 备注名优先(用户给联系人设的,只影响自己这端的显示)
+      const name = contactAlias(peer?.userId || '') || peer?.name || peer?.userId || r.name || '私信'
       // 发起方 = 房间创建者;不是我建的就是对方发起的(通知只发给接收方)
       let fromPeer = false
       try {
@@ -3756,7 +3780,8 @@ export function listDirectMessages(): { id: string; name: string; avatar: string
     seen.add(d.peerId)
     return true
   })
-  return deduped.map(({ ts, peerId, ...rest }) => rest)
+  // peerId 保留给调用方(私信管理:改备注/删除会话要知道对方是谁)
+  return deduped.map(({ ts, ...rest }) => rest)
 }
 
 /** 打开会话时标记已读(发已读回执 → 清未读)。best-effort，失败不影响使用。 */
