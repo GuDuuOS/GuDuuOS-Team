@@ -1644,7 +1644,40 @@ class CosmacBot:
             except Exception:
                 logger.exception("自动执行:读取任务 #%s 失败", tid)
                 continue
+            # 执行者解析(评审 #10):先查全局库;查不到再查**发起人自建**(模型会把任务派给
+            # 名册里"我的·"智能体)——用其真实人设执行,但不建全局傀儡(私有资源,同名 slug
+            # 会跨用户共享账号)。两处都没有 → 不执行,留看板并如实提示,绝不拿空人设硬跑。
             agent_def = self._find_global_agent(slug) or {}
+            is_global = bool(agent_def)
+            if not agent_def:
+                try:
+                    agent_def = next(
+                        (m for m in self._my_agent_items(sender)
+                         if str(m.get("slug") or "") == str(slug)), {},
+                    )
+                except Exception:
+                    agent_def = {}
+            if not agent_def:
+                try:
+                    from cosmac.db import session_scope
+                    from cosmac.db.task_repo import update_task
+
+                    with session_scope() as s:
+                        update_task(
+                            s, tid, status="todo", progress=0,
+                            result=f"自动执行跳过:执行者「{slug}」不在智能体库(可能已删除/写错)",
+                        )
+                except Exception:
+                    logger.debug("自动执行:未知执行者状态回填失败", exc_info=True)
+                try:
+                    self.client.send_text(
+                        room_id,
+                        f"⚠️ 任务#{tid}《{title}》的执行者「{slug}」不在智能体库，已留在看板。"
+                        "可到任务看板改派，或让管理员在后台补建该智能体。",
+                    )
+                except Exception:
+                    pass
+                continue
             name = str(agent_def.get("name") or slug)
             out = ""
             err = "模型无输出"
@@ -1672,11 +1705,13 @@ class CosmacBot:
                 try:
                     # 方案B:产出以该 AI 同事的傀儡账号身份发(时间线显示它的名字/头像);
                     # 傀儡不可用(账号建不了/不在房)退回主 AI 代打署名,绝不丢产出。
+                    # 自建智能体(非 global)不建傀儡(评审 #10),直接主 AI 署名。
                     puppet = ""
-                    try:
-                        puppet = self._ensure_worker_in_room(room_id, slug)
-                    except Exception:
-                        puppet = ""
+                    if is_global:
+                        try:
+                            puppet = self._ensure_worker_in_room(room_id, slug)
+                        except Exception:
+                            puppet = ""
                     sent = None
                     if puppet:
                         sent = self.client.send_text_as(
