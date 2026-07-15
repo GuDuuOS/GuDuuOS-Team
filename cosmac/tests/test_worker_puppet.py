@@ -93,6 +93,17 @@ class TestWorkerPuppet(unittest.TestCase):
         self.assertEqual(c.registered, ["guduu-ai-copywriter"])
         self.assertEqual(len(c.displaynames), 1)
 
+    def test_in_room_cached_after_first_ensure(self) -> None:
+        """评审 #7 回归:「已在房」缓存——第二次起零 HTTP;发送前确保在房由 handler 调。"""
+        self.bot._ensure_worker_in_room(ROOM, "copywriter")
+        self.bot._ensure_worker_in_room(ROOM, "copywriter")
+        c = self.bot.client
+        self.assertEqual(len(c.invited), 1)  # 邀请/join 只发生一次
+        self.assertEqual(len(c.joined), 1)
+        # 另一个房间 → 重新确保(缓存按 (room, slug))
+        self.bot._ensure_worker_in_room("!other:h", "copywriter")
+        self.assertEqual(len(c.joined), 2)
+
     def test_register_failure_falls_back(self) -> None:
         self.bot.client.register_ok = False
         self.assertEqual(self.bot._ensure_worker_in_room(ROOM, "copywriter"), "")

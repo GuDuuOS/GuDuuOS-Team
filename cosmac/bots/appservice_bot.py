@@ -298,6 +298,8 @@ class CosmacBot:
         self._acquired_cache: Dict[str, Tuple[Set[str], float]] = {}
         # AI 同事傀儡账号缓存(slug → MXID;空串=注册失败,重启前不重试)
         self._worker_account_cache: Dict[str, str] = {}
+        # 傀儡「已在房」缓存((room_id, slug)):免每次发送前重复 邀请+join 两个 HTTP
+        self._worker_in_room_cache: Set[Tuple[str, str]] = set()
         # ═══ 群消息热路径缓存(评审 #3):@智能体触发判定跑在**每条**群消息上,
         # 其依赖的 全局agent/技能库(控制室 state)、群配置(room state)、自建agent(DB)
         # 此前每次都发 HTTP/SQL——活跃群 20 条闲聊≈数百次串行请求。═══
@@ -596,6 +598,13 @@ class CosmacBot:
                 # 方案B:worker 路由若解析出傀儡账号(as_user),回复以该 AI 同事本人身份发——
                 # 时间线上显示它的名字/头像;傀儡发送失败退回主 AI 身份,绝不丢回复。
                 as_user = str(gctx.get("as_user") or "")
+                if as_user:
+                    # 发送前确保傀儡在本房(评审#7:普通频道 @ 已获取智能体/旧专班里
+                    # 傀儡从未 join,不在房 send_text_as 必 403)。带在房缓存,平时零开销;
+                    # 拉不进房(权限等)则清空 as_user,直接走主 AI 身份,省一次注定失败的请求。
+                    _slug = self._worker_slug_of(as_user)
+                    if _slug and not self._ensure_worker_in_room(room_id, _slug):
+                        as_user = ""
                 sent_ok = False
                 if as_user:
                     sent_ok = bool(self.client.send_text_as(
@@ -1538,18 +1547,26 @@ class CosmacBot:
     def _ensure_worker_in_room(self, room_id: str, slug: str) -> str:
         """把某协作 Agent 的傀儡账号拉进频道(注册→邀请→join,全幂等)。
 
-        assemble_team 建专班时逐个调用,让 AI 同事**真的出现在成员列表里**(方案B)。
-        返回傀儡 MXID;任一步失败返回空串(专班照常,退回方案A 的"人设应答"不阻断)。
+        assemble_team 建专班时逐个调用,让 AI 同事**真的出现在成员列表里**(方案B);
+        应答/交付以傀儡身份发送前也要调(评审 #7:不在房 send_text_as 必 403——
+        普通频道 @ 已获取智能体、方案B上线前建的旧专班都属此列)。
+        「已在房」按 (room, slug) 缓存,后续调用零 HTTP。
+        返回傀儡 MXID;任一步失败返回空串(退回主 AI 身份兜底,不阻断)。
         """
         uid = self._ensure_worker_account(slug)
         if not uid:
             return ""
+        if (room_id, slug) in self._worker_in_room_cache:
+            return uid
         try:
             self.client.invite_user(room_id, uid)  # 已在房/重复邀请由 join 兜底
         except Exception:
             logger.debug("邀请傀儡 %s 进 %s 失败(继续尝试 join)", uid, room_id, exc_info=True)
         try:
             if self.client.join_room_as(room_id, uid):
+                self._worker_in_room_cache.add((room_id, slug))
+                if len(self._worker_in_room_cache) > 20000:
+                    self._worker_in_room_cache.clear()
                 return uid
         except Exception:
             logger.exception("傀儡 %s join %s 失败", uid, room_id)
