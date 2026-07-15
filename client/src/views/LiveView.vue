@@ -1787,7 +1787,9 @@ function pickMention(c: MentionCand) {
 
 /** 输入框统一按键处理:补全面板打开时接管 ↑↓/Enter/Tab/Esc,否则维持原行为。 */
 function onComposerKeydown(e: KeyboardEvent) {
-  if (mentionOpen.value) {
+  // 输入法组字中(isComposing)的按键一律不拦(评审#6):中文用户按 Enter 确认拼音候选时,
+  // 若被下面的 mention 选中分支劫持,未上屏的组字会被吞掉换成 @候选。
+  if (mentionOpen.value && !e.isComposing) {
     if (e.key === 'ArrowDown') { e.preventDefault(); mentionIdx.value = (mentionIdx.value + 1) % mentionList.value.length; return }
     if (e.key === 'ArrowUp') { e.preventDefault(); mentionIdx.value = (mentionIdx.value - 1 + mentionList.value.length) % mentionList.value.length; return }
     if (e.key === 'Enter' || e.key === 'Tab') {
