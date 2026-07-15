@@ -82,6 +82,8 @@ import {
   acceptPendingInvites,
   isProjectArchived,
   botId,
+  contactAlias,
+  setContactAlias,
   getChannelConfig,
   fetchMarketCatalog,
   fetchMarketAcquired,
@@ -373,7 +375,7 @@ const aiSessions = ref<AiSession[]>([])
 function refreshAiSessions() { aiSessions.value = listAiSessions() }
 
 // ── 真人私信(DM):渲染在侧栏"私信"区,点开在主区聊天(头部/输入框走简化私聊样式) ──
-const dms = ref<{ id: string; name: string; avatar: string; pending?: boolean; fromPeer?: boolean; unread?: number }[]>([])
+const dms = ref<{ id: string; name: string; avatar: string; peerId?: string; pending?: boolean; fromPeer?: boolean; unread?: number }[]>([])
 // 新私信通知(QA:对方发起私信毫无提示,接收方不知道):首轮加载只记不弹(老私信不轰炸),
 // 之后 sync 里**新出现的、对方发起的**私信房弹一条通知;正打开着那间房的不弹。
 let dmSeeded = false
@@ -394,6 +396,39 @@ function refreshDms() {
   }
   dms.value = list
 }
+/** 私信管理:给当前联系人改备注名(存本人 account data,只影响自己看到的显示)。 */
+async function renameDmContact() {
+  const dm = dms.value.find((d) => d.id === currentRoom.value)
+  if (!dm?.peerId) { toast('暂不可用', '没拿到对方账号信息，稍后再试'); return }
+  const cur = contactAlias(dm.peerId)
+  const alias = prompt(`给「${dm.name}」设置备注名（留空恢复原名）：`, cur)
+  if (alias === null) return  // 用户取消
+  try {
+    await setContactAlias(dm.peerId, alias)
+    refreshDms()  // 侧栏与会话头(currentName 取自 dms)立即用新备注
+    toast('已更新备注', alias.trim() ? `显示为「${alias.trim()}」` : '已恢复对方原名')
+  } catch (e: any) {
+    toast('备注保存失败', e?.message || String(e))
+  }
+}
+
+/** 私信管理:删除当前会话(离开并遗忘——只从自己列表移除,对方不受影响)。 */
+async function deleteDmChat() {
+  const room = currentRoom.value
+  if (!room) return
+  if (!confirm(`删除与「${currentName.value}」的私信会话？\n聊天记录将从你的列表中移除（对方不受影响）。对方之后再发消息会重新出现新会话。`)) return
+  try {
+    await leaveAndForget(room)
+    currentRoom.value = ''
+    board.value = true
+    refreshDms()
+    toast('已删除会话', '如需再联系，可从「发起私信」重新开始')
+    setTimeout(refresh, 600)
+  } catch (e: any) {
+    toast('删除失败', e?.message || String(e))
+  }
+}
+
 const dmDialogOpen = ref(false)     // "发起私信"弹窗
 const dmUserInput = ref('')
 const dmBusy = ref(false)
@@ -2422,6 +2457,13 @@ onBeforeUnmount(() => {
                 :title="currentVis === '公开' ? '公开频道：本服务器任何人可自行加入' : '私密频道：仅受邀成员可进'">{{ currentVis }}</span>
           <div v-if="currentTopic && !currentIsDm" class="ch-topic">{{ currentTopic }}</div>
           <div class="ch-actions">
+            <!-- 私信管理入口(负责人建议:此前私信没有任何管理入口) -->
+            <button v-if="currentIsDm" class="ch-ic-btn" title="修改备注名" @click="renameDmContact">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
+            </button>
+            <button v-if="currentIsDm" class="ch-ic-btn dm-del" title="删除会话（仅从你的列表移除）" @click="deleteDmChat">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
+            </button>
             <button v-if="!currentIsDm" class="ch-members-btn" title="频道管理 · 成员 / 技能 / 知识库 / 规则" @click="openAdmin(currentName, currentRoom)">
               <div class="ava-stack">
                 <div v-for="m in channelMembers.slice(0, 3)" :key="m.id" class="a" :class="{ bot: m.isBot }">{{ m.isBot ? '智' : initials(m.name) }}</div>
@@ -3476,6 +3518,8 @@ onBeforeUnmount(() => {
 .ava-stack .a.bot { background: var(--text); border-radius: 5px; }
 .ch-members-count { font-size: 13px; color: var(--text-3); font-family: var(--mono); margin: 0 0 0 6px; }
 .ch-ic-btn { width: 30px; height: 30px; background: transparent; border: none; color: var(--text-3); border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: background .12s ease, color .12s ease; }
+/* 私信「删除会话」按钮:悬停转警示红,提示这是移除性操作 */
+.ch-ic-btn.dm-del:hover { color: #c0392b; background: rgba(192, 57, 43, 0.08); }
 .ch-ic-btn:hover { background: var(--bg-hover); color: var(--text); }
 .ch-ic-btn.active { background: var(--accent-soft); color: var(--accent); }
 
