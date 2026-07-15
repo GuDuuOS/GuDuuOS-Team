@@ -3481,6 +3481,21 @@ onBeforeUnmount(() => {
 
 /* 消息流（Discord 风：分组 / 悬停高亮 / 工具条 / 反应 / 回复）*/
 .stream { flex: 1; overflow-y: auto; padding: 8px var(--content-pad-x) 20px; }
+/* 消息区滚动条**常驻可见**(负责人建议):全局滚动条是"滚动中才显形"(reset.css),
+   静止时全透明——想快速拖拽长聊天记录时根本抓不到。仅此容器覆盖为常驻。
+   ⚠️ 必须先把标准属性还原为 auto:reset.css 的 `*{scrollbar-width:thin}` 在
+   Chrome 121+ 会让 ::-webkit-scrollbar 定制整个失效(标准属性优先),且 overlay
+   模式下标准属性做不到常驻;还原后 webkit 伪元素接管=强制经典滚动条,占位+常驻。 */
+.stream { scrollbar-width: auto; scrollbar-color: auto; }
+.stream::-webkit-scrollbar { width: 10px; }
+.stream::-webkit-scrollbar-track { background: transparent; }
+.stream::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.22);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.stream::-webkit-scrollbar-thumb:hover { background-color: rgba(0, 0, 0, 0.38); }
 .msg { display: flex; flex-direction: column; padding: 4px 10px; margin: 0 -10px; border-radius: 4px; position: relative; }
 .msg:not(.grouped) { margin-top: 18px; }
 /* 有回复的消息：上方再多留点空，给连接线腾出"空行" */
