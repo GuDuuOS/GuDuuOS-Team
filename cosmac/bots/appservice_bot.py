@@ -37,6 +37,7 @@ from cosmac.config import (
     AI_CONFIG_EVENT_TYPE,
     CHANNEL_CONFIG_EVENT_TYPE,
     CONTROL_ADMINS_EVENT_TYPE,
+    MEMBER_EVENT_TYPE,
     ONBOARDING_TEMPLATES_EVENT_TYPE,
     PEOPLE_EVENT_TYPE,
     RULES_EVENT_TYPE,
@@ -300,6 +301,8 @@ class CosmacBot:
         self._worker_account_cache: Dict[str, str] = {}
         # 傀儡「已在房」缓存((room_id, slug)):免每次发送前重复 邀请+join 两个 HTTP
         self._worker_in_room_cache: Set[Tuple[str, str]] = set()
+        # 平台管理员判定缓存(user_id → (是否, ts)):60 秒 TTL + power_levels 事件清表(评审 #9)
+        self._admin_flag_cache: Dict[str, Tuple[bool, float]] = {}
         # ═══ 群消息热路径缓存(评审 #3):@智能体触发判定跑在**每条**群消息上,
         # 其依赖的 全局agent/技能库(控制室 state)、群配置(room state)、自建agent(DB)
         # 此前每次都发 HTTP/SQL——活跃群 20 条闲聊≈数百次串行请求。═══
@@ -486,6 +489,17 @@ class CosmacBot:
         if event_type == SKILLS_EVENT_TYPE and event.get("state_key") is not None:
             self._skills_items_cache = ([], float("-inf"))
             return
+        # 1e) 会员等级/控制室权限变了 → 相关 60 秒缓存清表,变更即刻生效(评审 #9)。
+        #     后台直改 state 不经 grant(),只有这里能感知;变更低频,整表清无碍。
+        if event_type == MEMBER_EVENT_TYPE and event.get("state_key") is not None:
+            try:
+                self.members.invalidate_cache()
+            except Exception:
+                pass
+            return
+        if event_type == "m.room.power_levels" and event.get("state_key") is not None:
+            self._admin_flag_cache.clear()
+            # 不 return:power_levels 变化极少,后续无消息处理逻辑,直接落到默认忽略
 
         # 2) 群里的文本消息
         if event_type == "m.room.message":
@@ -4454,7 +4468,9 @@ class CosmacBot:
         ]
         return 200, {"skills": out}
 
-    def _market_catalog_items(self, user_id: str, is_admin: bool) -> List[Dict[str, Any]]:
+    def _market_catalog_items(
+        self, user_id: str, is_admin: bool, only_kind: str = ""
+    ) -> List[Dict[str, Any]]:
         """构建「AI Agent 商城」目录条目(handle_market_catalog 的主体,抽出来供
         acquire 校验/已获取列表回显复用——三处必须看到同一份货架)。
 
@@ -4488,67 +4504,75 @@ class CosmacBot:
             items.append(row)
 
         # —— 智能体:预置+控制室合并(启用的),逐条按 access 判定 ——
-        agents = self._global_agent_items()
-        for a in agents:
-            access = str(a.get("access") or "").strip()
-            if access == "admin" and not is_admin:
-                continue
-            _push("agent", a, self._resource_visible(a, user_id), access, {
-                "division": str(a.get("division") or ""),
-                # 只给绑定技能的数量,不给技能明细(卡片展示"内置 N 项技能"够了)
-                "skill_count": len(a.get("skill_slugs") or []),
-            })
+        # only_kind(评审 #9):acquire 校验单条资源时只建对应类别,别为一次校验重建全货架。
+        # 技能段要用 agents 算「随谁激活」,故 agent/skill 两类都需要 agents 列表。
+        agents = (
+            self._global_agent_items() if only_kind in ("", "agent", "skill") else []
+        )
+        if not only_kind or only_kind == "agent":
+            for a in agents:
+                access = str(a.get("access") or "").strip()
+                if access == "admin" and not is_admin:
+                    continue
+                _push("agent", a, self._resource_visible(a, user_id), access, {
+                    "division": str(a.get("division") or ""),
+                    # 只给绑定技能的数量,不给技能明细(卡片展示"内置 N 项技能"够了)
+                    "skill_count": len(a.get("skill_slugs") or []),
+                })
 
         # —— 技能:可绑定技能库(预置+控制室),附「随哪些 AI 同事激活」供使用指引 ——
         # preset_skills() 的原始条目不带 preset 标记(handle_preset_skills 是展示时补的),
         # 这里按 slug 对照预置库判定「官方」,否则预置技能会错标成"平台运营"。
-        from cosmac.ai.preset_skills import preset_skills
+        if not only_kind or only_kind == "skill":
+            from cosmac.ai.preset_skills import preset_skills
 
-        preset_skill_slugs = {str(p.get("slug")) for p in preset_skills()}
-        by_skill: Dict[str, List[str]] = {}
-        for a in agents:
-            for sl in (a.get("skill_slugs") or []):
-                by_skill.setdefault(str(sl), []).append(str(a.get("name") or a.get("slug")))
-        for s in self._skill_library():
-            access = str(s.get("access") or "").strip()
-            if access == "admin" and not is_admin:
-                continue
-            _push("skill", s, self._resource_visible(s, user_id), access, {
-                "agents": by_skill.get(str(s.get("slug")), []),
-                "inject": str(s.get("inject") or ""),
-                "official": bool(s.get("preset")) or str(s.get("slug")) in preset_skill_slugs,
-            })
+            preset_skill_slugs = {str(p.get("slug")) for p in preset_skills()}
+            by_skill: Dict[str, List[str]] = {}
+            for a in agents:
+                for sl in (a.get("skill_slugs") or []):
+                    by_skill.setdefault(str(sl), []).append(str(a.get("name") or a.get("slug")))
+            for s in self._skill_library():
+                access = str(s.get("access") or "").strip()
+                if access == "admin" and not is_admin:
+                    continue
+                _push("skill", s, self._resource_visible(s, user_id), access, {
+                    "agents": by_skill.get(str(s.get("slug")), []),
+                    "inject": str(s.get("inject") or ""),
+                    "official": bool(s.get("preset")) or str(s.get("slug")) in preset_skill_slugs,
+                })
 
         # —— 工作流:控制室连接器(启用的)。解锁=workflow_run 门控(全局一道闸,非逐项)。
         #    门槛=仅管理员(workflow_run 的默认值)时对非管理员整类隐藏,同 access='admin' 资源的口径 ——
-        wf_unlocked = self._gate_allows(user_id, "workflow_run")
-        wf_required = self.gating.required("workflow_run")
-        # 门槛 free=人人可用,前端语义上等于 access=''(免费)
-        wf_access = "" if wf_required == TIER_FREE else str(wf_required)
-        if is_admin or wf_required != GATE_ADMIN:
-            for w in self._workflow_defs():
-                _push("workflow", w, wf_unlocked, wf_access, {
-                    "platform": str(w.get("platform") or "webhook"),
-                    "input_hint": str(w.get("input_hint") or ""),
-                    "official": True,  # 连接器都是平台后台配的,统一标官方
-                })
+        if not only_kind or only_kind == "workflow":
+            wf_unlocked = self._gate_allows(user_id, "workflow_run")
+            wf_required = self.gating.required("workflow_run")
+            # 门槛 free=人人可用,前端语义上等于 access=''(免费)
+            wf_access = "" if wf_required == TIER_FREE else str(wf_required)
+            if is_admin or wf_required != GATE_ADMIN:
+                for w in self._workflow_defs():
+                    _push("workflow", w, wf_unlocked, wf_access, {
+                        "platform": str(w.get("platform") or "webhook"),
+                        "input_hint": str(w.get("input_hint") or ""),
+                        "official": True,  # 连接器都是平台后台配的,统一标官方
+                    })
 
         # —— 平台共享知识库:按篇列出。解锁=knowledge 门控。无 DB 时安静跳过。
         #    同上:门槛=仅管理员时对非管理员整类隐藏 ——
-        kb_unlocked = self._gate_allows(user_id, "knowledge")
-        kb_required = self.gating.required("knowledge")
-        kb_access = "" if kb_required == TIER_FREE else str(kb_required)
-        if is_admin or kb_required != GATE_ADMIN:
-            try:
-                from cosmac.db import kb, session_scope
-                from cosmac.db.models import SCOPE_GLOBAL
+        if not only_kind or only_kind == "knowledge":
+            kb_unlocked = self._gate_allows(user_id, "knowledge")
+            kb_required = self.gating.required("knowledge")
+            kb_access = "" if kb_required == TIER_FREE else str(kb_required)
+            if is_admin or kb_required != GATE_ADMIN:
+                try:
+                    from cosmac.db import kb, session_scope
+                    from cosmac.db.models import SCOPE_GLOBAL
 
-                with session_scope() as s:
-                    for d in kb.list_docs(s, scope=SCOPE_GLOBAL, scope_id=self._PLATFORM_KB_SCOPE):
-                        _push("knowledge", {"slug": f"kbdoc-{d.id}", "name": d.title},
-                              kb_unlocked, kb_access, {"official": True})
-            except Exception:
-                logger.debug("商城列平台知识库失败(跳过该分类)", exc_info=True)
+                    with session_scope() as s:
+                        for d in kb.list_docs(s, scope=SCOPE_GLOBAL, scope_id=self._PLATFORM_KB_SCOPE):
+                            _push("knowledge", {"slug": f"kbdoc-{d.id}", "name": d.title},
+                                  kb_unlocked, kb_access, {"official": True})
+                except Exception:
+                    logger.debug("商城列平台知识库失败(跳过该分类)", exc_info=True)
         return items
 
     def handle_market_catalog(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
@@ -4604,8 +4628,9 @@ class CosmacBot:
             return 400, {"error": "参数不合法"}
         if want:
             is_admin = self._is_platform_admin(user_id)
+            # only_kind(评审 #9):校验单条资源只建对应类别,不为一次点击重建全货架
             match = next(
-                (i for i in self._market_catalog_items(user_id, is_admin)
+                (i for i in self._market_catalog_items(user_id, is_admin, only_kind=kind)
                  if i["kind"] == kind and i["slug"] == slug),
                 None,
             )
@@ -5271,7 +5296,20 @@ class CosmacBot:
         """是否**平台管理员** = 在控制室里 power≥50。用于工作流这类"用服务端共享凭据、
         触发付费/外部操作"的授权——不分 DM/群，堵住"和 bot 开个 DM 就能跑"的绕过。
         非控制室成员/读不到一律视为否（保守拒绝）。
+        60 秒缓存(评审 #9):资源可见性/商城目录逐条调它,每次 2 趟 HTTP 太贵;
+        控制室 power_levels 变更事件到达时清表(见 _handle_event),平时 60 秒兜底。
         """
+        cached = self._admin_flag_cache.get(user_id)
+        if cached and time.monotonic() - cached[1] < 60:
+            return cached[0]
+        flag = self._is_platform_admin_uncached(user_id)
+        self._admin_flag_cache[user_id] = (flag, time.monotonic())
+        if len(self._admin_flag_cache) > 10000:
+            self._admin_flag_cache.clear()
+        return flag
+
+    def _is_platform_admin_uncached(self, user_id: str) -> bool:
+        """_is_platform_admin 的真实读取体(缓存壳见上)。"""
         try:
             ctrl = self.client.resolve_alias(self.config.control_room_alias)
             if not ctrl:

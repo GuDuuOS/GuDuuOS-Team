@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from cosmac.config import GATING_EVENT_TYPE, MEMBER_EVENT_TYPE, MEMBERS_EVENT_TYPE
 
@@ -160,6 +160,17 @@ class MembersStore:
     def __init__(self, client: Any, control_room_alias: str):
         self._client = client
         self._alias = control_room_alias
+        # 会员记录 60 秒缓存(user_id → (记录或 None, 时间戳)):get_tier 被资源可见性/
+        # 门控/商城目录逐条调用,每次一趟控制室 state HTTP 读太贵(评审 #9)。
+        # grant 写入时主动失效;后台直改 state 的场景由 bot 收到 state 事件时清整表。
+        self._rec_cache: Dict[str, Tuple[Optional[Dict[str, Any]], float]] = {}
+
+    def invalidate_cache(self, user_id: str = "") -> None:
+        """会员记录缓存失效:传 user_id 清单人,不传清整表(state 直改场景)。"""
+        if user_id:
+            self._rec_cache.pop(user_id, None)
+        else:
+            self._rec_cache.clear()
 
     def _ctrl_room(self) -> Optional[str]:
         """解析控制室 room_id；解析不到返回 None（控制室还没建）。"""
@@ -217,7 +228,19 @@ class MembersStore:
 
         供续费逻辑用（要拿到当前 expires_ts 才能"在原到期日上顺延"）。读失败返回 None
         → 上层按免费/无记录处理（fail-closed，不误授予）。
+        带 60 秒缓存(评审 #9,含"无记录"也缓存);grant/收到会员 state 事件时失效。
         """
+        cached = self._rec_cache.get(user_id)
+        if cached and time.monotonic() - cached[1] < 60:
+            return cached[0]
+        rec = self._get_record_uncached(user_id)
+        self._rec_cache[user_id] = (rec, time.monotonic())
+        if len(self._rec_cache) > 10000:
+            self._rec_cache.clear()
+        return rec
+
+    def _get_record_uncached(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """get_record 的真实读取体(缓存壳见上)。"""
         room = self._ctrl_room()
         if not room:
             return None
@@ -278,11 +301,14 @@ class MembersStore:
         }
         try:
             # state_key 用去 @ 的形式，绕开 Matrix"@开头只能本人写"的限制（见 member_state_key）
-            return bool(
+            ok = bool(
                 self._client.set_state_event(
                     room, MEMBER_EVENT_TYPE, content, member_state_key(user_id)
                 )
             )
+            if ok:
+                self.invalidate_cache(user_id)  # 等级变了,60 秒缓存立即失效(开通即生效)
+            return ok
         except Exception:
             logger.exception("授予会员等级失败 user=%s tier=%s", user_id, tier)
             return False
