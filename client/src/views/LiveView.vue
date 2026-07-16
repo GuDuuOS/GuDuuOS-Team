@@ -2232,7 +2232,7 @@ onBeforeUnmount(() => {
               >
                 <span class="cs-chan-av" :style="{ background: colorOf(r.name) }">{{ iconChar(r.name) }}</span>
                 <span class="cs-label" :title="r.name">{{ r.name }}</span>
-                <span v-if="isArchived(r.id)" class="cs-archived-tag" title="专班已归档收尾">🗄</span>
+                <span v-if="isArchived(r.id)" class="cs-archived-tag" title="专班已归档收尾"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></svg></span>
               </div>
             </template>
           </div>
@@ -2253,7 +2253,7 @@ onBeforeUnmount(() => {
               >
                 <span class="cs-chan-av" :style="{ background: colorOf(r.name) }">{{ iconChar(r.name) }}</span>
                 <span class="cs-label" :title="r.name">{{ r.name }}</span>
-                <span v-if="isArchived(r.id)" class="cs-archived-tag" title="专班已归档收尾">🗄</span>
+                <span v-if="isArchived(r.id)" class="cs-archived-tag" title="专班已归档收尾"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></svg></span>
               </div>
               <p v-if="!channelRooms.length" class="cs-empty">还没有频道</p>
               <div class="cs-item cs-add-row" @click="openNewChannel">
@@ -3330,11 +3330,12 @@ onBeforeUnmount(() => {
 .cs-item.active .cs-chan-av { box-shadow: 0 0 0 1.5px rgba(255,255,255,.5); }
 .cs-item.active .cs-ic { color: var(--text); }
 .cs-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 已归档专班频道：灰显（仍可点开查看留档），右侧 🗄 角标 */
+/* 已归档专班频道：灰显（仍可点开查看留档），右侧归档盒角标。
+   角标用内联 SVG 而非 🗄 emoji——emoji 在 Windows/部分字体下渲染成模糊小块看不清(负责人报的)。 */
 .cs-item.archived { opacity: 0.5; }
 .cs-item.archived:hover { opacity: 0.72; }
 .cs-item.archived.active { opacity: 0.85; }
-.cs-archived-tag { flex-shrink: 0; font-size: 12px; opacity: 0.8; }
+.cs-archived-tag { flex-shrink: 0; display: inline-flex; align-items: center; color: var(--text-2); }
 /* 未归类组:计数小标 + 悬浮出现的「归入」按钮 */
 .cs-orphan-n { margin-left: auto; font-size: 11px; color: var(--text-3); background: var(--bg-soft); border-radius: 999px; padding: 0 7px; }
 .cs-adopt { flex-shrink: 0; display: none; border: 1px solid var(--border); background: var(--bg-panel); color: var(--text-2); font-size: 11px; padding: 1px 8px; border-radius: 6px; cursor: pointer; }
