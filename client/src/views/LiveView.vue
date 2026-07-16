@@ -2404,6 +2404,7 @@ onBeforeUnmount(() => {
               <button
                 v-for="p in activeProjects" :key="p.goal"
                 class="proj-card" :class="{ active: activeGoal === p.goal }"
+                :title="p.goal"
                 @click="activeGoal = p.goal"
               >
                 <div class="proj-name">🎬 {{ p.goal }}</div>
@@ -2423,6 +2424,7 @@ onBeforeUnmount(() => {
                 <button
                   v-for="p in doneProjects" :key="p.goal"
                   class="proj-card proj-done" :class="{ active: activeGoal === p.goal }"
+                  :title="p.goal"
                   @click="activeGoal = p.goal"
                 >
                   <div class="proj-name">🎬 {{ p.goal }}</div>
