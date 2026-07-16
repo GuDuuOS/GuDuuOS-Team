@@ -2460,7 +2460,8 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="kan-cards">
                   <div v-for="t in tasksByStatus(col.key)" :key="t.id" class="kan-card" :class="{ done: t.status === 'done' }" @click="col.key !== 'done' && moveTask(t, nextStatus(col.key))">
-                    <div class="kan-title">{{ t.title }}</div>
+                    <!-- 任务 ID 前置:AI 在频道/对话里引用任务只说 #编号,看板不显示编号就对不上号(负责人报的) -->
+                    <div class="kan-title"><span class="kan-id">#{{ t.id }}</span>{{ t.title }}</div>
                     <div v-if="dueMeta(t)" class="kan-due" :class="dueMeta(t)!.cls">🕒 {{ dueMeta(t)!.text }}</div>
                     <div v-if="t.assignee || execLabel(t) || t.progress > 0" class="kan-foot">
                       <span v-if="t.assignee" class="kan-who">
@@ -3436,6 +3437,8 @@ onBeforeUnmount(() => {
 .kan-card.done { opacity: .68; }
 .kan-card.done .kan-title { text-decoration: line-through; text-decoration-color: var(--text-3); }
 .kan-title { font-size: var(--fs-100); color: var(--text); line-height: 1.55; font-weight: 500; }
+/* 任务 ID 角标:弱化颜色、等宽数字,与 AI 对话里的 #编号 对上号 */
+.kan-id { color: var(--text-3); font-weight: 600; margin-right: 6px; font-variant-numeric: tabular-nums; }
 /* 截止时间徽章：中性=灰、快到期=橙、逾期=红 */
 .kan-due { display: inline-flex; align-items: center; gap: 3px; margin-top: 7px; font-size: var(--fs-75); color: var(--text-2); background: var(--bg-soft); border-radius: 999px; padding: 2px 9px; }
 .kan-due.soon { color: #8a5a10; background: #f7e3b8; }
