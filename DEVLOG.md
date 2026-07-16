@@ -1,5 +1,12 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-16 — fix:消息里 @主AI 显示品牌名 @CosMac Star(负责人报的)
+- 现象:任务到期提醒在频道里 @ 负责人时,主 AI 显示原始账号 @guduu:cosmac.cc。
+- 修法:前端 mention 渲染(renderBody 的 @ 高亮正则)对 localpart=guduu 的提及按品牌名
+  显示 @CosMac Star:域(悬浮 title 保留真实账号)——与后台成员弹窗同口径(§7 呈现层)。
+  bot 发的消息体不动(通知语义要真实 MXID),纯呈现层替换,历史消息也一并生效。
+- 本地实测:@guduu:域→@CosMac Star:域;傀儡 @guduu-ai-*、普通用户 @alice 不受影响。纯前端。
+
 ## 2026-07-16 — fix:平台管理员任务看板看不到未加入工作区的任务(负责人报的)
 - 现象:管理员在任务看板看不到"自己未加入的频道/工作区"的任务,与全局管理员权限不符。
 - 根因:后端 handle_tasks_list 对管理员本来就返回**全量**任务,但前端 scopedTasks 按

@@ -1212,8 +1212,17 @@ function renderMd(raw: string): string {
     const suffix = tail ? tail[0] : ''
     return keep(`<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`) + suffix
   })
-  // @提及高亮（@用户 或 @用户:服务器）
-  s = s.replace(/(^|[\s(])@([a-zA-Z0-9_.\-]+(?::[a-zA-Z0-9_.\-]+)?)/g, '$1<span class="mention">@$2</span>')
+  // @提及高亮（@用户 或 @用户:服务器）。主 AI 的原始账号(@guduu / @guduu:域)按品牌名
+  // 显示为 @CosMac Star——与后台成员弹窗同口径(负责人要求,任务到期提醒里 @ 出原始账号很难看);
+  // 悬浮 title 保留真实账号便于排查。傀儡(@guduu-ai-*) localpart 不同,不受影响。
+  s = s.replace(/(^|[\s(])@([a-zA-Z0-9_.\-]+(?::[a-zA-Z0-9_.\-]+)?)/g, (_m, pre, id) => {
+    const [lp, domain = ''] = String(id).split(':')
+    if (lp === 'guduu') {
+      const shown = domain ? `@CosMac Star:${domain}` : '@CosMac Star'
+      return `${pre}<span class="mention" title="@${id}">${shown}</span>`
+    }
+    return `${pre}<span class="mention">@${id}</span>`
+  })
   // 块级：标题 / 引用 / 无序列表（L8：composer 工具条有这三个按钮，渲染端此前不支持、对方看到
   // 字面 "## 标题"）。逐行判断，放在换行→<br> 之前；块级行渲染成独立块元素、其间不加 <br>，
   // 只有相邻的普通行之间才用 <br> 连接。注意此时文本已被 escapeHtml，故 ">" 已是 "&gt;"。
