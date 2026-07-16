@@ -290,7 +290,7 @@ import {
 } from '@/composables/useChannelAdmin'
 import {
   getGlobalAgents, kbRoomList, kbRoomAdd, kbRoomDelete,
-  normalizeUserId, userExists, checkUserDeactivated,
+  normalizeUserId, userExists, checkUserDeactivated, currentUserId,
   type GlobalAgent,
 } from '@/matrix/client'
 
@@ -341,6 +341,17 @@ async function doInviteLive() {
     // 邀请前先校验：①账号不存在 ②账号已停用——停用用户能收到邀请却永远接受不了,
     // 只会在成员列表里挂着「待接受」,不给提示的话邀请人一直以为拉进来了。
     const uid = normalizeUserId(liveInvite.value)
+    // ③重复添加:已在成员列表(含待接受)——分"自己/待接受/他人"给明确提示,
+    //   别让 Matrix 的「403 already in the room」裸奔出来(负责人报的)。
+    const hit = liveMembers.value.find((m) => m.id === uid)
+    if (hit) {
+      liveErr.value = uid === currentUserId()
+        ? '您已是本频道成员，无需重复添加自己。'
+        : hit.pending
+          ? '已邀请过该成员，正等待对方接受，无需重复邀请。'
+          : '该成员已是本频道成员，无需重复添加。'
+      return
+    }
     if (!(await userExists(uid))) {
       liveErr.value = '该用户不存在，请检查用户名是否正确。'
       return
@@ -352,7 +363,11 @@ async function doInviteLive() {
     await inviteLiveMember(liveInvite.value)
     liveInvite.value = ''
   } catch (e: any) {
-    liveErr.value = `邀请失败：${e?.message || e}`
+    // 兜底:本地成员列表没刷到、Synapse 仍报"已在房" → 同样转成友好文案
+    const msg = String(e?.message || e)
+    liveErr.value = /already in the room/i.test(msg)
+      ? '该成员已是本频道成员，无需重复添加。'
+      : `邀请失败：${msg}`
   } finally { liveBusy.value = false }
 }
 async function doRemoveLive(m: { id: string; name: string }) {
