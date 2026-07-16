@@ -1,5 +1,10 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-16 — fix:已归档频道角标显示不清(负责人报的)
+- 侧栏已归档频道右侧的 🗄 emoji 在 Windows/部分字体下渲染成模糊小块,看不出是什么。
+- 修法:两处(频道组/收藏组)换成内联 SVG 归档盒图标(13px,stroke=currentColor 随主题色),
+  .cs-archived-tag 样式改 inline-flex+var(--text-2)。本地实测清晰。纯前端。
+
 ## 2026-07-16 — feat:登录互斥「后踢前」+ 旧端提示「账号已在别处登录」(负责人报的)
 - 需求:同一账号跨浏览器登录时多端并发存活,应后踢前并明确提示。
 - 服务端(`registration.py`):登录成功(stepup 闸之后)`_kick_other_devices`——用**这次刚
