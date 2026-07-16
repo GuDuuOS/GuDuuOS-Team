@@ -1,5 +1,20 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-16 — feat:归档催办——AI 问"是否归档"被忽略的每日提醒(负责人需求)
+- 需求:任务全完成后 AI 口头征询归档,没人理就没下文了。现在有确定性兜底:
+  完成满 24h 未归档 → 频道里 @频道主 提醒归档,之后**每天一条**,直到归档为止。
+- 实现(挂在现有任务时效提醒线程,15min 扫描节奏):
+  · `task_repo.rooms_all_tasks_done`:DB 扫「有任务且全部 done」的频道(带最近更新时刻);
+  · `scan_archive_nags` 判定链:完成满 24h(观察窗=「AI 询问被忽略」,刚完成时 AI 已当场问过)
+    → 未写 cosmac.project.archived → 距上次催办 ≥24h → 发;
+  · 催办时刻记房间 state `cosmac.archive.nag`{last_ts,count}(持久,重启不丢);
+    **先写 state 成功再发消息**——反过来写失败会按 15min 轰炸;
+  · @频道主=power_levels 里 power≥100 的真人(无则退 ≥50 管理员),主 AI 按 localpart 排除、
+    傀儡(@guduu-ai-*)排除;前端 mention 渲染会把 @ 显示成品牌/真名。
+- 闭环终点:用户对 AI 说「归档本频道」→ archive_project 写归档标记 → 扫描跳过。
+- 8 项单测(repo 查询/发送+@/24h 节流+递增/观察窗/已归档停止/未完成不发/写 state 失败不发/
+  频道主回退)+全量 573 过。纯后端,部署 restart guduu-bot。
+
 ## 2026-07-16 — fix:频道管理重复邀请成员报 403 裸错(负责人报的)
 - 现象:频道管理→人员 邀请自己/已有成员时,直接把 Matrix「403 already in the room」
   英文报错甩给用户;邀请已在频道的成员则像"没反应"。
