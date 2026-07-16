@@ -45,6 +45,7 @@ import {
   createSpace,
   createChannelInSpace,
   linkRoomToSpace,
+  moveRoomToSpace,
   spaceJoinRule,
   setSpaceOpenJoin,
   spaceJoinLink,
@@ -544,7 +545,6 @@ watch(aiOpen, (v) => { if (v) nextTick(scrollAiToBottom) })
 // ── 纯界面态（折叠分组 / 下拉菜单 / 专注模式 / 收藏星）────
 const channelsOpen = ref(true)
 const favOpen = ref(true)
-const fanCommunityOpen = ref(true)
 const dmsOpen = ref(true)
 const appMenuOpen = ref(false)
 const userMenuOpen = ref(false)
@@ -876,10 +876,14 @@ const chSetName = ref('')
 const chSetTopic = ref('')
 const chSetBusy = ref(false)
 const chDeleteArm = ref(false)
+// 「移动到工作区」：弹窗里的目标工作区选择，初始=当前工作区；保存时若变了就真移动。
+// （负责人需求：粉丝运营等要独立工作区,频道得能从原工作区挪过去。）
+const chSetSpace = ref('')
 function openChannelSettings() {
   if (!currentRoom.value) return
   chSetName.value = currentName.value
   chSetTopic.value = currentTopic.value
+  chSetSpace.value = activeSpace.value
   chDeleteArm.value = false
   chDeleteTaskWarn.value = 0
   chSetOpen.value = true
@@ -936,7 +940,27 @@ async function saveChannelSettings() {
         throw e
       }
     }
-    toast('已保存', `频道改为「${name}」`)
+    // 目标工作区变了 → 真移动（先挂进新工作区、再从旧的摘除,详见 moveRoomToSpace）。
+    // 放在改名之后:名字/简介保存失败会先抛出去,不会出现"名没改成却已被挪走"的半截态。
+    if (chSetSpace.value && chSetSpace.value !== activeSpace.value) {
+      const target = chSetSpace.value
+      const res = await moveRoomToSpace(activeSpace.value, target, id)
+      if (res === 'fail') {
+        toast('移动失败', '你可能没有目标工作区的管理权限')
+        return
+      }
+      const tname = spaces.value.find((s) => s.id === target)?.name || '目标工作区'
+      // 本地状态跟着走,别等 sync:切到目标工作区并保持频道打开(频道跟人走)
+      activeSpace.value = target
+      spaceChildIds.value = new Set([...roomIdsInSpace(target), id])
+      allSpaceChildIds.value = new Set([...allSpaceChildIds.value, id])
+      toast(
+        res === 'ok' ? '已移动频道' : '已挂进新工作区',
+        res === 'ok' ? `「${name}」现在属于「${tname}」` : `「${name}」已进「${tname}」;原工作区无权摘除,它暂时两边可见`,
+      )
+    } else {
+      toast('已保存', `频道改为「${name}」`)
+    }
     chSetOpen.value = false
     setTimeout(refresh, 700)
   } catch (e: any) {
@@ -1116,27 +1140,21 @@ async function adoptOrphan(r: { id: string; name: string }) {
   } finally { adoptBusy.value = '' }
 }
 
-// ── 粉丝社区分组：把面向粉丝的房间（后援会/歌迷会/粉丝群/应援会/社区/fans）从「频道」里
-//    拆出来单列一组。纯前端名称启发式，零后端——房间名带这些关键词即归此组，其余留「频道」。
-//    （以后若要精确归类，可改成读房间的 cosmac.* 状态事件标签。）
-const FAN_RE = /(后援会|歌迷会|粉丝|应援|社区|fans?\b|fan ?club)/i
-function isFanRoom(name: string): boolean { return FAN_RE.test(name) }
 // 某频道是否「已归档专班」（bot 收尾写 cosmac.project.archived）：灰显 + 排到最后。
 function isArchived(id: string): boolean { return isProjectArchived(id) }
-// 收藏的频道（m.favourite 标签）——单独置顶成「收藏」组;已收藏的不再在下面的普通/粉丝组重复出现。
+// 收藏的频道（m.favourite 标签）——单独置顶成「收藏」组;已收藏的不再在下面的普通组重复出现。
 const favRooms = computed(() =>
   filteredRooms.value
     .filter((r) => r.fav)
     .sort((a, b) => a.name.localeCompare(b.name, 'zh')),
 )
-// 普通频道（剔除粉丝社区房间 + 已收藏的）；已归档的排到最后（在用频道在前，留档不打扰）。
+// 普通频道（剔除已收藏的）；已归档的排到最后（在用频道在前，留档不打扰）。
+// （曾按名称启发式单列过「粉丝社区」分组，负责人拍板撤销：粉丝运营应是独立工作区,不是频道分组。）
 const channelRooms = computed(() =>
   filteredRooms.value
-    .filter((r) => !r.fav && !isFanRoom(r.name))
+    .filter((r) => !r.fav)
     .sort((a, b) => Number(isArchived(a.id)) - Number(isArchived(b.id))),
 )
-// 粉丝社区频道（剔除已收藏的）
-const fanRooms = computed(() => filteredRooms.value.filter((r) => !r.fav && isFanRoom(r.name)))
 
 // ── 频道彩色图标：按名字确定性取色 + 取代表字（无需后端，所有频道立即生效）──
 const CHAN_PALETTE = ['#c96442', '#6b8e4e', '#4a7a8c', '#b58932', '#8a6a8a', '#5a7a8a', '#b94a4a', '#7a8a5a']
@@ -2228,31 +2246,6 @@ onBeforeUnmount(() => {
             </template>
           </div>
 
-          <!-- 粉丝社区 group（面向粉丝的房间：后援会/歌迷会/粉丝群…，按名称归类）-->
-          <div class="cs-group">
-            <button class="cs-group-head" @click="fanCommunityOpen = !fanCommunityOpen">
-              <svg class="caret" :class="{ open: fanCommunityOpen }" width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M9 6 15 12 9 18z" /></svg>
-              <span>粉丝社区</span>
-            </button>
-            <template v-if="fanCommunityOpen">
-              <div
-                v-for="r in fanRooms"
-                :key="r.id"
-                class="cs-item ch-row"
-                :class="{ active: r.id === currentRoom }"
-                @click="openRoom(r.id)"
-              >
-                <span class="cs-chan-av" :style="{ background: colorOf(r.name) }">{{ iconChar(r.name) }}</span>
-                <span class="cs-label" :title="r.name">{{ r.name }}</span>
-              </div>
-              <p v-if="!fanRooms.length" class="cs-empty">还没有粉丝社区频道</p>
-              <div class="cs-item cs-add-row" @click="openNewChannel">
-                <span class="cs-ic-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14" /></svg></span>
-                <span class="cs-label">添加粉丝频道</span>
-              </div>
-            </template>
-          </div>
-
           <!-- 未归类 group（不属于任何工作区的孤儿房：AI 建的专班/别人拉我进的群。
                每个工作区下都显示这一组（它们本来就没归属）；点「归入」挂进当前工作区后就只在那里出现。）-->
           <div v-if="orphanRooms.length" class="cs-group">
@@ -2933,6 +2926,14 @@ onBeforeUnmount(() => {
         <input v-model="chSetName" class="nw-input" maxlength="50" placeholder="频道名称" @keyup.enter="saveChannelSettings" />
         <div class="nw-field-label">简介</div>
         <textarea v-model="chSetTopic" class="nw-input nw-textarea" rows="2" maxlength="200" placeholder="一句话说明这个频道是干嘛的" />
+        <!-- 移动到工作区：有 ≥2 个工作区才显示;选了别的工作区,保存时就真移动过去 -->
+        <template v-if="spaces.length > 1">
+          <div class="nw-field-label">所在工作区</div>
+          <select v-model="chSetSpace" class="nw-input">
+            <option v-for="s in spaces" :key="s.id" :value="s.id">{{ s.name }}</option>
+          </select>
+          <p v-if="chSetSpace && chSetSpace !== activeSpace" class="nw-hint">保存后此频道将移动到「{{ spaces.find((s) => s.id === chSetSpace)?.name }}」，成员和聊天记录不受影响</p>
+        </template>
         <div v-if="chDeleteArm && chDeleteTaskWarn > 0" class="ch-del-warn">
           ⚠️ 本频道还有 <b>{{ chDeleteTaskWarn }}</b> 个未完成任务。退出后这些任务仍在任务看板里，
           但你将失去从这个频道跟进它们的入口。确认要退出吗？
