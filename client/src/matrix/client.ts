@@ -1448,6 +1448,9 @@ export async function listAdminRooms(): Promise<AdminRoom[]> {
       `/_synapse/admin/v1/rooms?from=${from}&limit=${limit}&order_by=joined_members&dir=b`,
     )
     for (const r of data.rooms || []) {
+      // 工作区(Space)在 Matrix 里本质也是房间,Admin API 会一并返回——但它不是"频道",
+      // 混进后台频道列表会误导管理(负责人报的)。按 room_type 剔除。
+      if (r.room_type === 'm.space') continue
       out.push({
         id: r.room_id,
         name: r.name || r.canonical_alias || r.room_id,
