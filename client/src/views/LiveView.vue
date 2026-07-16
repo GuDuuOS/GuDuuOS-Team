@@ -50,6 +50,7 @@ import {
   setSpaceOpenJoin,
   spaceJoinLink,
   createDirectMessage,
+  findExistingDm,
   listDirectMessages,
   isDirectRoom,
   acceptRoomInvite,
@@ -449,12 +450,22 @@ async function doStartDm() {
   if (!v || dmBusy.value) return
   dmBusy.value = true
   try {
+    // 重复邀请:已有和 TA 的私信会话 → 别再提示"对方接受后即可聊天"误导用户以为又发了
+    // 一次邀请(负责人报的)——直接打开旧会话并明确说不用重复邀请。本地查询,零网络开销。
+    const existed = findExistingDm(v)
+    if (existed) {
+      dmDialogOpen.value = false
+      refresh()
+      openRoom(existed)
+      toast('该成员已邀请', '无需重复邀请，已为你打开会话')
+      return
+    }
     // 先校验对方存在——不存在就别建出一个邀请不到人的死私信房,直接给清晰提示。
     if (!(await userExists(v))) {
       toast('该用户不存在', '请检查用户名是否正确（对方需已有账号）')
       return
     }
-    const roomId = await createDirectMessage(v)   // 已有则复用,不重复建
+    const roomId = await createDirectMessage(v)
     dmDialogOpen.value = false
     // 邀请刚发出,房可能还没 sync 完;稍等再刷新列表并打开
     setTimeout(() => { refresh(); openRoom(roomId) }, 500)

@@ -3696,22 +3696,32 @@ export async function createAiSession(): Promise<string> {
 }
 
 /** 与某个用户开一个一对一私信(DM)。已有和 TA 的 DM 就复用,不重复建;返回 room_id。 */
-export async function createDirectMessage(userId: string): Promise<string> {
-  if (!mx) throw new Error('未登录')
+/** 查找与某人**已存在**的私信房，返回 roomId（没有则空串）。
+ * 用统一判定(isDmRoom):对方发起、我还没接受的邀请房也要算——否则"TA 邀我未接受 +
+ * 我又主动发起"会算成两个 DM。发起私信弹窗用它区分"新邀请"和"重复邀请"给不同提示。 */
+export function findExistingDm(userId: string): string {
+  if (!mx) return ''
   const uid = normalizeUserId(userId)
-  if (!uid) throw new Error('请填写有效的用户名或用户 id')
-  if (uid === (mx as any).getUserId?.()) throw new Error('不能和自己私信')
-  // 复用已存在的 DM:避免同一个人建出一堆重复私信房。
-  // 用统一判定(isDmRoom):对方发起、我还没接受的邀请房也要算——否则"TA 邀我未接受 +
-  // 我又主动发起"会建出第二个重复 DM。
+  if (!uid) return ''
   for (const r of mx.getRooms()) {
     try {
       if (!isDmRoom(r) || isAiSessionRoom(r)) continue
       const members = r.getJoinedMembers?.() || []
       const invited = (r as any).getMembersWithMembership?.('invite') || []
       if ([...members, ...invited].some((m: any) => m.userId === uid)) return r.roomId
-    } catch { /* 读不到就当没有,继续建 */ }
+    } catch { /* 读不到就当没有 */ }
   }
+  return ''
+}
+
+export async function createDirectMessage(userId: string): Promise<string> {
+  if (!mx) throw new Error('未登录')
+  const uid = normalizeUserId(userId)
+  if (!uid) throw new Error('请填写有效的用户名或用户 id')
+  if (uid === (mx as any).getUserId?.()) throw new Error('不能和自己私信')
+  // 复用已存在的 DM:避免同一个人建出一堆重复私信房。
+  const existed = findExistingDm(uid)
+  if (existed) return existed
   const res: any = await mx.createRoom({
     preset: 'trusted_private_chat' as any,
     invite: [uid],
