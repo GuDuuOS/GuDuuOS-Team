@@ -459,10 +459,17 @@ watch(tab, (t) => { if (t === 'knowledge') loadRoomDocs() })
 // 每次打开弹窗时，从 Matrix 重新拉一遍真实成员（防 sync 期间有进出群没反映）+ 全局智能体列表
 watch(visible, (v) => {
   if (!v) return
-  // 清掉上次遗留的报错(如上次「移出失败」)——否则关掉再开,旧红字还粘在新弹窗顶上(本次修复)。
+  // 清掉上次遗留的报错(如上次「移出失败」)——否则关掉再开,旧红字还粘在新弹窗顶上。
   liveErr.value = ''
   liveInvite.value = ''
   kbErr.value = ''
+  // 清掉所有 tab 的「添加」草稿输入——填了没点添加就关弹窗,再打开不该还挂着上次的
+  // 半截内容(负责人报的:技能三个框残留)。已点添加的,add 函数本来就即时清。
+  mName.value = ''; mRole.value = ''
+  sLabel.value = ''; sTag.value = ''; sDesc.value = ''
+  kLabel.value = ''; kDesc.value = ''
+  rLabel.value = ''; rDesc.value = ''
+  dLabel.value = ''
   if (isLive.value) { refreshLiveMembers(); loadGlobalAgents(); loadRoomDocs() }
 })
 

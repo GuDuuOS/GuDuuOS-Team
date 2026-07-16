@@ -1,5 +1,12 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-16 — fix:频道管理弹窗草稿关闭后残留(负责人报的)
+- 现象:技能等 tab 的「添加」输入框填了没提交,关弹窗再开,上次的半截内容还挂着。
+- 修法:visible watcher(打开时)统一清空所有 tab 的添加草稿
+  (成员 mName/mRole、技能 sLabel/sTag/sDesc、知识库 kLabel/kDesc、规则 rLabel/rDesc、
+  数据权限 dLabel)——与已有的 liveErr/liveInvite/kbErr 清理同处。已提交的本就即时清。
+- 本地实测:技能三框填草稿→关→开→全空。纯前端。
+
 ## 2026-07-16 — fix:管理后台频道列表混入工作区(负责人报的)
 - 现象:后台「频道管理」把工作区(如 明星·陈溥江)也列成频道条目。
 - 根因:数据源是 Synapse Admin API /v1/rooms,Space 本质也是房间、一并返回。
