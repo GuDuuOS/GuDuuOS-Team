@@ -879,6 +879,28 @@ export async function linkRoomToSpace(spaceId: string, roomId: string): Promise<
   return true
 }
 
+/** 把频道从一个工作区移到另一个（频道设置里的「移动到工作区」）。
+ *
+ * 顺序是**先挂进新的、再从旧的摘除**——挂接失败就整体失败，绝不会把频道弄成
+ * 两边都不在的孤儿。摘除（往旧 Space 写空 content 的 m.space.child）失败只说明
+ * 在旧工作区没写权限，此时频道已进新工作区、只是旧的还挂着 → 返回 'partial'
+ * 让调用方提示一下，不算失败。 */
+export async function moveRoomToSpace(
+  fromSpaceId: string,
+  toSpaceId: string,
+  roomId: string,
+): Promise<'ok' | 'partial' | 'fail'> {
+  if (!mx || !toSpaceId || !roomId) return 'fail'
+  if (!(await linkRoomToSpace(toSpaceId, roomId))) return 'fail'
+  if (fromSpaceId && fromSpaceId !== toSpaceId) {
+    try {
+      // Matrix 惯例:m.space.child 写空 content = 从频道树摘除该子房间
+      await (mx as any).sendStateEvent(fromSpaceId, 'm.space.child', {}, roomId)
+    } catch { return 'partial' }
+  }
+  return 'ok'
+}
+
 /* ===== 站点页面内容（注册/登录页的「隐私政策 / 帮助中心」）=====
  * 内容存控制室 state event `cosmac.pages`(后台「页面内容」编辑);未配置时后端回内置默认稿。
  * 读走 bot 公开端点(注册页未登录也要能看);写走 state event(与其它后台配置同套路)。 */
