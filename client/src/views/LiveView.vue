@@ -1682,6 +1682,13 @@ function openAiPanel() {
   aiOpen.value = true
 }
 
+/** 私信分组里的「中枢 AI」:直接打开**放大版**主 AI 界面(负责人要求)——
+ *  Cowork 式全屏弹窗(左会话列表+中对话+右进度/文件),而不是右侧小面板。 */
+function openAiMax() {
+  aiOpen.value = true
+  aiMax.value = true
+}
+
 function initials(name: string) {
   return name.replace(/^@/, '').slice(0, 1).toUpperCase()
 }
@@ -2278,7 +2285,7 @@ onBeforeUnmount(() => {
               <span>私信</span>
             </button>
             <template v-if="dmsOpen">
-              <div class="cs-item dm-row" :class="{ active: aiOpen }" @click="openAiPanel">
+              <div class="cs-item dm-row" :class="{ active: aiOpen }" @click="openAiMax">
                 <span class="cs-dm-av bot">智<span class="dot-online" /></span>
                 <span class="cs-label">中枢 AI</span>
               </div>

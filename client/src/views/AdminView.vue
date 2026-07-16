@@ -1497,7 +1497,9 @@
             <div v-for="m in memberList" :key="m" class="adm-mrow">
               <span class="adm-ava sm" :class="{ bot: isBotMember(m) || isAiWorkerId(m) }">{{ (isBotMember(m) || isAiWorkerId(m)) ? '智' : m.replace(/^@/, '').charAt(0).toUpperCase() }}</span>
               <span class="adm-mid">
-                <template v-if="isBotMember(m)"><b>CosMac Star</b> <span class="adm-dim">{{ m }}</span></template>
+                <!-- 主 AI 按品牌名整体展示为 @CosMac Star:域(负责人要求);真实账号
+                     @guduu:… 是协议层标识改不了,收进 hover 提示供管理员核对 -->
+                <template v-if="isBotMember(m)"><b :title="`真实账号:${m}`">@CosMac Star:{{ m.split(':')[1] || '' }}</b></template>
                 <!-- AI 同事傀儡账号(方案B):标注它是哪个智能体 -->
                 <template v-else-if="isAiWorkerId(m)"><b>AI 同事·{{ m.replace(/^@guduu-ai-/, '').split(':')[0] }}</b> <span class="adm-dim">{{ m }}</span></template>
                 <template v-else>{{ m }}</template>
