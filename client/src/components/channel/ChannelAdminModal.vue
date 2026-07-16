@@ -324,9 +324,11 @@ const tabs: { key: TabKey; label: string; countKey?: CountKey }[] = [
 ]
 const tab = ref<TabKey>('members')
 
-// 人员标签的数字：有真后端用真实成员数，否则用 mock
+// 标签页的数字：有真后端时用真实数据——人员数真实成员;知识库=「来源」条目+真实
+// 上传的文档(上传入库后数字不动、与实际不符是负责人报的 bug)。其余用本地 state。
 function countOf(k?: CountKey) {
   if (k === 'members' && isLive.value) return liveMembers.value.length
+  if (k === 'knowledge' && isLive.value) return state.knowledge.length + kbDocs.value.length
   return k ? state[k].length : 0
 }
 
