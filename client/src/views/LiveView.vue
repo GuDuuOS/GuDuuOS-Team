@@ -241,7 +241,9 @@ const scopedTasks = computed(() => {
       if (mySpaceIds.has(sid)) return false           // 属于我的另一个工作区 → 只在那边显示
       // 归属工作区我进不去,但**派给我 或 我下达的** → 别弄丢(L11:此前只保留"派给我的",
       // 把"我下达却派给别人、且归属工作区已退出/删除"的任务弄丢了,与后端可见性口径不一致)。
-      return assignedToMe(t) || dispatchedByMe(t)
+      // 平台管理员额外放行:后端本来就发全量给管理员,但未加入的工作区在左栏没有入口,
+      // 这里再按成员身份过滤掉就**永远看不到**(负责人报的 bug)——与"全局管理员"权限定义不符。
+      return assignedToMe(t) || dispatchedByMe(t) || isAdmin.value
     }
     // —— 以下为无归属的存量任务：旧口径兜底 ——
     const rid = t.room_id || ''
