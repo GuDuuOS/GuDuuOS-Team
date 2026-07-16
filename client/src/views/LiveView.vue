@@ -2026,9 +2026,15 @@ onMounted(async () => {
   // 全局会话失效监听:账号被停用/token 被吊销时(运行中),弹明确提示并送回登录页——
   // 否则所有功能静默 401,用户只觉得"按钮都点不动了"(线上实测:停用后点任务「开始」无反应)。
   onSessionExpired((reason) => {
-    toast('登录已失效', reason === 'M_USER_DEACTIVATED'
-      ? '你的账号已被停用，请联系管理员。即将返回登录页…'
-      : '请重新登录（账号可能已被停用或在别处退出）。即将返回登录页…')
+    // KICKED_BY_OTHER_LOGIN = 单端在线互斥:同一账号在别的浏览器登录,本端被后端踢下线
+    // (client.ts 向 /cosmac/session/kicked 确认过才给这个 reason,不是猜的)。
+    if (reason === 'KICKED_BY_OTHER_LOGIN') {
+      toast('账号已在别处登录', '你的账号刚在其他设备/浏览器登录，本端已被迫下线。即将返回登录页…')
+    } else {
+      toast('登录已失效', reason === 'M_USER_DEACTIVATED'
+        ? '你的账号已被停用，请联系管理员。即将返回登录页…'
+        : '请重新登录（账号可能已被停用或在别处退出）。即将返回登录页…')
+    }
     setTimeout(() => window.location.reload(), 2200)  // reload 后无会话 → 自动落到登录页
   })
   loading.value = true

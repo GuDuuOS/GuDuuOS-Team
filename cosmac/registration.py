@@ -777,6 +777,104 @@ def _proxy_synapse_login(
     return 403, {"error": "用户名或密码错误"}
 
 
+# ── 单端在线（后踢前）────────────────────────────────────────────
+# 负责人拍板：同一账号跨浏览器登录时后登录的踢掉先登录的（多端并发存活不符合产品预期）。
+# 实现：登录成功后用**这次刚验证过的密码**走 Synapse 的 UIA(user-interactive auth)
+# 删掉该账号的其它 devices——旧端 token 立即失效，sync 收到 M_UNKNOWN_TOKEN 后由前端
+# 提示"账号已在别处登录"。不需要 admin 权限、不改 Synapse。
+#
+# 被踢记录存**内存**（单实例够用，与验证码同口径）：前端 token 失效时来查"我是不是被顶
+# 号了"，据此把提示从笼统的"登录已失效"换成明确的"账号已在别处登录"。重启丢记录只是
+# 提示退化成笼统文案，不影响互斥本身。
+_kicked_devices: Dict[Tuple[str, str], float] = {}   # (user_id, device_id) -> 被踢时刻
+_kicked_lock = threading.Lock()
+_KICKED_TTL = 24 * 3600      # 记录保留 24h：被踢端通常几秒内就会来查，24h 绰绰有余
+
+
+def _kick_other_devices(hs_url: str, username: str, password: str,
+                        payload: Dict[str, Any]) -> None:
+    """登录成功后踢掉该账号的**其它**设备（单端在线）。best-effort：任何一步失败都只记
+    日志、绝不影响本次登录返回——互斥是产品体验，不能因为它把正常登录搞挂。
+
+    payload = Synapse 登录响应（含 access_token / device_id / user_id）。
+    删设备走两步 UIA：先裸 POST 拿 session，再带 m.login.password + session 提交。
+    """
+    token = str(payload.get("access_token") or "")
+    new_dev = str(payload.get("device_id") or "")
+    user_id = str(payload.get("user_id") or "")
+    if not token or not new_dev or not user_id:
+        return
+    base = hs_url.rstrip("/")
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        r = requests.get(f"{base}/_matrix/client/v3/devices",
+                         headers=headers, timeout=_HS_TIMEOUT)
+        if r.status_code != 200:
+            return
+        others = [
+            str(d.get("device_id"))
+            for d in (r.json().get("devices") or [])
+            if d.get("device_id") and d.get("device_id") != new_dev
+        ]
+        if not others:
+            return
+        # UIA 第一步：裸提交换 session（Synapse 固定回 401 + session/flows）
+        r1 = requests.post(f"{base}/_matrix/client/v3/delete_devices",
+                           json={"devices": others}, headers=headers,
+                           timeout=_HS_TIMEOUT)
+        auth: Dict[str, Any] = {
+            "type": "m.login.password",
+            "identifier": {"type": "m.id.user", "user": username},
+            "password": password,
+        }
+        if r1.status_code == 401:
+            sess = str((r1.json() or {}).get("session") or "")
+            if sess:
+                auth["session"] = sess
+        elif r1.status_code == 200:
+            # 个别部署对 appservice/关闭 UIA 的场景一步就成——直接记录返回
+            _record_kicked(user_id, others)
+            return
+        # UIA 第二步：带密码提交真删
+        r2 = requests.post(f"{base}/_matrix/client/v3/delete_devices",
+                           json={"devices": others, "auth": auth}, headers=headers,
+                           timeout=_HS_TIMEOUT)
+        if r2.status_code == 200:
+            _record_kicked(user_id, others)
+            logger.info("单端在线：%s 登录，踢掉旧设备 %d 台", user_id, len(others))
+        else:
+            logger.warning("单端在线：删旧设备失败 status=%s user=%s",
+                           r2.status_code, user_id)
+    except requests.RequestException:
+        logger.debug("单端在线：踢旧设备网络失败（忽略，不影响登录）", exc_info=True)
+
+
+def _record_kicked(user_id: str, device_ids: list) -> None:
+    """记录"这些设备是被顶号踢掉的"，供前端失效时查询换专属提示。"""
+    now = time.time()
+    with _kicked_lock:
+        for d in device_ids:
+            _kicked_devices[(user_id, d)] = now
+        # 惰性清理：过期条目 + 容量兜底（防长期运行膨胀）
+        if len(_kicked_devices) > 5000:
+            for k in [k for k, t in _kicked_devices.items() if now - t > _KICKED_TTL]:
+                _kicked_devices.pop(k, None)
+
+
+def was_kicked(user_id: str, device_id: str) -> bool:
+    """该 (账号, 设备) 是否是最近被"别处登录"踢掉的。给 /cosmac/session/kicked 查询用。"""
+    if not user_id or not device_id:
+        return False
+    with _kicked_lock:
+        ts = _kicked_devices.get((user_id, device_id))
+        if ts is None:
+            return False
+        if time.time() - ts > _KICKED_TTL:
+            _kicked_devices.pop((user_id, device_id), None)
+            return False
+        return True
+
+
 def login_account(
     username: str, password: str, *, hs_url: str, client_ip: str = "",
     code: str = "", server_name: str = "",
@@ -815,6 +913,9 @@ def login_account(
                         token=str(payload.get("access_token") or ""))
     if gate is not None:
         return gate
+    # 单端在线（后踢前）：这次登录成功 → 踢掉该账号其它设备。放在 stepup 闸之后——
+    # 可疑登录还没过二次验证时绝不能把人家正常在用的会话踢下线。
+    _kick_other_devices(hs_url, username, password, payload)
     _audit("login", subject=username, ip=client_ip, ok=True,
            detail="ok_stepup" if code else "ok")
     return 200, payload
@@ -856,6 +957,8 @@ def login_email(
                             token=str(payload.get("access_token") or ""))
         if gate is not None:
             return gate
+        # 单端在线（后踢前）：与 login_account 同一道（见彼处注释）。
+        _kick_other_devices(hs_url, username, password, payload)
         _audit("login", subject=username, ip=client_ip, ok=True,
                detail="ok_email_stepup" if code else "ok_email")
         return 200, payload

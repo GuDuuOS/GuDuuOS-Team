@@ -5886,6 +5886,18 @@ class _Handler(BaseHTTPRequestHandler):
             code, payload = self.bot.handle_kb_room_list(token, room_id)
             self._send_json(code, payload, cors=True)
             return
+        # 单端在线：查询"我这台设备是不是被别处登录顶掉的"（?user_id=&device_id=）。
+        # **公开端点**——查询者的 token 刚被吊销、没法鉴权;只回答 bool,需同时知道
+        # user_id+device_id 才能问,泄露面可忽略(device_id 是随机串,外人拿不到)。
+        if self.path.split("?", 1)[0] == "/cosmac/session/kicked":
+            from urllib.parse import parse_qs, urlparse
+            from cosmac import registration
+            qs = parse_qs(urlparse(self.path).query)
+            kicked = registration.was_kicked(
+                (qs.get("user_id") or [""])[0], (qs.get("device_id") or [""])[0]
+            )
+            self._send_json(200, {"kicked": kicked}, cors=True)
+            return
         # 公开页面内容：隐私政策/帮助中心（?key=privacy|help,无需登录——注册页要用）
         if self.path.split("?", 1)[0] == "/cosmac/page":
             from urllib.parse import parse_qs, urlparse
