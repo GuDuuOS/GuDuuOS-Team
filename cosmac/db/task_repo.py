@@ -231,6 +231,38 @@ def tasks_needing_reminder(
     return out
 
 
+def rooms_all_tasks_done(session: Session) -> List[Dict[str, Any]]:
+    """扫出**任务全部完成**的频道（归档催办用）。
+
+    返回 [{"room_id", "total", "last_update_ts"}]：该频道有任务、且没有一条非 done；
+    last_update_ts = 该频道任务的最近一次更新时刻（epoch 秒）——催办扫描用它实现
+    「完成后 24h 没动静才开始催」（刚完成时 AI 已在对话里口头问过归档，别立刻叠着催）。
+    只挑挂在真实频道上的任务（room_id 非空）；已归档与否由调用方读房间 state 判断
+    （归档标记在 Matrix state event 里，DB 这边不知道）。
+    """
+    from sqlalchemy import case
+
+    rows = session.execute(
+        select(
+            Task.room_id,
+            func.count().label("total"),
+            func.max(Task.updated_at).label("last_update"),
+        )
+        .where(Task.room_id != "")
+        .group_by(Task.room_id)
+        .having(func.sum(case((Task.status != "done", 1), else_=0)) == 0)
+    ).all()
+    out: List[Dict[str, Any]] = []
+    for room_id, total, last_update in rows:
+        ts = 0
+        try:
+            ts = int(last_update.timestamp()) if last_update is not None else 0
+        except Exception:
+            ts = 0
+        out.append({"room_id": room_id, "total": int(total), "last_update_ts": ts})
+    return out
+
+
 def mark_reminded(session: Session, task_id: int, bit: int) -> None:
     """给某任务打上"已发某档提醒"的位（按位或），防止下次扫描重复提醒。"""
     t = session.get(Task, task_id)

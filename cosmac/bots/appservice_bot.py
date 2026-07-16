@@ -5329,6 +5329,93 @@ class CosmacBot:
             logger.info("任务时效提醒：本轮发出 %d 条", sent)
         return sent
 
+    # —— 归档催办（负责人需求）：AI 口头问"是否归档"被忽略时的确定性兜底 ——
+    # 频道任务**全部完成**且完成后 24h 没动静(没归档) → 在频道里 @频道主 提醒归档;
+    # 之后每 24h 催一次,直到有人让 AI 归档(写下 cosmac.project.archived)为止。
+    # 上次催办时刻记在房间 state `cosmac.archive.nag`(持久,bot 重启不丢)。
+    _ARCHIVE_NAG_STATE = "cosmac.archive.nag"
+
+    def _room_owner_mentions(self, room_id: str) -> List[str]:
+        """找频道主(power=100 的真人)用于 @ 提醒;没有 100 就退而找 ≥50 的管理员。
+        排除主 AI 与傀儡账号(它们不是"人",@ 了也没人看)。读不到权限表 → 空(不 @ 只发文本)。"""
+        try:
+            pl = self.client.get_state_event(room_id, "m.room.power_levels", "") or {}
+            users = pl.get("users") or {}
+            # 主 AI 按 localpart 比对(@guduu:任何域)——域随部署变,别只认配置里的完整 id
+            bot_lp = str(self.config.bot_user_id or "").split(":")[0]
+            humans = [
+                (uid, lv) for uid, lv in users.items()
+                if isinstance(lv, int)
+                and uid.split(":")[0] != bot_lp
+                and not self._worker_slug_of(uid)
+            ]
+            owners = [uid for uid, lv in humans if lv >= 100]
+            if owners:
+                return sorted(owners)
+            return sorted(uid for uid, lv in humans if lv >= 50)
+        except Exception:
+            logger.debug("读频道主失败 room=%s", room_id, exc_info=True)
+            return []
+
+    def scan_archive_nags(self, nag_secs: int = 24 * 3600) -> int:
+        """扫一遍「任务全部完成但未归档」的频道，按 24h 节流发归档催办。返回本轮发出条数。
+
+        判定链（每个频道）：
+          ① DB：有任务且全部 done（rooms_all_tasks_done）;
+          ② 完成后满 24h（最后一次任务更新距今 ≥ nag_secs）——刚完成时 AI 已口头征询过,
+             这 24h 就是"AI 询问被忽略"的观察窗;
+          ③ 房间 state 无 cosmac.project.archived(archived=true)——已归档即闭环终点;
+          ④ 房间 state cosmac.archive.nag 的 last_ts 距今 ≥ nag_secs——每天最多一条。
+        发送顺序:先写 nag state 成功、再发消息——反过来的话写失败会按扫描间隔(15min)轰炸。
+        全程兜异常:一个频道失败不影响其余。
+        """
+        now = int(time.time())
+        sent = 0
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.task_repo import rooms_all_tasks_done
+
+            with session_scope() as s:
+                candidates = rooms_all_tasks_done(s)
+        except Exception:
+            logger.debug("归档催办：读任务失败（跳过本轮）", exc_info=True)
+            return 0
+        for c in candidates:
+            room = c["room_id"]
+            try:
+                if now - int(c.get("last_update_ts") or 0) < nag_secs:
+                    continue  # ② 完成还不满观察窗
+                arch = self.client.get_state_event(
+                    room, "cosmac.project.archived", "") or {}
+                if arch.get("archived"):
+                    continue  # ③ 已归档
+                nag = self.client.get_state_event(
+                    room, self._ARCHIVE_NAG_STATE, "") or {}
+                last = int(nag.get("last_ts") or 0)
+                if now - last < nag_secs:
+                    continue  # ④ 今天已催过
+                count = int(nag.get("count") or 0) + 1
+                # 先记账再发声(见 docstring);写不进 state(无权限?)就跳过这个房,别轰炸
+                if not self.client.set_state_event(
+                    room, self._ARCHIVE_NAG_STATE,
+                    {"last_ts": now, "count": count},
+                ):
+                    continue
+                owners = self._room_owner_mentions(room)
+                at = (" ".join(owners) + " ") if owners else ""
+                body = (
+                    f"{at}🗄 本频道 {c['total']} 个任务已全部完成，项目似乎可以收尾了。"
+                    "是否归档本频道？对我说「归档本频道」即可（归档前我会和你确认收尾摘要）。"
+                    "在归档或有新任务之前，我每天会提醒一次。"
+                )
+                self.client.send_text(room, body)
+                sent += 1
+            except Exception:
+                logger.debug("归档催办失败 room=%s（跳过）", room, exc_info=True)
+        if sent:
+            logger.info("归档催办：本轮发出 %d 条", sent)
+        return sent
+
     def start_reminder_scanner(self) -> None:
         """启动后台守护线程，周期性扫描任务时效并发提醒。
 
@@ -5340,6 +5427,7 @@ class CosmacBot:
             time.sleep(min(60, interval))  # 启动后先等一会儿，让服务/sync 就绪
             while True:
                 self.scan_task_reminders()
+                self.scan_archive_nags()   # 归档催办与任务时效提醒共用一个扫描节奏
                 time.sleep(interval)
 
         threading.Thread(target=_loop, name="task-reminder", daemon=True).start()
