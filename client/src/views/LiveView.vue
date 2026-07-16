@@ -2285,12 +2285,15 @@ onBeforeUnmount(() => {
               <span>私信</span>
             </button>
             <template v-if="dmsOpen">
-              <div class="cs-item dm-row" :class="{ active: aiOpen }" @click="openAiMax">
+              <!-- 高亮互斥(负责人报:两条同时亮):中枢 AI 只在「主区被它占据」时亮——
+                   放大态,或 AI 面板开着且没在看任何会话;打开了某个私信/频道时让位给那条 -->
+              <div class="cs-item dm-row" :class="{ active: aiMax || (aiOpen && !currentRoom) }" @click="openAiMax">
                 <span class="cs-dm-av bot">智<span class="dot-online" /></span>
                 <span class="cs-label">中枢 AI</span>
               </div>
               <!-- 真人私信列表:点开在主区聊天;有未读时名字加粗 + 红色未读数 -->
-              <div v-for="d in dms" :key="d.id" class="cs-item dm-row" :class="{ active: currentRoom === d.id, unread: (d.unread || 0) > 0 }" @click="openRoom(d.id)" :title="d.pending ? '新私信邀请,点开即接受' : ''">
+              <!-- !aiMax:放大版主 AI 弹窗占据主区时,底下的会话高亮让位给「中枢 AI」条目 -->
+              <div v-for="d in dms" :key="d.id" class="cs-item dm-row" :class="{ active: currentRoom === d.id && !aiMax, unread: (d.unread || 0) > 0 }" @click="openRoom(d.id)" :title="d.pending ? '新私信邀请,点开即接受' : ''">
                 <span class="cs-dm-av">{{ initials(d.name) }}</span>
                 <span class="cs-label">{{ d.name }}</span>
                 <!-- 收藏的联系人:标 ⭐ 并置顶(此前收藏对私信无可见效果) -->
