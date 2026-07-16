@@ -252,10 +252,23 @@ export function onSessionExpired(cb: (reason: string) => void): void {
 function fireSessionExpired(reason: string): void {
   if (sessionExpiredFired) return
   sessionExpiredFired = true
+  // 先取身份信息再清 session（清完就取不到了）:查"是否被别处登录顶掉"要用。
+  const uid = currentUserId()
+  const dev = String((mx as any)?.getDeviceId?.() || '')
+  const base = String((mx as any)?.baseUrl || '').replace(/\/$/, '')
   // 清掉本机记住的死会话:不清的话回登录页后 restoreSession 又拿它自动登录、无限循环。
-  try { removeCachedAccount(currentUserId()) } catch { /* ignore */ }
+  try { removeCachedAccount(uid) } catch { /* ignore */ }
   localStorage.removeItem(SESSION_KEY)
   try { mx?.stopClient() } catch { /* ignore */ }
+  // token 被吊销可能是「别处登录顶号」(单端在线,后端踢的)——问后端拿明确原因,
+  // 换成专属提示"账号已在别处登录";查询失败/不是被踢 → 按原 reason 走笼统文案。
+  if (reason === 'M_UNKNOWN_TOKEN' && uid && dev && base) {
+    fetch(`${base}/cosmac/session/kicked?user_id=${encodeURIComponent(uid)}&device_id=${encodeURIComponent(dev)}`)
+      .then((r) => r.json())
+      .then((j) => sessionExpiredCb?.(j?.kicked ? 'KICKED_BY_OTHER_LOGIN' : reason))
+      .catch(() => sessionExpiredCb?.(reason))
+    return
+  }
   sessionExpiredCb?.(reason)
 }
 

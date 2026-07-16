@@ -1,5 +1,21 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-16 — feat:登录互斥「后踢前」+ 旧端提示「账号已在别处登录」(负责人报的)
+- 需求:同一账号跨浏览器登录时多端并发存活,应后踢前并明确提示。
+- 服务端(`registration.py`):登录成功(stepup 闸之后)`_kick_other_devices`——用**这次刚
+  验证过的密码**走 Synapse 两步 UIA `delete_devices` 删掉该账号其它设备,旧端 token 立即
+  吊销。不需要 admin 权限、不改 Synapse、best-effort(踢失败绝不影响登录)。账号/邮箱两条
+  登录路径都接。被踢 (user,device) 记内存(24h TTL,单实例够用,重启只是提示退化)。
+- 查询端点 `GET /cosmac/session/kicked?user_id=&device_id=`(公开——查询者 token 已死没法
+  鉴权;只回 bool,需同时持有 user+device 才能问)。
+- 前端:`fireSessionExpired` 收 M_UNKNOWN_TOKEN 时先问 kicked 端点,是→reason 换
+  KICKED_BY_OTHER_LOGIN,LiveView 弹「账号已在别处登录,本端已被迫下线」;否则原笼统文案。
+- 验证:6 项单测(两步 UIA/记录/TTL/失败兜底)+全量 565 过;本地端到端两轮——浏览器登录
+  alice,curl 模拟第二浏览器登录 → bot 日志踢旧设备、服务器 devices 只剩新的、旧端查询
+  kicked=true(网络记录实锤)、自动回登录页。
+- 注意:**多端单点在线是产品语义**——手机/平板登录同样会踢网页端;将来要"每类端各留一个"
+  再按 device 名放宽。含后端改动,部署需 restart guduu-bot。
+
 ## 2026-07-16 — fix:消息里 @主AI 显示品牌名 @CosMac Star(负责人报的)
 - 现象:任务到期提醒在频道里 @ 负责人时,主 AI 显示原始账号 @guduu:cosmac.cc。
 - 修法:前端 mention 渲染(renderBody 的 @ 高亮正则)对 localpart=guduu 的提及按品牌名
