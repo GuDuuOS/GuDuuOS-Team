@@ -1874,7 +1874,7 @@ const GATING_EVENT_TYPE = 'cosmac.gating'
 
 /** 门槛阶梯（下拉可选项；与 bot 端 GATE_LEVELS 一致）。free<paid<creator<admin。 */
 export const GATE_LEVELS: { slug: string; label: string }[] = [
-  { slug: 'free', label: '免费（不限制）' },
+  { slug: 'free', label: '免费可用（所有人）' },
   { slug: 'paid', label: '付费会员及以上' },
   { slug: 'creator', label: '创作者会员' },
   { slug: 'admin', label: '仅平台管理员' },
@@ -1887,6 +1887,7 @@ export const GATE_CATALOG: { key: string; label: string; default: string; group:
   { key: 'memory', label: '长期记忆（AI 跨多轮/跨天记得你）', default: 'paid', group: 'AI 对话与检索' },
   { key: 'web_search', label: '联网搜索（外部 API、共享凭据有成本）', default: 'paid', group: 'AI 对话与检索' },
   { key: 'custom_skill', label: '自定义技能（用聊天命令建/管理自己的技能）', default: 'paid', group: 'AI 对话与检索' },
+  { key: 'custom_agent', label: '自建智能体（我的AI工坊创建 Agent）', default: 'paid', group: 'AI 对话与检索' },
   { key: 'create_room', label: '建群 / 频道', default: 'free', group: '任务编排与协作' },
   { key: 'task_board', label: 'AI 拆解任务到看板', default: 'paid', group: '任务编排与协作' },
   { key: 'assemble_team', label: '一键建专班（AI 组队 + 派单）', default: 'paid', group: '任务编排与协作' },
