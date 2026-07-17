@@ -393,7 +393,30 @@ class RoomAccessScopeTest(unittest.TestCase):
         )
         self.assertIn("!allowed:test", out)
         self.assertIn("!secret:test", out)  # 非成员房,管理员也能看到
-        self.assertIn("跨工作区", out)
+
+    def test_list_my_rooms_fallback_notes_incompleteness(self) -> None:
+        """回退口径(无 ADMIN_TOKEN):清单要自报"可能不含 AI 未进驻的频道",别再笃定说没有。"""
+        out = self.tb.execute(
+            ToolCall(id="x", name="list_my_rooms", arguments={}),
+            ToolContext("!cur:test", "@alice:test", is_dm=True),
+        )
+        self.assertIn("可能不含 AI 未进驻的频道", out)
+
+    def test_list_my_rooms_admin_api_includes_bot_absent_room(self) -> None:
+        """负责人实报的修复:发起人在、但 bot 不在的频道(侧栏可见)必须列出并标注 AI 未进驻。"""
+        self.tb.client.admin_user_joined_rooms = (  # type: ignore
+            lambda uid: ["!allowed:test", "!offline:test"])
+        self.tb.client.admin_room_name = (  # type: ignore
+            lambda rid: "线下核验专班" if rid == "!offline:test" else "")
+        out = self.tb.execute(
+            ToolCall(id="x", name="list_my_rooms", arguments={}),
+            ToolContext("!cur:test", "@alice:test", is_dm=True),
+        )
+        self.assertIn("线下核验专班", out)          # bot 不在的房也列出来
+        self.assertIn("AI 未进驻", out)             # 且明确标注
+        self.assertIn("测试频道", out)              # bot 在的房照常
+        self.assertNotIn("可能不含", out)           # 全集口径不再自报不全
+        self.assertNotIn("!secret:test", out)       # 发起人不在的房仍不暴露(隐私)
 
     def test_list_my_rooms_nonadmin_still_scoped(self) -> None:
         # 非管理员即使注入了 is_admin 回调,判为否也只看自己在的房(隐私边界不破)。
