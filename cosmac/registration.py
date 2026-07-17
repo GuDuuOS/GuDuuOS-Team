@@ -762,6 +762,16 @@ def _proxy_synapse_login(
         return 429, {"error": "尝试过于频繁，请稍后再试"}
     if resp.status_code >= 500:
         return 502, {"error": "登录服务暂不可用，请稍后重试"}
+    # 账号被**锁定**(新版停用):Synapse 回 401 + errcode=M_USER_LOCKED。给专门文案——
+    # 落到下面的通用"密码错误"会让被停用的人一直以为记错密码(与 deactivated 同理)。
+    try:
+        if resp.json().get("errcode") == "M_USER_LOCKED":
+            return 403, {
+                "error": "该账号已被停用，请联系管理员",
+                "errcode": "M_USER_DEACTIVATED",  # 前端已有停用文案处理,复用同一 errcode
+            }
+    except ValueError:
+        pass
     # 401/403 等 → 凭据错。但**先分辨"账号已停用"**:停用会抹掉密码→登录必然 403,若还回
     # "用户名或密码错误",被停用的人会一直以为是自己记错密码(负责人要求明确提示、去找管理员)。
     # 仅停用时给专门文案;正常账号密码错/账号不存在仍回通用文案(不泄露账号是否存在)。
@@ -1060,8 +1070,9 @@ def query_user_deactivated(hs_url: str, user_id: str) -> Optional[bool]:
         return None
     if rr.status_code == 200:
         try:
-            # Synapse 返回 deactivated 字段（可能是 bool 或 0/1）
-            return bool(rr.json().get("deactivated"))
+            # deactivated=旧版注销;locked=新版停用(锁定)。对"停用检测"两者等价:都登不进来。
+            j = rr.json()
+            return bool(j.get("deactivated") or j.get("locked"))
         except Exception:
             return None
     if rr.status_code == 404:
@@ -1101,7 +1112,9 @@ def list_deactivated_user_ids(
                 return None
             data = rr.json()
             for u in data.get("users") or []:
-                if u.get("deactivated") and u.get("name"):
+                # 锁定(locked=新版停用,数据保留)与注销(deactivated=旧版)都算"停用":
+                # 两者都登不进来,主 AI 都不该派单给他们。
+                if (u.get("deactivated") or u.get("locked")) and u.get("name"):
                     out.add(str(u["name"]))
             nxt = data.get("next_token")
             if nxt is None:  # 没有下一页了

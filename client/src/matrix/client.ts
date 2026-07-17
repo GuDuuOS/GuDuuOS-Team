@@ -1269,7 +1269,8 @@ export interface AdminUser {
   id: string            // 完整 id，如 @alice:cosmac.cc
   name: string          // 显示名（没设就退回 localpart）
   admin: boolean        // 是否服务器管理员
-  deactivated: boolean  // 是否已停用
+  deactivated: boolean  // 是否已**注销**(旧版停用,Synapse deactivate:已退出所有房间,不可逆)
+  locked: boolean       // 是否已**停用**(锁定:禁登录但频道/工作区/历史全保留,可无损恢复)
   isBot: boolean        // 是否中枢 AI（按 botId() 判定）
   email?: string       // 注册邮箱(cosmac DB 反查;仅管理员可见,可能没有)
 }
@@ -1311,6 +1312,7 @@ export async function listUsers(): Promise<AdminUser[]> {
         name: u.displayname || localpart,
         admin: !!u.admin,
         deactivated: !!u.deactivated,
+        locked: !!u.locked,
         isBot: u.name === botId(),
       })
     }
@@ -1346,13 +1348,33 @@ export async function listUserEmails(): Promise<Record<string, string>> {
 }
 
 /**
- * 停用某账号（POST deactivate）。erase=false 只停用、不抹除内容（可恢复账号本身）。
- * 注意：停用是软删除——账号不能再登录，但 id 仍占用。
+ * ⚠️ 注销账号（POST deactivate,**不可逆**）：Synapse 会把该用户从**所有房间退出**、
+ * 删除登录凭据/邮箱绑定——恢复后频道/工作区成员关系与历史读取权都救不回来
+ * （负责人线上踩过：恢复后只剩 cosmac DB 里的看板任务）。
+ * 日常「停用」请用 lockUser（锁定：禁登录、数据全保留、可无损恢复）；本函数仅留给
+ * 真要抹除账号的场景。
  */
 export async function deactivateUser(userId: string): Promise<void> {
   await adminFetch(`/_synapse/admin/v1/deactivate/${encodeURIComponent(userId)}`, {
     method: 'POST',
     body: JSON.stringify({ erase: false }),
+  })
+}
+
+/** 停用账号（锁定,Synapse locked）：禁止登录并踢下线,但频道/工作区成员关系、
+ * 聊天历史、配置全部原样保留;unlockUser 一键无损恢复。日常停用一律用它。 */
+export async function lockUser(userId: string): Promise<void> {
+  await adminFetch(`/_synapse/admin/v2/users/${encodeURIComponent(userId)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ locked: true }),
+  })
+}
+
+/** 解除锁定：账号恢复可登录,一切数据如常(无需重设密码)。 */
+export async function unlockUser(userId: string): Promise<void> {
+  await adminFetch(`/_synapse/admin/v2/users/${encodeURIComponent(userId)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ locked: false }),
   })
 }
 
