@@ -17,6 +17,7 @@ import {
   getChannelConfig,
   setChannelConfig,
   claimChannelAdmin,
+  kbRoomList,
   type ChannelMember
 } from '@/matrix/client'
 
@@ -161,6 +162,16 @@ const isLive = computed(() => !!currentRoomId.value)
 function refreshLiveMembers() {
   liveMembers.value = currentRoomId.value ? listChannelMembers(currentRoomId.value) : []
 }
+
+/* ===== 频道知识库真实文档（模块级共享：频道管理弹窗与右侧「关于此频道」同一份数据,
+ * 弹窗里上传/删除后 loadRoomKbDocs 刷新,右侧面板即时同步——负责人报的"维护后右侧未同步"）===== */
+const roomKbDocs = ref<{ id: number; title: string; source: string }[]>([])
+async function loadRoomKbDocs() {
+  if (!currentRoomId.value) { roomKbDocs.value = []; return }
+  try { roomKbDocs.value = await kbRoomList(currentRoomId.value) } catch { roomKbDocs.value = [] }
+}
+// 切频道就拉一次:右侧面板不经过弹窗也要能看到已入库文档
+watch(currentRoomId, () => { loadRoomKbDocs() })
 
 /* ===== 配置持久化（真实频道：存进 cosmac.channel_config state event）=====
  * 加载时把房间里已存的配置 merge 进当前 reactive config；
@@ -335,6 +346,8 @@ export function useChannelAdmin() {
     saveState,         // 配置保存状态：idle/saving/saved/error（UI 提示用）
     liveMembers,       // 真实成员快照
     refreshLiveMembers,
+    roomKbDocs,        // 频道知识库真实文档(弹窗与右侧面板共享)
+    loadRoomKbDocs,
     /** 真邀请已有用户进当前频道 */
     async inviteLiveMember(userIdRaw: string) {
       if (!currentRoomId.value) return

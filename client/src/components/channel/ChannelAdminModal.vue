@@ -289,7 +289,7 @@ import {
   type AccessLevel
 } from '@/composables/useChannelAdmin'
 import {
-  getGlobalAgents, kbRoomList, kbRoomAdd, kbRoomDelete,
+  getGlobalAgents, kbRoomAdd, kbRoomDelete,
   normalizeUserId, userExists, checkUserDeactivated, currentUserId,
   type GlobalAgent,
 } from '@/matrix/client'
@@ -300,7 +300,9 @@ type CountKey = 'members' | 'skills' | 'knowledge' | 'rules' | 'dataScopes'
 const {
   visible, state, groupName, close, addMember, removeMember, addItem, removeItem, addScope, removeScope,
   // 真实成员 + 配置持久化（有真后端时走这套）
-  roomId, isLive, saveState, liveMembers, refreshLiveMembers, inviteLiveMember, removeLiveMember
+  roomId, isLive, saveState, liveMembers, refreshLiveMembers, inviteLiveMember, removeLiveMember,
+  // 频道知识库真实文档:与右侧「关于此频道」共享同一份(负责人报的"维护后右侧未同步")
+  roomKbDocs: kbDocs, loadRoomKbDocs,
 } = useChannelAdmin()
 
 // 人设保存状态提示（存进房间 state event，多端同步）
@@ -412,17 +414,13 @@ async function loadGlobalAgents() {
 }
 
 /* —— 频道知识库：上传真实文档进本频道 RAG（区别于上面的“来源”标签是占位）—— */
-const kbDocs = ref<{ id: number; title: string; source: string }[]>([])
 const kbUploading = ref(false)
 const kbErr = ref('')
 const kbFileInput = ref<HTMLInputElement>()
 // 可读为文本的类型：文本/markdown/csv/json/日志等。PDF/Word 需服务端解析，暂不支持。
 const KB_TEXT_RE = /\.(txt|md|markdown|csv|tsv|json|log|text|rst|yaml|yml|xml|html?)$/i
 const KB_MAX_CHARS = 20000  // 与后端 MAX_DOC_CHARS 对齐，本地先拦、提示更友好
-async function loadRoomDocs() {
-  if (!isLive.value || !roomId.value) { kbDocs.value = []; return }
-  kbDocs.value = await kbRoomList(roomId.value)
-}
+async function loadRoomDocs() { await loadRoomKbDocs() }
 function pickKbFile() { if (!kbUploading.value) kbFileInput.value?.click() }
 async function onKbFilePicked(e: Event) {
   const input = e.target as HTMLInputElement
