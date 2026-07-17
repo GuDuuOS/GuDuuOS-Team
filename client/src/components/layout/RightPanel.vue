@@ -78,7 +78,7 @@ import { useChannelAdmin } from '@/composables/useChannelAdmin'
 import '@/styles/right.css'
 
 // 与「频道管理」弹窗共享同一份数据，增删会同步反映
-const { state, isLive, liveMembers, groupName } = useChannelAdmin()
+const { state, isLive, liveMembers, groupName, roomKbDocs } = useChannelAdmin()
 // 成员：真实频道用真实 Matrix 成员（映射成本面板的展示形状），demo 回退 mock
 const members = computed(() => {
   if (isLive.value) {
@@ -95,7 +95,12 @@ const members = computed(() => {
 })
 // 技能/知识库/规则：真实频道下已是真实持久化数据（loadConfigFromRoom 填充）
 const skills = computed(() => state.skills)
-const knowledge = computed(() => state.knowledge)
+// 知识库 = 「来源」条目 + **真实上传入库的文档**(roomKbDocs,与频道管理弹窗共享同一份,
+// 弹窗里上传/删除后这里即时同步——负责人报的"维护知识库后右侧未同步")
+const knowledge = computed(() => [
+  ...state.knowledge,
+  ...roomKbDocs.value.map((d) => ({ label: d.title, desc: '已入库文档 · 本频道 AI 可检索' })),
+])
 const rules = computed(() => state.rules)
 const { hide } = useRightPanel()
 </script>
