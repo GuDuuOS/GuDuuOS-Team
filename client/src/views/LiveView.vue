@@ -223,6 +223,23 @@ const TASK_COLS = [
   { key: 'done', label: '已完成' },
 ]
 async function loadTasks() { taskList.value = await getTasks() }
+// ── 系统级逾期提醒(负责人需求):不依赖 AI 聊天消息的平台自身提醒 ──
+// 「我的逾期任务」= 派给我 + 未完成 + 截止时间已过。角标常驻侧栏,登录时每天弹一次提示。
+const myOverdueTasks = computed(() =>
+  taskList.value.filter((t) => t.status !== 'done' && t.due_ts && t.due_ts * 1000 < Date.now() && assignedToMe(t)),
+)
+let overdueTimer: ReturnType<typeof setInterval> | null = null
+onBeforeUnmount(() => { if (overdueTimer) clearInterval(overdueTimer) })
+/** 每天首次登录时弹一次系统提醒(localStorage 按「账号+日期」去重,不轰炸)。 */
+function notifyOverdueOncePerDay() {
+  const n = myOverdueTasks.value.length
+  if (!n) return
+  const key = `cosmac.overdue.notice.${currentUserId()}`
+  const today = new Date().toDateString()
+  if (localStorage.getItem(key) === today) return
+  localStorage.setItem(key, today)
+  toast('任务逾期提醒', `你有 ${n} 个任务已逾期，请到「任务看板」处理或改期`)
+}
 // 按当前工作区过滤任务(QA:不同工作区任务看板全一样)。口径与左侧频道列表完全一致:
 // 任务所在频道属于本工作区 → 显示;属于**别的**工作区 → 隐藏;不属于任何工作区(孤儿专班/
 // 旧任务无 room_id) → 各工作区都显示,避免"任务凭空消失"。
@@ -1423,6 +1440,11 @@ async function afterLogin(uid: string) {
   // maybeAcceptInvites 处理,修 bug 9/10/11)。
   maybeAcceptInvites()
   loadStats() // 数据看板真实指标（best-effort）
+  // 系统级逾期提醒(负责人需求:不能只靠 AI 在频道里说):登录即拉任务 → 侧栏「任务看板」
+  // 常驻红色角标(我的逾期数) + 每天首次登录弹一次系统提醒;之后每 10 分钟静默刷新角标。
+  loadTasks().then(notifyOverdueOncePerDay).catch(() => {})
+  if (overdueTimer) clearInterval(overdueTimer)
+  overdueTimer = setInterval(() => loadTasks().catch(() => {}), 10 * 60 * 1000)
   // 插件商城:恢复本人装过的插件到右侧栏(存 account data)。sync 首包可能还没带回
   // account data,3.5s 后再补一次(restore 幂等,多调无害)。
   restorePlugins()
@@ -2212,6 +2234,8 @@ onBeforeUnmount(() => {
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
             </span>
             <span class="cs-label">任务看板</span>
+            <!-- 系统级逾期角标:我的逾期任务数,常驻可见(不依赖 AI 聊天提醒) -->
+            <span v-if="myOverdueTasks.length" class="cs-overdue-n" :title="`你有 ${myOverdueTasks.length} 个任务已逾期`">{{ myOverdueTasks.length }}</span>
           </div>
           <!-- 置顶：图文教程（前台只读·类公众号；编辑在管理后台）-->
           <div class="cs-item pinned-item" :class="{ active: docs }" @click="openDocs">
@@ -3348,6 +3372,8 @@ onBeforeUnmount(() => {
 .cs-item.archived:hover { opacity: 0.72; }
 .cs-item.archived.active { opacity: 0.85; }
 .cs-archived-tag { flex-shrink: 0; display: inline-flex; align-items: center; color: var(--text-2); }
+/* 任务看板逾期角标:红底白字,与私信未读同视觉级别(系统级提醒,常驻) */
+.cs-overdue-n { margin-left: auto; flex-shrink: 0; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #c0392b; color: #fff; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
 /* 未归类组:计数小标 + 悬浮出现的「归入」按钮 */
 .cs-orphan-n { margin-left: auto; font-size: 11px; color: var(--text-3); background: var(--bg-soft); border-radius: 999px; padding: 0 7px; }
 .cs-adopt { flex-shrink: 0; display: none; border: 1px solid var(--border); background: var(--bg-panel); color: var(--text-2); font-size: 11px; padding: 1px 8px; border-radius: 6px; cursor: pointer; }
