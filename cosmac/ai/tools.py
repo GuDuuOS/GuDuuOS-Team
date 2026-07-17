@@ -1051,41 +1051,66 @@ class Toolbox:
                 "要跨频道统筹，请到右侧「私人会话」里找我。"
             )
         try:
-            room_ids = self.client.joined_rooms()
+            bot_rooms = set(self.client.joined_rooms())
         except Exception:
-            room_ids = []
-        if not room_ids:
-            return "暂时拿不到频道列表(服务波动?),请稍后再试。"
-        # 可见范围：普通用户只列自己在的频道(隐私边界);**平台管理员/负责人**列全部 bot 频道——
-        # 否则他跨工作区查一个"自己没加入但组织里存在"的频道(如别的工作区的专班)会一直查不到。
+            bot_rooms = set()
+        # 【数据源修复·负责人实报】此前把 bot 自己的 joined_rooms 当全集——bot 没被拉进的
+        # 频道它永远"看不见",还反过来笃定说该频道不存在。现在**首选管理员 API 查发起人
+        # 真实加入的全部房间**(与用户侧栏完全一致);bot 不在的频道照列、并标注"AI 未进驻"。
+        # 没配 ADMIN_TOKEN 时回退旧口径(bot∩发起人),并在结果里说明可能不全。
+        user_rooms = None
+        try:
+            user_rooms = self.client.admin_user_joined_rooms(ctx.sender)
+        except Exception:
+            user_rooms = None
         is_admin = bool(self.is_admin and self.is_admin(ctx.sender))
+        if user_rooms is not None:
+            # 全集=发起人真实房间;平台管理员额外并上 bot 服务的全部频道(跨工作区统筹)
+            candidates = list(dict.fromkeys(
+                list(user_rooms) + (sorted(bot_rooms) if is_admin else [])))
+        else:
+            candidates = sorted(bot_rooms)
+        if not candidates:
+            return "暂时拿不到频道列表(服务波动?),请稍后再试。"
         import time as _time
         now = _time.time()
         out: List[str] = []
-        for rid in room_ids[:150]:
+        for rid in candidates[:150]:
             try:
-                if self._room_kind(rid) != "channel":
-                    continue  # AI 会话房/私信不算频道
-                # 非管理员:只暴露发起人自己在的房;管理员:全部频道都可见(跨工作区统筹)。
-                if not is_admin and not self.client.is_joined_member(rid, ctx.sender):
-                    continue
+                in_bot = rid in bot_rooms
+                if in_bot:
+                    if self._room_kind(rid) != "channel":
+                        continue  # AI 会话房/私信不算频道
+                    # 旧口径回退时仍要按发起人过滤(隐私边界);admin 全集本就是发起人的房
+                    if user_rooms is None and not is_admin \
+                            and not self.client.is_joined_member(rid, ctx.sender):
+                        continue
                 cached = self._room_name_cache.get(rid)
                 if cached and now - cached[1] < 300:
                     name = cached[0]
-                else:
+                elif in_bot:
                     ev = self.client.get_state_event(rid, "m.room.name")
                     name = str((ev or {}).get("name") or "")
                     self._room_name_cache[rid] = (name, now)
+                else:
+                    # bot 不在的房读不了 state,走管理员 API 读房名
+                    name = self.client.admin_room_name(rid) or ""
+                    self._room_name_cache[rid] = (name, now)
+                    if not name:
+                        continue  # 无名房=私信/AI 会话概率高,不当频道列(与实名频道判定同口径)
                 if "控制室" in name:
                     continue  # 平台配置房,不是聊天频道
-                out.append(f"· {name or '(未命名频道)'} — {rid}")
+                tag = "" if in_bot else "（AI 未进驻——把 @CosMac Star 邀进频道后我才能读它的内容）"
+                out.append(f"· {name or '(未命名频道)'} — {rid}{tag}")
             except Exception:
                 continue  # 单个房读不出不影响整体
         if not out:
             return "没有找到你所在的频道。"
         head = f"全部频道({len(out)} 个,跨工作区)" if is_admin else f"你所在的频道({len(out)} 个)"
+        note = "" if user_rooms is not None else \
+            "\n⚠️ 本清单按 AI 所在频道统计,可能不含 AI 未进驻的频道。"
         return (
-            f"{head}:\n" + "\n".join(out)
+            f"{head}:\n" + "\n".join(out) + note
             + "\n\n(要看某个频道最近聊了什么,我可以用 get_recent_messages 调取。)"
         )
 

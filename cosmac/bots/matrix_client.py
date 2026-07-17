@@ -587,6 +587,51 @@ class MatrixClient:
             logger.debug("查已加入房间列表失败", exc_info=True)
         return []
 
+    # —— Synapse 管理 API(需 COSMAC_ADMIN_TOKEN;没配则以下方法回 None,调用方回退 bot 视角) ——
+    @staticmethod
+    def _admin_token() -> str:
+        """服务器管理员令牌:先 COSMAC_ 再 GUDUU_(与 registration._env 同一兼容口径)。"""
+        import os
+        return os.environ.get("COSMAC_ADMIN_TOKEN") or os.environ.get("GUDUU_ADMIN_TOKEN") or ""
+
+    def admin_user_joined_rooms(self, user_id: str) -> Optional[List[str]]:
+        """管理员视角列**某个用户**真实加入的全部房间 id(含 bot 不在的房)。
+
+        主 AI 的「频道清单」此前用 bot 自己的 joined_rooms 当全集——bot 没被拉进的频道
+        它永远"看不见",还反过来笃定说频道不存在(负责人线上实报)。本方法查的是
+        `/_synapse/admin/v1/users/<id>/joined_rooms`,与用户侧栏完全一致。
+        没配 ADMIN_TOKEN / 请求失败 → None(调用方回退旧行为)。
+        """
+        token = self._admin_token()
+        if not token or not user_id:
+            return None
+        url = (f"{self.homeserver_url}/_synapse/admin/v1/users/"
+               f"{quote(user_id, safe='')}/joined_rooms")
+        try:
+            resp = requests.get(
+                url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+            if resp.status_code == 200:
+                return list(resp.json().get("joined_rooms") or [])
+            logger.debug("admin 查用户房间返回 %s", resp.status_code)
+        except requests.RequestException:
+            logger.debug("admin 查用户房间失败", exc_info=True)
+        return None
+
+    def admin_room_name(self, room_id: str) -> Optional[str]:
+        """管理员视角读某房间名(bot 不在的房也能读)。失败/没配 token → None。"""
+        token = self._admin_token()
+        if not token or not room_id:
+            return None
+        url = f"{self.homeserver_url}/_synapse/admin/v1/rooms/{quote(room_id, safe='')}"
+        try:
+            resp = requests.get(
+                url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+            if resp.status_code == 200:
+                return str(resp.json().get("name") or "")
+        except requests.RequestException:
+            logger.debug("admin 读房间名失败", exc_info=True)
+        return None
+
     def joined_member_count(self, room_id: str) -> int:
         """查房间当前已加入的成员数（用于区分"私聊"和"群聊"）。
 
