@@ -93,7 +93,7 @@
             <p class="adm-hint">
               共 {{ users.length }} 个账号 ·
               管理员 {{ users.filter(u => u.admin).length }} ·
-              已停用 {{ users.filter(u => u.deactivated).length }}
+              已停用 {{ users.filter(u => u.deactivated || u.locked).length }}
             </p>
           </div>
           <div class="adm-actions">
@@ -146,7 +146,7 @@
           </thead>
           <tbody>
             <tr v-if="!filteredUsers.length"><td colspan="5" class="adm-empty-row">没有匹配的用户，换个筛选条件试试。</td></tr>
-            <tr v-for="u in filteredUsers" :key="u.id" :class="{ off: u.deactivated }">
+            <tr v-for="u in filteredUsers" :key="u.id" :class="{ off: u.deactivated || u.locked }">
               <td>
                 <div class="adm-user">
                   <span class="adm-ava">{{ avatarOf(u) }}</span>
@@ -184,8 +184,10 @@
                 <span v-else class="adm-muted">—</span>
               </td>
               <td>
-                <span class="adm-tag" :class="u.deactivated ? 'off' : 'ok'">
-                  {{ u.deactivated ? '已停用' : '正常' }}
+                <!-- 三态:正常 / 已停用(锁定,数据保留可无损恢复) / 已注销(旧版 deactivate,已退所有频道) -->
+                <span class="adm-tag" :class="u.deactivated || u.locked ? 'off' : 'ok'"
+                  :title="u.deactivated ? '旧版停用(已退出所有频道,恢复需重新邀请)' : u.locked ? '锁定停用:频道/历史全保留,可无损恢复' : ''">
+                  {{ u.deactivated ? '已注销' : u.locked ? '已停用' : '正常' }}
                 </span>
               </td>
               <td class="adm-ops">
@@ -196,14 +198,17 @@
                   重置密码
                 </button>
                 <button
-                  v-if="!u.deactivated"
+                  v-if="!u.deactivated && !u.locked"
                   class="adm-op danger"
                   :disabled="u.isBot || busy === u.id || u.id === currentUserId()"
                   :title="u.id === currentUserId() ? '不能停用自己' : ''"
-                  @click="doDeactivate(u)"
+                  @click="doLock(u)"
                 >停用</button>
-                <button v-else class="adm-op" :disabled="busy === u.id" @click="doReactivate(u)">
+                <button v-else-if="u.locked && !u.deactivated" class="adm-op" :disabled="busy === u.id" @click="doUnlock(u)">
                   恢复
+                </button>
+                <button v-else class="adm-op" :disabled="busy === u.id" title="旧版停用:恢复后需重新邀请进各频道" @click="doReactivate(u)">
+                  恢复(旧版)
                 </button>
               </td>
             </tr>
@@ -1528,6 +1533,8 @@ import {
   createUser,
   deactivateUser,
   reactivateUser,
+  lockUser,
+  unlockUser,
   resetPassword,
   setUserAdmin,
   ensureControlRoomMembership,
@@ -1732,8 +1739,8 @@ const filteredUsers = computed(() => {
       // 用**与列表同款的有效等级**过滤：管理员在等级列显示「管理员」(u.admin),不是其底层 tier——
       // 否则按「付费会员」筛会把底层 tier=paid 的管理员也带进来(与展示不一致,QA 实测)。
       if (filterTier.value !== 'all' && (u.admin ? 'admin' : memberTier(u.id)) !== filterTier.value) return false
-      if (filterStatus.value === 'ok' && u.deactivated) return false
-      if (filterStatus.value === 'off' && !u.deactivated) return false
+      if (filterStatus.value === 'ok' && (u.deactivated || u.locked)) return false
+      if (filterStatus.value === 'off' && !(u.deactivated || u.locked)) return false
       return true
     })
     .sort((a, b) => Number(a.deactivated) - Number(b.deactivated))  // 在用在前、停用在后
@@ -1890,19 +1897,21 @@ async function doResetPassword(u: AdminUser) {
   }
 }
 
-async function doDeactivate(u: AdminUser) {
-  // L15：不能停用自己——Synapse 只拦"自我降权"、不拦对自己 /deactivate，唯一管理员停用自己会
-  // 立即掉线且无法登录，后台永久失守（只能上服务器用 admin API 救）。前端直接拦下。
+async function doLock(u: AdminUser) {
+  // 停用=锁定(Synapse locked):禁登录+踢下线,但频道/工作区成员关系与历史**全保留**,
+  // 可无损恢复。此前走 Synapse deactivate 会把用户退出所有房间——恢复后只剩看板任务、
+  // 成员关系全丢(负责人线上踩过),故日常停用一律改锁定,deactivate 仅留作真抹除。
+  // L15：不能停用自己——唯一管理员把自己锁了会立即掉线,后台永久失守。前端直接拦下。
   if (u.id === currentUserId()) {
     warn('不能停用自己', '停用自己会立即掉线且无法登录。如需停用，请让另一位管理员操作。')
     return
   }
-  if (!confirm(`确认停用 ${u.name}？停用后该账号无法登录（可恢复）。`)) return
+  if (!confirm(`确认停用 ${u.name}？停用后该账号无法登录；其频道、工作区与聊天记录全部保留，可随时无损恢复。`)) return
   busy.value = u.id
   try {
-    await deactivateUser(u.id)
-    u.deactivated = true
-    success('已停用', `${u.name} 已无法登录`)
+    await lockUser(u.id)
+    u.locked = true
+    success('已停用', `${u.name} 已无法登录（数据保留，可无损恢复）`)
   } catch (e: any) {
     warn('停用失败', e?.message || '无法停用账号')
   } finally {
@@ -1910,15 +1919,33 @@ async function doDeactivate(u: AdminUser) {
   }
 }
 
+async function doUnlock(u: AdminUser) {
+  busy.value = u.id
+  try {
+    await unlockUser(u.id)
+    u.locked = false
+    success('已恢复', `${u.name} 可正常登录了，频道与历史数据一切如常`)
+  } catch (e: any) {
+    warn('恢复失败', e?.message || '无法恢复账号')
+  } finally {
+    busy.value = null
+  }
+}
+
 async function doReactivate(u: AdminUser) {
-  const pwd = prompt(`恢复 ${u.name} 需同时设新密码（服务器要求，至少 8 位）：`)
+  // 旧版停用(deactivate)的恢复:Synapse 要求同时设新密码;且当初停用时已退出所有房间,
+  // 恢复后需要各频道/工作区管理员重新邀请——这里把丑话说在前面。
+  const pwd = prompt(
+    `恢复 ${u.name} 需同时设新密码（服务器要求，至少 8 位）。\n` +
+    '注意：该账号是旧版停用，当时已退出所有频道/工作区；恢复后需要重新邀请才能回到各频道。',
+  )
   if (!pwd) return
   if (pwd.length < 8) { warn('密码太短', '至少 8 位'); return }
   busy.value = u.id
   try {
     await reactivateUser(u.id, pwd)
     u.deactivated = false
-    success('已恢复', `${u.name} 可用新密码登录了`)
+    success('已恢复', `${u.name} 可用新密码登录了；进频道需重新邀请`)
   } catch (e: any) {
     warn('恢复失败', e?.message || '无法恢复账号')
   } finally {
@@ -3100,7 +3127,7 @@ async function loadOverview() {
     ov.version = ver
     ov.userTotal = us.length
     ov.adminCount = us.filter((u) => u.admin).length
-    ov.deactivated = us.filter((u) => u.deactivated).length
+    ov.deactivated = us.filter((u) => u.deactivated || u.locked).length
     ov.roomTotal = rs.length
     ov.publicRooms = rs.filter((r) => r.isPublic).length
     ov.encryptedRooms = rs.filter((r) => r.encrypted).length
