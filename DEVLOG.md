@@ -1,5 +1,17 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-16 — fix:AI 改派任务后看板责任人不变(负责人报的)
+- 现象:AI 把已完成任务重新激活并"改派"给别的执行者(如真人→UI 设计师 AI),频道里说得
+  有板有眼,看板卡片责任人却还是旧的、进度还挂 100%。
+- 根因:update_task(repo+工具)根本不支持执行者字段——AI 只能改状态,"改派"纯属嘴上说说。
+- 修法:
+  · repo update_task 加 assignee/executor_kind/executor_ref(kind 走白名单归一);
+    **重开清进度**:done→todo/doing 且未显式给进度时,挂着的 100% 清回 0(部分进度保留);
+  · 工具 update_task 加同名参数,描述写明「改派必须传三件套,只在回复里说不传参看板不会变」;
+    executor_kind 白名单外直接拒绝(防静默回落 none 的假改派);回执带「改派给 X」。
+- 9 项单测(改派落库/重开清100%/部分进度保留/显式进度优先/done补满回归/坏kind两层防线/
+  空assignee不覆盖/工具透传+拒绝)+全量 582 过。纯后端,部署 restart guduu-bot。
+
 ## 2026-07-16 — fix:频道知识库上传后 tab 数字不更新(负责人报的)
 - 现象:知识库 tab 上传文档入库成功,标签上的数字仍是 0。
 - 根因:countOf('knowledge') 只数占位「来源」条目(state.knowledge),不含真实上传的
