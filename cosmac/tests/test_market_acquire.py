@@ -59,6 +59,8 @@ def _bot() -> CosmacBot:
     bot._is_platform_admin = lambda uid: False  # type: ignore
     bot.members.get_tier = lambda uid: "free"  # type: ignore
     bot._user_template = lambda uid: ""  # type: ignore
+    # market_acquire 整体门控默认放行(真实实现要连 Matrix 读策略);门控行为单测里单独收紧
+    bot._gate_allows = lambda uid, cap: True  # type: ignore
     return bot
 
 
@@ -91,6 +93,23 @@ class TestMarketAcquire(unittest.TestCase):
         self.assertEqual(code, 200)
         _, p = self.bot.handle_market_acquired_list("tok")
         self.assertEqual(p["items"], [])
+
+    def test_market_gate_blocks_acquire_not_remove(self) -> None:
+        """market_acquire 门控:挡「获取」;「移除」不挡(货架关了也要能清已获取)。"""
+        # 先在放行状态下获取一个
+        code, _ = self.bot.handle_market_acquire(
+            "tok", {"kind": "agent", "slug": "pub-agent"})
+        self.assertEqual(code, 200)
+        # 收紧门控 → 再获取被 403
+        self.bot._gate_allows = (  # type: ignore
+            lambda uid, cap: cap != "market_acquire")
+        code, _ = self.bot.handle_market_acquire(
+            "tok", {"kind": "skill", "slug": "pub-skill"})
+        self.assertEqual(code, 403)
+        # 移除已获取的仍放行
+        code, _ = self.bot.handle_market_acquire(
+            "tok", {"kind": "agent", "slug": "pub-agent", "acquired": False})
+        self.assertEqual(code, 200)
 
     def test_server_side_validation(self) -> None:
         # 未登录
