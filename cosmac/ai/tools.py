@@ -819,6 +819,8 @@ class Toolbox:
                 "  • 开始处理 → status=doing\n"
                 "  • **改截止日期** → due 填新日期（如『2025-07-11』或『2025-07-11 10:00』）；"
                 "清空截止日期填 due=''。用户说『把截止改到X』就直接用本工具改,别再新建任务。\n"
+                "  • **改派/重新指派执行者** → assignee(显示名)+executor_kind+executor_ref"
+                " **必须一起传**——只在回复里说改派了、不传这三个参数,看板责任人不会变。\n"
                 "只能改本频道的任务（按 task_id，先用 list_room_tasks 拿编号）。"
             ),
             parameters={
@@ -843,6 +845,18 @@ class Toolbox:
                             "新截止日期（可选）。格式『YYYY-MM-DD』或『YYYY-MM-DD HH:MM』"
                             "（只给日期默认当天 23:59）。传空串 '' = 清除截止日期（改为无时限）。"
                         ),
+                    },
+                    "assignee": {
+                        "type": "string",
+                        "description": "改派时的新责任人显示名（如『UI 设计师』『设计师 chengjy』）。",
+                    },
+                    "executor_kind": {
+                        "type": "string", "enum": ["human", "agent", "workflow"],
+                        "description": "改派时的执行者类型：human=真人 / agent=AI 智能体 / workflow=工作流。",
+                    },
+                    "executor_ref": {
+                        "type": "string",
+                        "description": "改派时的执行者标识：真人填 @用户id 或用户名；agent 填能力名册里的 slug；workflow 填工作流名。",
                     },
                 },
                 "required": ["task_id"],
@@ -1786,6 +1800,13 @@ class Toolbox:
             return "任务状态只能是 待办(todo)/进行中(doing)/已完成(done) 之一，请用其中之一。"
         result = args.get("result")
         progress = args.get("progress")
+        # 改派参数(负责人报的 bug:AI 嘴上说改派了,看板责任人没变——原来工具根本不支持传执行者)。
+        # kind 白名单校验:非法值直接拒绝,别静默回落 none 造成"假改派"。
+        assignee = args.get("assignee")
+        exec_kind = args.get("executor_kind")
+        exec_ref = args.get("executor_ref")
+        if exec_kind is not None and str(exec_kind) not in ("human", "agent", "workflow"):
+            return "executor_kind 只能是 human/agent/workflow 之一。"
         # 截止日期：没给这个键=不动;给了(含空串)=改期。空串→清除(None);否则解析日期→epoch 秒。
         from cosmac.db.task_repo import _DUE_UNSET
         due_val: Any = _DUE_UNSET
@@ -1817,12 +1838,17 @@ class Toolbox:
                     result=result if isinstance(result, str) else None,
                     progress=progress if isinstance(progress, int) else None,
                     due_ts=due_val,
+                    assignee=assignee if isinstance(assignee, str) else None,
+                    executor_kind=str(exec_kind) if exec_kind is not None else None,
+                    executor_ref=str(exec_ref) if exec_ref is not None else None,
                 )
             if not ok:
                 return f"任务 #{tid} 没有可更新的内容。"
             tail = f" → {status}" if status else ""
             if due_label:
                 tail += f"（{due_label}）"
+            if isinstance(assignee, str) and assignee.strip():
+                tail += f"（改派给 {assignee.strip()}）"
             return f"已更新任务 #{tid}「{title}」{tail}。"
         except Exception:
             logger.exception("更新任务失败")

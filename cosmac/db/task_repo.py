@@ -160,17 +160,28 @@ def update_task(
     progress: Optional[int] = None,
     result: Optional[str] = None,
     due_ts: Any = _DUE_UNSET,
+    assignee: Optional[str] = None,
+    executor_kind: Optional[str] = None,
+    executor_ref: Optional[str] = None,
 ) -> bool:
-    """改任务状态/进度/结果/截止时间（手动拖卡 或 P2 的 AI/工作流自动回填）。
+    """改任务状态/进度/结果/截止时间/**执行者**（手动拖卡、AI 推进/审核回填、改派）。
 
-    status 改成 done 时进度补满 100；改成非 done 但没给进度则不动进度。
-    due_ts 传值（含 None=清空）会**重置 reminded=0**——新截止时间要重新计"快到期/逾期"提醒。返回是否命中。
+    status 改成 done 时进度补满 100；从 done **重新打开**(改回 todo/doing)且没显式给
+    进度时,把挂着的 100% 清回 0——重开的任务卡还显示 100% 会误导(负责人报的)。
+    due_ts 传值（含 None=清空）会**重置 reminded=0**——新截止时间要重新计提醒。
+    assignee/executor_kind/executor_ref：改派用（AI 把任务重新指派给别人/别的 AI 时,
+    看板的责任人要跟着变,不能只改状态嘴上说改了派）。返回是否命中。
     """
     values: Dict[str, Any] = {}
     if status is not None and status in _VALID_STATUS:
         values["status"] = status
         if status == "done" and progress is None:
             values["progress"] = 100
+        elif status != "done" and progress is None:
+            # 重新打开：进度还挂 100% 的清回 0（其它进度值保留——暂停再继续别丢进度）
+            t = session.get(Task, task_id)
+            if t is not None and (t.progress or 0) >= 100:
+                values["progress"] = 0
     if progress is not None:
         try:
             values["progress"] = max(0, min(100, int(progress)))
@@ -178,6 +189,12 @@ def update_task(
             pass
     if result is not None:
         values["result"] = str(result)[:_MAX_TITLE]
+    if assignee is not None and str(assignee).strip():
+        values["assignee"] = str(assignee).strip()[:255]
+    if executor_kind is not None:
+        values["executor_kind"] = _norm_kind(executor_kind)
+    if executor_ref is not None:
+        values["executor_ref"] = str(executor_ref).strip()[:255]
     if due_ts is not _DUE_UNSET:
         parsed = None
         if due_ts is not None:
