@@ -4728,6 +4728,10 @@ class CosmacBot:
         if kind not in self._MARKET_KINDS or not slug:
             return 400, {"error": "参数不合法"}
         if want:
+            # 商城整体门控(market_acquire):管"能不能用商城获取"这个动作本身;每个资源的
+            # 等级另由 access(unlocked)逐条强制——双层。只挡"获取",移除不挡(已获取的要能清)。
+            if not self._gate_allows(user_id, "market_acquire"):
+                return 403, {"error": self._gate_denied_text("market_acquire", ui=True)}
             is_admin = self._is_platform_admin(user_id)
             # only_kind(评审 #9):校验单条资源只建对应类别,不为一次点击重建全货架
             match = next(
