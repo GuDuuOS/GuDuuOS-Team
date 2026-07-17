@@ -4344,6 +4344,10 @@ class CosmacBot:
         user_id = self.client.whoami(access_token)
         if not user_id:
             return 401, {"error": "登录已失效，请重新登录"}
+        # 自建智能体是付费功能(custom_agent 门控,与自建技能 custom_skill 对称)——此前
+        # 这里没有闸,免费用户可随意建(负责人报的"有部分内容没加权限")。删自己的不设门控。
+        if not self._gate_allows(user_id, "custom_agent"):
+            return 403, {"error": self._gate_denied_text("custom_agent", ui=True)}
         slug = str((body or {}).get("slug") or "").strip().lower()
         if not self._valid_slug(slug):
             return 400, {"error": "标识(slug)需为小写字母/数字/中划线,64 字符内"}

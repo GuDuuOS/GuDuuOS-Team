@@ -341,7 +341,9 @@ _GATE_RANK: Dict[str, int] = {
 
 # 后台门控下拉可选的「门槛」目录（slug + 标签）。即上面阶梯的人类可读版。
 GATE_LEVELS: List[Dict[str, str]] = [
-    {"slug": TIER_FREE, "label": "免费（不限制）"},
+    # 「免费可用」= 使用门槛为免费级,即**所有人都能用**;不是"免费版不受限制"——
+    # 数量上限另在「用量配额」页按等级配(负责人反馈原文案有歧义,2026-07)。
+    {"slug": TIER_FREE, "label": "免费可用（所有人）"},
     {"slug": TIER_PAID, "label": "付费会员及以上"},
     {"slug": TIER_CREATOR, "label": "创作者会员"},
     {"slug": GATE_ADMIN, "label": "仅平台管理员"},
@@ -356,6 +358,8 @@ GATE_CATALOG: List[Dict[str, str]] = [
     {"key": "memory", "label": "长期记忆（AI 跨多轮/跨天记得你）", "default": TIER_PAID, "group": "AI 对话与检索"},
     {"key": "web_search", "label": "联网搜索（外部 API、共享凭据有成本）", "default": TIER_PAID, "group": "AI 对话与检索"},
     {"key": "custom_skill", "label": "自定义技能（用聊天命令建/管理自己的技能）", "default": TIER_PAID, "group": "AI 对话与检索"},
+    # 自建智能体与自建技能对称:都是付费功能(负责人报的缺口:工坊建智能体此前没有门控)。
+    {"key": "custom_agent", "label": "自建智能体（我的AI工坊创建 Agent）", "default": TIER_PAID, "group": "AI 对话与检索"},
     {"key": "create_room", "label": "建群 / 频道", "default": TIER_FREE, "group": "任务编排与协作"},
     {"key": "task_board", "label": "AI 拆解任务到看板", "default": TIER_PAID, "group": "任务编排与协作"},
     {"key": "assemble_team", "label": "一键建专班（AI 组队 + 派单）", "default": TIER_PAID, "group": "任务编排与协作"},

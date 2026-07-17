@@ -100,6 +100,16 @@ class TestMyStudio(unittest.TestCase):
             "instructions": "正文"})
         self.assertEqual(code, 403)
 
+    def test_agent_save_enforces_custom_agent_gate(self) -> None:
+        # 负责人报的缺口:自建智能体此前**没有**门控。现与自建技能对称,custom_agent 未过→403
+        self.bot._gate_allows = lambda uid, cap: cap != "custom_agent"  # type: ignore
+        code, _ = self.bot.handle_my_agents_save("tok", dict(AGENT))
+        self.assertEqual(code, 403)
+        # 门控放行则照常可建(回归)
+        self.bot._gate_allows = lambda *a, **k: True  # type: ignore
+        code, _ = self.bot.handle_my_agents_save("tok", dict(AGENT))
+        self.assertEqual(code, 200)
+
     def test_roster_shows_my_agent_first(self) -> None:
         self.bot.handle_my_agents_save("tok", dict(AGENT))
         out = self.bot._list_capabilities_for_tool(ToolContext("!r:h", U))
