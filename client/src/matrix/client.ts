@@ -1512,6 +1512,28 @@ export async function getServerVersion(): Promise<string> {
   }
 }
 
+/** 查某频道的「真正主人」= power_levels 里 power≥100 的**真人**(排除主 AI 与傀儡)。
+ * AI 代建的专班 creator 是 @guduu,按 creator 分组会把全部专班堆到主 AI 名下(负责人指正);
+ * 真人群主才是"这个频道是谁的"的正确口径。无真人 100 → 回退真人 creator → 空串。 */
+export async function getRoomOwner(roomId: string, creator?: string | null): Promise<string> {
+  try {
+    const data = await adminFetch(`/_synapse/admin/v1/rooms/${encodeURIComponent(roomId)}/state`)
+    const pl = (data.state || []).find((e: any) => e.type === 'm.room.power_levels' && !e.state_key)
+    const users: Record<string, number> = pl?.content?.users || {}
+    const humans = Object.entries(users)
+      .filter(([uid, lv]) => typeof lv === 'number' && !uid.startsWith('@guduu:') && !isAiWorkerId(uid))
+      .sort((a, b) => (b[1] as number) - (a[1] as number))
+    const owner = humans.find(([, lv]) => (lv as number) >= 100)
+    if (owner) return owner[0]
+    // 无真人 100:退而取权限最高的真人管理员(≥50)——AI 代管群里他就是实际负责人
+    const admin = humans.find(([, lv]) => (lv as number) >= 50)
+    if (admin) return admin[0]
+  } catch { /* 拉不到就走 creator 回退 */ }
+  const c = creator || ''
+  if (c && !c.startsWith('@guduu:') && !isAiWorkerId(c)) return c
+  return ''
+}
+
 /** 查某房间的已加入成员 id 列表（Admin API）。 */
 export async function getRoomMembers(roomId: string): Promise<string[]> {
   const data = await adminFetch(

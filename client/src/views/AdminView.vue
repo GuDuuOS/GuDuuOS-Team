@@ -1692,6 +1692,7 @@ import {
   fetchAdminArchives,
   fetchAdminRoomDetail,
   fetchAdminKbDoc,
+  getRoomOwner,
   type AdminRoomDetail,
   type AdminArchive,
   getPresetAgents,
@@ -3130,15 +3131,42 @@ const wfSaving = ref(false)
 const chType = ref<'all' | 'public' | 'private'>('all')
 const chPred = computed(() => (r: AdminRoom) => chType.value === 'all' || (chType.value === 'public' ? r.isPublic : !r.isPublic))
 const { query: chSearch, filtered: chFiltered } = useListSearch(rooms, (r) => `${r.name} ${r.id} ${r.alias || ''} ${r.creator || ''}`, chPred)
-// 按账号(创建者)分组显示(负责人要求):开关记 localStorage;组按频道数降序
+// 按**个人账号**分组显示(负责人指正:不是技术 creator——AI 代建的专班 creator 全是
+// @guduu,那样等于没分。口径=频道真正的主人:power≥100 的真人群主(无则真人管理员,
+// 再无则真人 creator);主 AI/傀儡一律排除。主人需逐房拉 power_levels,异步解析+缓存。
 const chGroupByCreator = ref(localStorage.getItem('cosmac.adm.chgroup') === '1')
-watch(chGroupByCreator, (v) => { try { localStorage.setItem('cosmac.adm.chgroup', v ? '1' : '0') } catch { /* 记不住就算了 */ } })
+watch(chGroupByCreator, (v) => {
+  try { localStorage.setItem('cosmac.adm.chgroup', v ? '1' : '0') } catch { /* 记不住就算了 */ }
+  if (v) resolveOwners()
+})
+// 频道列表是异步加载的:开关先于列表就绪时(如记住的开启态)要等列表到了再解析——
+// 否则 rooms 为空时跑一遍空解析,之后没人再触发,全部卡在「解析中…」(本地实测踩到)。
+watch(() => rooms.value.length, () => { if (chGroupByCreator.value) resolveOwners() })
+const roomOwners = reactive<Record<string, string>>({})   // roomId → 主人账号('' = 无真人主人)
+const ownersResolving = ref(false)
+/** 批量解析各频道主人(并发 6,只拉没缓存的;失败的按无主处理)。 */
+async function resolveOwners() {
+  if (ownersResolving.value) return
+  ownersResolving.value = true
+  try {
+    const todo = rooms.value.filter((r) => !(r.id in roomOwners))
+    let i = 0
+    async function worker() {
+      while (i < todo.length) {
+        const r = todo[i++]
+        try { roomOwners[r.id] = await getRoomOwner(r.id, r.creator) } catch { roomOwners[r.id] = '' }
+      }
+    }
+    await Promise.all(Array.from({ length: 6 }, worker))
+  } finally { ownersResolving.value = false }
+}
 type ChRow = { kind: 'room'; r: AdminRoom } | { kind: 'cap'; creator: string; count: number; r?: AdminRoom }
 const chRows = computed<ChRow[]>(() => {
   if (!chGroupByCreator.value) return chFiltered.value.map((r) => ({ kind: 'room' as const, r }))
   const m = new Map<string, AdminRoom[]>()
   for (const r of chFiltered.value) {
-    const k = r.creator || '(未知创建者)'
+    const owner = roomOwners[r.id]
+    const k = owner === undefined ? '(解析中…)' : owner || '(无归属·仅 AI 管理)'
     if (!m.has(k)) m.set(k, [])
     m.get(k)!.push(r)
   }
@@ -3149,7 +3177,7 @@ const chRows = computed<ChRow[]>(() => {
   }
   return out
 })
-/** 组标题的创建者显示:主 AI 账号按品牌名(与成员弹窗同口径)。 */
+/** 组标题显示(真人账号直接显示;兜底态原样)。 */
 function displayCreator(uid: string): string {
   if (uid.startsWith('@guduu:')) return '@CosMac Star:' + uid.split(':')[1]
   return uid
