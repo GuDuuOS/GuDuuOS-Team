@@ -102,6 +102,15 @@ class TestChannelKbIsolation(unittest.TestCase):
         self.assertIn("频道资源纪律", ch)
         self.assertNotIn("频道资源纪律", dm)
 
+    def test_rule_doc_injected_and_truncated(self) -> None:
+        """频道规则文档(Markdown)每轮全文注入;超 4000 字截断兜底。"""
+        self.bot.client.cfg = {"ruleDoc": "# 工作规范\n禁止对外报价。" + "x" * 5000}
+        out = self.bot._skill_addendum(ROOM, U, query="报价", is_dm=False)
+        self.assertIn("本频道规则文档", out)
+        self.assertIn("禁止对外报价", out)
+        # 4000 截断:注入段里的 x 串不超过 4000-len(前缀)
+        self.assertNotIn("x" * 4200, out)
+
     def test_rules_tab_injected(self) -> None:
         """频道管理「规则」tab 的规则真正注入(此前从未生效——配了等于摆设)。"""
         self.bot.client.cfg = {"rules": [

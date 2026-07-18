@@ -871,6 +871,11 @@ class CosmacBot:
             ch_rules_text = (
                 "【本频道规则（RULE，须严格遵守）】：\n" + ch_rules
             ) if ch_rules else ""
+            # 频道规则文档(Markdown):整篇工作规范,每轮全文注入(负责人需求,类 CLAUDE.md)
+            rule_doc = (gctx.get("rule_doc") or "").strip()
+            rule_doc_text = (
+                "【本频道规则文档（完整工作规范，须严格遵守）】：\n" + rule_doc
+            ) if rule_doc else ""
             agent_slugs = gctx.get("skill_slugs", [])
             items = (
                 # 全局技能按发起人的「可用范围」过滤(资源级权限:等级/模板/仅管理员);
@@ -926,8 +931,8 @@ class CosmacBot:
             return "\n\n".join(
                 p for p in (
                     now_text, _INTERACTION_POLICY,
-                    rules_text, channel_policy, ch_rules_text, task_rule_text,
-                    persona, user_pref_text,
+                    rules_text, channel_policy, ch_rules_text, rule_doc_text,
+                    task_rule_text, persona, user_pref_text,
                     mem_text, skills_text, kb_text, wf_text,
                 ) if p
             )
@@ -1161,13 +1166,16 @@ class CosmacBot:
         out: Dict[str, Any] = {
             "persona": "", "skill_slugs": [], "model": "", "task_rule": "",
             "worker_slugs": [], "workflow_slugs": [], "kb_scopes": [],
-            "channel_rules": "",
+            "channel_rules": "", "rule_doc": "",
         }
         try:
             cfg = self.client.get_state_event(room_id, CHANNEL_CONFIG_EVENT_TYPE) or {}
             # 本专班任务 RULE（档3）：项目主AI 的缰绳，最高优先级注入（见 _skill_addendum）。
             # 先于 persona 取出，确保两条返回路径都带上它。
             out["task_rule"] = str(cfg.get("taskRule") or "").strip()
+            # 频道规则文档(Markdown,负责人需求):整篇工作规范,每轮全文注入。4000 字截断
+            # 兜底(前端同上限)——全文注入有 token 成本,别让超长文档挤占对话空间。
+            out["rule_doc"] = str(cfg.get("ruleDoc") or "").strip()[:4000]
             # 频道管理「规则」tab 配的规则(负责人报的隐藏缺陷:此前**从未注入**给 AI,配了等于摆设)。
             # 结构 [{label, desc}],拼成一段文本随 addendum 注入。
             rule_items = [
