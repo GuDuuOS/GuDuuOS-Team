@@ -1,5 +1,13 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-18 — fix:@CosMac Star 高亮断字 + 频道内 AI 回复 Loading 气泡(负责人报的)
+- ①高亮断字:通用 @ 正则不认空格,「@CosMac Star」只有 @CosMac 成 pill、" Star" 掉外面。
+  renderBody 里对带空格的品牌名先整体匹配成 pill 并 stash(避免通用正则二次啃)。
+- ②频道内 loading:bot 早就全路径发 typing,但前端只在中枢 AI 私聊面板渲染"正在输入…",
+  频道消息流没有——@AI 后一片死寂。新增 channelTyping(跟当前频道走):频道流底部
+  复用三点跳动气泡;出现时滚到底;切频道立刻重算不残留。
+- 本地实测:pill 完整包住 @CosMac Star;bot typing 30s 气泡显示;切频道气泡消失。纯前端。
+
 ## 2026-07-18 — fix:私聊里查频道成员/记录查成私聊房(负责人实报"查询不全")
 - 现象:私人会话里让 AI 查「讲座活动专班」成员,AI 报"共 2 人(你+bot)"——实际频道 8 人。
 - 根因:list_room_members/get_recent_messages **只有 room_id 参数、没有 room_name**——
