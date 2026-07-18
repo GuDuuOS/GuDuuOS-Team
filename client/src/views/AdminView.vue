@@ -3398,6 +3398,10 @@ onMounted(check)
   flex-direction: column;
   padding: 16px 12px;
   gap: 18px;
+  /* 菜单项已超一屏(负责人报的):侧栏自身滚动,品牌头随滚、内容区不受影响 */
+  height: 100vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 .adm-brand { display: flex; align-items: center; gap: 10px; padding: 4px; }
 .adm-logo {
