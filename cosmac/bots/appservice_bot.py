@@ -5611,6 +5611,59 @@ class CosmacBot:
             logger.info("归档催办：本轮发出 %d 条", sent)
         return sent
 
+    # 默认「频道资源边界」规则(与建频道时写入的同一条;backfill 与工具共用)
+    _DEFAULT_CHANNEL_RULE = {
+        "label": "频道资源边界",
+        "desc": "本频道 AI 仅使用本频道的技能、智能体、规则与知识库"
+                "(含管理员显式绑定进本频道的知识源)作答,不引用频道外内容。",
+    }
+
+    def backfill_channel_rules(self) -> int:
+        """给**存量频道**补写默认「频道资源边界」规则(负责人:每个频道都要有可见 RULE)。
+
+        建频道时的默认写入只覆盖新频道;存量频道规则 tab 仍是 0(线上实报)。本方法扫一遍
+        bot 已加入的频道,规则为空的补上这一条——**读旧配置 merge 后整体写回**(set_state_event
+        是覆盖语义,不 merge 会把 persona/kbScopes 抹掉)。幂等:已有任何规则的房跳过,
+        稳定态零写入。bot 无写权限的房(用户自建、bot 仅是普通成员)写失败忽略——那类房由
+        前端「频道管理」弹窗打开时兜底补。返回本轮补写条数。
+        """
+        done = 0
+        try:
+            rooms = self.client.joined_rooms()
+        except Exception:
+            return 0
+        for rid in rooms:
+            try:
+                # 房型/房名判定在 Toolbox 上(共享缓存);bot 类自身没有这俩方法
+                if self.toolbox._room_kind(rid) != "channel":
+                    continue
+                name_ev = self.client.get_state_event(rid, "m.room.name") or {}
+                if "控制室" in str(name_ev.get("name") or ""):
+                    continue  # 平台配置房不是聊天频道
+                cfg = self.client.get_state_event(rid, CHANNEL_CONFIG_EVENT_TYPE) or {}
+                if cfg.get("rules"):
+                    continue  # 已有规则(含手工配的),不动
+                cfg["rules"] = [dict(self._DEFAULT_CHANNEL_RULE)]
+                if self.client.set_state_event(rid, CHANNEL_CONFIG_EVENT_TYPE, cfg):
+                    done += 1
+                time.sleep(0.2)  # 全量扫描限速,别打爆 Synapse
+            except Exception:
+                continue
+        if done:
+            logger.info("存量频道默认规则补写:本轮 %d 个频道", done)
+        return done
+
+    def start_rules_backfill(self) -> None:
+        """启动后台线程,延迟一次性补写存量频道的默认规则(幂等,重启重跑无害)。"""
+        def _once() -> None:
+            time.sleep(90)  # 等服务/sync 稳定再扫
+            try:
+                self.backfill_channel_rules()
+            except Exception:
+                logger.debug("存量规则补写失败(忽略)", exc_info=True)
+
+        threading.Thread(target=_once, name="rules-backfill", daemon=True).start()
+
     def start_reminder_scanner(self) -> None:
         """启动后台守护线程，周期性扫描任务时效并发提醒。
 
@@ -6787,6 +6840,7 @@ def run(config: CosmacConfig) -> None:
 
     # #5：启动任务时效提醒扫描线程——周期性扫"快到期/逾期"未完成任务，在其频道内 @ 负责人提醒。
     bot.start_reminder_scanner()
+    bot.start_rules_backfill()   # 存量频道补默认「频道资源边界」规则(一次性,幂等)
 
     # 把 bot 和 hs_token 注入到 Handler 类上（http.server 用类、不便传参，用 partial 构造）
     handler_cls = partial(_make_handler, bot=bot, hs_token=config.hs_token)
