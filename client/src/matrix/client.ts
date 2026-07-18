@@ -3821,6 +3821,27 @@ export async function fetchAdminArchives(): Promise<AdminArchive[]> {
   return (j.archives || []) as AdminArchive[]
 }
 
+/** 后台「频道管理·详情」:某频道的 RULE/知识库/技能/智能体/记忆(仅平台管理员)。 */
+export interface AdminRoomDetail {
+  rules: { label: string; desc: string }[]
+  task_rule: string
+  persona: { aiName: string; prompt: string }
+  agents: { slug: string; name: string }[]
+  kb_sources: string[]
+  kb_docs: { id: number; title: string; source: string }[]
+  skills: { slug: string; name: string; enabled: boolean }[]
+  memory: string
+}
+export async function fetchAdminRoomDetail(roomId: string): Promise<AdminRoomDetail> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  const r = await fetch(`${payBase()}/cosmac/admin/room_detail?room_id=${encodeURIComponent(roomId)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || `读取频道详情失败(${r.status})`)
+  return j as AdminRoomDetail
+}
+
 /* —— 联系人备注(私信管理):存本人 account data(每账号轻量配置的标准位置,多端同步)。
  *    形如 { aliases: { "@peer:host": "备注名" } };备注只影响自己看到的显示,对方无感。 */
 const CONTACTS_ACCOUNT_DATA = 'cc.cosmac.contacts'

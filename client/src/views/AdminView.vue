@@ -304,6 +304,9 @@
                 <span v-if="r.encrypted" class="adm-tag bot" title="端到端加密">🔒 加密</span>
               </td>
               <td class="adm-ops">
+                <button class="adm-op" :disabled="roomBusy === r.id" @click="viewRoomDetail(r)">
+                  详情
+                </button>
                 <button class="adm-op" :disabled="roomBusy === r.id" @click="viewMembers(r)">
                   查看成员
                 </button>
@@ -1525,6 +1528,64 @@
       </div>
     </div>
 
+    <!-- 频道详情弹窗(负责人需求:每个频道的 RULE/知识库/Skill/Agent/记忆一览;人员用旁边「查看成员」) -->
+    <div v-if="rdOf" class="adm-mask" @click.self="rdOf = null">
+      <div class="adm-modal rd-modal">
+        <div class="adm-modal-h">{{ rdOf.name }} · 频道详情</div>
+        <div v-if="rdLoading" class="adm-center"><div class="adm-spin" /> 加载中…</div>
+        <template v-else-if="rdData">
+          <div class="rd-body">
+            <div class="rd-sec">
+              <div class="rd-cap">🤖 AI 人设</div>
+              <p v-if="rdData.persona.aiName || rdData.persona.prompt" class="rd-text">
+                <b v-if="rdData.persona.aiName">{{ rdData.persona.aiName }}</b>
+                <span v-if="rdData.persona.prompt"> — {{ rdData.persona.prompt }}</span>
+              </p>
+              <p v-else class="rd-empty">未配置(用平台默认人设)</p>
+            </div>
+            <div class="rd-sec">
+              <div class="rd-cap">🎭 智能体(Agent)</div>
+              <p v-if="rdData.agents.length" class="rd-text">
+                <span v-for="a in rdData.agents" :key="a.slug" class="adm-tag member rd-chip">{{ a.name }}</span>
+              </p>
+              <p v-else class="rd-empty">未绑定</p>
+            </div>
+            <div class="rd-sec">
+              <div class="rd-cap">🛠 技能(Skill)</div>
+              <p v-if="rdData.skills.length" class="rd-text">
+                <span v-for="k in rdData.skills" :key="k.slug" class="adm-tag rd-chip" :class="k.enabled ? 'member' : 'off'">{{ k.name }}{{ k.enabled ? '' : '(停用)' }}</span>
+              </p>
+              <p v-else class="rd-empty">本频道无自建技能</p>
+            </div>
+            <div class="rd-sec">
+              <div class="rd-cap">⚖️ RULE(规则)</div>
+              <template v-if="rdData.rules.length || rdData.task_rule">
+                <p v-for="(ru, i) in rdData.rules" :key="i" class="rd-text">· <b>{{ ru.label }}</b><span v-if="ru.desc">:{{ ru.desc }}</span></p>
+                <p v-if="rdData.task_rule" class="rd-text">· <b>专班任务约束</b>:{{ rdData.task_rule }}</p>
+              </template>
+              <p v-else class="rd-empty">未配置规则</p>
+            </div>
+            <div class="rd-sec">
+              <div class="rd-cap">📚 知识库</div>
+              <p v-if="rdData.kb_sources.length" class="rd-text">绑定来源:{{ rdData.kb_sources.join('、') }}</p>
+              <template v-if="rdData.kb_docs.length">
+                <p v-for="d in rdData.kb_docs" :key="d.id" class="rd-text">· 《{{ d.title }}》</p>
+              </template>
+              <p v-if="!rdData.kb_sources.length && !rdData.kb_docs.length" class="rd-empty">无绑定来源、无已上传文档</p>
+            </div>
+            <div class="rd-sec">
+              <div class="rd-cap">🧠 长期记忆</div>
+              <p v-if="rdData.memory" class="rd-text rd-mem">{{ rdData.memory }}</p>
+              <p v-else class="rd-empty">暂无长期记忆摘要</p>
+            </div>
+          </div>
+        </template>
+        <div class="adm-modal-f">
+          <button class="adm-btn ghost" @click="rdOf = null">关闭</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 频道成员弹窗 -->
     <div v-if="membersOf" class="adm-mask" @click.self="membersOf = null">
       <div class="adm-modal">
@@ -1617,6 +1678,8 @@ import {
   botId,
   isAiWorkerId,
   fetchAdminArchives,
+  fetchAdminRoomDetail,
+  type AdminRoomDetail,
   type AdminArchive,
   getPresetAgents,
   fetchSitePage,
@@ -2034,6 +2097,24 @@ async function loadRooms() {
     warn('加载失败', e?.message || '无法获取频道列表')
   } finally {
     roomsLoading.value = false
+  }
+}
+
+// 频道详情弹窗(RULE/知识库/Skill/Agent/记忆)
+const rdOf = ref<AdminRoom | null>(null)
+const rdLoading = ref(false)
+const rdData = ref<AdminRoomDetail | null>(null)
+async function viewRoomDetail(r: AdminRoom) {
+  rdOf.value = r
+  rdLoading.value = true
+  rdData.value = null
+  try {
+    rdData.value = await fetchAdminRoomDetail(r.id)
+  } catch (e: any) {
+    warn('加载失败', e?.message || '无法获取频道详情')
+    rdOf.value = null
+  } finally {
+    rdLoading.value = false
   }
 }
 
@@ -3439,6 +3520,14 @@ onMounted(check)
   font-size: var(--fs-100); background: var(--bg); color: var(--text);
 }
 .adm-field input:focus { outline: none; border-color: var(--accent); }
+.rd-modal { width: min(640px, 92vw); }
+.rd-body { max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 4px 2px; }
+.rd-sec { border: 1px solid var(--border, #e8e0d4); border-radius: 10px; padding: 10px 12px; }
+.rd-cap { font-size: 12px; font-weight: 700; color: var(--text-2, #6a6055); margin-bottom: 6px; }
+.rd-text { font-size: 13px; color: var(--text, #3a332b); margin: 3px 0; line-height: 1.6; }
+.rd-empty { font-size: 12px; color: var(--text-3, #9a8f80); }
+.rd-chip { margin-right: 6px; }
+.rd-mem { white-space: pre-wrap; }
 .adm-modal-f { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 
 /* 频道管理补充 */

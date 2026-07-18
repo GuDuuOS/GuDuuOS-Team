@@ -1,5 +1,14 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-18 — feat:后台频道管理加「详情」——每频道的 RULE/知识库/Skill/Agent/记忆(负责人要求)
+- 后端新端点 GET /cosmac/admin/room_detail?room_id=(仅平台管理员):聚合返回
+  channel_config(规则/专班约束/人设/绑定智能体/知识库来源) + DB(本频道技能/已上传文档/
+  长期记忆摘要)。bot 未进驻的频道走 admin API 兜底读 state(新 admin_room_state)。
+- 前端频道列表每行加「详情」按钮 → 分区弹窗:AI人设/智能体/技能/RULE/知识库/长期记忆;
+  人员用旁边既有「查看成员」。
+- 本地实测:造 config(2规则+专班约束+人设)→详情弹窗逐区正确显示。全量 602 过。
+  前端+后端,部署 dist + restart bot。
+
 ## 2026-07-18 — feat:后台菜单分组可折叠(负责人追加)
 - 组标题改可点按钮(caret 旋转指示),点击收起/展开该组;状态存 localStorage
   (cosmac.adm.menufold),刷新/下次进入保持。本地实测:折叠 17→11 项、刷新记住、

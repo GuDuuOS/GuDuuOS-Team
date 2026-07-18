@@ -3122,6 +3122,104 @@ class CosmacBot:
             logger.debug("读人事花名册失败", exc_info=True)
         return 200, out
 
+    def handle_admin_room_detail(
+        self, access_token: str, room_id: str
+    ) -> Tuple[int, Dict[str, Any]]:
+        """后台「频道管理·详情」：一次返回某频道的 RULE/知识库/技能/智能体/记忆(仅平台管理员)。
+
+        负责人需求:后台要能看每个频道的 人员/RULE/知识库/Skill/Agent/记忆——人员前端已有
+        (Synapse admin API),其余在此聚合。channel_config 优先 bot 视角读(在房),bot 未进驻
+        的频道走管理员 API 兜底(admin_room_state);DB 数据(技能/文档/记忆)与在不在房无关。
+        全程兜异常:某块读不出就给空,别整个详情打不开。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(user_id):
+            return 403, {"error": "仅平台管理员可查看频道详情"}
+        room_id = str(room_id or "").strip()
+        if not room_id.startswith("!"):
+            return 400, {"error": "无效的频道 id"}
+        # ① channel_config(bot 在房直接读;不在房走 admin API 兜底)
+        cfg: Dict[str, Any] = {}
+        try:
+            cfg = self.client.get_state_event(room_id, CHANNEL_CONFIG_EVENT_TYPE) or {}
+        except Exception:
+            cfg = {}
+        if not cfg:
+            try:
+                for ev in (self.client.admin_room_state(room_id) or []):
+                    if ev.get("type") == CHANNEL_CONFIG_EVENT_TYPE \
+                            and not ev.get("state_key"):
+                        cfg = ev.get("content") or {}
+                        break
+            except Exception:
+                cfg = {}
+        rules = [
+            {"label": str(r.get("label") or ""), "desc": str(r.get("desc") or "")}
+            for r in (cfg.get("rules") or []) if isinstance(r, dict)
+        ]
+        task_rule = str(cfg.get("taskRule") or "")
+        persona = cfg.get("persona") or {}
+        # 绑定的智能体:persona.agentSlug(单绑) + agentSlugs(专班协作),解析成名字
+        agent_slugs = [str(s) for s in (cfg.get("agentSlugs") or []) if s]
+        p_slug = str((persona.get("agentSlug") or "")).strip()
+        if p_slug and p_slug not in agent_slugs:
+            agent_slugs.insert(0, p_slug)
+        agents = []
+        for slug in agent_slugs:
+            a = None
+            try:
+                a = self._find_global_agent(slug)
+            except Exception:
+                a = None
+            agents.append({"slug": slug, "name": str((a or {}).get("name") or slug)})
+        # 知识库绑定来源(可读标签)
+        kb_sources = []
+        for src in (cfg.get("kbScopes") or []):
+            src = str(src)
+            if src == "platform":
+                kb_sources.append("平台知识库")
+            elif src.startswith("user:"):
+                kb_sources.append(f"个人库({src[5:]})")
+            elif src.startswith("room:"):
+                kb_sources.append(f"频道库({src[5:]})")
+        # ② DB:本频道技能 / 已上传文档 / 长期记忆
+        skills: List[Dict[str, Any]] = []
+        kb_docs: List[Dict[str, Any]] = []
+        memory = ""
+        try:
+            from cosmac.db import kb as kb_mod, session_scope
+            from cosmac.db.memory_repo import get_summary
+            from cosmac.db.models import SCOPE_ROOM, Skill as DbSkill
+
+            with session_scope() as s:
+                for sk in s.query(DbSkill).filter(
+                    DbSkill.scope == SCOPE_ROOM, DbSkill.scope_id == room_id,
+                ).all():
+                    skills.append({
+                        "slug": sk.slug, "name": sk.name,
+                        "enabled": bool(sk.enabled),
+                    })
+                for d in kb_mod.list_docs(s, scope=SCOPE_ROOM, scope_id=room_id):
+                    kb_docs.append({"id": d.id, "title": d.title, "source": d.source})
+                memory = get_summary(s, SCOPE_ROOM, room_id) or ""
+        except Exception:
+            logger.debug("读频道详情 DB 部分失败", exc_info=True)
+        return 200, {
+            "rules": rules,
+            "task_rule": task_rule,
+            "persona": {
+                "aiName": str(persona.get("aiName") or ""),
+                "prompt": str(persona.get("prompt") or "")[:500],
+            },
+            "agents": agents,
+            "kb_sources": kb_sources,
+            "kb_docs": kb_docs,
+            "skills": skills,
+            "memory": memory[:3000],
+        }
+
     def handle_admin_archives(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """列全部专班归档记录(管理后台「归档记录」页)。仅平台管理员。
 
@@ -6000,6 +6098,14 @@ class _Handler(BaseHTTPRequestHandler):
         # 专班归档记录(管理后台「归档记录」页,仅管理员)
         if self.path.split("?", 1)[0] == "/cosmac/admin/archives":
             code, payload = self.bot.handle_admin_archives(self._bearer())
+            self._send_json(code, payload, cors=True)
+            return
+        # 后台「频道管理·详情」:某频道的 RULE/知识库/技能/智能体/记忆(仅平台管理员)
+        if self.path.split("?", 1)[0] == "/cosmac/admin/room_detail":
+            from urllib.parse import parse_qs, urlparse
+            qs = parse_qs(urlparse(self.path).query)
+            rid = (qs.get("room_id") or [""])[0]
+            code, payload = self.bot.handle_admin_room_detail(self._bearer(), rid)
             self._send_json(code, payload, cors=True)
             return
         if self.path.split("?", 1)[0] == "/cosmac/admin/emails":
