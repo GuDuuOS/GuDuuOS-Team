@@ -222,6 +222,29 @@
             <input v-model="rDesc" class="cam-input" placeholder="说明（可选）" @keyup.enter="doAddRule" />
             <button class="cam-add-btn" :disabled="!rLabel.trim()" @click="doAddRule">＋ 添加规则</button>
           </div>
+
+          <!-- 频道规则文档(Markdown,负责人需求):像 CLAUDE.md 的整篇工作规范——每轮全文注入本频道 AI。
+               两种编辑方式:直接在下方编辑 / 上传 .md 填入。与知识库分工:文档=每轮必读的硬约束,
+               大量背景资料请放「知识库」(按需检索),别塞这里(全文注入,超长又贵又挤)。 -->
+          <div class="cam-ruledoc">
+            <div class="cam-ruledoc-h">
+              <span class="cam-field-label">📜 频道规则文档（Markdown）</span>
+              <span class="cam-ruledoc-n" :class="{ over: state.ruleDoc.length >= RULEDOC_MAX }">{{ state.ruleDoc.length }} / {{ RULEDOC_MAX }}</span>
+              <button class="cam-add-btn" :disabled="ruleDocUploading" @click="pickRuleDocFile">{{ ruleDocUploading ? '读取中…' : '⬆ 上传 .md' }}</button>
+              <input ref="ruleDocFileInput" type="file" accept=".md,.markdown,.txt" hidden @change="onRuleDocFilePicked" />
+            </div>
+            <p class="cam-row-desc" style="margin:2px 0 6px">
+              写"AI 在本频道怎么干活"：身份、流程、输出规范、禁区——每轮对话全文注入。大量背景资料请放「知识库」标签（按需检索），别贴在这里。
+            </p>
+            <textarea
+              v-model="state.ruleDoc"
+              class="cam-textarea cam-ruledoc-ta"
+              :maxlength="RULEDOC_MAX"
+              rows="12"
+              placeholder="# 本频道工作规范&#10;&#10;## 身份&#10;你是……&#10;&#10;## 流程&#10;1. ……&#10;&#10;## 禁区&#10;- 不得……"
+            />
+            <p v-if="ruleDocErr" class="cam-err">{{ ruleDocErr }}</p>
+          </div>
           <div v-if="isLive" class="cam-help" :style="saveHintStyle">{{ saveHint }}</div>
         </template>
 
@@ -405,6 +428,32 @@ function doAddMember() { addMember(mName.value, mRole.value); mName.value = ''; 
 function doAddSkill() { addItem('skills', sLabel.value, sDesc.value, sTag.value); sLabel.value = ''; sTag.value = ''; sDesc.value = '' }
 function doAddKnowledge() { addItem('knowledge', kLabel.value, kDesc.value); kLabel.value = ''; kDesc.value = '' }
 function doAddRule() { addItem('rules', rLabel.value, rDesc.value); rLabel.value = ''; rDesc.value = '' }
+// 频道规则文档:上传 .md 填入(编辑区 v-model 直接绑 state.ruleDoc,自动保存走 composable watch)
+const RULEDOC_MAX = 4000  // 每轮全文注入,给上限防挤占对话空间(后端注入同样截断兜底)
+const ruleDocFileInput = ref<HTMLInputElement>()
+const ruleDocUploading = ref(false)
+const ruleDocErr = ref('')
+function pickRuleDocFile() { if (!ruleDocUploading.value) ruleDocFileInput.value?.click() }
+async function onRuleDocFilePicked(e: Event) {
+  const input = e.target as HTMLInputElement
+  const f = (input.files || [])[0]
+  input.value = ''
+  if (!f) return
+  ruleDocUploading.value = true; ruleDocErr.value = ''
+  try {
+    const text = (await f.text()).trim()
+    if (!text) { ruleDocErr.value = `${f.name}:内容为空`; return }
+    if (text.length > RULEDOC_MAX) {
+      ruleDocErr.value = `${f.name}:${text.length} 字超过上限 ${RULEDOC_MAX}——规则文档写"怎么干活",大段资料请上传到「知识库」标签`
+      return
+    }
+    state.ruleDoc = text   // 覆盖现有内容;自动保存到本频道
+  } catch (err: any) {
+    ruleDocErr.value = err?.message || String(err)
+  } finally {
+    ruleDocUploading.value = false
+  }
+}
 function doAddScope() { addScope(dLabel.value, dLevel.value, dAccess.value); dLabel.value = '' }
 
 // 可绑定的全局智能体（管理后台维护，存控制室 state event）

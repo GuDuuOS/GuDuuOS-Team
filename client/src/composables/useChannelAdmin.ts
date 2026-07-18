@@ -45,6 +45,8 @@ export interface GroupConfig {
   skills: ChannelInfoItem[]
   knowledge: ChannelInfoItem[]
   rules: ChannelInfoItem[]
+  /** 频道规则文档(Markdown,负责人需求):像 CLAUDE.md 那样的整篇工作规范,每轮全文注入本频道 AI。 */
+  ruleDoc: string
   dataScopes: DataScope[]
   persona: ChannelPersona
   model: ChannelModel
@@ -138,6 +140,7 @@ function seedConfig(groupName: string): GroupConfig {
     skills: channelSkills.map((s) => ({ ...s })),
     knowledge: channelKnowledge.map((k) => ({ ...k })),
     rules: channelRules.map((r) => ({ ...r })),
+    ruleDoc: '',
     dataScopes: BASE_DATASCOPES.map((d) => ({ ...d })),
     persona: { ...BASE_PERSONA },
     model: { ...BASE_MODEL },
@@ -195,6 +198,7 @@ function loadConfigFromRoom(name: string, roomId: string) {
   cfg.skills = Array.isArray(saved.skills) ? saved.skills : []
   cfg.knowledge = Array.isArray(saved.knowledge) ? saved.knowledge : []
   cfg.rules = Array.isArray(saved.rules) ? saved.rules : []
+  cfg.ruleDoc = typeof saved.ruleDoc === 'string' ? saved.ruleDoc : ''
   cfg.dataScopes = Array.isArray(saved.dataScopes) ? saved.dataScopes : []
   nextTick(() => { suppressPersist = false })
 }
@@ -308,6 +312,10 @@ watch(
   { deep: true },
 )
 watch(
+  () => current.value.ruleDoc,
+  (v) => { if (!suppressPersist && currentRoomId.value) persist({ ruleDoc: v }) },
+)
+watch(
   () => current.value.dataScopes,
   (v) => { if (!suppressPersist && currentRoomId.value) persist({ dataScopes: v.map((x) => ({ ...x })) }) },
   { deep: true },
@@ -319,6 +327,9 @@ const state = {
   get skills() { return current.value.skills },
   get knowledge() { return current.value.knowledge },
   get rules() { return current.value.rules },
+  // v-model 直接绑编辑区,要有 setter(其余列表型都是引用可变,单值字符串必须显式 set)
+  get ruleDoc() { return current.value.ruleDoc },
+  set ruleDoc(v: string) { current.value.ruleDoc = v },
   get dataScopes() { return current.value.dataScopes },
   get persona() { return current.value.persona },
   get model() { return current.value.model },
