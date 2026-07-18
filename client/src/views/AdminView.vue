@@ -276,21 +276,24 @@
         </div>
         <div v-if="roomsLoading" class="adm-center"><div class="adm-spin" /> 加载频道列表…</div>
 
-        <table v-else class="adm-table">
+        <!-- 固定列宽(table-layout:fixed):分组收起时没有内容行,auto 布局会把四列均分,
+             表头和展开后的列位置对不上(负责人报的"点开时表头不一致")。 -->
+        <table v-else class="adm-table adm-ch-table">
           <thead>
             <tr>
               <th>频道</th>
-              <th>成员</th>
-              <th>类型</th>
-              <th class="adm-ops-h">操作</th>
+              <th class="adm-ch-w-members">成员</th>
+              <th class="adm-ch-w-type">类型</th>
+              <th class="adm-ops-h adm-ch-w-ops">操作</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="!chFiltered.length" class="adm-empty-tr"><td colspan="99" class="adm-empty-row">没有匹配的频道。</td></tr>
+            <tr v-if="!chFiltered.length" class="adm-empty-tr"><td colspan="4" class="adm-empty-row">没有匹配的频道。</td></tr>
             <template v-for="row in chRows" :key="row.kind === 'room' ? row.r.id : 'cap:' + row.creator">
             <!-- 按账号分组模式:组标题行(创建者 + 频道数;主 AI 按品牌名显示) -->
             <tr v-if="row.kind === 'cap'" class="adm-cap-row adm-cap-click" @click="toggleOwnerGroup(row.creator)">
-              <td colspan="99">
+              <!-- colspan 必须=真实列数:fixed 布局把最大跨列数当总列数,写 99 会生成 99 列 -->
+              <td colspan="4">
                 <svg class="adm-cap-caret" :class="{ open: chOpenOwners[row.creator] }" width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M9 6 15 12 9 18z" /></svg>
                 👤 {{ displayCreator(row.creator) }} <span class="adm-dim">· {{ row.count }} 个频道 · {{ chOpenOwners[row.creator] ? '点击收起' : '点击展开' }}</span>
               </td>
@@ -3518,6 +3521,12 @@ onMounted(check)
   padding: 8px 10px; border-bottom: 1px solid var(--border);
 }
 .adm-ops-h { text-align: right; }
+/* 频道表固定列宽:收起/展开布局一致 */
+.adm-ch-table { table-layout: fixed; width: 100%; }
+.adm-ch-w-members { width: 13%; }
+.adm-ch-w-type { width: 11%; }
+.adm-ch-w-ops { width: 220px; }
+.adm-ch-table td { overflow: hidden; text-overflow: ellipsis; }
 .adm-table td { padding: 11px 10px; border-bottom: 1px solid var(--border-soft); vertical-align: middle; }
 .adm-table tr.off td { opacity: 0.55; }
 
