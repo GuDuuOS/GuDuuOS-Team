@@ -12,13 +12,20 @@
         </div>
       </div>
       <nav class="adm-menu">
-        <!-- 分类分组(负责人要求):按职能归类,小标题分隔;顺序=日常使用频率 -->
-        <div class="adm-menu-cap">总览</div>
+        <!-- 分类分组(负责人要求):按职能归类,组标题可点击折叠/展开(localStorage 记住) -->
+        <button class="adm-menu-cap" @click="toggleMenuGroup('ov')">
+          <svg class="adm-cap-caret" :class="{ open: !menuFold.ov }" width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M9 6 15 12 9 18z" /></svg>总览
+        </button>
+        <template v-if="!menuFold.ov">
         <button class="adm-mi" :class="{ active: tab === 'overview' }" @click="switchToOverview">
           <span class="adm-mi-ic">📊</span> 数据概览
         </button>
+        </template>
 
-        <div class="adm-menu-cap">用户与频道</div>
+        <button class="adm-menu-cap" @click="toggleMenuGroup('uc')">
+          <svg class="adm-cap-caret" :class="{ open: !menuFold.uc }" width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M9 6 15 12 9 18z" /></svg>用户与频道
+        </button>
+        <template v-if="!menuFold.uc">
         <button class="adm-mi" :class="{ active: tab === 'users' }" @click="tab = 'users'">
           <span class="adm-mi-ic">👤</span> 用户管理
         </button>
@@ -28,8 +35,12 @@
         <button class="adm-mi" :class="{ active: tab === 'archives' }" @click="switchToArchives">
           <span class="adm-mi-ic">🗂️</span> 归档记录
         </button>
+        </template>
 
-        <div class="adm-menu-cap">AI 能力</div>
+        <button class="adm-menu-cap" @click="toggleMenuGroup('ai')">
+          <svg class="adm-cap-caret" :class="{ open: !menuFold.ai }" width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M9 6 15 12 9 18z" /></svg>AI 能力
+        </button>
+        <template v-if="!menuFold.ai">
         <button class="adm-mi" :class="{ active: tab === 'ai' }" @click="switchToAi">
           <span class="adm-mi-ic">🤖</span> AI 配置
         </button>
@@ -48,8 +59,12 @@
         <button class="adm-mi" :class="{ active: tab === 'workflows' }" @click="switchToWorkflows">
           <span class="adm-mi-ic">🔗</span> 工作流
         </button>
+        </template>
 
-        <div class="adm-menu-cap">会员与变现</div>
+        <button class="adm-menu-cap" @click="toggleMenuGroup('biz')">
+          <svg class="adm-cap-caret" :class="{ open: !menuFold.biz }" width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M9 6 15 12 9 18z" /></svg>会员与变现
+        </button>
+        <template v-if="!menuFold.biz">
         <button class="adm-mi" :class="{ active: tab === 'gating' }" @click="switchToGating">
           <span class="adm-mi-ic">🔐</span> 会员权限
         </button>
@@ -59,8 +74,12 @@
         <button class="adm-mi" :class="{ active: tab === 'plans' }" @click="switchToPlans">
           <span class="adm-mi-ic">💳</span> 会员套餐
         </button>
+        </template>
 
-        <div class="adm-menu-cap">内容与运营</div>
+        <button class="adm-menu-cap" @click="toggleMenuGroup('ops')">
+          <svg class="adm-cap-caret" :class="{ open: !menuFold.ops }" width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M9 6 15 12 9 18z" /></svg>内容与运营
+        </button>
+        <template v-if="!menuFold.ops">
         <button class="adm-mi" :class="{ active: tab === 'templates' }" @click="switchToTemplates">
           <span class="adm-mi-ic">🧰</span> 入驻模板
         </button>
@@ -73,6 +92,7 @@
         <button class="adm-mi" :class="{ active: tab === 'sitePages' }" @click="switchToSitePages">
           <span class="adm-mi-ic">📄</span> 页面内容
         </button>
+        </template>
       </nav>
     </aside>
 
@@ -1620,6 +1640,14 @@ const { success, warn } = useToast()
 
 // 当前管理模块：用户/频道/AI配置/技能库/智能体/规则/工作流/数据概览
 const tab = ref<'users' | 'rooms' | 'ai' | 'skills' | 'agents' | 'people' | 'templates' | 'rules' | 'workflows' | 'gating' | 'quotas' | 'plans' | 'docs' | 'platformKb' | 'sitePages' | 'archives' | 'overview'>('users')
+// 侧栏菜单分组折叠状态(负责人要求可收缩);localStorage 记住,默认全展开
+const menuFold = reactive<Record<string, boolean>>(
+  (() => { try { return JSON.parse(localStorage.getItem('cosmac.adm.menufold') || '{}') } catch { return {} } })(),
+)
+function toggleMenuGroup(k: string) {
+  menuFold[k] = !menuFold[k]
+  try { localStorage.setItem('cosmac.adm.menufold', JSON.stringify(menuFold)) } catch { /* 存不了就不记住 */ }
+}
 
 /* —— 图文教程（后台编辑全平台图文；前台只读·付费可见）—— */
 function switchToDocs() { tab.value = 'docs' }
@@ -3205,8 +3233,11 @@ onMounted(check)
 .adm-title { font-size: var(--fs-200); font-weight: var(--fw-bold); }
 .adm-sub { font-size: var(--fs-75); color: var(--text-3); margin-top: 1px; }
 .adm-menu { display: flex; flex-direction: column; gap: 2px; }
-.adm-menu-cap { margin: 14px 10px 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--text-3, #9a8f80); text-transform: uppercase; }
+.adm-menu-cap { display: flex; align-items: center; gap: 5px; width: calc(100% - 20px); margin: 14px 10px 4px; padding: 0; border: none; background: none; cursor: pointer; text-align: left; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--text-3, #9a8f80); text-transform: uppercase; }
+.adm-menu-cap:hover { color: var(--text-2, #6a6055); }
 .adm-menu-cap:first-child { margin-top: 4px; }
+.adm-cap-caret { flex-shrink: 0; transition: transform .12s ease; }
+.adm-cap-caret.open { transform: rotate(90deg); }
 .adm-mi {
   display: flex; align-items: center; gap: 9px;
   padding: 9px 10px; border: none; border-radius: 8px;
