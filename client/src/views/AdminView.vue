@@ -289,8 +289,11 @@
             <tr v-if="!chFiltered.length" class="adm-empty-tr"><td colspan="99" class="adm-empty-row">没有匹配的频道。</td></tr>
             <template v-for="row in chRows" :key="row.kind === 'room' ? row.r.id : 'cap:' + row.creator">
             <!-- 按账号分组模式:组标题行(创建者 + 频道数;主 AI 按品牌名显示) -->
-            <tr v-if="row.kind === 'cap'" class="adm-cap-row">
-              <td colspan="99">👤 {{ displayCreator(row.creator) }} <span class="adm-dim">· {{ row.count }} 个频道</span></td>
+            <tr v-if="row.kind === 'cap'" class="adm-cap-row adm-cap-click" @click="toggleOwnerGroup(row.creator)">
+              <td colspan="99">
+                <svg class="adm-cap-caret" :class="{ open: chOpenOwners[row.creator] }" width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M9 6 15 12 9 18z" /></svg>
+                👤 {{ displayCreator(row.creator) }} <span class="adm-dim">· {{ row.count }} 个频道 · {{ chOpenOwners[row.creator] ? '点击收起' : '点击展开' }}</span>
+              </td>
             </tr>
             <tr v-else>
               <td>
@@ -3173,10 +3176,14 @@ const chRows = computed<ChRow[]>(() => {
   const out: ChRow[] = []
   for (const [creator, list] of [...m.entries()].sort((a, b) => b[1].length - a[1].length)) {
     out.push({ kind: 'cap', creator, count: list.length })
-    for (const r of list) out.push({ kind: 'room', r })
+    // 默认收起:只看账号行,点开(chOpenOwners)才展开该账号的频道(负责人:先缩小看账号)
+    if (chOpenOwners[creator]) for (const r of list) out.push({ kind: 'room', r })
   }
   return out
 })
+// 每个账号组的展开状态(默认全部收起;仅当前页面会话内记忆)
+const chOpenOwners = reactive<Record<string, boolean>>({})
+function toggleOwnerGroup(k: string) { chOpenOwners[k] = !chOpenOwners[k] }
 /** 组标题显示(真人账号直接显示;兜底态原样)。 */
 function displayCreator(uid: string): string {
   if (uid.startsWith('@guduu:')) return '@CosMac Star:' + uid.split(':')[1]
@@ -3605,6 +3612,8 @@ onMounted(check)
 }
 .adm-field input:focus { outline: none; border-color: var(--accent); }
 .adm-cap-row td { background: var(--bg-soft, #f4ede2); font-size: 12px; font-weight: 700; color: var(--text-2, #6a6055); padding: 7px 12px; }
+.adm-cap-click { cursor: pointer; user-select: none; }
+.adm-cap-click:hover td { background: var(--bg-hover, #efe6d8); }
 .adm-check { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--text-2, #6a6055); cursor: pointer; white-space: nowrap; }
 .rd-doc { cursor: pointer; }
 .rd-doc:hover .rd-doc-hint { color: var(--action, #c96442); }
