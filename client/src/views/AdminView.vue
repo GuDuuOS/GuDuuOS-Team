@@ -271,6 +271,7 @@
         <div class="adm-filters">
           <input v-model.trim="chSearch" class="adm-search" placeholder="🔍 搜索频道名 / ID…" />
           <select v-model="chType" class="adm-fsel"><option value="all">全部类型</option><option value="public">公开</option><option value="private">私有</option></select>
+          <label class="adm-check"><input type="checkbox" v-model="chGroupByCreator" /> 按账号分组</label>
           <span class="adm-filter-n">{{ chFiltered.length }} / {{ rooms.length }}</span>
         </div>
         <div v-if="roomsLoading" class="adm-center"><div class="adm-spin" /> 加载频道列表…</div>
@@ -286,39 +287,45 @@
           </thead>
           <tbody>
             <tr v-if="!chFiltered.length" class="adm-empty-tr"><td colspan="99" class="adm-empty-row">没有匹配的频道。</td></tr>
-            <tr v-for="r in chFiltered" :key="r.id">
+            <template v-for="row in chRows" :key="row.kind === 'room' ? row.r.id : 'cap:' + row.creator">
+            <!-- 按账号分组模式:组标题行(创建者 + 频道数;主 AI 按品牌名显示) -->
+            <tr v-if="row.kind === 'cap'" class="adm-cap-row">
+              <td colspan="99">👤 {{ displayCreator(row.creator) }} <span class="adm-dim">· {{ row.count }} 个频道</span></td>
+            </tr>
+            <tr v-else>
               <td>
                 <div class="adm-user">
-                  <span class="adm-ava">{{ (r.name || '#').charAt(0).toUpperCase() }}</span>
+                  <span class="adm-ava">{{ (row.r.name || '#').charAt(0).toUpperCase() }}</span>
                   <div class="adm-u-id">
-                    <div class="adm-u-name">{{ r.name }}</div>
-                    <div class="adm-u-handle">{{ r.alias || r.id }}</div>
+                    <div class="adm-u-name">{{ row.r.name }}</div>
+                    <div class="adm-u-handle">{{ row.r.alias || row.r.id }}</div>
                   </div>
                 </div>
               </td>
-              <td>{{ r.members }}<span class="adm-dim"> / 本服 {{ r.localMembers }}</span></td>
+              <td>{{ row.r.members }}<span class="adm-dim"> / 本服 {{ row.r.localMembers }}</span></td>
               <td>
-                <span class="adm-tag" :class="r.isPublic ? 'admin' : 'member'">
-                  {{ r.isPublic ? '公开' : '私有' }}
+                <span class="adm-tag" :class="row.r.isPublic ? 'admin' : 'member'">
+                  {{ row.r.isPublic ? '公开' : '私有' }}
                 </span>
-                <span v-if="r.encrypted" class="adm-tag bot" title="端到端加密">🔒 加密</span>
+                <span v-if="row.r.encrypted" class="adm-tag bot" title="端到端加密">🔒 加密</span>
               </td>
               <td class="adm-ops">
-                <button class="adm-op" :disabled="roomBusy === r.id" @click="viewRoomDetail(r)">
+                <button class="adm-op" :disabled="roomBusy === row.r.id" @click="viewRoomDetail(row.r)">
                   详情
                 </button>
-                <button class="adm-op" :disabled="roomBusy === r.id" @click="viewMembers(r)">
+                <button class="adm-op" :disabled="roomBusy === row.r.id" @click="viewMembers(row.r)">
                   查看成员
                 </button>
                 <button
-                  v-if="!isCtrlRoom(r)"
-                  class="adm-op danger" :disabled="roomBusy === r.id" @click="doDeleteRoom(r)"
+                  v-if="!isCtrlRoom(row.r)"
+                  class="adm-op danger" :disabled="roomBusy === row.r.id" @click="doDeleteRoom(row.r)"
                 >
                   删除
                 </button>
                 <span v-else class="adm-tag" title="控制室承载全部平台配置，不可删除">🔒 系统</span>
               </td>
             </tr>
+            </template>
             <tr v-if="!rooms.length"><td colspan="4" class="adm-empty">暂无频道</td></tr>
           </tbody>
         </table>
@@ -1569,7 +1576,12 @@
               <div class="rd-cap">📚 知识库</div>
               <p v-if="rdData.kb_sources.length" class="rd-text">绑定来源:{{ rdData.kb_sources.join('、') }}</p>
               <template v-if="rdData.kb_docs.length">
-                <p v-for="d in rdData.kb_docs" :key="d.id" class="rd-text">· 《{{ d.title }}》</p>
+                <template v-for="d in rdData.kb_docs" :key="d.id">
+                  <p class="rd-text rd-doc" @click="toggleRdDoc(d.id)">· 《{{ d.title }}》
+                    <span class="rd-doc-hint">{{ rdDocOpen === d.id ? '收起 ▲' : '查看全文 ▼' }}</span>
+                  </p>
+                  <pre v-if="rdDocOpen === d.id" class="rd-doc-text">{{ rdDocLoading ? '加载中…' : rdDocText }}</pre>
+                </template>
               </template>
               <p v-if="!rdData.kb_sources.length && !rdData.kb_docs.length" class="rd-empty">无绑定来源、无已上传文档</p>
             </div>
@@ -1616,7 +1628,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { rowKey } from '@/utils/rowKey'
 import {
   isServerAdmin,
@@ -1679,6 +1691,7 @@ import {
   isAiWorkerId,
   fetchAdminArchives,
   fetchAdminRoomDetail,
+  fetchAdminKbDoc,
   type AdminRoomDetail,
   type AdminArchive,
   getPresetAgents,
@@ -2104,10 +2117,29 @@ async function loadRooms() {
 const rdOf = ref<AdminRoom | null>(null)
 const rdLoading = ref(false)
 const rdData = ref<AdminRoomDetail | null>(null)
+// 详情弹窗内点开某篇知识库文档看全文
+const rdDocOpen = ref<number | null>(null)
+const rdDocText = ref('')
+const rdDocLoading = ref(false)
+async function toggleRdDoc(id: number) {
+  if (rdDocOpen.value === id) { rdDocOpen.value = null; return }
+  rdDocOpen.value = id
+  rdDocLoading.value = true
+  rdDocText.value = ''
+  try {
+    rdDocText.value = (await fetchAdminKbDoc(id)).text || '(空文档)'
+  } catch (e: any) {
+    rdDocText.value = `读取失败:${e?.message || e}`
+  } finally {
+    rdDocLoading.value = false
+  }
+}
+
 async function viewRoomDetail(r: AdminRoom) {
   rdOf.value = r
   rdLoading.value = true
   rdData.value = null
+  rdDocOpen.value = null
   try {
     rdData.value = await fetchAdminRoomDetail(r.id)
   } catch (e: any) {
@@ -3098,6 +3130,30 @@ const wfSaving = ref(false)
 const chType = ref<'all' | 'public' | 'private'>('all')
 const chPred = computed(() => (r: AdminRoom) => chType.value === 'all' || (chType.value === 'public' ? r.isPublic : !r.isPublic))
 const { query: chSearch, filtered: chFiltered } = useListSearch(rooms, (r) => `${r.name} ${r.id} ${r.alias || ''} ${r.creator || ''}`, chPred)
+// 按账号(创建者)分组显示(负责人要求):开关记 localStorage;组按频道数降序
+const chGroupByCreator = ref(localStorage.getItem('cosmac.adm.chgroup') === '1')
+watch(chGroupByCreator, (v) => { try { localStorage.setItem('cosmac.adm.chgroup', v ? '1' : '0') } catch { /* 记不住就算了 */ } })
+type ChRow = { kind: 'room'; r: AdminRoom } | { kind: 'cap'; creator: string; count: number; r?: AdminRoom }
+const chRows = computed<ChRow[]>(() => {
+  if (!chGroupByCreator.value) return chFiltered.value.map((r) => ({ kind: 'room' as const, r }))
+  const m = new Map<string, AdminRoom[]>()
+  for (const r of chFiltered.value) {
+    const k = r.creator || '(未知创建者)'
+    if (!m.has(k)) m.set(k, [])
+    m.get(k)!.push(r)
+  }
+  const out: ChRow[] = []
+  for (const [creator, list] of [...m.entries()].sort((a, b) => b[1].length - a[1].length)) {
+    out.push({ kind: 'cap', creator, count: list.length })
+    for (const r of list) out.push({ kind: 'room', r })
+  }
+  return out
+})
+/** 组标题的创建者显示:主 AI 账号按品牌名(与成员弹窗同口径)。 */
+function displayCreator(uid: string): string {
+  if (uid.startsWith('@guduu:')) return '@CosMac Star:' + uid.split(':')[1]
+  return uid
+}
 // 技能 / 智能体 / 模板 / 工作流 / 套餐：按 启用/停用 筛
 const skEn = useEnabledFilter<GlobalSkill>()
 const { query: skSearch, filtered: skFiltered } = useListSearch(skills, (s) => `${s.name} ${s.slug} ${s.description}`, skEn.predicate)
@@ -3520,6 +3576,12 @@ onMounted(check)
   font-size: var(--fs-100); background: var(--bg); color: var(--text);
 }
 .adm-field input:focus { outline: none; border-color: var(--accent); }
+.adm-cap-row td { background: var(--bg-soft, #f4ede2); font-size: 12px; font-weight: 700; color: var(--text-2, #6a6055); padding: 7px 12px; }
+.adm-check { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--text-2, #6a6055); cursor: pointer; white-space: nowrap; }
+.rd-doc { cursor: pointer; }
+.rd-doc:hover .rd-doc-hint { color: var(--action, #c96442); }
+.rd-doc-hint { font-size: 11px; color: var(--text-3, #9a8f80); margin-left: 6px; }
+.rd-doc-text { font-size: 12px; line-height: 1.6; color: var(--text, #3a332b); background: var(--bg-soft, #f7f2e9); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow-y: auto; margin: 4px 0 8px; }
 .rd-modal { width: min(640px, 92vw); }
 .rd-body { max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 4px 2px; }
 .rd-sec { border: 1px solid var(--border, #e8e0d4); border-radius: 10px; padding: 10px 12px; }

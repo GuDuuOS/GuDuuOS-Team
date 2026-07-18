@@ -3832,6 +3832,17 @@ export interface AdminRoomDetail {
   skills: { slug: string; name: string; enabled: boolean }[]
   memory: string
 }
+/** 后台「频道详情」:读某篇知识库文档全文(仅平台管理员)。 */
+export async function fetchAdminKbDoc(id: number): Promise<{ title: string; source: string; text: string }> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  const r = await fetch(`${payBase()}/cosmac/admin/kb_doc?id=${id}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || `读取文档失败(${r.status})`)
+  return j
+}
+
 export async function fetchAdminRoomDetail(roomId: string): Promise<AdminRoomDetail> {
   const token = (mx as any)?.getAccessToken?.() || ''
   const r = await fetch(`${payBase()}/cosmac/admin/room_detail?room_id=${encodeURIComponent(roomId)}`, {
