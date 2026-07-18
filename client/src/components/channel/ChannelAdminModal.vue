@@ -20,6 +20,20 @@
         </button>
       </div>
 
+      <!-- AI 一键写:补充要求小弹窗(产品风格,替代原生 prompt) -->
+      <div v-if="aiDlgOpen" class="cam-ai-mask" @click.self="aiDlgOpen = false">
+        <div class="cam-ai-dlg">
+          <div class="cam-ai-t">✨ AI 一键写规则文档</div>
+          <p class="cam-ai-d">AI 将按本频道的人设、规则、智能体与知识库现状生成工作规范草稿，生成后可继续修改。</p>
+          <textarea v-model="aiNotes" class="cam-textarea" rows="3" maxlength="1000" placeholder="补充要求（可留空，直接按频道现状生成）&#10;例如：侧重内容审核流程；输出必须带数据依据" />
+          <p v-if="state.ruleDoc.trim()" class="cam-ai-warn">⚠️ 编辑区已有内容：AI 会在其基础上改写并覆盖显示（原文已作为参考喂给 AI）。</p>
+          <div class="cam-ai-f">
+            <button class="cam-add-btn ghost" @click="aiDlgOpen = false">取消</button>
+            <button class="cam-add-btn" @click="confirmAiRuleDoc">开始生成</button>
+          </div>
+        </div>
+      </div>
+
       <div class="cam-body">
         <!-- 角色设定 -->
         <template v-if="tab === 'persona'">
@@ -436,16 +450,21 @@ const ruleDocUploading = ref(false)
 const ruleDocErr = ref('')
 function pickRuleDocFile() { if (!ruleDocUploading.value) ruleDocFileInput.value?.click() }
 // AI 一键写:按频道上下文生成规范草稿填入编辑区(不直接落库,用户可改,保存走自动保存)。
-// 已有内容会作为"改进基础"一并喂给 AI(不会丢),生成前确认覆盖。
+// 交互走产品风格的自定义小弹窗(负责人:原生 prompt 不符设计风格),覆盖提示也收在弹窗里。
 const ruleDocAi = ref(false)
-async function doAiRuleDoc() {
+const aiDlgOpen = ref(false)
+const aiNotes = ref('')
+function doAiRuleDoc() {
   if (!roomId.value || ruleDocAi.value) return
-  const notes = prompt('对这份规范有什么补充要求?(可留空,直接按频道现状生成)') 
-  if (notes === null) return   // 用户点了取消
-  if (state.ruleDoc.trim() && !confirm('编辑区已有内容,AI 将在其基础上改写并覆盖显示(原文已喂给 AI 参考)。继续?')) return
+  aiNotes.value = ''
+  aiDlgOpen.value = true
+}
+async function confirmAiRuleDoc() {
+  if (!roomId.value || ruleDocAi.value) return
+  aiDlgOpen.value = false
   ruleDocAi.value = true; ruleDocErr.value = ''
   try {
-    const md = await fetchRuleDocDraft(roomId.value, notes.trim(), state.ruleDoc)
+    const md = await fetchRuleDocDraft(roomId.value, aiNotes.value.trim(), state.ruleDoc)
     state.ruleDoc = md.slice(0, RULEDOC_MAX)   // 填入即自动保存;可继续手改
   } catch (e: any) {
     ruleDocErr.value = e?.message || String(e)
