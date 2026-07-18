@@ -863,6 +863,16 @@ export async function createChannelInSpace(
   try {
     await (mx as any).sendStateEvent(cid, 'm.space.parent', { via: [server], canonical: true }, spaceId)
   } catch { /* parent 指回是辅助,失败不影响频道进工作区(靠 m.space.child) */ }
+  // 默认「频道资源边界」规则(负责人硬性要求:每次建频道都要植入):频道管理「规则」tab
+  // 可见可改;服务端另有恒定的代码层隔离,这条是给成员看的透明化声明。失败不阻断建频道。
+  try {
+    await (mx as any).sendStateEvent(cid, CHANNEL_CONFIG_EVENT, {
+      rules: [{
+        label: '频道资源边界',
+        desc: '本频道 AI 仅使用本频道的技能、智能体、规则与知识库(含管理员显式绑定进本频道的知识源)作答,不引用频道外内容。',
+      }],
+    }, '')
+  } catch { /* 规则写入失败不影响频道可用 */ }
   return cid
 }
 

@@ -988,8 +988,16 @@ class Toolbox:
         kb_scopes, kb_labels = self._resolve_kb_scopes(ctx, args.get("knowledge"))
         rule = str(args.get("rule") or "").strip()
         bind_note = ""
-        if kb_scopes or rule:
-            content: Dict[str, Any] = {}
+        if True:  # 每个新频道都写配置:至少带一条默认「频道资源边界」规则(负责人硬性要求)
+            content: Dict[str, Any] = {
+                # 默认 RULE(可见,频道管理「规则」tab 可改/可删;即使删了,代码层的
+                # 频道资源纪律仍恒定生效——这条是给成员看的透明化声明)
+                "rules": [{
+                    "label": "频道资源边界",
+                    "desc": "本频道 AI 仅使用本频道的技能、智能体、规则与知识库"
+                            "(含管理员显式绑定进本频道的知识源)作答,不引用频道外内容。",
+                }],
+            }
             if kb_scopes:
                 content["kbScopes"] = kb_scopes
             if rule:

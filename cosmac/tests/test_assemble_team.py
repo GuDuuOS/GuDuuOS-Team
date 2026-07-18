@@ -121,13 +121,17 @@ class TestAssembleTeam(unittest.TestCase):
         self.assertIn("platform", content["kbScopes"])
         self.assertEqual(content["taskRule"], "对外资料需审核")
         self.assertIn("已绑定", out)
-        # 不带 knowledge/rule 时不写 channel_config(不引入空配置)
+        # 不带 knowledge/rule 时也写 channel_config——默认植入「频道资源边界」规则
+        # (负责人硬性要求:每次建频道都要有默认 RULE,频道 AI 只用本频道资源)。
         self.client.states.clear()
         self.tb.execute(
             ToolCall(id="y", name="create_room", arguments={"name": "普通频道"}),
             ToolContext("!cur:h", "@owner:h"),
         )
-        self.assertFalse(self.client.states)
+        self.assertEqual(len(self.client.states), 1)
+        _, _, content2 = self.client.states[0]
+        self.assertEqual(content2["rules"][0]["label"], "频道资源边界")
+        self.assertNotIn("taskRule", content2)
 
     def test_workers_pulled_into_room_as_puppets(self) -> None:
         # 方案B:建专班时把每个协作 Agent 的傀儡账号拉进频道(注入回调);
