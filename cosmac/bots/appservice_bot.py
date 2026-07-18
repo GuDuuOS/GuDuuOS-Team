@@ -584,6 +584,7 @@ class CosmacBot:
                 # 让中枢 AI 也能基于平台图文内容作答（无需前端传作用域）。
                 extra_system = self._skill_addendum(
                     room_id, sender, query=text or user_text, gctx=gctx,
+                    is_dm=is_dm,
                 )
                 # 双层作用域指令(频道分身 vs 全局助理):告诉 AI 它现在是哪种身份、边界在哪。
                 # 智能水平两种模式相同(同一引擎/能同样拆任务建专班),只是"能拿到的原料"不同。
@@ -843,6 +844,7 @@ class CosmacBot:
         query: str = "",
         gctx: Optional[Dict[str, Any]] = None,
         extra_scopes: Optional[List[str]] = None,
+        is_dm: bool = True,
     ) -> str:
         """拼出本轮注入主 AI 的 system addendum = 人设 + 技能 + 知识库检索片段(RAG)。
 
@@ -864,6 +866,11 @@ class CosmacBot:
                 "【本专班任务约束（RULE，须严格遵守；你只围绕本项目分配与审核，不越界）】：\n"
                 + task_rule
             ) if task_rule else ""
+            # 频道管理「规则」tab 的规则(此前从未注入——负责人报的缺陷,现在真正生效)
+            ch_rules = (gctx.get("channel_rules") or "").strip()
+            ch_rules_text = (
+                "【本频道规则（RULE，须严格遵守）】：\n" + ch_rules
+            ) if ch_rules else ""
             agent_slugs = gctx.get("skill_slugs", [])
             items = (
                 # 全局技能按发起人的「可用范围」过滤(资源级权限:等级/模板/仅管理员);
@@ -886,9 +893,13 @@ class CosmacBot:
             user_pref_text = self._user_profile_text(sender)
             mem_text = self._memory_context(room_id, sender)
             # 频道绑定的知识库来源(组班"调进频道"的个人/资料库频道/平台库)一并纳入 RAG
+            # 频道知识隔离(负责人硬性要求:频道 AI 只能用本频道资源,个人库/平台资料
+            # 曾在频道里被检索出来、把平台内部信息说给了频道成员——线上实报的泄漏):
+            # 频道模式(非 DM)只查 本频道库+管理员显式绑定进频道的知识源;私聊(全局助理)不变。
             kb_text = self._kb_context(
                 room_id, sender, query, extra_scopes,
                 bound_sources=gctx.get("kb_scopes"),
+                channel_isolated=not is_dm,
             )
             wf_text = self._preset_workflows_text(gctx.get("workflow_slugs") or [])
             # 当前时间：让模型能把"3天后/下周五"这类相对期限换算成绝对日期（拆任务设 due 用）。
@@ -902,11 +913,21 @@ class CosmacBot:
                 "【当前时间】" + _tz_now()
                 + "\n未来两周星期对照(写日期时照抄,别自己推算):" + weekday_table()
             )
-            # 时间 → 交互准则(内置基线) → 平台规则 → 任务RULE → 人设 → 用户偏好 → 长期记忆 → 技能 → 知识库 → 预置工作流
+            # 频道资源纪律(负责人硬性要求):**每个频道恒定注入**——不管建房时有没有写 RULE,
+            # 存量频道一并覆盖。私聊(全局助理)不注入(那是用户自己的空间,可用个人库)。
+            channel_policy = "" if is_dm else (
+                "【频道资源纪律(必须遵守)】你是本频道的专属 AI:只使用本频道的人设、技能、"
+                "智能体、规则与知识库(含管理员显式绑定进本频道的知识源)作答;"
+                "不得引用、透露或依赖频道之外的任何内容——包括其他频道的信息、"
+                "成员的个人知识库、平台内部资料与项目开发信息。"
+                "若本频道资料不足以回答,如实说明并建议把所需资料上传到本频道知识库。"
+            )
+            # 时间 → 交互准则(内置基线) → 平台规则 → 频道纪律 → 任务RULE → 人设 → 用户偏好 → 长期记忆 → 技能 → 知识库 → 预置工作流
             return "\n\n".join(
                 p for p in (
                     now_text, _INTERACTION_POLICY,
-                    rules_text, task_rule_text, persona, user_pref_text,
+                    rules_text, channel_policy, ch_rules_text, task_rule_text,
+                    persona, user_pref_text,
                     mem_text, skills_text, kb_text, wf_text,
                 ) if p
             )
@@ -958,6 +979,7 @@ class CosmacBot:
         room_k: int = 3, user_k: int = 2,
         extra_scopes: Optional[List[str]] = None,
         bound_sources: Optional[List[str]] = None,
+        include_user_scope: bool = True,
     ) -> List[Tuple[str, str, float]]:
         """检索本群+个人+**频道绑定的知识库**，返回 [(标题, 片段, 相关度), ...] 降序。无命中/出错返回 []。
 
@@ -982,7 +1004,10 @@ class CosmacBot:
         for x in (extra_scopes or []):
             if x and x not in room_scopes:
                 room_scopes.append(x)
-        user_scopes: List[str] = [sender] if sender else []
+        # include_user_scope=False(频道隔离):发起人个人库**不再默认带入**——此前个人库在
+        # 任何频道都被检索,把用户自己存的平台/项目资料泄进了频道对话(负责人线上实报)。
+        # 显式绑定(bound_sources 的 user:xxx)不受影响——那是管理员对本频道的明确授权。
+        user_scopes: List[str] = [sender] if (sender and include_user_scope) else []
         global_scopes: List[str] = []
         # 解析频道绑定的知识库来源,分派到对应作用域
         for src in (bound_sources or []):
@@ -1060,6 +1085,7 @@ class CosmacBot:
         self, room_id: str, sender: str, query: str,
         extra_scopes: Optional[List[str]] = None,
         bound_sources: Optional[List[str]] = None,
+        channel_isolated: bool = False,
     ) -> str:
         """RAG 自动注入：按 query 检索知识库 top-K 片段，渲染成「参考资料」块塞进 system。
 
@@ -1076,10 +1102,14 @@ class CosmacBot:
         # 图文教程是全平台一份、付费可读：付费用户的每轮对话(含中枢 AI)自动把全局图文纳入 RAG，
         # 让 AI 能基于平台图文内容作答；非付费用户不注入（与查看图文同一道 doc_read 闸）。
         scopes = list(extra_scopes or [])
-        if self._doc_can_read(sender) and self._GLOBAL_DOC_ROOM not in scopes:
+        # 频道隔离模式:全局图文教程也不带(它是平台内容,不属于本频道)——负责人要求频道
+        # AI 只用本频道资源;私聊/全局助理照旧纳入。
+        if not channel_isolated and self._doc_can_read(sender) \
+                and self._GLOBAL_DOC_ROOM not in scopes:
             scopes.append(self._GLOBAL_DOC_ROOM)
         hits = self._kb_retrieve(
             room_id, sender, query, extra_scopes=scopes, bound_sources=bound_sources,
+            include_user_scope=not channel_isolated,
         )
         if not hits:
             return ""
@@ -1094,7 +1124,13 @@ class CosmacBot:
         门控由 execute() 的 gate_check 统一裁决(search_knowledge→knowledge)，这里不重复判。
         给模型读的结构化结果：命中按相关度降序列出，无命中明确说"没找到"（提示别编造）。
         """
-        hits = self._kb_retrieve(ctx.room_id, ctx.sender, query, room_k=4, user_k=3)
+        # 与自动注入同一隔离口径:频道里用 search_knowledge 工具也只查本频道(+绑定源)
+        gctx = self._group_context(ctx.room_id) if not ctx.is_dm else {}
+        hits = self._kb_retrieve(
+            ctx.room_id, ctx.sender, query, room_k=4, user_k=3,
+            bound_sources=gctx.get("kb_scopes") if gctx else None,
+            include_user_scope=ctx.is_dm,
+        )
         if not hits:
             return "知识库里没找到与此相关的资料（可以换个关键词再试，或据常识作答并说明未引用知识库）。"
         lines = ["知识库检索结果（相关度降序）："]
@@ -1125,12 +1161,24 @@ class CosmacBot:
         out: Dict[str, Any] = {
             "persona": "", "skill_slugs": [], "model": "", "task_rule": "",
             "worker_slugs": [], "workflow_slugs": [], "kb_scopes": [],
+            "channel_rules": "",
         }
         try:
             cfg = self.client.get_state_event(room_id, CHANNEL_CONFIG_EVENT_TYPE) or {}
             # 本专班任务 RULE（档3）：项目主AI 的缰绳，最高优先级注入（见 _skill_addendum）。
             # 先于 persona 取出，确保两条返回路径都带上它。
             out["task_rule"] = str(cfg.get("taskRule") or "").strip()
+            # 频道管理「规则」tab 配的规则(负责人报的隐藏缺陷:此前**从未注入**给 AI,配了等于摆设)。
+            # 结构 [{label, desc}],拼成一段文本随 addendum 注入。
+            rule_items = [
+                (str(r.get("label") or "").strip(), str(r.get("desc") or "").strip())
+                for r in (cfg.get("rules") or []) if isinstance(r, dict)
+            ]
+            rule_lines = [
+                (f"{lb}:{ds}" if ds else lb) for lb, ds in rule_items if lb or ds
+            ]
+            out["channel_rules"] = "\n".join(
+                f"{i}. {t}" for i, t in enumerate(rule_lines, 1))
             # 本专班绑定的协作 Agent slug（档3b @名路由用）；一并取出避免重复读 state。
             out["worker_slugs"] = [str(s) for s in (cfg.get("agentSlugs") or []) if s]
             # 本频道绑定的知识库来源（组班时"调进频道"的个人/资料库频道/平台库）。
