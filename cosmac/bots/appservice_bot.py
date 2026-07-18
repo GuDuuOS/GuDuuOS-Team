@@ -3211,7 +3211,8 @@ class CosmacBot:
             "task_rule": task_rule,
             "persona": {
                 "aiName": str(persona.get("aiName") or ""),
-                "prompt": str(persona.get("prompt") or "")[:500],
+                # 详情就是要看全,给足 2000(人设上限量级);超长再截
+                "prompt": str(persona.get("prompt") or "")[:2000],
             },
             "agents": agents,
             "kb_sources": kb_sources,
@@ -3219,6 +3220,46 @@ class CosmacBot:
             "skills": skills,
             "memory": memory[:3000],
         }
+
+    def handle_admin_kb_doc(
+        self, access_token: str, doc_id: str
+    ) -> Tuple[int, Dict[str, Any]]:
+        """后台「频道详情」点开某篇知识库文档看全文(仅平台管理员)。
+
+        正文不存 doc 行、在分块表里——按 chunk id 顺序拼回全文;超长截 2 万字(前端预览
+        足够,也别把超大文档一次性打到浏览器)。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(user_id):
+            return 403, {"error": "仅平台管理员可查看"}
+        try:
+            did = int(doc_id)
+        except (TypeError, ValueError):
+            return 400, {"error": "无效的文档 id"}
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.models import KnowledgeChunk, KnowledgeDoc
+
+            with session_scope() as s:
+                doc = s.get(KnowledgeDoc, did)
+                if doc is None:
+                    return 404, {"error": "文档不存在(可能已删除)"}
+                chunks = (
+                    s.query(KnowledgeChunk)
+                    .filter(KnowledgeChunk.doc_id == did)
+                    .order_by(KnowledgeChunk.id)
+                    .all()
+                )
+                text = "\n".join(str(c.text or "") for c in chunks)
+                return 200, {
+                    "id": doc.id, "title": doc.title, "source": doc.source,
+                    "scope": doc.scope, "text": text[:20000],
+                }
+        except Exception:
+            logger.exception("读知识库文档全文失败")
+            return 500, {"error": "读取失败(数据库不可用?)"}
 
     def handle_admin_archives(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """列全部专班归档记录(管理后台「归档记录」页)。仅平台管理员。
@@ -6098,6 +6139,14 @@ class _Handler(BaseHTTPRequestHandler):
         # 专班归档记录(管理后台「归档记录」页,仅管理员)
         if self.path.split("?", 1)[0] == "/cosmac/admin/archives":
             code, payload = self.bot.handle_admin_archives(self._bearer())
+            self._send_json(code, payload, cors=True)
+            return
+        # 后台「频道详情」点开知识库文档看全文(仅平台管理员)
+        if self.path.split("?", 1)[0] == "/cosmac/admin/kb_doc":
+            from urllib.parse import parse_qs, urlparse
+            qs = parse_qs(urlparse(self.path).query)
+            did = (qs.get("id") or [""])[0]
+            code, payload = self.bot.handle_admin_kb_doc(self._bearer(), did)
             self._send_json(code, payload, cors=True)
             return
         # 后台「频道管理·详情」:某频道的 RULE/知识库/技能/智能体/记忆(仅平台管理员)
