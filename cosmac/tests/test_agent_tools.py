@@ -418,6 +418,42 @@ class RoomAccessScopeTest(unittest.TestCase):
         self.assertNotIn("可能不含", out)           # 全集口径不再自报不全
         self.assertNotIn("!secret:test", out)       # 发起人不在的房仍不暴露(隐私)
 
+    def test_dm_list_members_without_target_refused(self) -> None:
+        """负责人实报:私聊里查频道成员没带 room 参数,此前静默回退到私聊房、
+        把「你我俩」当频道成员汇报。现在必须拒绝并引导指定频道。"""
+        out = self.tb.execute(
+            ToolCall(id="x", name="list_room_members", arguments={}),
+            ToolContext("!dm:test", "@alice:test", is_dm=True),
+        )
+        self.assertIn("要查哪个频道", out)
+        self.assertNotIn("名成员", out)  # 绝不返回私聊房的成员列表
+
+    def test_dm_list_members_by_room_name(self) -> None:
+        """私聊里按频道名查成员:解析到真频道并返回其成员。"""
+        out = self.tb.execute(
+            ToolCall(id="x", name="list_room_members",
+                     arguments={"room_name": "测试频道"}),
+            ToolContext("!dm:test", "@alice:test", is_dm=True),
+        )
+        self.assertIn("!allowed:test", out)
+        self.assertIn("名成员", out)
+
+    def test_channel_mode_members_defaults_to_current(self) -> None:
+        """频道模式不带参数=本频道,语义不变(回归)。"""
+        out = self.tb.execute(
+            ToolCall(id="x", name="list_room_members", arguments={}),
+            ToolContext("!allowed:test", "@alice:test", is_dm=False),
+        )
+        self.assertIn("名成员", out)
+
+    def test_dm_get_messages_without_target_refused(self) -> None:
+        """get_recent_messages 同病同修:私聊里不指定频道 → 拒绝,不读私聊房。"""
+        out = self.tb.execute(
+            ToolCall(id="x", name="get_recent_messages", arguments={}),
+            ToolContext("!dm:test", "@alice:test", is_dm=True),
+        )
+        self.assertIn("要查哪个频道", out)
+
     def test_list_my_rooms_nonadmin_still_scoped(self) -> None:
         # 非管理员即使注入了 is_admin 回调,判为否也只看自己在的房(隐私边界不破)。
         self.tb.is_admin = lambda uid: False  # type: ignore
