@@ -181,16 +181,17 @@ def main() -> None:
     wait_synapse()
     ensure_bot_user()
     admin_password = ensure_admin()
-    ensure_control_room()
-
-    print("[bootstrap] 引导完成 ✅")
     if admin_password:
-        # 初始密码只在这里显示一次；install.sh 会把这段透传到终端
+        # 初始密码只显示这一次。⚠️ 必须在后续步骤**之前**打印——首次 VM 实测
+        # 踩坑：打印排在建控制室之后，建房一失败密码就永远丢了。
         print("=" * 46)
         print(f"  初始管理员账号：{ADMIN_USER}")
         print(f"  初始管理员密码：{admin_password}")
         print("  （首次登录后请立即在客户端修改密码）")
         print("=" * 46)
+    ensure_control_room()
+
+    print("[bootstrap] 引导完成 ✅")
 
 
 if __name__ == "__main__":

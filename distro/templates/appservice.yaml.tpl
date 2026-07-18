@@ -26,7 +26,11 @@ namespaces:
     # （单引号 YAML：\. 就是正则转义点，无需双写反斜杠）
     - exclusive: false
       regex: '@guduu.*:{{DOMAIN_REGEX}}'
-  aliases: []
+  aliases:
+    # 预留控制室别名：bootstrap 以 bot 身份创建 #cosmac-ctrl 需要它，
+    # 否则 Synapse 报 M_EXCLUSIVE 拒绝（首次 VM 实测踩坑）。
+    - exclusive: true
+      regex: '#cosmac-ctrl.*'
   rooms: []
 
 # 主 AI 不限速（它要服务全实例的对话）
