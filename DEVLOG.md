@@ -1,5 +1,16 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-18 — fix:存量频道补默认 RULE(负责人:每个频道都要有,不能只覆盖新建)
+- 之前默认「频道资源边界」只在**新建**频道时写入,存量频道规则 tab 仍 0(线上实报)。
+  代码层硬隔离一直生效,但要**可见**。两层补齐:
+  ① bot 启动后台线程(延迟90s,幂等):扫 joined 频道,规则为空的补默认——**读旧配置
+    merge 后写回**(set_state_event 覆盖语义,不 merge 会抹 persona/kbScopes);
+    控制室/非频道排除;bot 无写权限的房忽略;
+  ② 前端兜底:频道管理弹窗打开且规则为空 → 自动补同一条(覆盖用户能管的房)。
+- 坑:_room_kind/_room_name 在 Toolbox 不在 bot 类上,首版 AttributeError 被吞导致零补写
+  (单测抓到)。2 项单测(merge+幂等)+全量 604 过;前端实测存量频道打开弹窗规则 0→1。
+- 前端+后端,部署 dist + restart bot(重启后 90s 自动补全存量)。
+
 ## 2026-07-18 — fix:后台侧栏加滚动条(负责人报的)
 - 菜单分组后超一屏,底部分组够不着。.adm-nav 加 height:100vh + overflow-y:auto
   (scrollbar-width:thin),侧栏独立滚动、内容区不受影响。
