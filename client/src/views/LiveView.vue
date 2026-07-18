@@ -389,6 +389,8 @@ const filterInput = ref<HTMLInputElement>()
 const aiRoom = ref('')
 // ③ 流式体感：中枢 AI 是否"正在输入…"（bot 生成回复期间发 typing 信号，这里渲染气泡）
 const botTyping = ref(false)
+// 频道消息流的"正在输入…"(当前频道有人/AI 在打字;切频道时重算)
+const channelTyping = ref(false)
 const aiMsgs = ref<LiveMsg[]>([])
 const aiDraft = ref('')
 const aiOpen = ref(true)
@@ -563,7 +565,11 @@ function scrollStreamToBottom(force = false) {
 // msgs 每次 sync 整体替换(引用变化即触发):贴底则跟随新消息
 watch(msgs, () => nextTick(() => scrollStreamToBottom()))
 // 切换频道:强制滚到底(等 DOM 渲染完这一帧)
-watch(currentRoom, (id) => { if (id) nextTick(() => scrollStreamToBottom(true)) })
+watch(currentRoom, (id) => {
+  if (id) nextTick(() => scrollStreamToBottom(true))
+  // 切频道立刻重算"正在输入"，别把上个频道的气泡带过来
+  channelTyping.value = id ? roomTyping(id) : false
+})
 
 function scrollAiToBottom() {
   const el = aiBodyRef.value
@@ -1240,6 +1246,10 @@ function renderMd(raw: string): string {
     const suffix = tail ? tail[0] : ''
     return keep(`<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`) + suffix
   })
+  // 带空格的品牌名「@CosMac Star」先整体成 pill 并 stash——通用 @ 正则不认空格,
+  // 只会把「@CosMac」包住、" Star" 掉在外面(负责人报的"@ 时 Star 没高亮")。
+  s = s.replace(/(^|[\s(])@CosMac Star(?=$|[^A-Za-z0-9])/g,
+    (_m, pre) => pre + keep('<span class="mention">@CosMac Star</span>'))
   // @提及高亮（@用户 或 @用户:服务器）。主 AI 的原始账号(@guduu / @guduu:域)按品牌名
   // 显示为 @CosMac Star——与后台成员弹窗同口径(负责人要求,任务到期提醒里 @ 出原始账号很难看);
   // 悬浮 title 保留真实账号便于排查。傀儡(@guduu-ai-*) localpart 不同,不受影响。
@@ -1385,10 +1395,14 @@ let stopUpdates: (() => void) | null = null
 // 同上：typing 监听的解绑函数。
 let stopTyping: (() => void) | null = null
 // typing 信号变化 → 重算中枢 AI 是否在输入；刚开始输入时滚到底，让"正在输入…"可见。
+// 频道消息流同样渲染(负责人:@AI 后要有 loading 反馈)——channelTyping 跟当前频道走。
 function refreshTyping() {
   const t = aiRoom.value ? roomTyping(aiRoom.value) : false
   if (t && !botTyping.value) nextTick(scrollAiToBottom)
   botTyping.value = t
+  const ct = currentRoom.value ? roomTyping(currentRoom.value) : false
+  if (ct && !channelTyping.value) nextTick(() => scrollStreamToBottom())
+  channelTyping.value = ct
 }
 
 // 实时自动接受频道邀请:邀请可能在**在线期间**到达(AI 拉人),不能只在登录那一刻查一次——
@@ -2642,6 +2656,14 @@ onBeforeUnmount(() => {
             </div>
           </div>
           </template>
+          <!-- 频道内"正在输入…":@AI 后它生成回复期间的 loading 反馈(负责人:不能死寂)。
+               真人成员打字同样会亮(IM 常规)。样式复用中枢 AI 面板的三点跳动气泡。 -->
+          <div v-if="channelTyping" class="msg bot stream-typing">
+            <div class="msg-main">
+              <div class="msg-gutter"><div class="ava">智</div></div>
+              <div class="msg-body"><div class="ai-bubble typing"><span class="td" /><span class="td" /><span class="td" /></div></div>
+            </div>
+          </div>
           <p v-if="currentRoom && !msgs.length" class="hint pad">{{ currentIsDm ? '还没有聊天记录，发条消息打个招呼吧' : '这个频道还没有消息' }}</p>
           <p v-if="!currentRoom" class="hint pad">← 选一个频道开始</p>
         </div>
