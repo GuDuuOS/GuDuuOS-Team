@@ -223,6 +223,9 @@
 
         <!-- 规则 -->
         <template v-else-if="tab === 'rules'">
+          <!-- 单条规则(轻量):列表保留;添加行默认折叠成小链接——「规则文档」才是本页主角
+               (负责人拍板:两个输入区叠着显重,条目弱化、保留能力与数据链路)。 -->
+          <p class="cam-row-desc" style="margin:0 0 4px">单条铁律（如「对外报价须负责人确认」）——快速添加、可单独删除；完整工作规范请写下方「规则文档」。</p>
           <div v-for="(r, i) in state.rules" :key="'r' + i" class="cam-row">
             <div class="cam-row-main">
               <div class="cam-row-label">{{ r.label }}</div>
@@ -230,11 +233,12 @@
             </div>
             <button class="cam-del" title="移除" @click="removeItem('rules', i)">×</button>
           </div>
-          <p v-if="isLive && !state.rules.length" class="cam-row-desc" style="padding:8px 2px">还没有规则 —— 在下方添加，会自动保存到本频道。</p>
-          <div class="cam-add">
+          <button v-if="!ruleAddOpen" class="cam-rule-add-link" @click="ruleAddOpen = true">＋ 添加单条规则</button>
+          <div v-else class="cam-add">
             <input v-model="rLabel" class="cam-input" placeholder="规则名称" @keyup.enter="doAddRule" />
             <input v-model="rDesc" class="cam-input" placeholder="说明（可选）" @keyup.enter="doAddRule" />
-            <button class="cam-add-btn" :disabled="!rLabel.trim()" @click="doAddRule">＋ 添加规则</button>
+            <button class="cam-add-btn" :disabled="!rLabel.trim()" @click="doAddRule">＋ 添加</button>
+            <button class="cam-add-btn ghost" @click="ruleAddOpen = false">收起</button>
           </div>
 
           <!-- 频道规则文档(Markdown,负责人需求):像 CLAUDE.md 的整篇工作规范——每轮全文注入本频道 AI。
@@ -442,7 +446,8 @@ const dLabel = ref(''); const dLevel = ref<Confidential>('内部'); const dAcces
 function doAddMember() { addMember(mName.value, mRole.value); mName.value = ''; mRole.value = '' }
 function doAddSkill() { addItem('skills', sLabel.value, sDesc.value, sTag.value); sLabel.value = ''; sTag.value = ''; sDesc.value = '' }
 function doAddKnowledge() { addItem('knowledge', kLabel.value, kDesc.value); kLabel.value = ''; kDesc.value = '' }
-function doAddRule() { addItem('rules', rLabel.value, rDesc.value); rLabel.value = ''; rDesc.value = '' }
+const ruleAddOpen = ref(false)   // 单条规则添加行默认折叠(文档区是主角)
+function doAddRule() { addItem('rules', rLabel.value, rDesc.value); rLabel.value = ''; rDesc.value = ''; ruleAddOpen.value = false }
 // 频道规则文档:上传 .md 填入(编辑区 v-model 直接绑 state.ruleDoc,自动保存走 composable watch)
 const RULEDOC_MAX = 4000  // 每轮全文注入,给上限防挤占对话空间(后端注入同样截断兜底)
 const ruleDocFileInput = ref<HTMLInputElement>()
