@@ -12,12 +12,24 @@
         </div>
       </div>
       <nav class="adm-menu">
+        <!-- 分类分组(负责人要求):按职能归类,小标题分隔;顺序=日常使用频率 -->
+        <div class="adm-menu-cap">总览</div>
+        <button class="adm-mi" :class="{ active: tab === 'overview' }" @click="switchToOverview">
+          <span class="adm-mi-ic">📊</span> 数据概览
+        </button>
+
+        <div class="adm-menu-cap">用户与频道</div>
         <button class="adm-mi" :class="{ active: tab === 'users' }" @click="tab = 'users'">
           <span class="adm-mi-ic">👤</span> 用户管理
         </button>
         <button class="adm-mi" :class="{ active: tab === 'rooms' }" @click="switchToRooms">
           <span class="adm-mi-ic">＃</span> 频道管理
         </button>
+        <button class="adm-mi" :class="{ active: tab === 'archives' }" @click="switchToArchives">
+          <span class="adm-mi-ic">🗂️</span> 归档记录
+        </button>
+
+        <div class="adm-menu-cap">AI 能力</div>
         <button class="adm-mi" :class="{ active: tab === 'ai' }" @click="switchToAi">
           <span class="adm-mi-ic">🤖</span> AI 配置
         </button>
@@ -30,15 +42,14 @@
         <button class="adm-mi" :class="{ active: tab === 'people' }" @click="switchToPeople">
           <span class="adm-mi-ic">👥</span> 人员能力
         </button>
-        <button class="adm-mi" :class="{ active: tab === 'templates' }" @click="switchToTemplates">
-          <span class="adm-mi-ic">🧰</span> 入驻模板
-        </button>
         <button class="adm-mi" :class="{ active: tab === 'rules' }" @click="switchToRules">
           <span class="adm-mi-ic">⚖️</span> 规则
         </button>
         <button class="adm-mi" :class="{ active: tab === 'workflows' }" @click="switchToWorkflows">
           <span class="adm-mi-ic">🔗</span> 工作流
         </button>
+
+        <div class="adm-menu-cap">会员与变现</div>
         <button class="adm-mi" :class="{ active: tab === 'gating' }" @click="switchToGating">
           <span class="adm-mi-ic">🔐</span> 会员权限
         </button>
@@ -48,6 +59,11 @@
         <button class="adm-mi" :class="{ active: tab === 'plans' }" @click="switchToPlans">
           <span class="adm-mi-ic">💳</span> 会员套餐
         </button>
+
+        <div class="adm-menu-cap">内容与运营</div>
+        <button class="adm-mi" :class="{ active: tab === 'templates' }" @click="switchToTemplates">
+          <span class="adm-mi-ic">🧰</span> 入驻模板
+        </button>
         <button class="adm-mi" :class="{ active: tab === 'docs' }" @click="switchToDocs">
           <span class="adm-mi-ic">📰</span> 图文教程
         </button>
@@ -56,12 +72,6 @@
         </button>
         <button class="adm-mi" :class="{ active: tab === 'sitePages' }" @click="switchToSitePages">
           <span class="adm-mi-ic">📄</span> 页面内容
-        </button>
-        <button class="adm-mi" :class="{ active: tab === 'archives' }" @click="switchToArchives">
-          <span class="adm-mi-ic">🗂️</span> 归档记录
-        </button>
-        <button class="adm-mi" :class="{ active: tab === 'overview' }" @click="switchToOverview">
-          <span class="adm-mi-ic">📊</span> 数据概览
         </button>
       </nav>
     </aside>
@@ -3195,6 +3205,8 @@ onMounted(check)
 .adm-title { font-size: var(--fs-200); font-weight: var(--fw-bold); }
 .adm-sub { font-size: var(--fs-75); color: var(--text-3); margin-top: 1px; }
 .adm-menu { display: flex; flex-direction: column; gap: 2px; }
+.adm-menu-cap { margin: 14px 10px 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--text-3, #9a8f80); text-transform: uppercase; }
+.adm-menu-cap:first-child { margin-top: 4px; }
 .adm-mi {
   display: flex; align-items: center; gap: 9px;
   padding: 9px 10px; border: none; border-radius: 8px;
