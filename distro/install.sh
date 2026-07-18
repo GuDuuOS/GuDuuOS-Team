@@ -159,7 +159,8 @@ docker compose up -d --build
 
 say "等待 Synapse 就绪……"
 for i in $(seq 1 60); do
-  if docker compose exec -T synapse python -c \
+  # 注意是 python3：官方 Synapse 镜像里没有 python 命令（VM 实测踩坑）
+  if docker compose exec -T synapse python3 -c \
     "import urllib.request;urllib.request.urlopen('http://localhost:8008/_matrix/client/versions')" \
     >/dev/null 2>&1; then break; fi
   [ "$i" -eq 60 ] && die "Synapse 120 秒未就绪。查日志：docker compose logs synapse"

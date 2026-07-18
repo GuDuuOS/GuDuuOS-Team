@@ -50,12 +50,9 @@ services:
       SYNAPSE_CONFIG_PATH: /data/homeserver.yaml
     volumes:
       - ./data/synapse:/data
-    healthcheck:
-      # 官方镜像自带 python；探活走本机 client versions 端点
-      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8008/health')\""]
-      interval: 10s
-      timeout: 10s
-      retries: 30
+    # 健康检查用官方镜像**自带**的（curl /health）。首次 VM 实测教训：别自己
+    # 覆盖——镜像里只有 python3 没有 python，自写探针永远失败会把好端端的
+    # Synapse 误判成 unhealthy，卡死整条依赖链。
 
   bot:
     # CosMac 主 AI：镜像从仓库根构建（cosmac/ 包 + bootstrap 脚本）
