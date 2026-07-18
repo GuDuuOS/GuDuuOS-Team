@@ -617,6 +617,24 @@ class MatrixClient:
             logger.debug("admin 查用户房间失败", exc_info=True)
         return None
 
+    def admin_room_state(self, room_id: str) -> Optional[List[Dict[str, Any]]]:
+        """管理员视角读某房间**全部 state**(bot 不在的房也能读)。失败/没配 token → None。
+
+        后台「频道详情」用:bot 未进驻的频道,channel_config 等配置读不到,走这里兜底。
+        """
+        token = self._admin_token()
+        if not token or not room_id:
+            return None
+        url = f"{self.homeserver_url}/_synapse/admin/v1/rooms/{quote(room_id, safe='')}/state"
+        try:
+            resp = requests.get(
+                url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+            if resp.status_code == 200:
+                return list(resp.json().get("state") or [])
+        except requests.RequestException:
+            logger.debug("admin 读房间 state 失败", exc_info=True)
+        return None
+
     def admin_room_name(self, room_id: str) -> Optional[str]:
         """管理员视角读某房间名(bot 不在的房也能读)。失败/没配 token → None。"""
         token = self._admin_token()
