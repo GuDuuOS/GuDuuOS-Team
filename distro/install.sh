@@ -148,6 +148,11 @@ render templates/homeserver.yaml.tpl data/synapse/homeserver.yaml \
   "MACAROON_SECRET_KEY=$MACAROON_SECRET_KEY" "FORM_SECRET=$FORM_SECRET"
 chmod 600 data/synapse/homeserver.yaml
 
+# 官方 Synapse 镜像内进程以 UID 991 运行；上面渲染出的配置是 root 属主 600，
+# 不移交属主 Synapse 读不了配置直接起不来（首次 VM 实测踩的坑）。整目录一起交，
+# generate 产物/媒体目录属主也统一，避免同类权限问题。
+chown -R 991:991 data/synapse
+
 # ---------- 5. 起全栈 ----------
 say "构建并启动全部容器（首次构建前端约需几分钟）……"
 docker compose up -d --build
