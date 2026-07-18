@@ -3854,6 +3854,19 @@ export interface AdminRoomDetail {
   skills: { slug: string; name: string; enabled: boolean }[]
   memory: string
 }
+/** 频道规则文档「AI 一键写」:按频道上下文生成 Markdown 工作规范草稿(频道管理员)。 */
+export async function fetchRuleDocDraft(roomId: string, notes = '', existing = ''): Promise<string> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  const r = await fetch(`${payBase()}/cosmac/channel/ruledoc_draft`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ room_id: roomId, notes, existing }),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || `AI 生成失败(${r.status})`)
+  return String(j.markdown || '')
+}
+
 /** 后台「频道详情」:读某篇知识库文档全文(仅平台管理员)。 */
 export async function fetchAdminKbDoc(id: number): Promise<{ title: string; source: string; text: string }> {
   const token = (mx as any)?.getAccessToken?.() || ''

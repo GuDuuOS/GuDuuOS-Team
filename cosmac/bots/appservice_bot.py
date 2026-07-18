@@ -3807,6 +3807,95 @@ class CosmacBot:
             return 502, {"error": "AI 没有返回内容，请重试"}
         return 200, {"markdown": md}
 
+    def handle_ruledoc_draft(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """「AI 一键写」频道规则文档:按频道上下文生成 Markdown 工作规范草稿(负责人需求)。
+
+        权限:该频道管理员(power≥50)或平台管理员——与"谁能写规则"同口径。
+        生成不落库:返回给前端填进编辑区,用户可改,保存走既有自动保存。
+        上下文喂给 AI:频道名/简介/人设/条目规则/绑定智能体/知识库文档标题——让规范贴合
+        这个频道的真实用途,而不是通用模板。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        room_id = str((body or {}).get("room_id") or "").strip()
+        if not room_id.startswith("!"):
+            return 400, {"error": "无效的频道 id"}
+        # 频道管理员 或 平台管理员
+        allowed = self._is_platform_admin(user_id)
+        if not allowed:
+            try:
+                pl = self.client.get_state_event(room_id, "m.room.power_levels", "") or {}
+                users = pl.get("users") or {}
+                allowed = int(users.get(user_id, pl.get("users_default", 0)) or 0) >= 50
+            except Exception:
+                allowed = False
+        if not allowed:
+            return 403, {"error": "需要本频道管理员权限"}
+        if not self._gate_allows(user_id, "ai_chat"):
+            return 403, {"error": self._gate_denied_text("ai_chat", ui=True)}
+        notes = str(body.get("notes") or "").strip()[:1000]
+        existing = str(body.get("existing") or "").strip()[:4000]
+        # 频道上下文(每块兜异常,拿不到就少喂)
+        ctx_lines: List[str] = []
+        try:
+            name_ev = self.client.get_state_event(room_id, "m.room.name") or {}
+            if name_ev.get("name"):
+                ctx_lines.append(f"频道名:{name_ev['name']}")
+            topic_ev = self.client.get_state_event(room_id, "m.room.topic") or {}
+            if topic_ev.get("topic"):
+                ctx_lines.append(f"频道简介:{topic_ev['topic']}")
+        except Exception:
+            pass
+        try:
+            gctx = self._group_context(room_id)
+            if gctx.get("persona"):
+                ctx_lines.append(f"AI 人设:{str(gctx['persona'])[:400]}")
+            if gctx.get("channel_rules"):
+                ctx_lines.append(f"现有条目规则:\n{gctx['channel_rules']}")
+            if gctx.get("worker_slugs"):
+                ctx_lines.append("绑定智能体:" + "、".join(gctx["worker_slugs"]))
+        except Exception:
+            pass
+        try:
+            from cosmac.db import kb as kb_mod, session_scope
+            from cosmac.db.models import SCOPE_ROOM
+
+            with session_scope() as s:
+                titles = [d.title for d in kb_mod.list_docs(
+                    s, scope=SCOPE_ROOM, scope_id=room_id)][:10]
+            if titles:
+                ctx_lines.append("频道知识库文档:" + "、".join(titles))
+        except Exception:
+            pass
+        self._apply_runtime_config()
+        sys = (
+            "你是企业 AI 协作平台的规范撰写专家。为一个频道撰写「频道规则文档」——"
+            "该文档会每轮全文注入这个频道的 AI,相当于它的工作宪法。"
+            "用 Markdown 输出,结构建议:# 标题、## 身份与定位、## 工作流程、## 输出规范、"
+            "## 禁区与边界。内容必须贴合下面给出的频道上下文,具体、可执行,不写空话。"
+            "**全文严格控制在 3500 字以内**。只输出文档正文,不要寒暄或额外说明。"
+        )
+        user = "频道上下文:\n" + ("\n".join(ctx_lines) or "(无,按通用协作频道写)")
+        if notes:
+            user += f"\n\n负责人补充要求:{notes}"
+        if existing:
+            user += f"\n\n在以下已有文档基础上改进(保留有用部分):\n{existing}"
+        try:
+            from cosmac.ai.base import Message
+            out = self.llm.complete(
+                [Message(role="system", content=sys), Message(role="user", content=user)]
+            )
+        except Exception:
+            logger.exception("AI 写频道规则文档失败")
+            return 502, {"error": "AI 生成失败，请稍后重试"}
+        md = (out or "").strip()[:4000]
+        if not md:
+            return 502, {"error": "AI 没有返回内容，请重试"}
+        return 200, {"markdown": md}
+
     def handle_pay_me(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """查"我当前的会员状态"（升级弹窗顶部展示）。验明身份 → 返回当前生效等级 + 到期。"""
         from cosmac.members import active_tier, tier_label
@@ -6094,7 +6183,8 @@ class _Handler(BaseHTTPRequestHandler):
                 or p.startswith("/cosmac/space/")
                 or p.startswith("/cosmac/profile/")
                 or p.startswith("/cosmac/usage/")
-                or p.startswith("/cosmac/admin/")      # 后台用户列表拉邮箱（GET 带 Authorization 也要预检）
+                or p.startswith("/cosmac/admin/")
+                or p.startswith("/cosmac/channel/")   # 频道规则文档 AI 一键写      # 后台用户列表拉邮箱（GET 带 Authorization 也要预检）
                 or p.startswith("/cosmac/channel/")     # 平台管理员接管频道（bug14）
                 or p.startswith("/cosmac/auth/")):     # 认证前端配置（Turnstile 开关）；都走浏览器，需预检
             origin = os.environ.get("COSMAC_APP_ORIGIN", "") or "*"
@@ -6473,6 +6563,15 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(code, payload, cors=True)
             return
 
+        # 频道规则文档「AI 一键写」(返回 Markdown,前端编辑区填入)
+        if path == "/cosmac/channel/ruledoc_draft":
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_ruledoc_draft(self._bearer(), body)
+            self._send_json(code, payload, cors=True)
+            return
         # 图文教程：让 AI 按主题写草稿（返回 Markdown，后台编辑器填入）
         if path == "/cosmac/doc/draft":
             token = self._bearer()
