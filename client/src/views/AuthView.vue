@@ -20,9 +20,11 @@ import {
   resetRequestCode, resetVerify, getAuthConfig,
   fetchSitePage,
 } from '@/matrix/client'
+import { defaultHsUrl } from '@/config/hs'
 
-// homeserver 基址（与 LiveView 保持一致）
-const HS = 'https://hs.cosmac.cc'
+// homeserver 基址（与 LiveView 保持一致）：主站/本地连 hs.cosmac.cc，
+// OEM 自部实例（发行版）为同源——见 config/hs.ts
+const HS = defaultHsUrl()
 
 // ── 帮助 / 隐私政策 弹层（内容来自后台「页面内容」,未配置回落内置默认稿）──
 const pageOpen = ref<'' | 'privacy' | 'help'>('')

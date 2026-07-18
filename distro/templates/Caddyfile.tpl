@@ -1,0 +1,50 @@
+# ============================================================
+# CosMac 发行版 —— Caddy 配置模板（install.sh 渲染到 data/caddy/Caddyfile）
+# ------------------------------------------------------------
+# 选 Caddy 而非 nginx+certbot：自动签发/续期 Let's Encrypt 证书，
+# OEM 自部零证书运维——这是发行版“一条命令装完”的关键简化。
+# 单域名同源：前端、Matrix API、cosmac API 全在 https://{{DOMAIN}} 下，
+# 客户端按同源自动找到 homeserver（见 client/src/config/hs.ts）。
+# ============================================================
+
+{
+	# ACME 联系邮箱（证书到期提醒发这里）
+	email {{ADMIN_EMAIL}}
+}
+
+{{DOMAIN}} {
+	encode zstd gzip
+
+	# —— Matrix 协议层（🚫 路径一个字都不能改，见 CLAUDE.md §7）——
+	# 仅放行 client-server/联邦 API 与 /_synapse/client（密码重置等页面）；
+	# /_synapse/admin 不对公网暴露（bot 走容器内网访问，不经这里）。
+	@matrix path /_matrix/* /_synapse/client/*
+	handle @matrix {
+		reverse_proxy synapse:8008
+	}
+
+	# —— CosMac 自有 API（注册验码/入驻/商城/皮肤等，bot 提供）——
+	handle /cosmac/* {
+		reverse_proxy bot:9000
+	}
+
+	# —— 联邦服务发现：联邦走 443（免开 8448 端口）——
+	handle /.well-known/matrix/server {
+		header Content-Type application/json
+		respond `{"m.server": "{{DOMAIN}}:443"}` 200
+	}
+
+	# —— 客户端服务发现：homeserver 即本域名 ——
+	handle /.well-known/matrix/client {
+		header Content-Type application/json
+		header Access-Control-Allow-Origin *
+		respond `{"m.homeserver": {"base_url": "https://{{DOMAIN}}"}}` 200
+	}
+
+	# —— 前端静态（hash 路由，深链统一回 index.html）——
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

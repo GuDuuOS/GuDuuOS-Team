@@ -331,7 +331,9 @@ export async function loginWithEmailNoStart(
 
 // 允许的 homeserver host 白名单：localStorage 可被同源脚本/扩展篡改，若不校验 baseUrl，
 // 被改成攻击者主机后，恢复会话时会把 Authorization: Bearer <token> 发往该主机 → token 泄露。
-const ALLOWED_HS_HOSTS = ['hs.cosmac.cc', 'localhost', '127.0.0.1']
+// 追加 window.location.hostname：OEM 自部实例（发行版）homeserver 与页面同源；
+// 同源天然可信——代码本身就是从该源加载的，伪造同源即已完全控制页面，白名单挡不了也不必挡。
+const ALLOWED_HS_HOSTS = ['hs.cosmac.cc', 'localhost', '127.0.0.1', window.location.hostname]
 
 function isValidBaseUrl(u: unknown): u is string {
   if (typeof u !== 'string' || !u) return false

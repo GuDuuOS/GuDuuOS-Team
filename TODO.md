@@ -18,6 +18,19 @@
   - [ ] P3:PayPal + USDT + 按 IP 地理路由选通道
   - [ ] P4:支付宝/微信 + 对账/退款
   - 前置:负责人注册 Stripe 账号拿 key
+- [ ] **模块6 · OEM 体系**(方案定稿 2026-07-18;全貌见 CLAUDE.md §4 模块6 行 + memory oem-nexus-plan)
+  - [x] **P0 发行版**已完成(2026-07-19,干净 VM 实测通过,样板间 oem1.cosmac.cc):
+    整栈容器化(distro/ 四容器 compose,Caddy 自动 HTTPS 弃 nginx+certbot)+install.sh+
+    bootstrap 引导+doctor.sh+update.sh;主站迁入实例#0 未做(非阻塞,P1 顺带评估)
+  - [ ] **P1 母舰+网关+皮肤**:fleet 服务(KEY 签发/兑换 API/实例注册/心跳)+ LLM 网关
+    (平台 key 鉴权/逐请求计量/token 钱包扣费/限流)+ console 独立前端基础版(实例列表/详情/
+    KEY 管理/手动充值)+ 实例内运行时皮肤(控制室 cosmac.brand + 免登录 GET /cosmac/brand +
+    client tenant.ts 运行时化 + 预设主题,logo 只收 png/jpg 禁 SVG)+ 自助下载页(凭 KEY 放行)
+  - [ ] **P2 规模化**:数据大屏(实时树状图:母舰→OEM→实例,节点大小=用户数/颜色=健康度 +
+    增长面板)+ 联邦生态白名单下发(federation whitelist,只通生态不接公网 Matrix)+
+    余额/健康告警 + 网关双活 + 网关最低兼容版本强制(催升级抓手)
+  - [ ] **P3 接钱**:token 在线充值 + KEY 在线购买(硬依赖模块4 Stripe 全链路)
+  - ⚠️ 连锁:上百家规模下 token 充值不可能手工记账 → **模块4 P2 Stripe 优先级被拉高**
 - [ ] **模块5 · 个人主页**(未开工;需要客户端 UI 设计配合)
 - [ ] **模块R · 品牌化**(持续:碰到呈现层 Matrix/Synapse 字样顺手改)
 

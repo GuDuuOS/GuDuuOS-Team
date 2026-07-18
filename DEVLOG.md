@@ -1,5 +1,39 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-19 — ✅ 模块6 P0 干净 VM 端到端实测通过——样板间 oem1.cosmac.cc(合入 main)
+- 负责人开一次性 GCP VM(test/us-central1,e2,ubuntu-minimal 22.04)+火山引擎 DNS
+  加 oem1.cosmac.cc A 记录;全程浏览器 SSH 复制命令装机,共踩 4 坑全修:
+  ①渲染配置 root 600,官方镜像内 Synapse 以 UID 991 跑读不了→install.sh chown 991;
+  ②自写 healthcheck 用 python,镜像只有 python3→删除覆盖用镜像自带 curl 探针
+  (好端端的 Synapse 被误判 unhealthy 卡死依赖链,教训:别覆盖官方探针);
+  ③appservice aliases 命名空间为空,bot 建 #cosmac-ctrl 报 M_EXCLUSIVE→模板预留
+  '#cosmac-ctrl.*';④管理员密码打印排在建房之后,建房失败密码丢→改为创建后立即打印。
+- 验收(浏览器实测):一键安装→Caddy 自动 HTTPS→doctor 13 项全绿→admin 登录→
+  首次引导(选模板/起名/频道/AI 人设)→bot 建出「OEM样板间」工作区→中枢 AI echo 回复。
+  客户端同源补丁生效(OEM 域名下 homeserver=同源,主站行为零变化)。
+- 运维备注:测试 PAT 曾进聊天记录,并入 TODO「凭据轮换」批次;测试 VM 可删可留作样板间。
+- 部署:主站**无需部署**(dist 变化对 app.cosmac.cc 是行为零变化的 hash 更新,下次随功能一起上)。
+
+## 2026-07-19 — feat:模块6 P0「CosMac 发行版」容器化整栈落地(分支 feat/oem-p0-distro)
+- **模块6 方案定稿**(2026-07-18 负责人逐项拍板,全录 CLAUDE.md §4 模块6行+memory
+  oem-nexus-plan):OEM 独立自部+自带域名+完全白牌;KEY 买断(永久含升级)+token 充值;
+  原厂 LLM key 永不下发、AI 必经 GuDuu Nexus 网关;联邦=生态内互通;规模按上百家设计。
+- **P0 产物(distro/)**:docker-compose 四容器(pgvector-PG/官方 Synapse v1.141.0/
+  bot/Caddy 自动 HTTPS)+ install.sh(交互收集域名邮箱SMTP授权码→生成全部密钥→渲染
+  homeserver/appservice/Caddyfile/.env→synapse generate→起栈→引导)+ bootstrap.py
+  (幂等:注册 @guduu+显示名/共享密钥建管理员/bot 建控制室 power100+邀管理员50——全新
+  实例没这套控制室 state 体系全失灵,这是引导的关键一环)+ doctor.sh 自诊断+ update.sh。
+- **关键决策**:发行版用 Caddy 弃 nginx+certbot(自动 HTTPS=一条命令装完的关键);
+  单域名同源(前端/_matrix//cosmac 同域,联邦走 443 well-known,免开 8448);
+  federation_domain_whitelist P0 只含自己(P2 Nexus 下发生态名单);模板渲染用 bash
+  原生替换弃 sed(密钥特殊字符转义地狱);bot 镜像 py3.12 显式补 PyYAML(requirements
+  没有它,生产 venv 是沾了 Synapse 的光)。
+- **客户端同源补丁**:新增 config/hs.ts defaultHsUrl()——主站/本地仍连 hs.cosmac.cc,
+  其他域名(OEM 自部)homeserver=同源;白名单追加同源 host(同源天然可信)。主站行为零变化。
+- 本地验证:shell/py 语法过、模板渲染演练(特殊字符密钥字节级无损)、compose YAML 合法、
+  npm run build 过、dev 冒烟正常。**本机无 Docker,整栈端到端待干净 VM 实测**(P0 交付
+  判据),故留在分支未合 main。
+
 ## 2026-07-18 — feat:规则 tab 主次调整——条目添加折叠,文档为主角(负责人拍板)
 - 条目规则与规则文档两个输入区叠着显重。调整:条目列表保留(默认「频道资源边界」等
   数据链路不动),添加行折叠成「＋ 添加单条规则」文字链接(点开展开,添加后自动收起);

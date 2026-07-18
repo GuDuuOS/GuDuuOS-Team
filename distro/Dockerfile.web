@@ -1,0 +1,23 @@
+# ============================================================
+# Web 镜像 —— 发行版用：客户端静态产物 + Caddy
+# ------------------------------------------------------------
+# 两阶段构建：
+#   ① node 阶段：在容器里从源码构建 client/dist（OEM 服务器不需要装 node）
+#   ② caddy 阶段：只带静态产物 + Caddy 本体，镜像小
+# Caddyfile 不打进镜像——由 install.sh 按 OEM 域名渲染后挂载（见 compose volumes）。
+# ============================================================
+
+# —— 阶段①：构建前端 ——
+FROM node:20-alpine AS build
+WORKDIR /build
+# 先拷依赖清单单独 npm ci，利用层缓存
+COPY client/package.json client/package-lock.json ./
+RUN npm ci
+COPY client/ ./
+# vue-tsc 类型检查 + vite 构建（与本地 npm run build 完全一致）
+RUN npm run build
+
+# —— 阶段②：运行时 ——
+FROM caddy:2-alpine
+# 前端静态产物；Caddyfile 里 root 指向 /srv
+COPY --from=build /build/dist /srv
