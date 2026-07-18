@@ -230,6 +230,7 @@
             <div class="cam-ruledoc-h">
               <span class="cam-field-label">📜 频道规则文档（Markdown）</span>
               <span class="cam-ruledoc-n" :class="{ over: state.ruleDoc.length >= RULEDOC_MAX }">{{ state.ruleDoc.length }} / {{ RULEDOC_MAX }}</span>
+              <button class="cam-add-btn" :disabled="ruleDocAi || !isLive" title="AI 按频道上下文(人设/规则/知识库)生成工作规范草稿,可再修改" @click="doAiRuleDoc">{{ ruleDocAi ? '✨ 生成中…' : '✨ AI 一键写' }}</button>
               <button class="cam-add-btn" :disabled="ruleDocUploading" @click="pickRuleDocFile">{{ ruleDocUploading ? '读取中…' : '⬆ 上传 .md' }}</button>
               <input ref="ruleDocFileInput" type="file" accept=".md,.markdown,.txt" hidden @change="onRuleDocFilePicked" />
             </div>
@@ -312,7 +313,7 @@ import {
   type AccessLevel
 } from '@/composables/useChannelAdmin'
 import {
-  getGlobalAgents, kbRoomAdd, kbRoomDelete,
+  getGlobalAgents, kbRoomAdd, kbRoomDelete, fetchRuleDocDraft,
   normalizeUserId, userExists, checkUserDeactivated, currentUserId,
   type GlobalAgent,
 } from '@/matrix/client'
@@ -434,6 +435,24 @@ const ruleDocFileInput = ref<HTMLInputElement>()
 const ruleDocUploading = ref(false)
 const ruleDocErr = ref('')
 function pickRuleDocFile() { if (!ruleDocUploading.value) ruleDocFileInput.value?.click() }
+// AI 一键写:按频道上下文生成规范草稿填入编辑区(不直接落库,用户可改,保存走自动保存)。
+// 已有内容会作为"改进基础"一并喂给 AI(不会丢),生成前确认覆盖。
+const ruleDocAi = ref(false)
+async function doAiRuleDoc() {
+  if (!roomId.value || ruleDocAi.value) return
+  const notes = prompt('对这份规范有什么补充要求?(可留空,直接按频道现状生成)') 
+  if (notes === null) return   // 用户点了取消
+  if (state.ruleDoc.trim() && !confirm('编辑区已有内容,AI 将在其基础上改写并覆盖显示(原文已喂给 AI 参考)。继续?')) return
+  ruleDocAi.value = true; ruleDocErr.value = ''
+  try {
+    const md = await fetchRuleDocDraft(roomId.value, notes.trim(), state.ruleDoc)
+    state.ruleDoc = md.slice(0, RULEDOC_MAX)   // 填入即自动保存;可继续手改
+  } catch (e: any) {
+    ruleDocErr.value = e?.message || String(e)
+  } finally {
+    ruleDocAi.value = false
+  }
+}
 async function onRuleDocFilePicked(e: Event) {
   const input = e.target as HTMLInputElement
   const f = (input.files || [])[0]
