@@ -421,14 +421,22 @@ class Toolbox:
         # 3) 看某房间成员
         self._register(
             name="list_room_members",
-            description="列出某个房间当前的成员；不指定 room_id 则看当前房间。",
+            description=(
+                "列出某个**频道**当前的成员。在频道里不填参数=本频道;"
+                "在私人会话里查某频道的成员**必须**给 room_id 或 room_name——"
+                "不给会被拒绝(私聊房只有你我俩,那不是用户想要的频道成员)。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
                     "room_id": {
                         "type": "string",
-                        "description": "房间 id；不填则看当前房间。",
-                    }
+                        "description": "房间 id(最精确,优先用)。",
+                    },
+                    "room_name": {
+                        "type": "string",
+                        "description": "频道名;不知道 room_id 时用它,我会解析(重名会让你挑)。",
+                    },
                 },
             },
             fn=self._tool_list_members,
@@ -438,15 +446,19 @@ class Toolbox:
         self._register(
             name="get_recent_messages",
             description=(
-                "读取某房间最近的聊天记录，用于了解上下文/做总结。"
-                "不指定 room_id 则读当前房间。"
+                "读取某个**频道**最近的聊天记录，用于了解上下文/做总结。"
+                "在频道里不填参数=本频道;在私人会话里读某频道**必须**给 room_id 或 room_name。"
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "room_id": {
                         "type": "string",
-                        "description": "房间 id；不填则读当前房间。",
+                        "description": "房间 id(最精确,优先用)。",
+                    },
+                    "room_name": {
+                        "type": "string",
+                        "description": "频道名;不知道 room_id 时用它,我会解析。",
                     },
                     "limit": {
                         "type": "integer",
@@ -1328,8 +1340,35 @@ class Toolbox:
             "转告用户时**必须用这里的真实频道名**，不要用你以为的名字。"
         )
 
+    def _resolve_target_room(
+        self, args: Dict[str, Any], ctx: ToolContext
+    ) -> "Tuple[str, Optional[str]]":
+        """从 room_id/room_name 解析工具的目标房间。返回 (room_id, None) 或 ("", 拒绝文案)。
+
+        ⚠️ 私人会话里两个参数都没给 → **拒绝**而不是回退到当前房——此前静默回退把
+        「用户与 AI 的私聊房」(2 人)当成频道查成员,AI 一本正经地汇报"频道共 2 人"
+        (负责人线上实报)。频道模式不填=本频道,语义不变。
+        """
+        room_id = str(args.get("room_id") or "").strip()
+        room_name = str(args.get("room_name") or "").strip()
+        if not room_id and room_name:
+            rid, err = self._resolve_room_by_name(room_name)
+            if err:
+                return "", err
+            room_id = rid
+        if not room_id:
+            if ctx.is_dm:
+                return "", (
+                    "请告诉我要查哪个频道(频道名或 room_id)。这里是私人会话,"
+                    "不指定频道的话我看到的只是咱俩的会话房,那不是你要的频道数据。"
+                )
+            room_id = ctx.room_id
+        return room_id, None
+
     def _tool_list_members(self, args: Dict[str, Any], ctx: ToolContext) -> str:
-        room_id = args.get("room_id") or ctx.room_id
+        room_id, err = self._resolve_target_room(args, ctx)
+        if err:
+            return err
         denial = self._check_room_access(room_id, ctx)
         if denial:
             return denial
@@ -1340,7 +1379,9 @@ class Toolbox:
         return f"房间 {room_id} 共有 {len(members)} 名成员：\n" + "\n".join(lines)
 
     def _tool_get_messages(self, args: Dict[str, Any], ctx: ToolContext) -> str:
-        room_id = args.get("room_id") or ctx.room_id
+        room_id, err = self._resolve_target_room(args, ctx)
+        if err:
+            return err
         denial = self._check_room_access(room_id, ctx)
         if denial:
             return denial
