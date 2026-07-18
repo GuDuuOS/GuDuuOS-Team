@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# ============================================================
+# CosMac 发行版 —— 自诊断脚本（OEM 排障第一入口）
+# ------------------------------------------------------------
+# 逐项体检并打 ✓/✗，最后汇总。哪项 ✗ 就按提示处理；仍搞不定时，
+# 把本脚本完整输出发给技术支持（不含密钥，可放心转发）。
+# ============================================================
+set -uo pipefail
+cd "$(dirname "$0")"
+
+PASS=0; FAIL=0
+ok()   { printf '  \033[1;32m✓\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
+bad()  { printf '  \033[1;31m✗\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
+
+echo "== CosMac 实例体检 =="
+
+# ---------- 基础环境 ----------
+command -v docker >/dev/null 2>&1 && ok "docker 已安装" || bad "docker 未安装"
+[ -f .env ] && ok "配置文件 .env 存在" || bad ".env 不存在——尚未安装？先跑 ./install.sh"
+DOMAIN="$(grep -E '^DOMAIN=' .env 2>/dev/null | cut -d= -f2- || true)"
+[ -n "$DOMAIN" ] && ok "实例域名：$DOMAIN" || bad ".env 里读不到 DOMAIN"
+
+# ---------- 磁盘 ----------
+AVAIL_KB="$(df -Pk . | awk 'NR==2{print $4}')"
+if [ "${AVAIL_KB:-0}" -gt 2097152 ]; then ok "磁盘剩余 $((AVAIL_KB/1024/1024)) GB"
+else bad "磁盘剩余不足 2GB——媒体/数据库会写满，尽快扩容或清理"; fi
+
+# ---------- 容器状态 ----------
+for svc in postgres synapse bot web; do
+  state="$(docker compose ps --format '{{.Service}} {{.State}}' 2>/dev/null | awk -v s="$svc" '$1==s{print $2}')"
+  if [ "$state" = "running" ]; then ok "容器 $svc 运行中"
+  else bad "容器 $svc 状态异常（$state）——看日志：docker compose logs $svc"; fi
+done
+
+# ---------- DNS ----------
+PUB_IP="$(curl -4fsS --max-time 8 https://ifconfig.me 2>/dev/null || true)"
+DNS_IP="$(getent hosts "$DOMAIN" 2>/dev/null | awk '{print $1; exit}' || true)"
+if [ -n "$DNS_IP" ] && { [ -z "$PUB_IP" ] || [ "$DNS_IP" = "$PUB_IP" ]; }; then
+  ok "DNS 解析正常（$DOMAIN → $DNS_IP）"
+else
+  bad "DNS 异常：解析到「${DNS_IP:-无}」，本机公网 IP「${PUB_IP:-未知}」——检查域名 A 记录"
+fi
+
+# ---------- HTTPS / 证书（经公网全链路，同时验证 Caddy 与证书）----------
+code="$(curl -so /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/" 2>/dev/null || true)"
+if [ "$code" = "200" ]; then ok "HTTPS 前端可访问（证书有效）"
+else bad "HTTPS 访问异常（HTTP ${code:-超时}）——证书未签出？看日志：docker compose logs web"; fi
+
+# ---------- Matrix API ----------
+code="$(curl -so /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/_matrix/client/versions" 2>/dev/null || true)"
+[ "$code" = "200" ] && ok "Matrix API 正常" || bad "Matrix API 异常（HTTP ${code:-超时}）——看日志：docker compose logs synapse"
+
+# ---------- 联邦服务发现 ----------
+code="$(curl -so /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/.well-known/matrix/server" 2>/dev/null || true)"
+[ "$code" = "200" ] && ok "联邦服务发现正常" || bad "well-known 异常（HTTP ${code:-超时}）"
+
+# ---------- CosMac bot ----------
+# 任何非 502/超时的响应（含 401/404）都说明 bot 进程活着且路由通
+code="$(curl -so /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/cosmac/onboarding/templates" 2>/dev/null || true)"
+if [ -n "$code" ] && [ "$code" != "502" ] && [ "$code" != "000" ]; then ok "CosMac 主 AI 服务可达（HTTP $code）"
+else bad "CosMac 主 AI 服务不可达——看日志：docker compose logs bot"; fi
+
+# ---------- P1 预留：GuDuu Nexus 网关连通性检查加在这里 ----------
+
+echo "== 结果：$PASS 项通过，$FAIL 项异常 =="
+[ "$FAIL" -eq 0 ]

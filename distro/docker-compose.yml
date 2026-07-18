@@ -1,0 +1,125 @@
+# ============================================================
+# CosMac 发行版 —— OEM 自部一键栈（模块6 P0）
+# ------------------------------------------------------------
+# 一个实例 = 下面 4 个容器：
+#   postgres : 数据库（带 pgvector，知识库向量检索用；synapse/cosmac 两库同实例）
+#   synapse  : Matrix homeserver（官方镜像，版本与生产对齐 v1.141.0）
+#   bot      : CosMac 主 AI（appservice，代码来自本仓库 cosmac/）
+#   web      : Caddy —— 自动 HTTPS + 前端静态 + 反代 /_matrix、/cosmac
+#
+# ⚠️ 不要手动 docker compose up：请用 ./install.sh（它负责生成 .env、
+#    homeserver.yaml、appservice 注册文件、Caddyfile，缺了这些起不来）。
+# 环境变量全部来自同目录 .env（install.sh 生成，已 gitignore，含密钥勿外传）。
+# ============================================================
+
+name: cosmac
+
+services:
+  postgres:
+    # pgvector 官方镜像 = PostgreSQL 16 + vector 扩展（知识库 RAG 的硬前提）
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      # 主库给 Synapse 用；cosmac 库由 pg-init 脚本在首次启动时追加创建
+      POSTGRES_USER: synapse
+      POSTGRES_PASSWORD: ${PG_SYNAPSE_PASSWORD}
+      POSTGRES_DB: synapse
+      # Synapse 硬性要求数据库 locale 为 C（否则启动自检直接拒绝）
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      # 传给 pg-init 脚本：cosmac 业务库的独立账号密码
+      COSMAC_DB_PASSWORD: ${COSMAC_DB_PASSWORD}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      # 首次初始化时执行：创建 cosmac 库/账号 + 装 pgvector 扩展
+      - ./pg-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synapse"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  synapse:
+    # 与生产对齐的 Synapse 版本；升级发行版时这里跟着提版本号（update.sh 拉新）
+    image: matrixdotorg/synapse:v1.141.0
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # /data 下的 homeserver.yaml / 签名密钥 / 日志配置由 install.sh 生成
+      SYNAPSE_CONFIG_PATH: /data/homeserver.yaml
+    volumes:
+      - ./data/synapse:/data
+    healthcheck:
+      # 官方镜像自带 python；探活走本机 client versions 端点
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8008/health')\""]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  bot:
+    # CosMac 主 AI：镜像从仓库根构建（cosmac/ 包 + bootstrap 脚本）
+    build:
+      context: ..
+      dockerfile: distro/Dockerfile.bot
+    restart: unless-stopped
+    depends_on:
+      synapse:
+        condition: service_healthy
+    environment:
+      # —— 连接 Synapse（容器内网，不出宿主机）——
+      COSMAC_HS_URL: http://synapse:8008
+      COSMAC_SERVER_NAME: ${DOMAIN}
+      COSMAC_BOT_USER_ID: "@guduu:${DOMAIN}"
+      # appservice 双向密钥（install.sh 随机生成，与 appservice 注册文件一致）
+      COSMAC_AS_TOKEN: ${COSMAC_AS_TOKEN}
+      COSMAC_HS_TOKEN: ${COSMAC_HS_TOKEN}
+      # bot 自己的 HTTP 服务：容器内要监听 0.0.0.0 才能被 synapse/caddy 访问到
+      COSMAC_LISTEN_HOST: 0.0.0.0
+      COSMAC_LISTEN_PORT: "9000"
+      # —— cosmac 业务库（独立于 synapse 库，见 CLAUDE.md §3 存储分层）——
+      COSMAC_DATABASE_URL: postgresql+psycopg://cosmac:${COSMAC_DB_PASSWORD}@postgres:5432/cosmac
+      # 工作流异步回调等对外可达地址
+      COSMAC_PUBLIC_URL: https://${DOMAIN}
+      # 管理员令牌 + Synapse 注册共享密钥（邮箱验证码注册建号用）
+      COSMAC_ADMIN_TOKEN: ${COSMAC_ADMIN_TOKEN}
+      COSMAC_REGISTRATION_SHARED_SECRET: ${COSMAC_REGISTRATION_SHARED_SECRET}
+      # —— OEM 自己的发信邮箱（注册验证码从这里发出）——
+      COSMAC_SMTP_HOST: ${COSMAC_SMTP_HOST:-}
+      COSMAC_SMTP_PORT: ${COSMAC_SMTP_PORT:-465}
+      COSMAC_SMTP_USER: ${COSMAC_SMTP_USER:-}
+      COSMAC_SMTP_PASSWORD: ${COSMAC_SMTP_PASSWORD:-}
+      COSMAC_SMTP_FROM: ${COSMAC_SMTP_FROM:-}
+      COSMAC_SMTP_FROM_NAME: ${COSMAC_SMTP_FROM_NAME:-}
+      # —— AI 模型 ——
+      # P0 暂时直连各厂商（key 由 .env 提供，默认 echo 占位）；
+      # P1 起统一改走 GuDuu Nexus 的 LLM 网关（原厂 key 永不下发，见 CLAUDE.md §4 模块6）。
+      COSMAC_LLM_PROVIDER: ${COSMAC_LLM_PROVIDER:-echo}
+      COSMAC_LLM_MODEL: ${COSMAC_LLM_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ARK_API_KEY: ${ARK_API_KEY:-}
+      # —— OEM 授权码（P0 只登记；P1 接 Nexus 网关鉴权后成为硬凭证）——
+      COSMAC_OEM_KEY: ${COSMAC_OEM_KEY:-}
+      # bootstrap.py 用：初始管理员
+      COSMAC_ADMIN_USER: ${COSMAC_ADMIN_USER:-admin}
+      COSMAC_ADMIN_EMAIL: ${COSMAC_ADMIN_EMAIL:-}
+
+  web:
+    # Caddy：唯一对公网开放的容器。自动向 Let's Encrypt 签发/续期证书，
+    # 同域名下：前端静态(/) + Synapse(/_matrix,/_synapse/client) + bot(/cosmac)。
+    build:
+      context: ..
+      dockerfile: distro/Dockerfile.web
+    restart: unless-stopped
+    depends_on:
+      - synapse
+      - bot
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./data/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy/data:/data      # 证书存这里，删了会重新签（有频率限制，别乱删）
+      - ./data/caddy/config:/config

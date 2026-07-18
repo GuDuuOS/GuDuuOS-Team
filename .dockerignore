@@ -1,0 +1,16 @@
+# ============================================================
+# Docker 构建上下文裁剪（发行版镜像从仓库根构建，见 distro/docker-compose.yml）
+# synapse/ 是只读源码参考（几百 MB），与镜像无关，必须排除——否则每次
+# 构建都要打包上传整个仓库，慢且无谓。
+# ============================================================
+.git
+synapse/
+.venv/
+run/
+docs/
+node_modules/
+client/node_modules/
+client/dist/
+distro/data/
+distro/.env
+*.docx

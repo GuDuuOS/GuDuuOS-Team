@@ -1,5 +1,25 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-19 — feat:模块6 P0「CosMac 发行版」容器化整栈落地(分支 feat/oem-p0-distro)
+- **模块6 方案定稿**(2026-07-18 负责人逐项拍板,全录 CLAUDE.md §4 模块6行+memory
+  oem-nexus-plan):OEM 独立自部+自带域名+完全白牌;KEY 买断(永久含升级)+token 充值;
+  原厂 LLM key 永不下发、AI 必经 GuDuu Nexus 网关;联邦=生态内互通;规模按上百家设计。
+- **P0 产物(distro/)**:docker-compose 四容器(pgvector-PG/官方 Synapse v1.141.0/
+  bot/Caddy 自动 HTTPS)+ install.sh(交互收集域名邮箱SMTP授权码→生成全部密钥→渲染
+  homeserver/appservice/Caddyfile/.env→synapse generate→起栈→引导)+ bootstrap.py
+  (幂等:注册 @guduu+显示名/共享密钥建管理员/bot 建控制室 power100+邀管理员50——全新
+  实例没这套控制室 state 体系全失灵,这是引导的关键一环)+ doctor.sh 自诊断+ update.sh。
+- **关键决策**:发行版用 Caddy 弃 nginx+certbot(自动 HTTPS=一条命令装完的关键);
+  单域名同源(前端/_matrix//cosmac 同域,联邦走 443 well-known,免开 8448);
+  federation_domain_whitelist P0 只含自己(P2 Nexus 下发生态名单);模板渲染用 bash
+  原生替换弃 sed(密钥特殊字符转义地狱);bot 镜像 py3.12 显式补 PyYAML(requirements
+  没有它,生产 venv 是沾了 Synapse 的光)。
+- **客户端同源补丁**:新增 config/hs.ts defaultHsUrl()——主站/本地仍连 hs.cosmac.cc,
+  其他域名(OEM 自部)homeserver=同源;白名单追加同源 host(同源天然可信)。主站行为零变化。
+- 本地验证:shell/py 语法过、模板渲染演练(特殊字符密钥字节级无损)、compose YAML 合法、
+  npm run build 过、dev 冒烟正常。**本机无 Docker,整栈端到端待干净 VM 实测**(P0 交付
+  判据),故留在分支未合 main。
+
 ## 2026-07-18 — feat:规则 tab 主次调整——条目添加折叠,文档为主角(负责人拍板)
 - 条目规则与规则文档两个输入区叠着显重。调整:条目列表保留(默认「频道资源边界」等
   数据链路不动),添加行折叠成「＋ 添加单条规则」文字链接(点开展开,添加后自动收起);

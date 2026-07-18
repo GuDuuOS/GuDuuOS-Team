@@ -96,6 +96,7 @@ import {
   type LiveSpace,
 } from '@/matrix/client'
 import { tenant } from '@/config/tenant'
+import { defaultHsUrl } from '@/config/hs'
 import logoUrl from '@/assets/cosmac-logo.png'
 
 // ── 复刻 DEMO 的按键功能：直接复用演示版的弹窗/面板组件 + 它们的 composable ──
@@ -368,7 +369,8 @@ async function moveTask(t: TaskItem, status: string) {
 }
 
 
-const HS = 'https://hs.cosmac.cc'
+// homeserver 基址：主站/本地连 hs.cosmac.cc，OEM 自部实例（发行版）为同源——见 config/hs.ts
+const HS = defaultHsUrl()
 
 // ── 登录态 ──────────────────────────────────────────────
 const user = ref('')

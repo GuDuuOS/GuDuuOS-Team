@@ -102,6 +102,7 @@
 | **会员等级**（账号权限分层：免费/付费/创作者） | Matrix state event | 已实现：存控制室 `cosmac.members`（同 admins 套路，管理员/bot 写、用户不可自改——付费门槛靠它）。**与「服务器管理员」正交**：管理员仍走 Synapse admin 标志。授予入口 `cosmac.members.MembersStore.grant`（**预留给模块4支付**）。枚举/校验见 `cosmac/members.py`。普通用户查自己等级走「DM 问 bot」命令`会员`（控制室只管理员可读）。 |
 | **功能门控策略**（能力→最低会员等级） | Matrix state event | 已实现：存控制室 `cosmac.gating`，后台「会员权限」页逐项配，bot **服务端强制**（客户端只配置）。门槛阶梯 免费<付费<创作者<仅管理员；平台管理员永远不受会员门控。能力目录 `cosmac/members.py` GATE_CATALOG（ai_chat/knowledge/create_room/workflow_run；**新增功能往这加一条**，前后端各一份）。工具层经 `Toolbox.gate_check` 同样受控（防自然语言绕过命令）。 |
 | 工作流运行记录（模块3）、交易（模块4）、个人主页（模块5） | ✅ CosMac Star DB | 关系型。 |
+| **OEM/Nexus 数据**（KEY·license、实例注册、token 钱包、用量计量、心跳遥测） | ✅ Nexus 独立 DB | 模块6：存**母舰侧**（GuDuu Nexus fleet 服务自己的 Postgres），与各 OEM 自部实例完全隔离；原厂 LLM key 只进网关 env，永不进发行版。 |
 
 **基建决策**：CosMac Star 的 DB **复用生产现成的 PostgreSQL**（Synapse 已在跑，见 `DEPLOY.md`），给 cosmac 服务**单开一个 database/schema**，按需装 **pgvector**。这走 §2 的第 3 条路径（新增独立服务/数据），与 Synapse 核心解耦、不碰它。
 
@@ -122,6 +123,7 @@
 | 3 | Bot / 插件 / 工作流引擎 | ✅ 完成 | **定调：不自建引擎，对接外部平台**(n8n/Make/Coze/ComfyUI/Dify)。全套上线：通用连接器引擎(`cosmac/wf.py`，含 webhook/Dify/Coze/ComfyUI)+ 聊天命令 `工作流 列表/跑` + 主 AI 工具 `run_workflow` + 异步回调协议 + 运行记录入库 + **后台编排 UI**(`AdminView.vue` 工作流面板：4 平台连接器增删改查、凭据只填名)；定义走控制室 `cosmac.workflows`、密钥走服务端 env。**安全/健壮性"够用即止"**(负责人 2026-06 拍板)：单实例下真实风险(SSRF/密钥/鉴权/DoS/重复触发/崩溃可见性)全堵；**durable 任务队列 + 多实例 fencing + per-event 精确一次**记为**已知架构边界·本期不做**(单 bot 小规模属过度设计)。增强项(更多平台适配器/graph 上传 UI)按需再补 |
 | 4 | 交易系统（会员订阅） | 🟡 进行中 | **主线=会员订阅/充值**，多渠道支付(Stripe/PayPal/USDT/支付宝/微信)按 IP 地理路由，范围"较完整"。**P1 地基已落地+单测**(`cosmac/trading/`)：套餐定义(控制室 `cosmac.plans`)+ 订单(DB `cosmac_order`)+ **可插拔支付抽象** `PaymentProvider`(密钥只进 env)+ 订单服务(下单/支付成功**幂等**开通/**续费按原到期日顺延**)+ 会员**到期**(扩 `members.py`：grant 带 expires_ts、查等级自动判过期)+ 手动/mock 支付(HMAC 验签、不接真钱跑通业务链)。**分期**：P2 Stripe 全链路+webhook端点+前端套餐页；P3 PayPal/USDT+地理路由；P4 支付宝/微信+对账/退款。会员/门控预热地基见上文存储表。 |
 | 5 | 个人主页 | ⬜ | 需要客户端 UI 配合 |
+| 6 | **OEM 体系（GuDuu Nexus + CosMac 发行版 + LLM 网关）** | 🟡 进行中 | **P0 发行版代码已落地**（2026-07-19，`distro/`：四容器 compose + install/doctor/update 脚本 + bootstrap 引导 + 客户端同源补丁；待干净 VM 端到端实测后合 main）。**方案已定稿（2026-07-18，负责人逐项拍板）**：每 OEM **独立部署一套**（自己的服务器/域名/邮箱，docker 整栈发行版一键装，`server_name`=OEM 域名）；**完全白牌**（运行时皮肤，界面零平台标识）；KEY **买断（永久含升级）+ token 另充值**（钱包余额耗尽断 AI = 唯一续费抓手）；**原厂 LLM key 永不下发**，全部 AI 调用必经母舰 **LLM 网关**（平台 key 鉴权/逐请求计量/扣钱包/限流——对自部实例唯一的技术缰绳，也是全系统唯一单点，需高可用）；联邦 = **GuDuu 生态内互通**（Nexus 下发 federation whitelist，不接公网 Matrix）；大后台 **GuDuu Nexus** = 独立 console 前端 + fleet 服务（KEY 签发/实例注册/心跳遥测/token 钱包/数据大屏·实时树状图）。规模预期**上百家** → 兑码/下载/安装/激活**全自助**必须进 P1。分期：P0 整栈容器化 + install/doctor 脚本 → P1 Nexus + 网关 + 皮肤 + 自助闭环 → P2 大屏 + 联邦白名单 + 告警 + 最低兼容版本强制 → P3 接钱（硬依赖模块4 Stripe）。 |
 | R | **品牌化 Matrix→CosMac Star** | ⬜ 持续 | 贯穿全程的横切任务，按 §7 三层红线分层改，每碰到呈现层字样就顺手改 |
 
 > 状态符号：⬜未开始 / 🟡进行中 / ✅完成。开工/完成时更新这张表。

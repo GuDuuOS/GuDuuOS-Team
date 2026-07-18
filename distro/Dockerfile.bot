@@ -1,0 +1,27 @@
+# ============================================================
+# CosMac 主 AI（bot）镜像 —— 发行版用
+# ------------------------------------------------------------
+# 构建上下文是仓库根（见 docker-compose.yml 的 build.context: ..），
+# 只拷 cosmac/ 包和引导脚本，不含 synapse/ 源码参考目录（.dockerignore 排除）。
+# python 选 3.12：与生产 bot-venv 对齐（Agent SDK 引擎需要 3.12；
+# 但 claude-agent-sdk 依赖 CLI 二进制、体积大，P0 不装——engine.py 是懒加载，
+# 默认引擎关闭时不 import，不影响运行）。
+# ============================================================
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# 先拷 requirements 单独装依赖——利用 Docker 层缓存，改业务代码不重装依赖
+COPY cosmac/requirements.txt /app/cosmac/requirements.txt
+# PyYAML 单列：cosmac/config.py 读 appservice yaml 需要它，但 requirements.txt
+# 没写（生产 venv 因 Synapse 同环境自带；发行版容器里 bot 独立运行必须显式装）
+RUN pip install --no-cache-dir -r /app/cosmac/requirements.txt PyYAML
+
+# 业务代码 + 全新实例引导脚本（install.sh 会 docker compose exec 调它）
+COPY cosmac/ /app/cosmac/
+COPY distro/bootstrap.py /app/distro/bootstrap.py
+
+# 日志直接打到 stdout，交给 docker logs
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "-m", "cosmac"]
