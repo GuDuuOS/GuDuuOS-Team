@@ -30,7 +30,7 @@ import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict
 
 from nexus import db, fleet
 from nexus.fleet import FleetError
@@ -61,9 +61,17 @@ def _admin_token() -> str:
 
 
 class NexusHandler(BaseHTTPRequestHandler):
-    """所有 /nexus/ 端点的处理器。一请求一 DB Session，出错整体回滚。"""
+    """所有 /nexus/（fleet）与 /gw/（LLM 网关）端点的处理器。
+
+    一请求一 DB Session，出错整体回滚；网关走 gateway.handle_post（内部
+    自管短连 Session——LLM 转发耗时长，不能套在这里的会话包装里）。
+    """
 
     server_version = "GuDuuNexus/0.1"
+    # HTTP/1.1：网关流式回传要用 chunked 编码（HTTP/1.0 不支持）。
+    # 代价是所有响应必须带 Content-Length 或 chunked——本文件的 _json/_err
+    # 都带 Content-Length，勿新增裸响应。
+    protocol_version = "HTTP/1.1"
 
     # ---- 基础工具 ----
 
@@ -110,7 +118,7 @@ class NexusHandler(BaseHTTPRequestHandler):
 
     # ---- 路由 ----
 
-    def do_GET(self) -> None:  # noqa: N802（http.server 命名约定）
+    def do_GET(self) -> None:  # noqa: N802  # http.server 命名约定
         path = self.path.split("?", 1)[0]
         if path == "/nexus/health":
             self._json(200, {"ok": True, "ts": int(time.time() * 1000)})
@@ -129,6 +137,17 @@ class NexusHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
+
+        # —— LLM 网关：/gw/<厂商>/<原厂路径后缀>（体大且可能流式，独立处理）——
+        if path.startswith("/gw/"):
+            from nexus import gateway  # 延迟导入：fleet-only 部署可不装 requests
+
+            parts = path[len("/gw/"):].split("/", 1)
+            provider = parts[0] if parts else ""
+            suffix = parts[1] if len(parts) > 1 else ""
+            gateway.handle_post(self, provider, suffix)
+            return
+
         body = self._read_body()
 
         if path == "/nexus/redeem":

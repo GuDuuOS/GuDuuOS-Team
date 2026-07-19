@@ -1,0 +1,6 @@
+# GuDuu Nexus（母舰 fleet 服务 + LLM 网关）运行依赖。
+# 与 cosmac 一致的最小栈：HTTP 走标准库，不引 Web 框架。
+requests>=2.31
+SQLAlchemy>=2.0
+# 生产连 Postgres 用；本地 SQLite 时不装也能跑
+psycopg[binary]>=3.1; platform_system != "Windows"

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
@@ -24,7 +23,7 @@ from nexus.db import (
     NexusLedger,
     NexusWallet,
 )
-from nexus.keys import generate_key, hash_key, looks_like_key, normalize_key
+from nexus.keys import generate_key, hash_key, looks_like_key
 
 
 class FleetError(Exception):

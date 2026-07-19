@@ -1,5 +1,20 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-19 — feat:模块6 P1 第2块「LLM 网关」——原厂 key 永不下发的技术缰绳落地(16测全过)
+- `nexus/gateway.py`:按厂商路径透传(/gw/anthropic|openai|ark/...),实例拿 OEM KEY
+  当 API key(x-api-key/Bearer 两种 SDK 送法都认),网关校验(KEY哈希/实例状态/钱包余额)
+  →换原厂 key 转发→解析 usage→扣钱包(fleet.debit,流水记 provider/model/in/out)。
+- 安全三闸:①原厂 key 只在网关 env;②**路径白名单只放行对话端点**(防原厂 key 被实例
+  挪用去调 files/fine-tune);③转发头白名单(cookie 等一律丢)。
+- 拒绝矩阵:无KEY 401/无效吊销 403/未兑换 403/实例停用 403/**余额≤0→402**(唯一续费
+  抓手的执行点,充值即恢复无需重启)。上游 4xx/5xx 与解析不到用量的调用**不扣费**。
+- 流式支持:HTTP/1.1+chunked 边收边发,SSE data 行截留解析用量(anthropic
+  message_start/delta、openai include_usage 末块);keep-alive 坑提前堵(错误提前
+  返回前先读净请求体,否则连接复用被残留字节打乱)。
+- 计量口径 P1 简化:扣费=in+out 1:1;模型价差倍率表=P2/P3 定价问题,流水可回溯重算。
+- 验证:3 个真 HTTP 集成测试(假上游+真 Nexus 双线程,含流式/换key断言/拒绝矩阵),
+  nexus 全量 16 测过,ruff 清。**无需部署**(Nexus VM 未开,下一块实例侧接线后一起上)。
+
 ## 2026-07-19 — feat:模块6 P1 第1块「GuDuu Nexus fleet 母舰服务」地基+单测(13过)+HTTP冒烟
 - 新建独立包 `nexus/`(与 cosmac 同级,独立 DB,同技术栈:同步 SQLAlchemy+标准库
   ThreadingHTTPServer,不引框架):db(KEY/实例/钱包/流水/心跳 5 表)+keys(KEY 生成
