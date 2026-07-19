@@ -1,5 +1,20 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-19 — feat:模块6 P1 第1块「GuDuu Nexus fleet 母舰服务」地基+单测(13过)+HTTP冒烟
+- 新建独立包 `nexus/`(与 cosmac 同级,独立 DB,同技术栈:同步 SQLAlchemy+标准库
+  ThreadingHTTPServer,不引框架):db(KEY/实例/钱包/流水/心跳 5 表)+keys(KEY 生成
+  CMK-XXXX×4,库里只存 sha256,明文仅签发时一次)+fleet(业务纯函数层)+service(HTTP)。
+- 端点:公开 /nexus/redeem(兑换,IP 限频 10/时)+/nexus/heartbeat(心跳,回传钱包余额
+  =实例侧"快没钱"提醒触点);管理 /nexus/admin/keys|revoke|instances|topup
+  (Bearer NEXUS_ADMIN_TOKEN,未配置一律 503 宁停不裸奔)。
+- 关键语义(按方案拍板落码):一把 KEY 绑一个域名,同域重装幂等且不重复注资,换域名
+  409 走人工;域名唯一防抢注;扣费允许透支(用量事后才知道,断供判定=余额≤0拒下一次,
+  见 fleet.debit 注释);钱包只能经 topup/debit 动,分分有流水。
+- 验证:13 单测全过 + 本地起服务 curl 全链路冒烟(含鉴权/一码多部负例)。
+- **无需部署**:Nexus 尚无生产 VM,等 P1 第2块 LLM 网关成型后一起上机。
+- 下一步:P1 第2块 LLM 网关(平台 key 鉴权/转发原厂/计量扣钱包/断供)→第3块实例侧
+  接线(install.sh 兑码+bot 心跳)→第4块 console(等负责人给看板 UI 参考)。
+
 ## 2026-07-19 — ✅ 模块6 P0 干净 VM 端到端实测通过——样板间 oem1.cosmac.cc(合入 main)
 - 负责人开一次性 GCP VM(test/us-central1,e2,ubuntu-minimal 22.04)+火山引擎 DNS
   加 oem1.cosmac.cc A 记录;全程浏览器 SSH 复制命令装机,共踩 4 坑全修:
