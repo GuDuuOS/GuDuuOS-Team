@@ -1,5 +1,19 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-21 — 🚀 生产搬家国内机:cs.guduuos.com 新主站(发行版自举)+nexus.guduuos.com 大屏上线
+- 负责人拍板:弃 GCP 旧站与旧数据,推倒重来;域名体系改走 guduuos.com(阿里云万网 DNS)。
+- 国内机(218.244.154.187,Claude 免密 SSH 直操):①宿主 Caddy 统一收 443 按域名分发;
+  ②**新主站=发行版共存模式自举**(/opt/cosmac/distro,--behind-proxy,吃自己狗粮),
+  server_name=cs.guduuos.com,bootstrap 一次通过(P0 修的四个坑零复发);③Nexus 母舰
+  (fleet+网关+大屏)systemd 常驻。HTTPS 证书均签发成功=**未被备案拦截**(周期扫描风险仍在,
+  长期运营建议补备案)。
+- 踩坑与对策(录入 memory cn-server):daocloud 镜像源有白名单拉不了 matrixdotorg/synapse
+  →逐镜像走 docker.1ms.run 拉取再改标签;GitHub 间歇断连→生产副本从本机 dev 副本
+  git fetch 本地同步。
+- 浏览器实测验收:https://cs.guduuos.com 登录(admin)→新品牌「欢迎来到 CosMac」引导弹出;
+  Matrix API/联邦发现/bot 全部 200;doctor 13 项全绿。
+- 后续:负责人自行登录确认后,GCP 全部 VM 可删;凭据轮换清单(root 密码/PAT/admin 初始密码)。
+
 ## 2026-07-21 — 品牌收敛:「CosMac Star」→「CosMac」(负责人拍板,新版本起生效)
 - 全局替换 33 个文件(client/cosmac/distro/docs/CLAUDE.md):登录页 logo(含拆开写的
   CosMac<span>Star</span> 两色排版)、顶栏、首次引导欢迎语、bot 显示名默认值、
