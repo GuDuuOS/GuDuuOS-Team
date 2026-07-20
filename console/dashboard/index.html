@@ -1,0 +1,948 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="GuDuu Nexus OEM 智能运营中心，展示 OEM 节点、Token 消耗与系统运行状态。"
+    />
+    <title>GuDuu Nexus · OEM 智能运营中心</title>
+    <link rel="stylesheet" href="./styles.css?v=20260719" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="GuDuu Nexus 首页">
+          <span class="brand__mark" aria-hidden="true">
+            <span class="brand__orbit"></span>
+            <span class="brand__core"></span>
+          </span>
+          <span class="brand__copy">
+            <strong>GuDuu <em>NEXUS</em></strong>
+            <small>OEM INTELLIGENCE NETWORK</small>
+          </span>
+        </a>
+
+        <div class="topbar__title">
+          <span>OEM 智能运营中心</span>
+          <i></i>
+          <small>全域数据总览</small>
+        </div>
+
+        <div class="topbar__actions">
+          <div class="system-live">
+            <span class="system-live__pulse"></span>
+            <span>
+              <small>系统状态</small>
+              <strong>运行稳定</strong>
+            </span>
+          </div>
+          <div class="clock" aria-live="polite">
+            <strong id="clock-time">00:00:00</strong>
+            <small id="clock-date">2026 / 07 / 19</small>
+          </div>
+          <button class="icon-button" id="motion-toggle" type="button" aria-label="暂停动态效果" title="暂停动态效果">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 6v12M16 6v12"></path>
+            </svg>
+          </button>
+          <button class="icon-button" id="fullscreen-toggle" type="button" aria-label="进入全屏" title="进入全屏">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="dashboard">
+        <aside class="left-rail">
+          <section
+            class="panel overview-card"
+            aria-label="Token、收入与 OEM 接入经营概览"
+            aria-roledescription="轮播"
+          >
+            <div class="overview-carousel" id="overview-carousel">
+              <div class="overview-carousel__viewport">
+                <div class="overview-carousel__track" id="overview-carousel-track">
+                  <article class="overview-slide" aria-hidden="false">
+                    <div class="panel-heading overview-slide__heading">
+                      <div>
+                        <span class="eyebrow">TOKEN OVERVIEW</span>
+                        <h2>Token 消耗总览</h2>
+                      </div>
+                    </div>
+
+                    <div class="hero-metric">
+                      <div class="hero-metric__value">
+                        <strong id="total-token">24.86</strong>
+                        <span>B</span>
+                      </div>
+                      <div class="trend-pill trend-pill--up">
+                        <svg viewBox="0 0 12 12" aria-hidden="true">
+                          <path d="m2 8 3-3 2 2 3-4"></path>
+                        </svg>
+                        <span>12.8%</span>
+                      </div>
+                    </div>
+                    <p class="metric-caption">累计 Token 消耗 <span>·</span> 较上周期</p>
+
+                    <div class="metric-pairs">
+                      <article>
+                        <span>今日消耗</span>
+                        <strong id="today-token">186.4M</strong>
+                        <small class="positive">+8.6%</small>
+                      </article>
+                      <article>
+                        <span>今日预估成本</span>
+                        <strong>$ 4,268</strong>
+                        <small class="neutral">预算内 72%</small>
+                      </article>
+                    </div>
+
+                    <div class="trend-chart-wrap">
+                      <div class="chart-labels">
+                        <span>近 24 小时趋势</span>
+                        <strong>峰值 14.2M / h</strong>
+                      </div>
+                      <canvas id="trend-canvas" aria-label="近 24 小时 Token 消耗趋势图"></canvas>
+                      <div class="chart-axis" aria-hidden="true">
+                        <span>00:00</span>
+                        <span>06:00</span>
+                        <span>12:00</span>
+                        <span>18:00</span>
+                        <span>NOW</span>
+                      </div>
+                    </div>
+                  </article>
+
+                  <article
+                    class="overview-slide overview-slide--revenue"
+                    aria-hidden="true"
+                  >
+                    <div class="panel-heading overview-slide__heading">
+                      <div>
+                        <span class="eyebrow">REVENUE OVERVIEW</span>
+                        <h2>总收入金额</h2>
+                      </div>
+                    </div>
+
+                    <div class="hero-metric hero-metric--revenue">
+                      <div class="hero-metric__value hero-metric__value--currency">
+                        <span>$</span>
+                        <strong id="total-revenue">328,760</strong>
+                      </div>
+                      <div class="trend-pill trend-pill--revenue">
+                        <svg viewBox="0 0 12 12" aria-hidden="true">
+                          <path d="m2 8 3-3 2 2 3-4"></path>
+                        </svg>
+                        <span>14.6%</span>
+                      </div>
+                    </div>
+                    <p class="metric-caption">累计收入金额 <span>·</span> 较上周期</p>
+
+                    <div class="metric-pairs metric-pairs--revenue">
+                      <article>
+                        <span>今日收入</span>
+                        <strong>$ 12,846</strong>
+                        <small class="positive">+15.3%</small>
+                      </article>
+                      <article>
+                        <span>本月预估</span>
+                        <strong>$ 386.2K</strong>
+                        <small class="neutral">目标达成 81%</small>
+                      </article>
+                    </div>
+
+                    <div class="trend-chart-wrap">
+                      <div class="chart-labels chart-labels--revenue">
+                        <span>近 24 小时收入</span>
+                        <strong>峰值 $ 1,184 / h</strong>
+                      </div>
+                      <svg
+                        class="revenue-trend-chart"
+                        viewBox="0 0 280 62"
+                        preserveAspectRatio="none"
+                        role="img"
+                        aria-label="近 24 小时收入趋势图"
+                      >
+                        <defs>
+                          <linearGradient id="revenue-area-gradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0" stop-color="#f39a49" stop-opacity=".22"></stop>
+                            <stop offset="1" stop-color="#f39a49" stop-opacity="0"></stop>
+                          </linearGradient>
+                          <linearGradient id="revenue-line-gradient" x1="0" y1="0" x2="1" y2="0">
+                            <stop offset="0" stop-color="#f39a49"></stop>
+                            <stop offset=".52" stop-color="#d875b7"></stop>
+                            <stop offset="1" stop-color="#8b7cff"></stop>
+                          </linearGradient>
+                        </defs>
+                        <path class="revenue-trend-chart__grid" d="M0 15.5H280M0 31H280M0 46.5H280"></path>
+                        <path
+                          class="revenue-trend-chart__area"
+                          d="M0 49L12 45L24 47L36 39L49 42L61 32L73 36L85 25L97 29L109 20L122 26L134 17L146 23L158 13L170 19L182 10L195 16L207 7L219 12L231 6L243 11L255 8L267 10L280 5V62H0Z"
+                        ></path>
+                        <path
+                          class="revenue-trend-chart__line"
+                          d="M0 49L12 45L24 47L36 39L49 42L61 32L73 36L85 25L97 29L109 20L122 26L134 17L146 23L158 13L170 19L182 10L195 16L207 7L219 12L231 6L243 11L255 8L267 10L280 5"
+                        ></path>
+                        <circle class="revenue-trend-chart__point" cx="278" cy="5.7" r="2.4"></circle>
+                      </svg>
+                      <div class="chart-axis" aria-hidden="true">
+                        <span>00:00</span>
+                        <span>06:00</span>
+                        <span>12:00</span>
+                        <span>18:00</span>
+                        <span>NOW</span>
+                      </div>
+                    </div>
+                  </article>
+
+                  <article
+                    class="overview-slide overview-slide--oem"
+                    aria-hidden="true"
+                  >
+                    <div class="panel-heading overview-slide__heading">
+                      <div>
+                        <span class="eyebrow">OEM ACCESS NETWORK</span>
+                        <h2>OEM 接入总量</h2>
+                      </div>
+                    </div>
+
+                    <div class="hero-metric hero-metric--oem">
+                      <div class="hero-metric__value hero-metric__value--oem">
+                        <strong id="overview-oem-total">0000008</strong>
+                        <span>OEM</span>
+                      </div>
+                      <div class="trend-pill trend-pill--oem">
+                        <svg viewBox="0 0 12 12" aria-hidden="true">
+                          <path d="m2 8 3-3 2 2 3-4"></path>
+                        </svg>
+                        <span>+2 本月</span>
+                      </div>
+                    </div>
+                    <p class="metric-caption">累计接入 OEM <span>·</span> 覆盖 6 大洲</p>
+
+                    <div class="metric-pairs">
+                      <article>
+                        <span>当前在线</span>
+                        <strong id="overview-oem-online">07</strong>
+                        <small class="positive" id="overview-oem-online-rate">87.5%</small>
+                      </article>
+                      <article>
+                        <span>本月新增</span>
+                        <strong>02</strong>
+                        <small class="positive">+100%</small>
+                      </article>
+                    </div>
+
+                    <div class="trend-chart-wrap">
+                      <div class="chart-labels chart-labels--oem">
+                        <span>近 12 个月接入趋势</span>
+                        <strong>累计增长 +8</strong>
+                      </div>
+                      <svg
+                        class="oem-access-trend-chart"
+                        viewBox="0 0 280 62"
+                        preserveAspectRatio="none"
+                        role="img"
+                        aria-label="近 12 个月 OEM 累计接入趋势图"
+                      >
+                        <defs>
+                          <linearGradient id="oem-bar-gradient" x1="0" y1="1" x2="0" y2="0">
+                            <stop offset="0" stop-color="#45bedc" stop-opacity=".08"></stop>
+                            <stop offset="1" stop-color="#7565e7" stop-opacity=".34"></stop>
+                          </linearGradient>
+                          <linearGradient id="oem-line-gradient" x1="0" y1="0" x2="1" y2="0">
+                            <stop offset="0" stop-color="#45bedc"></stop>
+                            <stop offset="1" stop-color="#7565e7"></stop>
+                          </linearGradient>
+                        </defs>
+                        <path class="oem-access-trend-chart__grid" d="M0 15.5H280M0 31H280M0 46.5H280"></path>
+                        <g class="oem-access-trend-chart__bars">
+                          <rect x="6" y="54" width="12" height="8" rx="3"></rect>
+                          <rect x="29" y="54" width="12" height="8" rx="3"></rect>
+                          <rect x="52" y="47" width="12" height="15" rx="3"></rect>
+                          <rect x="75" y="41" width="12" height="21" rx="3"></rect>
+                          <rect x="98" y="41" width="12" height="21" rx="3"></rect>
+                          <rect x="121" y="34" width="12" height="28" rx="3"></rect>
+                          <rect x="144" y="28" width="12" height="34" rx="3"></rect>
+                          <rect x="167" y="28" width="12" height="34" rx="3"></rect>
+                          <rect x="190" y="21" width="12" height="41" rx="3"></rect>
+                          <rect x="213" y="21" width="12" height="41" rx="3"></rect>
+                          <rect x="236" y="14" width="12" height="48" rx="3"></rect>
+                          <rect x="259" y="7" width="12" height="55" rx="3"></rect>
+                        </g>
+                        <path
+                          class="oem-access-trend-chart__line"
+                          d="M12 54L35 54L58 47L81 41L104 41L127 34L150 28L173 28L196 21L219 21L242 14L265 7"
+                        ></path>
+                        <circle class="oem-access-trend-chart__point" cx="265" cy="7" r="2.4"></circle>
+                      </svg>
+                      <div class="chart-axis" aria-hidden="true">
+                        <span>8月</span>
+                        <span>11月</span>
+                        <span>2月</span>
+                        <span>5月</span>
+                        <span>7月</span>
+                      </div>
+                    </div>
+                  </article>
+                </div>
+              </div>
+
+              <div class="overview-carousel__nav" aria-label="经营概览切换">
+                <button
+                  class="overview-carousel__arrow"
+                  id="overview-prev"
+                  type="button"
+                  aria-label="上一页：OEM 接入总量"
+                  aria-controls="overview-carousel-track"
+                >
+                  <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m7.5 2.5-3.5 3.5 3.5 3.5"></path></svg>
+                </button>
+                <div class="overview-carousel__dots" role="tablist" aria-label="经营概览页码">
+                  <button
+                    class="overview-carousel__dot is-active"
+                    type="button"
+                    role="tab"
+                    aria-label="显示 Token 消耗总览"
+                    aria-selected="true"
+                    data-overview-target="0"
+                  ></button>
+                  <button
+                    class="overview-carousel__dot"
+                    type="button"
+                    role="tab"
+                    aria-label="显示总收入金额"
+                    aria-selected="false"
+                    data-overview-target="1"
+                  ></button>
+                  <button
+                    class="overview-carousel__dot"
+                    type="button"
+                    role="tab"
+                    aria-label="显示 OEM 接入总量"
+                    aria-selected="false"
+                    data-overview-target="2"
+                  ></button>
+                </div>
+                <button
+                  class="overview-carousel__arrow"
+                  id="overview-next"
+                  type="button"
+                  aria-label="下一页：总收入金额"
+                  aria-controls="overview-carousel-track"
+                >
+                  <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m4.5 2.5 3.5 3.5-3.5 3.5"></path></svg>
+                </button>
+              </div>
+              <p class="sr-only" id="overview-carousel-status" aria-live="polite">Token 消耗总览，第 1 页，共 3 页</p>
+            </div>
+          </section>
+
+          <section class="panel oem-ranking">
+            <div class="panel-heading panel-heading--compact">
+              <div>
+                <span class="eyebrow">NODE RANKING</span>
+                <h2>OEM 消耗排行</h2>
+              </div>
+              <div class="ranking-heading__actions">
+                <button class="text-button" type="button" id="ranking-sort">按用量</button>
+                <div class="ranking-scroll-controls" aria-label="排行滚动控制">
+                  <button
+                    class="ranking-scroll-button"
+                    id="ranking-scroll-up"
+                    type="button"
+                    aria-label="向上滚动 OEM 排行"
+                    disabled
+                  >
+                    <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m2.5 7.5 3.5-3.5 3.5 3.5"></path></svg>
+                  </button>
+                  <button
+                    class="ranking-scroll-button"
+                    id="ranking-scroll-down"
+                    type="button"
+                    aria-label="向下滚动 OEM 排行"
+                  >
+                    <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m2.5 4.5 3.5 3.5 3.5-3.5"></path></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div
+              class="ranking-list"
+              id="ranking-list"
+              role="region"
+              aria-label="OEM Token 消耗完整排行"
+              tabindex="0"
+            ></div>
+          </section>
+
+          <section class="panel efficiency-card">
+            <div class="panel-heading panel-heading--compact">
+              <div>
+                <span class="eyebrow">EFFICIENCY</span>
+                <h2>调用效率</h2>
+              </div>
+              <span class="status-dot">优秀</span>
+            </div>
+            <div class="efficiency-grid">
+              <article>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 12h3l2-6 4 12 2-6h5"></path>
+                </svg>
+                <span>平均响应</span>
+                <strong>1.28<small>s</small></strong>
+              </article>
+              <article>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m5 12 4 4L19 6"></path>
+                </svg>
+                <span>成功率</span>
+                <strong>99.94<small>%</small></strong>
+              </article>
+            </div>
+          </section>
+        </aside>
+
+        <section class="universe-panel panel" data-visual-mode="global" data-visual-kind="map">
+          <div class="universe-panel__heading">
+            <div>
+              <span class="eyebrow" id="visual-eyebrow">GLOBAL DISTRIBUTION</span>
+              <h1 id="visual-title">OEM 全球节点网络</h1>
+            </div>
+            <div class="view-tools">
+              <div class="visual-switch" role="group" aria-label="中心视图">
+                <button
+                  type="button"
+                  class="is-active"
+                  aria-pressed="true"
+                  data-visual-mode="global"
+                  title="全球六边形地图"
+                >
+                  全球地图
+                </button>
+                <button
+                  type="button"
+                  aria-pressed="false"
+                  data-visual-mode="universe"
+                  title="3D OEM 星系"
+                >
+                  3D 星系
+                </button>
+              </div>
+              <div class="view-switch" role="group" aria-label="视图筛选">
+                <button type="button" class="is-active" data-filter="all">全部</button>
+                <button type="button" data-filter="active">活跃</button>
+                <button type="button" data-filter="warning">关注</button>
+              </div>
+              <button class="camera-reset" id="camera-reset" type="button" aria-label="复位星图视角" title="复位星图视角">
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M4.4 7.2A6.2 6.2 0 1 1 4.2 13M4.4 7.2V3.8M4.4 7.2h3.4"></path>
+                </svg>
+              </button>
+              <button class="add-oem-button" id="add-oem" type="button">
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M10 4v12M4 10h12"></path>
+                </svg>
+                接入 OEM
+              </button>
+            </div>
+          </div>
+
+          <div class="visual-stage" id="visual-stage" data-mode="map">
+            <div class="world-map-stage" id="world-map-stage" role="region" aria-label="全球 OEM 六边形地图">
+              <div class="map-heading">
+                <span id="map-heading-eyebrow">GLOBAL OEM NETWORK</span>
+                <strong id="map-node-summary">8 个区域节点 · 覆盖 6 大洲</strong>
+              </div>
+
+              <div class="map-kpis">
+                <article>
+                  <i class="map-kpis__icon map-kpis__icon--purple">
+                    <svg viewBox="0 0 20 20" aria-hidden="true">
+                      <path d="M3.5 10h13M10 3.5v13M5.4 5.4c2.5 2.5 6.7 2.5 9.2 0M5.4 14.6c2.5-2.5 6.7-2.5 9.2 0"></path>
+                      <circle cx="10" cy="10" r="7"></circle>
+                    </svg>
+                  </i>
+                  <span>覆盖区域<strong>24</strong></span>
+                </article>
+                <article>
+                  <i class="map-kpis__icon map-kpis__icon--cyan">
+                    <svg viewBox="0 0 20 20" aria-hidden="true">
+                      <path d="M4 13h3l2-7 3 10 2-6h2"></path>
+                    </svg>
+                  </i>
+                  <span id="map-rps-label">实时调用<strong id="map-rps-value">12.8K/s</strong></span>
+                </article>
+                <article>
+                  <i class="map-kpis__icon map-kpis__icon--green">
+                    <svg viewBox="0 0 20 20" aria-hidden="true">
+                      <path d="m5 10 3 3 7-7"></path>
+                    </svg>
+                  </i>
+                  <span id="map-availability-label">网络可用率<strong id="map-availability-value">99.98%</strong></span>
+                </article>
+              </div>
+
+              <svg
+                class="hex-world-map"
+                id="hex-world-map"
+                viewBox="0 0 1000 480"
+                role="img"
+                aria-labelledby="map-svg-title map-svg-desc"
+              >
+                <title id="map-svg-title">全球 OEM 六边形节点分布地图</title>
+                <desc id="map-svg-desc">每个六边形代表一个世界地图单元，彩色区域表示全球 OEM 调用热度。</desc>
+                <g class="continent-source" aria-hidden="true">
+                  <path d="M56 126 93 88 151 60 220 67 253 91 314 102 342 132 311 154 281 184 244 191 215 229 174 217 139 194 99 182 70 153Z"></path>
+                  <path d="m243 229 64-8 54 27 22 43-16 48-18 52-28 48-29-39-14-52-18-48Z"></path>
+                  <path d="m325 43 49-20 55 13 25 30-29 27-52 2-31-18Z"></path>
+                  <path d="m420 111 42-32 47 5 29 24-18 25 28 18-34 24-45-13-29-27Z"></path>
+                  <path d="m448 179 80-12 60 35 15 49-27 55-27 51-36 35-31-41-15-51-21-51Z"></path>
+                  <path d="m531 101 78-36 93-8 82 18 73 22 64 39-17 45-57 18-35 29-70-16-40 42-61-32-37-42-63-18Z"></path>
+                  <path d="m646 214 53 13 22 56-36 35-43-43Z"></path>
+                  <path d="m724 224 39 25 21 48-28 29-30-43Z"></path>
+                  <path d="m788 338 61-27 72 28 25 42-40 42-72-7-37-31Z"></path>
+                  <path d="m897 174 18-12 12 20-15 20Z"></path>
+                </g>
+                <g class="world-hex-cells" id="world-hex-cells" aria-hidden="true"></g>
+              </svg>
+
+              <div class="hex-hover-card" id="hex-hover-card" aria-hidden="true">
+                <div>
+                  <small id="hex-hover-scope">MAP CELL</small>
+                  <em>点击查看</em>
+                </div>
+                <strong id="hex-hover-id">HEX-0001</strong>
+                <span id="hex-hover-status">未绑定 OEM · 热度 18</span>
+              </div>
+
+              <button class="geo-node" type="button" data-node-id="nb" style="--geo-x: 18%; --geo-y: 34%; --geo-color: #6e7cf6">
+                <span class="geo-node__card">
+                  <span class="geo-node__icon" aria-hidden="true">
+                    <svg viewBox="0 0 20 20"><rect x="4" y="4" width="12" height="12" rx="2"></rect><path d="M7 8h6M7 11h6M7 14h4"></path></svg>
+                  </span>
+                  <span class="geo-node__copy">
+                    <small>Chicago · US-Central</small>
+                    <strong><span class="geo-node__name">Nebula One</span><em>3.41B</em></strong>
+                  </span>
+                </span>
+              </button>
+              <button class="geo-node" type="button" data-node-id="db" style="--geo-x: 49%; --geo-y: 26%; --geo-color: #54d9a1">
+                <span class="geo-node__card">
+                  <span class="geo-node__icon" aria-hidden="true">
+                    <svg viewBox="0 0 20 20"><rect x="4" y="4" width="12" height="12" rx="2"></rect><path d="M7 8h6M7 11h6M7 14h4"></path></svg>
+                  </span>
+                  <span class="geo-node__copy">
+                    <small>Berlin · EU-Central</small>
+                    <strong><span class="geo-node__name">深蓝数据</span><em>2.33B</em></strong>
+                  </span>
+                </span>
+              </button>
+              <button class="geo-node geo-node--below" type="button" data-node-id="gl" style="--geo-x: 55%; --geo-y: 48%; --geo-color: #ee638b">
+                <span class="geo-node__card">
+                  <span class="geo-node__icon" aria-hidden="true">
+                    <svg viewBox="0 0 20 20"><rect x="4" y="4" width="12" height="12" rx="2"></rect><path d="M7 8h6M7 11h6M7 14h4"></path></svg>
+                  </span>
+                  <span class="geo-node__copy">
+                    <small>Cairo · ME-North</small>
+                    <strong><span class="geo-node__name">引力工场</span><em>3.08B</em></strong>
+                  </span>
+                </span>
+              </button>
+              <button class="geo-node geo-node--left" type="button" data-node-id="sg" style="--geo-x: 82%; --geo-y: 39%; --geo-color: #a768ec">
+                <span class="geo-node__card">
+                  <span class="geo-node__icon" aria-hidden="true">
+                    <svg viewBox="0 0 20 20"><rect x="4" y="4" width="12" height="12" rx="2"></rect><path d="M7 8h6M7 11h6M7 14h4"></path></svg>
+                  </span>
+                  <span class="geo-node__copy">
+                    <small>Shanghai · CN-East</small>
+                    <strong><span class="geo-node__name">星河智算</span><em>5.82B</em></strong>
+                  </span>
+                </span>
+              </button>
+              <button class="geo-node geo-node--left geo-node--below" type="button" data-node-id="cz" style="--geo-x: 80%; --geo-y: 45%; --geo-color: #35d9ff">
+                <span class="geo-node__card">
+                  <span class="geo-node__icon" aria-hidden="true">
+                    <svg viewBox="0 0 20 20"><rect x="4" y="4" width="12" height="12" rx="2"></rect><path d="M7 8h6M7 11h6M7 14h4"></path></svg>
+                  </span>
+                  <span class="geo-node__copy">
+                    <small>Guangzhou · CN-South</small>
+                    <strong><span class="geo-node__name">云舟科技</span><em>3.96B</em></strong>
+                  </span>
+                </span>
+              </button>
+              <button class="geo-node geo-node--below geo-node--edge-right" type="button" data-node-id="ly" style="--geo-x: 75%; --geo-y: 56%; --geo-color: #ffb65c">
+                <span class="geo-node__card">
+                  <span class="geo-node__icon" aria-hidden="true">
+                    <svg viewBox="0 0 20 20"><rect x="4" y="4" width="12" height="12" rx="2"></rect><path d="M7 8h6M7 11h6M7 14h4"></path></svg>
+                  </span>
+                  <span class="geo-node__copy">
+                    <small>Singapore · AP-SG</small>
+                    <strong><span class="geo-node__name">光年智能</span><em>2.74B</em></strong>
+                  </span>
+                </span>
+              </button>
+              <button class="geo-node" type="button" data-node-id="px" style="--geo-x: 31%; --geo-y: 72%; --geo-color: #ff9f55">
+                <span class="geo-node__card">
+                  <span class="geo-node__icon" aria-hidden="true">
+                    <svg viewBox="0 0 20 20"><rect x="4" y="4" width="12" height="12" rx="2"></rect><path d="M7 8h6M7 11h6M7 14h4"></path></svg>
+                  </span>
+                  <span class="geo-node__copy">
+                    <small>São Paulo · BR-South</small>
+                    <strong><span class="geo-node__name">极星云</span><em>1.47B</em></strong>
+                  </span>
+                </span>
+              </button>
+              <button class="geo-node geo-node--left" type="button" data-node-id="hy" style="--geo-x: 88%; --geo-y: 77%; --geo-color: #3fc5e7">
+                <span class="geo-node__card">
+                  <span class="geo-node__icon" aria-hidden="true">
+                    <svg viewBox="0 0 20 20"><rect x="4" y="4" width="12" height="12" rx="2"></rect><path d="M7 8h6M7 11h6M7 14h4"></path></svg>
+                  </span>
+                  <span class="geo-node__copy">
+                    <small>Sydney · AU-East</small>
+                    <strong><span class="geo-node__name">寰宇引擎</span><em>2.05B</em></strong>
+                  </span>
+                </span>
+              </button>
+
+              <div class="map-traffic">
+                <div class="map-traffic__metric">
+                  <small id="map-traffic-label">GLOBAL TRAFFIC</small>
+                  <strong><span id="map-traffic-value">12,840</span> <em>req/s</em></strong>
+                </div>
+                <div class="map-traffic__bars" id="map-traffic-bars" aria-label="全球实时调用趋势"></div>
+                <div class="map-traffic__status">
+                  <span><i></i><b id="map-traffic-status">6 个区域稳定</b></span>
+                  <strong id="map-traffic-delta">+12.8%</strong>
+                </div>
+              </div>
+            </div>
+
+            <div class="universe-stage" id="universe-stage" role="tabpanel" aria-hidden="true">
+            <canvas
+              id="universe-canvas"
+              tabindex="0"
+              aria-describedby="canvas-hint"
+              aria-label="可拖动旋转和缩放的球状 OEM 节点网络，中央 NEXUS 核心会同步转动"
+            ></canvas>
+
+            <div class="network-summary">
+              <article>
+                <span>节点总数</span>
+                <strong id="node-count">08</strong>
+              </article>
+              <i></i>
+              <article>
+                <span>当前在线</span>
+                <strong id="online-count">07</strong>
+              </article>
+              <i></i>
+              <article>
+                <span>每秒调用</span>
+                <strong id="live-rps">12,840</strong>
+              </article>
+            </div>
+
+            <div class="canvas-hint" id="canvas-hint">
+              <span class="canvas-hint__mouse">
+                <i></i>
+              </span>
+              拖拽球体 · 核心同步 · 滚轮缩放 · 点击节点
+            </div>
+
+            <article class="node-inspector" id="node-inspector">
+              <div class="node-inspector__top">
+                <div class="node-avatar" id="selected-avatar">SG</div>
+                <div>
+                  <span id="selected-code">OEM · SG-01</span>
+                  <h3 id="selected-name">星河智算</h3>
+                </div>
+                <span class="node-state" id="selected-state">运行中</span>
+              </div>
+              <div class="node-inspector__stats">
+                <div>
+                  <span>累计消耗</span>
+                  <strong id="selected-token">4.82B</strong>
+                </div>
+                <div>
+                  <span>今日请求</span>
+                  <strong id="selected-requests">2.61M</strong>
+                </div>
+                <div>
+                  <span>平均延迟</span>
+                  <strong id="selected-latency">0.82s</strong>
+                </div>
+              </div>
+              <div class="node-inspector__footer">
+                <span id="selected-models">4 个模型在线</span>
+                <button type="button" id="inspect-detail">
+                  查看节点
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="m6 3 5 5-5 5"></path>
+                  </svg>
+                </button>
+              </div>
+            </article>
+
+            <div class="birth-toast" id="birth-toast" role="status" aria-live="polite">
+              <div class="birth-toast__icon">
+                <span></span>
+              </div>
+              <div>
+                <small>NEW NODE ONLINE</small>
+                <strong id="birth-toast-name">新 OEM 节点已接入</strong>
+              </div>
+            </div>
+          </div>
+          </div>
+
+          <div class="universe-footer">
+            <div class="legend">
+              <span><i class="legend__dot legend__dot--active"></i>活跃节点</span>
+              <span><i class="legend__dot legend__dot--warning"></i>高负载</span>
+              <span><i class="legend__dot legend__dot--offline"></i>维护中</span>
+              <span><i class="legend__line"></i>实时数据链路</span>
+            </div>
+            <div class="universe-scale">
+              <span>网络同步</span>
+              <div><i></i></div>
+              <strong>100%</strong>
+            </div>
+          </div>
+        </section>
+
+        <aside class="right-rail">
+          <section class="panel model-distribution">
+            <div class="panel-heading">
+              <div>
+                <span class="eyebrow">MODEL DISTRIBUTION</span>
+                <h2>模型用量分布</h2>
+              </div>
+              <span class="panel-heading__tag">TODAY</span>
+            </div>
+            <div class="distribution-main">
+              <div class="donut-chart" aria-label="模型用量分布环形图">
+                <div class="donut-chart__inner">
+                  <small>今日总量</small>
+                  <strong>186.4<em>M</em></strong>
+                </div>
+              </div>
+              <div class="distribution-legend">
+                <div>
+                  <i style="--dot-color: #8b7cff"></i>
+                  <span>GPT-5</span>
+                  <strong>42.8%</strong>
+                </div>
+                <div>
+                  <i style="--dot-color: #35d9ff"></i>
+                  <span>DeepSeek V3</span>
+                  <strong>28.6%</strong>
+                </div>
+                <div>
+                  <i style="--dot-color: #57e6a5"></i>
+                  <span>Qwen Max</span>
+                  <strong>18.4%</strong>
+                </div>
+                <div>
+                  <i style="--dot-color: #ffb65c"></i>
+                  <span>其他模型</span>
+                  <strong>10.2%</strong>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel realtime-card">
+            <div class="panel-heading panel-heading--compact">
+              <div>
+                <span class="eyebrow">LIVE ACTIVITY</span>
+                <h2>实时动态</h2>
+              </div>
+              <span class="live-badge"><i></i> LIVE</span>
+            </div>
+            <div class="activity-list" id="activity-list">
+              <article>
+                <span class="activity-icon activity-icon--success">
+                  <svg viewBox="0 0 20 20"><path d="m5 10 3 3 7-7"></path></svg>
+                </span>
+                <div>
+                  <p><strong>星河智算</strong> 完成模型热更新</p>
+                  <small>刚刚 · GPT-5 生产集群</small>
+                </div>
+              </article>
+              <article>
+                <span class="activity-icon activity-icon--flow">
+                  <svg viewBox="0 0 20 20"><path d="M4 13h3l2-7 3 10 2-6h2"></path></svg>
+                </span>
+                <div>
+                  <p><strong>云舟科技</strong> 调用量进入高峰</p>
+                  <small>2 分钟前 · 8,420 req/s</small>
+                </div>
+              </article>
+              <article>
+                <span class="activity-icon activity-icon--warning">
+                  <svg viewBox="0 0 20 20"><path d="M10 5v6M10 14v.5"></path></svg>
+                </span>
+                <div>
+                  <p><strong>Nebula One</strong> 预算使用达 80%</p>
+                  <small>8 分钟前 · 本周期额度</small>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel capacity-card">
+            <div class="panel-heading panel-heading--compact">
+              <div>
+                <span class="eyebrow">CAPACITY</span>
+                <h2>资源与配额</h2>
+              </div>
+              <button class="text-button" type="button" id="capacity-detail">详情</button>
+            </div>
+            <div class="capacity-list">
+              <div>
+                <div class="capacity-label">
+                  <span>全局 Token 配额</span>
+                  <strong id="quota-percent">72%</strong>
+                </div>
+                <div class="progress"><i id="quota-bar" style="width: 72%"></i></div>
+                <small id="quota-used">已使用 24.86B / 34.50B</small>
+              </div>
+              <div>
+                <div class="capacity-label">
+                  <span>并发调用容量</span>
+                  <strong>58%</strong>
+                </div>
+                <div class="progress progress--cyan"><i style="width: 58%"></i></div>
+                <small>12,840 / 22,000 req/s</small>
+              </div>
+              <div>
+                <div class="capacity-label">
+                  <span>存储与日志</span>
+                  <strong>46%</strong>
+                </div>
+                <div class="progress progress--green"><i style="width: 46%"></i></div>
+                <small>9.2 TB / 20 TB</small>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel health-card">
+            <div class="health-card__summary">
+              <div class="health-orb"><i></i></div>
+              <div>
+                <span>GLOBAL HEALTH SCORE</span>
+                <strong>98.7</strong>
+              </div>
+              <em>A+</em>
+            </div>
+            <div class="health-nodes">
+              <span>亚太 <i></i> 32ms</span>
+              <span>北美 <i></i> 48ms</span>
+              <span>欧洲 <i></i> 61ms</span>
+            </div>
+          </section>
+        </aside>
+      </main>
+
+      <footer class="statusbar">
+        <div>
+          <span class="statusbar__signal"><i></i><i></i><i></i></span>
+          GuDuu Nexus Data Mesh
+        </div>
+        <div class="statusbar__ticker">
+          <span>数据更新时间 <strong id="updated-time">00:00:00</strong></span>
+          <i></i>
+          <span>API Gateway <strong>Normal</strong></span>
+          <i></i>
+          <span>Region <strong>CN-East-01</strong></span>
+        </div>
+        <div>VERSION 2.6.0</div>
+      </footer>
+    </div>
+
+    <div class="detail-drawer" id="detail-drawer" aria-hidden="true">
+      <button class="detail-drawer__backdrop" id="drawer-backdrop" aria-label="关闭节点详情"></button>
+      <aside role="dialog" aria-modal="true" aria-labelledby="drawer-name">
+        <div class="drawer-header">
+          <div>
+            <span class="eyebrow" id="drawer-eyebrow">NODE PROFILE</span>
+            <h2 id="drawer-name">星河智算</h2>
+          </div>
+          <button class="icon-button" id="drawer-close" type="button" aria-label="关闭">
+            <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+          </button>
+        </div>
+        <div class="drawer-identity">
+          <div class="drawer-planet" id="drawer-planet"><span id="drawer-glyph">SG</span><i></i></div>
+          <div>
+            <span id="drawer-code">OEM · SG-01</span>
+            <strong id="drawer-status">运行中</strong>
+            <small id="drawer-region">华东 · CN-East-01</small>
+          </div>
+        </div>
+        <div class="drawer-stats">
+          <article>
+            <span id="drawer-token-label">累计 Token</span>
+            <strong id="drawer-token">5.82B</strong>
+            <small id="drawer-share">全局占比 23.4%</small>
+          </article>
+          <article>
+            <span id="drawer-requests-label">今日请求</span>
+            <strong id="drawer-requests">2.61M</strong>
+            <small id="drawer-requests-meta">峰值 3,280 req/s</small>
+          </article>
+          <article>
+            <span id="drawer-success-label">成功率</span>
+            <strong id="drawer-success">99.97%</strong>
+            <small id="drawer-success-meta">高于目标 0.07%</small>
+          </article>
+          <article>
+            <span id="drawer-latency-label">平均延迟</span>
+            <strong id="drawer-latency">0.82s</strong>
+            <small id="drawer-latency-meta">P95 1.64s</small>
+          </article>
+        </div>
+        <div class="drawer-grid-meta">
+          <div><span>地图坐标</span><strong id="drawer-cell-coordinates">X 000 · Y 000</strong></div>
+          <div><span>边界数据</span><strong>Natural Earth 110m</strong></div>
+          <div><span>OEM 关联</span><strong id="drawer-cell-oem">暂无绑定</strong></div>
+        </div>
+        <div class="drawer-section drawer-oem-section">
+          <div class="drawer-section__head">
+            <h3>近 7 日用量</h3>
+            <span>+18.2%</span>
+          </div>
+          <div class="drawer-bars">
+            <i style="height: 42%"></i>
+            <i style="height: 58%"></i>
+            <i style="height: 51%"></i>
+            <i style="height: 72%"></i>
+            <i style="height: 66%"></i>
+            <i style="height: 84%"></i>
+            <i style="height: 94%"></i>
+          </div>
+          <div class="drawer-days">
+            <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+          </div>
+        </div>
+        <div class="drawer-section drawer-oem-section">
+          <div class="drawer-section__head">
+            <h3>模型实例</h3>
+            <button type="button">管理配置</button>
+          </div>
+          <div class="model-instances">
+            <article><i></i><span>GPT-5</span><small>2 个实例</small><strong>在线</strong></article>
+            <article><i></i><span>DeepSeek V3</span><small>1 个实例</small><strong>在线</strong></article>
+            <article><i></i><span>Qwen Max</span><small>1 个实例</small><strong>在线</strong></article>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <script src="./app.js?v=20260719"></script>
+  </body>
+</html>

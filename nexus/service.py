@@ -112,6 +112,23 @@ class NexusHandler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _check_dash(self) -> bool:
+        """大屏端点鉴权：只读令牌 NEXUS_DASH_TOKEN（大屏挂墙上，权限与管理
+        令牌分开——泄露只读令牌看得到数据、动不了 KEY 和钱包）；admin 令牌也放行。"""
+        got = self.headers.get("Authorization") or ""
+        token = got[7:] if got.startswith("Bearer ") else ""
+        dash = os.environ.get("NEXUS_DASH_TOKEN", "").strip()
+        admin = _admin_token()
+        if dash and token and hmac.compare_digest(token, dash):
+            return True
+        if admin and token and hmac.compare_digest(token, admin):
+            return True
+        if not dash and not admin:
+            self._err(503, "NEXUS_ADMIN_DISABLED", "NEXUS_DASH_TOKEN 未配置")
+        else:
+            self._err(401, "NEXUS_FORBIDDEN", "大屏令牌无效")
+        return False
+
     # 屏蔽默认的逐请求 stderr 日志，统一走 logging
     def log_message(self, fmt: str, *args: Any) -> None:
         logger.info("%s %s", self._client_ip(), fmt % args)
@@ -133,7 +150,66 @@ class NexusHandler(BaseHTTPRequestHandler):
                     lambda s: self._json(200, {"instances": fleet.list_instances(s)})
                 )
             return
+        if path == "/nexus/dash/summary":
+            if self._check_dash():
+                self._with_session(lambda s: self._json(200, fleet.dash_summary(s)))
+            return
+        # —— 其余 GET：当静态请求，托管数据大屏（console/dashboard）——
+        if self._serve_dashboard(path):
+            return
         self._err(404, "NEXUS_UNKNOWN", "未知端点")
+
+    # ---- 大屏静态托管 ----
+    # Nexus VM 上一个进程同时供 API 和大屏页面：同源、免 CORS、免多配一个
+    # 静态服务器。生产入口 https://<nexus域名>/#token=<NEXUS_DASH_TOKEN>。
+
+    _DASH_DIR = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "console",
+        "dashboard",
+    )
+    _MIME = {
+        ".html": "text/html; charset=utf-8",
+        ".js": "application/javascript; charset=utf-8",
+        ".mjs": "application/javascript; charset=utf-8",
+        ".css": "text/css; charset=utf-8",
+        ".json": "application/json; charset=utf-8",
+        ".svg": "image/svg+xml",
+        ".png": "image/png",
+        ".txt": "text/plain; charset=utf-8",
+        ".ico": "image/x-icon",
+    }
+
+    def _serve_dashboard(self, path: str) -> bool:
+        """把 GET 路径映射到 console/dashboard 下的文件。返回是否已处理。
+
+        安全：normpath 后必须仍在大屏目录内（掐死 ../ 穿越）；扩展名白名单。
+        """
+        if not os.path.isdir(self._DASH_DIR):
+            return False
+        rel = path.lstrip("/") or "index.html"
+        full = os.path.normpath(os.path.join(self._DASH_DIR, rel))
+        if not full.startswith(self._DASH_DIR + os.sep) and full != os.path.join(
+            self._DASH_DIR, "index.html"
+        ):
+            return False
+        ext = os.path.splitext(full)[1].lower()
+        ctype = self._MIME.get(ext)
+        if ctype is None or not os.path.isfile(full):
+            return False
+        with open(full, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        # 大屏迭代频繁,禁缓存省一类"改了没生效"的支持工单;地图 JSON 大文件除外
+        self.send_header(
+            "Cache-Control",
+            "public, max-age=86400" if ext == ".json" else "no-cache",
+        )
+        self.end_headers()
+        self.wfile.write(data)
+        return True
 
     def do_POST(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]

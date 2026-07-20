@@ -1,0 +1,10 @@
+{
+  "name": "guduu-nexus-oem-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate:map": "node scripts/generate-world-hexes.mjs",
+    "start": "node server.mjs"
+  }
+}

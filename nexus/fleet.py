@@ -272,3 +272,141 @@ def list_instances(s) -> List[Dict[str, Any]]:
             }
         )
     return out
+
+
+# ---------- 大屏数据聚合（console/dashboard 用）----------
+
+# 在线判定阈值：心跳间隔设计为 10 分钟级，15 分钟没心跳=警告，2 小时=离线
+_ONLINE_MS = 15 * 60 * 1000
+_WARN_MS = 2 * 60 * 60 * 1000
+
+
+def _day_start_ms(offset_days: int = 0) -> int:
+    """今日（本地时区）零点的毫秒时间戳；offset_days=-1 即昨日零点。"""
+    lt = time.localtime(time.time() + offset_days * 86400)
+    return int(
+        time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1)) * 1000
+    )
+
+
+def _display_status(inst: NexusInstance, now: int) -> str:
+    """把「停用标志 + 心跳新旧」折叠成大屏的三色状态。"""
+    if inst.status != "active":
+        return "offline"
+    if inst.last_seen_ts is None or now - inst.last_seen_ts > _WARN_MS:
+        return "offline"
+    if now - inst.last_seen_ts > _ONLINE_MS:
+        return "warning"
+    return "active"
+
+
+def dash_summary(s) -> Dict[str, Any]:
+    """给数据大屏的一站式聚合：实例 × 用量 × 钱包 × 心跳 → 一个 JSON。
+
+    设计考量：
+      - 用量走 SQL 聚合（ledger 的 usage 行 = 每次 AI 调用一行，量会很大，
+        绝不能全捞进内存）；模型分布只扫**今日**流水且封顶 2000 行；
+      - delta（环比）= 今日 vs 昨日 token 消耗百分比，大屏涨跌角标用；
+      - recent = 最近 15 条流水（充值/消耗/兑换都算"实时动态"素材）。
+    """
+    from sqlalchemy import func  # 就近导入：仅此函数用聚合
+
+    now = _now_ms()
+    today0 = _day_start_ms()
+    yesterday0 = _day_start_ms(-1)
+
+    def _usage_by_instance(since: int = 0, until: int = 0) -> Dict[int, Dict[str, int]]:
+        """usage 流水按实例聚合：{instance_id: {tokens, requests}}（SQL SUM/COUNT）。"""
+        q = select(
+            NexusLedger.instance_id,
+            func.sum(NexusLedger.delta_tokens),
+            func.count(),
+        ).where(NexusLedger.kind == "usage")
+        if since:
+            q = q.where(NexusLedger.ts >= since)
+        if until:
+            q = q.where(NexusLedger.ts < until)
+        out: Dict[int, Dict[str, int]] = {}
+        for iid, total, cnt in s.execute(q.group_by(NexusLedger.instance_id)).all():
+            # usage 的 delta 是负数，取绝对值当消耗
+            out[int(iid)] = {"tokens": abs(int(total or 0)), "requests": int(cnt or 0)}
+        return out
+
+    all_usage = _usage_by_instance()
+    today_usage = _usage_by_instance(since=today0)
+    yesterday_usage = _usage_by_instance(since=yesterday0, until=today0)
+
+    # 今日模型分布：从流水备注（"provider/model in=x out=y"）解析，封顶 2000 行
+    model_rows = s.execute(
+        select(NexusLedger.instance_id, NexusLedger.note)
+        .where(NexusLedger.kind == "usage", NexusLedger.ts >= today0)
+        .order_by(NexusLedger.id.desc())
+        .limit(2000)
+    ).all()
+    models_by_inst: Dict[int, set] = {}
+    for iid, note in model_rows:
+        model = (note or "").split(" ", 1)[0]
+        if model:
+            models_by_inst.setdefault(int(iid), set()).add(model)
+
+    oems: List[Dict[str, Any]] = []
+    online = 0
+    for inst in s.execute(select(NexusInstance).order_by(NexusInstance.id)).scalars():
+        wallet = s.get(NexusWallet, inst.id)
+        try:
+            stats = json.loads(inst.stats_json or "{}")
+        except Exception:
+            stats = {}
+        status = _display_status(inst, now)
+        if status != "offline":
+            online += 1
+        t_today = today_usage.get(inst.id, {}).get("tokens", 0)
+        t_yesterday = yesterday_usage.get(inst.id, {}).get("tokens", 0)
+        # 环比：昨日为 0 时不算涨幅（避免 +∞），显示 0
+        delta = round((t_today - t_yesterday) / t_yesterday * 100, 1) if t_yesterday else 0.0
+        oems.append(
+            {
+                "id": inst.id,
+                "domain": inst.domain,
+                "status": status,
+                "version": inst.version,
+                "last_seen_ts": inst.last_seen_ts,
+                "balance_tokens": int(wallet.balance_tokens) if wallet else 0,
+                "tokens_total": all_usage.get(inst.id, {}).get("tokens", 0),
+                "tokens_today": t_today,
+                "requests_today": today_usage.get(inst.id, {}).get("requests", 0),
+                "models_today": len(models_by_inst.get(inst.id, ())),
+                "delta_pct": delta,
+                "users": int(stats.get("users") or 0),
+            }
+        )
+
+    recent_rows = s.execute(
+        select(NexusLedger).order_by(NexusLedger.id.desc()).limit(15)
+    ).scalars().all()
+    domains = {o["id"]: o["domain"] for o in oems}
+    recent = [
+        {
+            "ts": r.ts,
+            "kind": r.kind,
+            "domain": domains.get(r.instance_id, f"#{r.instance_id}"),
+            "tokens": int(r.delta_tokens),
+            "note": (r.note or "")[:80],
+        }
+        for r in recent_rows
+    ]
+
+    return {
+        "generated_ts": now,
+        "totals": {
+            "instances": len(oems),
+            "online": online,
+            "users": sum(o["users"] for o in oems),
+            "tokens_total": sum(o["tokens_total"] for o in oems),
+            "tokens_today": sum(o["tokens_today"] for o in oems),
+            "requests_today": sum(o["requests_today"] for o in oems),
+            "balance_total": sum(o["balance_tokens"] for o in oems),
+        },
+        "oems": oems,
+        "recent": recent,
+    }

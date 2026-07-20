@@ -1,5 +1,23 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-20 — feat:GuDuu Nexus 数据大屏接真数据(负责人自带 UI 并入 console/dashboard)
+- 负责人提供成品大屏原型(~/Documents/GuDuu Nexus大屏,零依赖纯前端:世界六边形
+  地图+3D星系+排行/总览面板),并入主仓库 **console/dashboard/**(原文件夹保留不动,
+  以后改动以仓库副本为准)。
+- **Nexus 侧**:①fleet.dash_summary 一站式聚合(实例×用量×钱包×心跳→大屏 JSON;
+  用量走 SQL SUM 防内存爆,模型分布只扫今日流水封顶 2000 行;三色状态=停用标志+心跳
+  新旧:15分钟内 active/2小时内 warning/更久 offline);②GET /nexus/dash/summary,
+  鉴权用**只读大屏令牌** NEXUS_DASH_TOKEN(与 admin 分权:大屏挂墙,泄露只能看不能动)
+  ;③service 顺手托管大屏静态文件(同源免 CORS,生产入口 https://<nexus>/#token=xxx)。
+- **大屏侧**(app.js 加"真实数据适配层",演示模式零破坏):起屏拉 summary,拉到就把
+  演示 OEMS 换成真实实例(颜色/星球坐标按域名 djb2 确定性生成,展示名智能取域名段),
+  单位 K/M/B 按最大节点自适应(演示写死 B,真实舰队初期是 M 级);30 秒静默刷数字,
+  节点数变化才整页重载;延迟未采集显示"—"不伪造。
+- 本地实测(浏览器):5 实例种子数据上屏——排行 oem-alpha 8.40M/beta-ai 3.90M/
+  delta 1.05M,累计 15.00M,今日 5.09M,warning/offline 状态正确,欠费实例余额-50000。
+- 已知边界:右侧「模型用量分布/实时动态/资源配额」仍演示数据(P2 大屏真实化再接;
+  recent 流水后端已返回,前端未接)。nexus 全量 17 测过。**无需部署**(Nexus VM 未开)。
+
 ## 2026-07-19 — feat:模块6 P1 第2块「LLM 网关」——原厂 key 永不下发的技术缰绳落地(16测全过)
 - `nexus/gateway.py`:按厂商路径透传(/gw/anthropic|openai|ark/...),实例拿 OEM KEY
   当 API key(x-api-key/Bearer 两种 SDK 送法都认),网关校验(KEY哈希/实例状态/钱包余额)

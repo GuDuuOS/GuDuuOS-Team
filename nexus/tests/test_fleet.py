@@ -156,6 +156,36 @@ class FleetTest(unittest.TestCase):
         with self.assertRaises(FleetError):
             fleet.topup(self.s, 9999, 10)
 
+    # ---- 大屏聚合 ----
+
+    def test_dash_summary(self):
+        # 实例A：有心跳、有今日用量、两种模型
+        ka = self._one_key(grant=1000)
+        inst = fleet.redeem(self.s, ka, "im.dash-a.test")["instance_id"]
+        fleet.heartbeat(self.s, ka, "1.0.0", {"users": 12})
+        fleet.debit(self.s, inst, 150, "openai/gpt-4o in=100 out=50")
+        fleet.debit(self.s, inst, 30, "anthropic/claude-x in=20 out=10")
+        # 实例B：兑换后从未心跳 → 大屏应判 offline
+        fleet.redeem(self.s, self._one_key(), "im.dash-b.test")
+
+        out = fleet.dash_summary(self.s)
+        self.assertEqual(out["totals"]["instances"], 2)
+        self.assertEqual(out["totals"]["online"], 1)
+        self.assertEqual(out["totals"]["tokens_today"], 180)
+        self.assertEqual(out["totals"]["requests_today"], 2)
+
+        by_domain = {o["domain"]: o for o in out["oems"]}
+        a = by_domain["im.dash-a.test"]
+        self.assertEqual(a["status"], "active")
+        self.assertEqual(a["tokens_total"], 180)
+        self.assertEqual(a["requests_today"], 2)
+        self.assertEqual(a["models_today"], 2)  # gpt-4o + claude-x
+        self.assertEqual(a["users"], 12)
+        self.assertEqual(a["balance_tokens"], 820)
+        self.assertEqual(by_domain["im.dash-b.test"]["status"], "offline")
+        # 实时动态：A 的 grant + 2 笔 usage + B 的 grant = 4 条流水
+        self.assertEqual(len(out["recent"]), 4)
+
 
 if __name__ == "__main__":
     unittest.main()
