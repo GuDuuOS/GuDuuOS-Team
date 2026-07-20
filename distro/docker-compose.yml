@@ -112,10 +112,12 @@ services:
     depends_on:
       - synapse
       - bot
+    # 端口绑定可被 .env 覆盖（共存模式 --behind-proxy 时改绑 127.0.0.1 高位口，
+    # 由宿主反代按域名转发进来；独占模式保持默认直绑 80/443）
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"   # HTTP/3
+      - "${COSMAC_WEB_HTTP:-80:80}"
+      - "${COSMAC_WEB_HTTPS:-443:443}"
+      - "${COSMAC_WEB_HTTPS_UDP:-443:443/udp}"   # HTTP/3
     volumes:
       - ./data/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./data/caddy/data:/data      # 证书存这里，删了会重新签（有频率限制，别乱删）

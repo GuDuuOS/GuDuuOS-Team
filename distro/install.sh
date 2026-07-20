@@ -56,12 +56,18 @@ fi
 
 # ---------- 1. 收集配置 ----------
 DOMAIN="" ADMIN_EMAIL="" OEM_KEY=""
+# 共存模式（--behind-proxy）：本机已有宿主反代（Caddy/nginx）统一收 80/443 时用。
+# 容器 Caddy 改为只出明文 HTTP、绑 127.0.0.1:8080，证书归宿主反代管。
+BEHIND_PROXY=0
+PROXY_HTTP_PORT=8080
 while [ $# -gt 0 ]; do
   case "$1" in
     --domain) DOMAIN="$2"; shift 2 ;;
     --email)  ADMIN_EMAIL="$2"; shift 2 ;;
     --key)    OEM_KEY="$2"; shift 2 ;;
-    *) die "未知参数：$1（支持 --domain/--email/--key）" ;;
+    --behind-proxy) BEHIND_PROXY=1; shift ;;
+    --proxy-port) PROXY_HTTP_PORT="$2"; shift 2 ;;
+    *) die "未知参数：$1（支持 --domain/--email/--key/--behind-proxy/--proxy-port）" ;;
   esac
 done
 
@@ -97,11 +103,13 @@ if [ -n "$PUB_IP" ] && [ -n "$DNS_IP" ] && [ "$PUB_IP" != "$DNS_IP" ]; then
 elif [ -z "$DNS_IP" ]; then
   warn "域名 $DOMAIN 当前解析不到 IP —— 请确认 DNS A 记录已生效，否则证书签发会失败。"
 fi
-for p in 80 443; do
-  if ss -tln 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$p\$"; then
-    warn "端口 $p 已被占用 —— Caddy 需要独占 80/443，请先停掉占用进程（如宿主机 nginx）。"
-  fi
-done
+if [ "$BEHIND_PROXY" -eq 0 ]; then
+  for p in 80 443; do
+    if ss -tln 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$p\$"; then
+      warn "端口 $p 已被占用 —— Caddy 需要独占 80/443，请先停掉占用进程（如宿主机 nginx）。"
+    fi
+  done
+fi
 
 # ---------- 3. 生成密钥 + 渲染配置 ----------
 say "生成密钥并渲染配置……"
@@ -131,8 +139,20 @@ render templates/appservice.yaml.tpl data/synapse/appservice-cosmac.yaml \
   "AS_TOKEN=$AS_TOKEN" "HS_TOKEN=$HS_TOKEN" "DOMAIN_REGEX=$DOMAIN_REGEX"
 chmod 600 data/synapse/appservice-cosmac.yaml
 
-render templates/Caddyfile.tpl data/caddy/Caddyfile \
-  "DOMAIN=$DOMAIN" "ADMIN_EMAIL=$ADMIN_EMAIL"
+if [ "$BEHIND_PROXY" -eq 1 ]; then
+  # 共存模式：容器只出明文 HTTP，端口绑定收敛到 127.0.0.1（宿主反代转进来）
+  render templates/Caddyfile-proxy.tpl data/caddy/Caddyfile "DOMAIN=$DOMAIN"
+  cat >> .env <<EOF
+
+# —— 共存模式（--behind-proxy）端口绑定：宿主反代 → 127.0.0.1:$PROXY_HTTP_PORT ——
+COSMAC_WEB_HTTP=127.0.0.1:$PROXY_HTTP_PORT:80
+COSMAC_WEB_HTTPS=127.0.0.1:1$PROXY_HTTP_PORT:443
+COSMAC_WEB_HTTPS_UDP=127.0.0.1:1$PROXY_HTTP_PORT:443/udp
+EOF
+else
+  render templates/Caddyfile.tpl data/caddy/Caddyfile \
+    "DOMAIN=$DOMAIN" "ADMIN_EMAIL=$ADMIN_EMAIL"
+fi
 
 # ---------- 4. Synapse 初始化：先 generate 拿签名密钥，再换成我们的主配置 ----------
 say "初始化 Synapse（生成签名密钥/日志配置）……"
@@ -173,6 +193,9 @@ docker compose exec -T bot python /app/distro/bootstrap.py || die "引导失败�
 
 say "=============================================="
 say "安装完成 ✅"
+if [ "$BEHIND_PROXY" -eq 1 ]; then
+  say "  共存模式：请在宿主反代加一条  $DOMAIN → 127.0.0.1:$PROXY_HTTP_PORT"
+fi
 say "  访问地址： https://$DOMAIN"
 say "  管理员账号/初始密码见上方 bootstrap 输出（仅显示一次，登录后请修改）"
 say "  管理后台： https://$DOMAIN/#/admin"
