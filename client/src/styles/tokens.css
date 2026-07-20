@@ -3,7 +3,7 @@
      主区域 / ChannelHeader / 右栏 → 纯白"内容层"
      外框灰（TopBar / 两侧 rail / 频道侧栏）→ 统一一档可见的灰，把白色内容托出来
   */
-  /* === CosMac Star 暖色调（米白 + 橙 + 暖墨）=== */
+  /* === CosMac 暖色调（米白 + 橙 + 暖墨）=== */
   --bg:          #ffffff;   /* 主区域、消息流、composer：纯白内容层 */
   --bg-soft:     #f4efe8;   /* 两侧 rail + TopBar：暖米灰外框 */
   --bg-side:     #faf7f2;   /* channel sidebar：暖米白 */

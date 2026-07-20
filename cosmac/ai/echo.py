@@ -26,4 +26,4 @@ class EchoProvider(LLMProvider):
                 break
 
         # 还没接真模型，先用固定话术证明"我看到你说的话了，也能回话"
-        return f"🤖 CosMac Star AI（占位）收到你说的：「{last_user_text}」"
+        return f"🤖 CosMac AI（占位）收到你说的：「{last_user_text}」"

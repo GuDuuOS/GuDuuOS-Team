@@ -1,5 +1,15 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-21 — 品牌收敛:「CosMac Star」→「CosMac」(负责人拍板,新版本起生效)
+- 全局替换 33 个文件(client/cosmac/distro/docs/CLAUDE.md):登录页 logo(含拆开写的
+  CosMac<span>Star</span> 两色排版)、顶栏、首次引导欢迎语、bot 显示名默认值、
+  系统提示词人设、echo 占位回复、注册邮件标题/正文、CLI/插件商城/频道管理等文案。
+- 不动:协议层(cosmac.* event 类型/路径)、代码标识符(cosmac 包名/env 前缀)、
+  DEVLOG 历史条目、@guduu bot 账号 localpart(stage2 迁移项另议)。
+- 验证:cosmac 605 测+nexus 17 测全过、ruff 清、client 构建过、浏览器实测登录页
+  =「CosMac」。**无需部署**:旧 GCP 主站即将退役不再更新;新品牌随国内机
+  star.cosmac.cc 新主站部署生效。
+
 ## 2026-07-20 — feat:GuDuu Nexus 数据大屏接真数据(负责人自带 UI 并入 console/dashboard)
 - 负责人提供成品大屏原型(~/Documents/GuDuu Nexus大屏,零依赖纯前端:世界六边形
   地图+3D星系+排行/总览面板),并入主仓库 **console/dashboard/**(原文件夹保留不动,

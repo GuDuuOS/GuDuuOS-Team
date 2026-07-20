@@ -373,7 +373,7 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
       <button v-if="isAdd" class="add-acct-back" @click="router.push('/')">← 返回当前账号</button>
       <!-- 顶部：品牌 + tab/标题 -->
       <div class="auth-top">
-        <div class="brand login-brand"><img :src="logoUrl" class="brand-logo" alt="" />CosMac<span>Star</span></div>
+        <div class="brand login-brand"><img :src="logoUrl" class="brand-logo" alt="" />CosMac</div>
         <div class="auth-tabs" v-if="authMode !== 'reset'">
           <button class="auth-tab" :class="{ active: authMode === 'login' }" @click="switchAuthMode('login')">登录</button>
           <button class="auth-tab" :class="{ active: authMode === 'register' }" @click="switchAuthMode('register')">注册</button>

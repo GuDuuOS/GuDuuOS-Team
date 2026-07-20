@@ -1,4 +1,4 @@
-"""CosMac Star 主 AI —— Application Service Bot（最小骨架）。
+"""CosMac 主 AI —— Application Service Bot（最小骨架）。
 
 职责（第一步，主 AI 控制层的地基）：
   1. 启动一个 HTTP 服务，接收 Synapse 推送过来的事件（这是主 AI 的"眼睛"）。
@@ -2494,8 +2494,8 @@ class CosmacBot:
         return [
             self.config.bot_user_id,        # @guduu:cosmac.cc（@pill）
             f"@{lp}",                        # @guduu
-            self.config.bot_displayname,     # CosMac Star
-            "CosMac Star",
+            self.config.bot_displayname,     # CosMac
+            "CosMac",
             "@CosMac",
             "CosMac",                        # 直接打名字开头就算叫它
         ]
@@ -4254,7 +4254,7 @@ class CosmacBot:
         "privacy": {
             "title": "隐私政策",
             "md": (
-                "CosMac Star 隐私政策\n\n最后更新：2026年7月\n\n"
+                "CosMac 隐私政策\n\n最后更新：2026年7月\n\n"
                 "一、我们收集什么\n"
                 "· 账号信息：用户名、邮箱（用于注册验证与找回密码）。\n"
                 "· 使用数据：你创建的工作区/频道、发送的消息、上传的文件与知识库文档。\n"
@@ -6015,7 +6015,7 @@ class CosmacBot:
         card = {
             "kind": "dispatch",
             "title": f"{name} · 专班已建立",
-            "subtitle": "由 CosMac Star 中枢自动派单",
+            "subtitle": "由 CosMac 中枢自动派单",
             "rows": [
                 {"task": "选题锁定", "owner": "选题 Agent", "type": "ai"},
                 {"task": "脚本撰写", "owner": "文案 Agent", "type": "ai"},
@@ -6956,7 +6956,7 @@ def run(config: CosmacConfig) -> None:
         (config.listen_host, config.listen_port), handler_cls
     )
     logger.info(
-        "CosMac Star 主 AI Bot 已启动: 监听 http://%s:%d ，连接 Synapse %s ，模型后端=%s",
+        "CosMac 主 AI Bot 已启动: 监听 http://%s:%d ，连接 Synapse %s ，模型后端=%s",
         config.listen_host,
         config.listen_port,
         config.homeserver_url,

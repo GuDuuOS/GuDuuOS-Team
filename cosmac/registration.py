@@ -212,7 +212,7 @@ def _smtp_conf() -> Optional[Dict[str, Any]]:
         "user": user,
         "password": password,
         "from": sender,
-        "from_name": _env("SMTP_FROM_NAME", "CosMac Star"),
+        "from_name": _env("SMTP_FROM_NAME", "CosMac"),
     }
 
 
@@ -235,7 +235,7 @@ def _build_email(code: str, kind: str = "register") -> Tuple[str, str, str]:
     """
     mins = _CODE_TTL // 60
     if kind == "login":
-        subject = f"【CosMac Star】登录安全验证码 {code}"
+        subject = f"【CosMac】登录安全验证码 {code}"
         heading = "验证是你本人在登录"
         intro = "检测到你的账号在**新设备/新地点**尝试登录。请在登录页输入下面的验证码完成验证："
         plain = (
@@ -245,21 +245,21 @@ def _build_email(code: str, kind: str = "register") -> Tuple[str, str, str]:
         )
         note = "如果这不是你本人的操作，说明有人可能知道了你的密码，请立即用「忘记密码」修改密码。"
     elif kind == "reset":
-        subject = f"【CosMac Star】重置密码验证码 {code}"
+        subject = f"【CosMac】重置密码验证码 {code}"
         heading = "重置你的密码"
-        intro = "你正在重置 CosMac Star 的登录密码。请在页面输入下面的验证码："
+        intro = "你正在重置 CosMac 的登录密码。请在页面输入下面的验证码："
         plain = (
-            f"你正在重置 CosMac Star 的登录密码。\n\n"
+            f"你正在重置 CosMac 的登录密码。\n\n"
             f"验证码：{code}\n\n"
             f"{mins} 分钟内有效。如果这不是你本人的操作，忽略本邮件即可，密码不会被更改。"
         )
         note = "如果这不是你本人的操作，忽略本邮件即可，你的密码不会被更改。"
     else:
-        subject = f"【CosMac Star】注册验证码 {code}"
+        subject = f"【CosMac】注册验证码 {code}"
         heading = "验证你的邮箱"
-        intro = "你正在注册 CosMac Star。请在页面输入下面的验证码完成注册："
+        intro = "你正在注册 CosMac。请在页面输入下面的验证码完成注册："
         plain = (
-            f"你正在注册 CosMac Star。\n\n"
+            f"你正在注册 CosMac。\n\n"
             f"验证码：{code}\n\n"
             f"{mins} 分钟内有效。如果这不是你本人的操作，忽略本邮件即可，账号不会有任何变化。"
         )
@@ -286,7 +286,7 @@ def _build_email(code: str, kind: str = "register") -> Tuple[str, str, str]:
 <div style="font-size:13px;line-height:1.7;color:#8a8378;">{note}</div>
 </td></tr>
 <tr><td style="padding:22px 36px 28px;">
-<div style="border-top:1px solid #eee9e1;padding-top:14px;font-size:12px;color:#ada699;line-height:1.6;">此邮件由系统自动发送，请勿直接回复。<br>© CosMac Star</div>
+<div style="border-top:1px solid #eee9e1;padding-top:14px;font-size:12px;color:#ada699;line-height:1.6;">此邮件由系统自动发送，请勿直接回复。<br>© CosMac</div>
 </td></tr>
 </table>
 </div>

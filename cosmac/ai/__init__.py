@@ -1,4 +1,4 @@
-"""CosMac Star AI 层 —— 主 AI 的大脑 + 多模型抽象。
+"""CosMac AI 层 —— 主 AI 的大脑 + 多模型抽象。
 
 统一的 LLM 接口在 base.py；具体后端按配置选：
   - echo            ：占位回显，用于打通骨架（无需任何 key）

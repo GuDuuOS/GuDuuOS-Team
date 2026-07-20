@@ -4,7 +4,7 @@
   <div v-if="visible" class="onb-mask">
     <div class="onb">
       <header class="onb-head">
-        <span class="onb-logo">✦ CosMac Star</span>
+        <span class="onb-logo">✦ CosMac</span>
         <span class="onb-sub">初次设置</span>
         <button v-if="step !== 'creating'" class="onb-skip" @click="onSkip">跳过，直接进入</button>
       </header>

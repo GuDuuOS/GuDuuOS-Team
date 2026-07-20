@@ -1,4 +1,4 @@
-"""CosMac Star 主 AI Bot 的启动入口。
+"""CosMac 主 AI Bot 的启动入口。
 
 用法（在项目根目录、且已激活/指定 .venv）：
     python -m cosmac

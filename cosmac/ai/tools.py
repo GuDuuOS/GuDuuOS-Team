@@ -1120,7 +1120,7 @@ class Toolbox:
                         continue  # 无名房=私信/AI 会话概率高,不当频道列(与实名频道判定同口径)
                 if "控制室" in name:
                     continue  # 平台配置房,不是聊天频道
-                tag = "" if in_bot else "（AI 未进驻——把 @CosMac Star 邀进频道后我才能读它的内容）"
+                tag = "" if in_bot else "（AI 未进驻——把 @CosMac 邀进频道后我才能读它的内容）"
                 out.append(f"· {name or '(未命名频道)'} — {rid}{tag}")
             except Exception:
                 continue  # 单个房读不出不影响整体
