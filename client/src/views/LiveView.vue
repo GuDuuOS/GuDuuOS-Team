@@ -2080,7 +2080,7 @@ onMounted(async () => {
     if (reason === 'KICKED_BY_OTHER_LOGIN') {
       toast('账号已在别处登录', '你的账号刚在其他设备/浏览器登录，本端已被迫下线。即将返回登录页…')
     } else {
-      toast('登录已失效', reason === 'M_USER_DEACTIVATED'
+      toast('登录已失效', (reason === 'M_USER_DEACTIVATED' || reason === 'M_USER_LOCKED')
         ? '你的账号已被停用，请联系管理员。即将返回登录页…'
         : '请重新登录（账号可能已被停用或在别处退出）。即将返回登录页…')
     }
