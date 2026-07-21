@@ -82,7 +82,7 @@
                         <svg viewBox="0 0 12 12" aria-hidden="true">
                           <path d="m2 8 3-3 2 2 3-4"></path>
                         </svg>
-                        <span>12.8%</span>
+                        <span id="total-delta">12.8%</span>
                       </div>
                     </div>
                     <p class="metric-caption">累计 Token 消耗 <span>·</span> 较上周期</p>
@@ -91,19 +91,19 @@
                       <article>
                         <span>今日消耗</span>
                         <strong id="today-token">186.4M</strong>
-                        <small class="positive">+8.6%</small>
+                        <small class="positive" id="today-delta">+8.6%</small>
                       </article>
                       <article>
-                        <span>今日预估成本</span>
-                        <strong>$ 4,268</strong>
-                        <small class="neutral">预算内 72%</small>
+                        <span id="today-second-label">今日预估成本</span>
+                        <strong id="today-second-value">$ 4,268</strong>
+                        <small class="neutral" id="today-second-meta">预算内 72%</small>
                       </article>
                     </div>
 
                     <div class="trend-chart-wrap">
                       <div class="chart-labels">
                         <span>近 24 小时趋势</span>
-                        <strong>峰值 14.2M / h</strong>
+                        <strong id="trend-peak">峰值 14.2M / h</strong>
                       </div>
                       <canvas id="trend-canvas" aria-label="近 24 小时 Token 消耗趋势图"></canvas>
                       <div class="chart-axis" aria-hidden="true">
@@ -379,7 +379,7 @@
             ></div>
           </section>
 
-          <section class="panel efficiency-card">
+          <section class="panel efficiency-card" id="efficiency-panel">
             <div class="panel-heading panel-heading--compact">
               <div>
                 <span class="eyebrow">EFFICIENCY</span>
@@ -466,7 +466,7 @@
                       <circle cx="10" cy="10" r="7"></circle>
                     </svg>
                   </i>
-                  <span>覆盖区域<strong>24</strong></span>
+                  <span id="map-region-label">覆盖区域<strong id="map-region-value">24</strong></span>
                 </article>
                 <article>
                   <i class="map-kpis__icon map-kpis__icon--cyan">
@@ -724,13 +724,13 @@
               <span class="panel-heading__tag">TODAY</span>
             </div>
             <div class="distribution-main">
-              <div class="donut-chart" aria-label="模型用量分布环形图">
+              <div class="donut-chart" id="model-donut" aria-label="模型用量分布环形图">
                 <div class="donut-chart__inner">
                   <small>今日总量</small>
-                  <strong>186.4<em>M</em></strong>
+                  <strong id="model-total">186.4<em>M</em></strong>
                 </div>
               </div>
-              <div class="distribution-legend">
+              <div class="distribution-legend" id="model-legend">
                 <div>
                   <i style="--dot-color: #8b7cff"></i>
                   <span>GPT-5</span>
@@ -811,7 +811,7 @@
                 <div class="progress"><i id="quota-bar" style="width: 72%"></i></div>
                 <small id="quota-used">已使用 24.86B / 34.50B</small>
               </div>
-              <div>
+              <div id="capacity-row-rps">
                 <div class="capacity-label">
                   <span>并发调用容量</span>
                   <strong>58%</strong>
@@ -819,7 +819,7 @@
                 <div class="progress progress--cyan"><i style="width: 58%"></i></div>
                 <small>12,840 / 22,000 req/s</small>
               </div>
-              <div>
+              <div id="capacity-row-storage">
                 <div class="capacity-label">
                   <span>存储与日志</span>
                   <strong>46%</strong>
@@ -835,11 +835,11 @@
               <div class="health-orb"><i></i></div>
               <div>
                 <span>GLOBAL HEALTH SCORE</span>
-                <strong>98.7</strong>
+                <strong id="health-score">98.7</strong>
               </div>
-              <em>A+</em>
+              <em id="health-grade">A+</em>
             </div>
-            <div class="health-nodes">
+            <div class="health-nodes" id="health-regions">
               <span>亚太 <i></i> 32ms</span>
               <span>北美 <i></i> 48ms</span>
               <span>欧洲 <i></i> 61ms</span>

@@ -185,6 +185,17 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(by_domain["im.dash-b.test"]["status"], "offline")
         # 实时动态：A 的 grant + 2 笔 usage + B 的 grant = 4 条流水
         self.assertEqual(len(out["recent"]), 4)
+        # 模型分布环图：按用量降序（gpt-4o 150 > claude-x 30）
+        self.assertEqual(
+            [(m["model"], m["tokens"]) for m in out["models"]],
+            [("openai/gpt-4o", 150), ("anthropic/claude-x", 30)],
+        )
+        # 24 小时趋势：24 个桶，总和=今日消耗（都发生在最近一小时内）
+        self.assertEqual(len(out["hourly"]), 24)
+        self.assertEqual(sum(h["tokens"] for h in out["hourly"]), 180)
+        # 总发放 = A 附赠 1000 + B 附赠 500（_one_key 默认）
+        self.assertEqual(out["totals"]["granted_total"], 1500)
+        self.assertEqual(out["totals"]["tokens_yesterday"], 0)
 
 
 if __name__ == "__main__":

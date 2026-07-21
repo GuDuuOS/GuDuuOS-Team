@@ -336,18 +336,54 @@ def dash_summary(s) -> Dict[str, Any]:
     today_usage = _usage_by_instance(since=today0)
     yesterday_usage = _usage_by_instance(since=yesterday0, until=today0)
 
-    # 今日模型分布：从流水备注（"provider/model in=x out=y"）解析，封顶 2000 行
+    # 今日模型分布：从流水备注（"provider/model in=x out=y"）解析，封顶 4000 行。
+    # 同一次扫描喂两个面板：每实例的"在用模型数" + 全舰队的"模型用量分布环图"。
     model_rows = s.execute(
-        select(NexusLedger.instance_id, NexusLedger.note)
+        select(NexusLedger.instance_id, NexusLedger.note, NexusLedger.delta_tokens)
         .where(NexusLedger.kind == "usage", NexusLedger.ts >= today0)
         .order_by(NexusLedger.id.desc())
-        .limit(2000)
+        .limit(4000)
     ).all()
     models_by_inst: Dict[int, set] = {}
-    for iid, note in model_rows:
+    model_tokens: Dict[str, int] = {}
+    for iid, note, delta in model_rows:
         model = (note or "").split(" ", 1)[0]
         if model:
             models_by_inst.setdefault(int(iid), set()).add(model)
+            model_tokens[model] = model_tokens.get(model, 0) + abs(int(delta or 0))
+    # 环图数据：按用量降序取前 8（再多环图挤不下也没意义）
+    models_top = [
+        {"model": m, "tokens": t}
+        for m, t in sorted(model_tokens.items(), key=lambda kv: -kv[1])[:8]
+    ]
+
+    # 近 24 小时逐小时消耗（趋势图数据源）：SQL 按小时桶聚合
+    hour_ms = 3600 * 1000
+    since_24h = now - 24 * hour_ms
+    # ⚠️ 用 op("/") 发原生整除——SQLAlchemy 2.0 的 Python 风格 `/` 是真除法，
+    # 会产生小数桶导致每行自成一组（实测踩坑：聚合结果只剩每桶最后一行）
+    bucket_expr = NexusLedger.ts.op("/")(hour_ms)
+    hourly_rows = s.execute(
+        select(bucket_expr, func.sum(NexusLedger.delta_tokens))
+        .where(NexusLedger.kind == "usage", NexusLedger.ts >= since_24h)
+        .group_by(bucket_expr)
+    ).all()
+    by_bucket = {int(b): abs(int(t or 0)) for b, t in hourly_rows}
+    start_bucket = int(since_24h // hour_ms) + 1
+    hourly = [
+        {"ts": (start_bucket + i) * hour_ms, "tokens": by_bucket.get(start_bucket + i, 0)}
+        for i in range(24)
+    ]
+
+    # 总发放（grant+topup 的正数流水合计）：配额面板"已消耗/总发放"的分母
+    granted_total = int(
+        s.execute(
+            select(func.sum(NexusLedger.delta_tokens)).where(
+                NexusLedger.delta_tokens > 0
+            )
+        ).scalar()
+        or 0
+    )
 
     oems: List[Dict[str, Any]] = []
     online = 0
@@ -396,6 +432,9 @@ def dash_summary(s) -> Dict[str, Any]:
         for r in recent_rows
     ]
 
+    tokens_yesterday = sum(
+        yesterday_usage.get(o["id"], {}).get("tokens", 0) for o in oems
+    )
     return {
         "generated_ts": now,
         "totals": {
@@ -404,9 +443,13 @@ def dash_summary(s) -> Dict[str, Any]:
             "users": sum(o["users"] for o in oems),
             "tokens_total": sum(o["tokens_total"] for o in oems),
             "tokens_today": sum(o["tokens_today"] for o in oems),
+            "tokens_yesterday": tokens_yesterday,
             "requests_today": sum(o["requests_today"] for o in oems),
             "balance_total": sum(o["balance_tokens"] for o in oems),
+            "granted_total": granted_total,
         },
         "oems": oems,
+        "models": models_top,
+        "hourly": hourly,
         "recent": recent,
     }

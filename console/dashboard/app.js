@@ -460,6 +460,8 @@
     OEMS.push(...mapped);
     state.nodes = mapped.map((node) => ({ ...node }));
     state.selectedId = mapped[0].id;
+    // 面板接管（环比/趋势/模型分布/动态/角标/健康分/隐藏演示件）
+    applyRealPanels(data);
     return true;
   }
 
@@ -507,8 +509,154 @@
         });
         refreshTotals();
         renderRanking();
+        applyRealPanels(data);
       } catch { /* 网络抖动静默,下轮再试 */ }
     }, 30000);
+  }
+  // —— 真实模式的面板接管：把演示件逐个换成母舰数据 / 无数据源的演示件隐藏 ——
+  let REAL_SUMMARY = null;   // 最近一次 summary（refreshTotals/drawTrend 的真实分支用）
+  let REAL_TREND = null;     // 近 24 小时逐小时消耗序列
+
+  function fmtTokens(n) {
+    const v = Math.abs(Number(n) || 0);
+    if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
+    if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
+    if (v >= 1e3) return `${(v / 1e3).toFixed(2)}K`;
+    return String(v);
+  }
+
+  function relTime(ts) {
+    const d = Date.now() - (Number(ts) || 0);
+    if (d < 60e3) return "刚刚";
+    if (d < 3600e3) return `${Math.floor(d / 60e3)} 分钟前`;
+    if (d < 86400e3) return `${Math.floor(d / 3600e3)} 小时前`;
+    return `${Math.floor(d / 86400e3)} 天前`;
+  }
+
+  // 模型用量分布：环图 + 图例（数据=网关流水按模型聚合；空数据给诚实占位）
+  function renderModelDist(models, todayTotal) {
+    const donut = $("#model-donut");
+    const legend = $("#model-legend");
+    const totalEl = $("#model-total");
+    if (!donut || !legend || !totalEl) return;
+    const totalTxt = fmtTokens(todayTotal);
+    totalEl.innerHTML = /[KMB]$/.test(totalTxt)
+      ? `${totalTxt.slice(0, -1)}<em>${totalTxt.slice(-1)}</em>`
+      : totalTxt;
+    if (!models.length) {
+      donut.style.background = "conic-gradient(rgba(139,124,255,0.16) 0 100%)";
+      legend.innerHTML =
+        '<div><i style="--dot-color:#8b7cff"></i><span>今日暂无 AI 调用</span><strong>—</strong></div>';
+      return;
+    }
+    const palette = ["#8b7cff", "#35d9ff", "#57e6a5", "#ffb65c", "#ff7aa5", "#5ca8ff", "#c0b7ff", "#abf2ff"];
+    const sum = models.reduce((s, m) => s + (m.tokens || 0), 0) || 1;
+    let acc = 0;
+    const stops = [];
+    legend.innerHTML = models
+      .map((m, i) => {
+        const pct = ((m.tokens || 0) / sum) * 100;
+        const color = palette[i % palette.length];
+        stops.push(`${color} ${acc.toFixed(2)}% ${(acc + pct).toFixed(2)}%`);
+        acc += pct;
+        const name = String(m.model || "").split("/").pop() || m.model;
+        return `<div><i style="--dot-color:${color}"></i><span>${name}</span><strong>${pct.toFixed(1)}%</strong></div>`;
+      })
+      .join("");
+    donut.style.background = `conic-gradient(${stops.join(",")})`;
+  }
+
+  // 实时动态：母舰最近流水（消耗/充值/开通）
+  function renderRecent(recent) {
+    const list = $("#activity-list");
+    if (!list || !recent.length) return;
+    list.innerHTML = recent
+      .slice(0, 4)
+      .map((r) => {
+        const name = String(r.domain || "").split(".")[0] || r.domain || "?";
+        const amount = fmtTokens(r.tokens);
+        const what =
+          r.kind === "usage" ? `消耗 ${amount} tokens`
+          : r.kind === "topup" ? `充值 ${amount} tokens`
+          : r.kind === "grant" ? `开通并获赠 ${amount} tokens`
+          : r.kind;
+        const model =
+          r.kind === "usage" && r.note
+            ? ` · ${String(r.note).split(" ")[0].split("/").pop()}`
+            : "";
+        return `<article><span class="activity-icon activity-icon--success"><svg viewBox="0 0 20 20"><path d="M10 4v12M4 10h12"></path></svg></span><div><p><strong>${name}</strong> ${what}</p><small>${relTime(r.ts)}${model}</small></div></article>`;
+      })
+      .join("");
+  }
+
+  // 按可见文本换标签（演示文案→真实口径；只在真实模式调用）
+  function swapLabelText(from, to) {
+    $$(".overview-carousel span, .overview-carousel small, .overview-carousel p").forEach((el) => {
+      if (el.childElementCount === 0 && el.textContent.trim() === from) el.textContent = to;
+    });
+  }
+
+  function applyRealPanels(data) {
+    REAL_SUMMARY = data;
+    const tt = data.totals || {};
+    // ① 环比：今日 vs 昨日（昨日为 0 显示 —，不伪造涨幅）
+    const hasYesterday = (tt.tokens_yesterday || 0) > 0;
+    const deltaNum = hasYesterday
+      ? ((tt.tokens_today - tt.tokens_yesterday) / tt.tokens_yesterday) * 100
+      : null;
+    const deltaTxt = deltaNum === null ? "—" : `${deltaNum >= 0 ? "+" : ""}${deltaNum.toFixed(1)}%`;
+    for (const sel of ["#total-delta", "#today-delta", "#map-traffic-delta"]) {
+      const el = $(sel);
+      if (el) el.textContent = deltaTxt;
+    }
+    // ② "今日预估成本"（演示）→ 今日调用（真实计量）
+    const lb = $("#today-second-label"); if (lb) lb.textContent = "今日调用";
+    const val = $("#today-second-value");
+    if (val) val.textContent = `${(tt.requests_today || 0).toLocaleString("en-US")} 次`;
+    const meta = $("#today-second-meta"); if (meta) meta.textContent = "经网关计量";
+    // ③ 24 小时趋势（真实小时桶）+ 峰值
+    REAL_TREND = (data.hourly || []).map((h) => h.tokens || 0);
+    const peakEl = $("#trend-peak");
+    if (peakEl) peakEl.textContent = `峰值 ${fmtTokens(Math.max(0, ...REAL_TREND))} / h`;
+    resizeTrend();
+    // ④ 模型分布 & ⑤ 实时动态
+    renderModelDist(data.models || [], tt.tokens_today || 0);
+    renderRecent(data.recent || []);
+    // ⑥ 地图三角标：接入实例 / 今日调用 / 实例在线率
+    const region = $("#map-region-label");
+    if (region) region.innerHTML = `接入实例<strong id="map-region-value">${tt.instances || 0}</strong>`;
+    const rps = $("#map-rps-label");
+    if (rps) rps.innerHTML = `今日调用<strong id="map-rps-value">${(tt.requests_today || 0).toLocaleString("en-US")}</strong>`;
+    const avail = $("#map-availability-label");
+    const onlinePct = tt.instances ? (tt.online / tt.instances) * 100 : 0;
+    if (avail) avail.innerHTML = `实例在线率<strong id="map-availability-value">${onlinePct.toFixed(1)}%</strong>`;
+    // ⑦ 底部流量条数字 → 今日网关调用
+    const tl = $("#map-traffic-label"); if (tl) tl.textContent = "GATEWAY CALLS";
+    const tv = $("#map-traffic-value");
+    if (tv) {
+      tv.textContent = (tt.requests_today || 0).toLocaleString("en-US");
+      const em = tv.parentElement && tv.parentElement.querySelector("em");
+      if (em) em.textContent = "次 · 今日";
+    }
+    const tstat = $("#map-traffic-status"); if (tstat) tstat.textContent = `${tt.online || 0} 实例在线`;
+    // ⑧ 轮播"今日收入"页 → 钱包余额合计（真实）
+    const rev = $("#total-revenue");
+    if (rev) {
+      rev.textContent = fmtTokens(tt.balance_total || 0);
+      const dollar = rev.parentElement && rev.parentElement.querySelector("span");
+      if (dollar) dollar.textContent = "◎";
+    }
+    swapLabelText("今日收入", "钱包余额合计");
+    // ⑨ 健康分：真实=在线率（不再演示 98.7）
+    const scoreEl = $("#health-score");
+    if (scoreEl) scoreEl.textContent = onlinePct.toFixed(1);
+    const gradeEl = $("#health-grade");
+    if (gradeEl) gradeEl.textContent = onlinePct >= 99 ? "A+" : onlinePct >= 90 ? "A" : onlinePct >= 75 ? "B" : "C";
+    // ⑩ 无真实数据源的演示件：整体隐藏（调用效率/并发/存储/区域延迟/模拟接入按钮）
+    for (const sel of ["#efficiency-panel", "#capacity-row-rps", "#capacity-row-storage", "#health-regions", "#add-oem"]) {
+      const el = $(sel);
+      if (el) el.style.display = "none";
+    }
   }
   // ══════════ 真实数据适配层结束 ══════════
 
@@ -2080,9 +2228,13 @@
   }
 
   function drawTrend(width, height) {
-    const values = [5.2, 5.8, 5.1, 6.4, 6.2, 7.1, 6.8, 8.4, 8.1, 9.2, 8.8, 10.5, 9.7, 11.1, 10.7, 12.2, 11.8, 13.3, 12.7, 14.2, 13.5, 13.8, 13.2, 13.9];
-    const min = 4.4;
-    const max = 15;
+    // 真实模式：用母舰的 24 小时逐小时消耗；演示模式保持原曲线
+    const realMode = REAL_TREND && REAL_TREND.length;
+    const values = realMode
+      ? REAL_TREND
+      : [5.2, 5.8, 5.1, 6.4, 6.2, 7.1, 6.8, 8.4, 8.1, 9.2, 8.8, 10.5, 9.7, 11.1, 10.7, 12.2, 11.8, 13.3, 12.7, 14.2, 13.5, 13.8, 13.2, 13.9];
+    const min = realMode ? 0 : 4.4;
+    const max = realMode ? Math.max(...values, 1) : 15;
     const points = values.map((value, index) => ({
       x: (index / (values.length - 1)) * width,
       y: height - ((value - min) / (max - min)) * height,
@@ -2136,7 +2288,11 @@
 
   function refreshTotals() {
     const total = state.nodes.reduce((sum, node) => sum + node.token, 0);
-    const quota = 34.5;
+    // 配额口径：真实模式=已消耗/总发放(grant+topup)；演示模式维持 34.5B 假配额
+    const realTotals = REAL_SUMMARY && REAL_SUMMARY.totals;
+    const quota = realTotals
+      ? Math.max((realTotals.granted_total || 0) / TOKEN_UNIT.div, total, 0.01)
+      : 34.5;
     const percentage = Math.min(100, (total / quota) * 100);
     const formattedNodeCount = String(state.nodes.length).padStart(2, "0");
     const formattedOverviewOemCount = String(state.nodes.length).padStart(7, "0");
@@ -2151,7 +2307,9 @@
     $("#today-token").textContent = `${todaySum.toFixed(2)}${TOKEN_UNIT.label}`;
     $("#node-count").textContent = formattedNodeCount;
     overviewOemTotal.textContent = formattedOverviewOemCount;
-    $("#map-node-summary").textContent = `${state.nodes.length} 个区域节点 · 覆盖 6 大洲`;
+    $("#map-node-summary").textContent = REAL_SUMMARY
+      ? `${state.nodes.length} 个接入实例 · 在线 ${onlineNodeCount}`
+      : `${state.nodes.length} 个区域节点 · 覆盖 6 大洲`;
     if (totalChanged && state.running) {
       overviewOemTotal.animate(
         [
@@ -2168,7 +2326,8 @@
       `${((onlineNodeCount / state.nodes.length) * 100).toFixed(1)}%`;
     $("#quota-percent").textContent = `${Math.round(percentage)}%`;
     $("#quota-bar").style.width = `${percentage.toFixed(1)}%`;
-    $("#quota-used").textContent = `已使用 ${total.toFixed(2)}B / ${quota.toFixed(2)}B`;
+    $("#quota-used").textContent =
+      `已使用 ${total.toFixed(2)}${TOKEN_UNIT.label} / ${quota.toFixed(2)}${TOKEN_UNIT.label}`;
   }
 
   function addActivity(node) {
@@ -2492,6 +2651,12 @@
   }
 
   function initLiveMetrics() {
+    // 真实模式：显示真实的今日网关调用数，不跑随机数动画
+    if (REAL_SUMMARY) {
+      $("#live-rps").textContent =
+        (REAL_SUMMARY.totals.requests_today || 0).toLocaleString("en-US");
+      return;
+    }
     window.setInterval(() => {
       const rps = 12840 + Math.round(Math.sin(Date.now() / 5700) * 280 + Math.random() * 90);
       $("#live-rps").textContent = rps.toLocaleString("en-US");
