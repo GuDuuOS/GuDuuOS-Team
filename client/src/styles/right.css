@@ -137,3 +137,9 @@
   line-height: 1.5;
   margin-top: 2px;
 }
+
+/* 知识库文档条目:可点击展开全文(负责人需求) */
+.right .info-item.clickable { cursor: pointer; }
+.right .info-item.clickable:hover .info-doc-hint { color: var(--action, #c96442); }
+.right .info-doc-hint { margin-left: auto; font-size: 11px; color: var(--text-3, #9a8f80); flex-shrink: 0; }
+.right .info-doc-text { font-size: 12px; line-height: 1.6; color: var(--text, #3a332b); background: var(--bg-soft, #f7f2e9); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow-y: auto; margin: 6px 0 2px; }

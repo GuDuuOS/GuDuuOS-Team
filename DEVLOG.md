@@ -1,5 +1,17 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-21 — feat:右侧「关于此频道」知识库文档可点击查看全文(负责人报的)
+- 现象:频道管理里维护知识库后,右侧面板知识库条目只是展示,点不开看内容。
+- 实现:新端点 GET /cosmac/kb/room/doc?room_id=&id=(**频道成员**可用,与后台仅管理员的
+  admin/kb_doc 区分):鉴权两道——发起人是频道成员+文档 scope=room 且 scope_id=本频道
+  (防跨房拿 doc_id 偷读);正文=chunks 拼接截 2 万字。前端 RightPanel 知识库真实文档
+  条目带 docId → 可点击「查看 ▼」展开全文(懒加载,pre 区最高 220px 内滚)。
+- 5 项单测(成员读全文/非成员403/跨房404/个人库404/坏参数)+全量 615 过。
+  注:本地浏览器验证受 HMR/限频反复干扰,前端交互与已实测的后台详情弹窗同模式,
+  以单测+生产部署后实测收口。前端+后端。
+- ⚠️ 本地验证套路更新:新代码 HS 配置在 client/src/config/hs.ts(defaultHsUrl),
+  TEMP-LOCAL-VERIFY 改它,不再是 AuthView/LiveView 的 HS 常量。
+
 ## 2026-07-21 — 部署切换:阿里云主站(cs.guduuos.com)首次全量升级
 - 负责人确认部署目标改为阿里云机(ssh guduu-cn),GCP/app.cosmac.cc 不再用。
 - 发现该机代码停在生产搬家时点(edde5c0)——本会话 30+ 项改动此前只上过旧 GCP。
