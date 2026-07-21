@@ -1,5 +1,19 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-21 — feat:模块6 P1③ 实例侧接线完成——cs.guduuos.com 成为实例#0 上大屏(线上实测)
+- **代码**(edde5c0):①cosmac/nexus_link.py 心跳线程(10分钟一跳,NEXUS_URL+OEM_KEY
+  齐备才启用否则全静默;统计只报真实数据:users 经 admin API/messages_today 进程计数;
+  母舰回传余额,耗尽大声告警);②install.sh 真兑码(失败即终止)+AI 通道自动指网关
+  (BASE_URL=母舰,API key=OEM 授权码);③bootstrap 登录 admin 铸造**真实服务器管理员
+  令牌**写回 .env——修 P0 遗留(随机 hex 冒充 COSMAC_ADMIN_TOKEN,忘记密码重置等静默坏);
+  ④__version__ 1.0.0。新增 5 单测,cosmac 全量 610 过。
+- **线上实测**(国内机):签 KEY(CMK-9EYQ...,附赠 1 亿 token)→兑换绑定 cs.guduuos.com
+  (instance_id=1)→接线 .env→重建 bot→心跳上母舰(version 1.0.0/users=2 真实数)→
+  **大屏切真实舰队模式**(1 节点 cs,NX-01 运行中)。
+- 待办:①方舟 ARK key 配进母舰 /etc/nexus.env(NEXUS_GW_ARK_KEY)后,主站 AI 从 echo
+  切 deepseek-经网关(实例 .env 的 ARK_BASE_URL/KEY 已预填,只差改 provider);
+  ②P1 剩④b 皮肤系统+console 管理页(KEY 签发/充值 UI,现在靠 curl)。
+
 ## 2026-07-21 — 🚀 生产搬家国内机:cs.guduuos.com 新主站(发行版自举)+nexus.guduuos.com 大屏上线
 - 负责人拍板:弃 GCP 旧站与旧数据,推倒重来;域名体系改走 guduuos.com(阿里云万网 DNS)。
 - 国内机(218.244.154.187,Claude 免密 SSH 直操):①宿主 Caddy 统一收 443 按域名分发;
