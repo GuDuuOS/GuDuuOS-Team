@@ -81,7 +81,7 @@ def ensure_bot_user() -> None:
     if r.ok:
         print(f"[bootstrap] 已注册主 AI 账号 {BOT_USER_ID}")
     elif r.status_code == 400 and r.json().get("errcode") == "M_USER_IN_USE":
-        print(f"[bootstrap] 主 AI 账号已存在，跳过")
+        print("[bootstrap] 主 AI 账号已存在，跳过")
     else:
         raise SystemExit(f"注册主 AI 账号失败：HTTP {r.status_code} {r.text[:200]}")
 
@@ -134,6 +134,34 @@ def ensure_admin() -> str | None:
         print(f"[bootstrap] 管理员 {ADMIN_MXID} 已存在，跳过（密码不变）")
         return None
     raise SystemExit(f"创建管理员失败：HTTP {r.status_code} {r.text[:200]}")
+
+
+def mint_admin_token(password: str) -> None:
+    """用初始密码登录 admin，铸造**服务器管理员 access token**。
+
+    为什么必须有它：cosmac 的忘记密码重置 / 账号停用检查等走 Synapse admin API，
+    appservice 的 as_token 权限不够（见 cosmac/registration.py）；心跳的注册用户数
+    统计也靠它。打印成机器可读行 ``COSMAC_ADMIN_TOKEN=...``，install.sh 捕获后
+    写回 .env 并重建 bot 容器。失败只警告——不阻断装机（相关功能降级不可用）。
+    """
+    try:
+        r = requests.post(
+            f"{HS}/_matrix/client/v3/login",
+            json={
+                "type": "m.login.password",
+                "identifier": {"type": "m.id.user", "user": ADMIN_USER},
+                "password": password,
+                "initial_device_display_name": "cosmac-server-admin",
+            },
+            timeout=10,
+        )
+        if r.ok:
+            print(f"COSMAC_ADMIN_TOKEN={r.json()['access_token']}")
+            print("[bootstrap] 已铸造服务器管理员令牌（install.sh 会写入 .env）")
+        else:
+            print(f"[bootstrap][警告] 铸造管理员令牌失败：HTTP {r.status_code}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[bootstrap][警告] 铸造管理员令牌异常：{e}")
 
 
 def ensure_control_room() -> None:
@@ -189,6 +217,7 @@ def main() -> None:
         print(f"  初始管理员密码：{admin_password}")
         print("  （首次登录后请立即在客户端修改密码）")
         print("=" * 46)
+        mint_admin_token(admin_password)
     ensure_control_room()
 
     print("[bootstrap] 引导完成 ✅")

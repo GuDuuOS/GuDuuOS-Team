@@ -32,6 +32,7 @@ from cosmac.ai.agent import Agent
 from cosmac.ai.base import LLMProvider, Message
 from cosmac.ai.tools import Toolbox, ToolContext
 from cosmac.bots.matrix_client import MatrixClient
+from cosmac import nexus_link  # 模块6：实例→母舰心跳（未配置时全静默）
 from cosmac.config import (
     AGENTS_EVENT_TYPE,
     AI_CONFIG_EVENT_TYPE,
@@ -459,6 +460,10 @@ class CosmacBot:
         # 方案B:AI 同事傀儡账号发的消息同样忽略——否则傀儡交付产出会触发 bot 再应答,自转不停
         if sender == self.config.bot_user_id or self._worker_slug_of(sender):
             return
+
+        # 模块6 心跳统计：记一条"今日看到的用户消息"（未接入 OEM 体系时只是加个内存计数）
+        if event_type == "m.room.message":
+            nexus_link.note_message()
 
         # 1) 被邀请进群 → 自动加入
         if event_type == "m.room.member":
@@ -6948,6 +6953,8 @@ def run(config: CosmacConfig) -> None:
     # #5：启动任务时效提醒扫描线程——周期性扫"快到期/逾期"未完成任务，在其频道内 @ 负责人提醒。
     bot.start_reminder_scanner()
     bot.start_rules_backfill()   # 存量频道补默认「频道资源边界」规则(一次性,幂等)
+    # 模块6：实例→GuDuu Nexus 母舰心跳（COSMAC_NEXUS_URL+COSMAC_OEM_KEY 齐备才启动）
+    nexus_link.start(config)
 
     # 把 bot 和 hs_token 注入到 Handler 类上（http.server 用类、不便传参，用 partial 构造）
     handler_cls = partial(_make_handler, bot=bot, hs_token=config.hs_token)

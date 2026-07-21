@@ -88,16 +88,19 @@ services:
       COSMAC_SMTP_PASSWORD: ${COSMAC_SMTP_PASSWORD:-}
       COSMAC_SMTP_FROM: ${COSMAC_SMTP_FROM:-}
       COSMAC_SMTP_FROM_NAME: ${COSMAC_SMTP_FROM_NAME:-}
-      # —— AI 模型 ——
-      # P0 暂时直连各厂商（key 由 .env 提供，默认 echo 占位）；
-      # P1 起统一改走 GuDuu Nexus 的 LLM 网关（原厂 key 永不下发，见 CLAUDE.md §4 模块6）。
+      # —— AI 模型（OEM 模式：BASE_URL 指向母舰网关、API key=OEM 授权码；
+      #    原厂 key 永不出现在实例侧，见 CLAUDE.md §4 模块6）——
       COSMAC_LLM_PROVIDER: ${COSMAC_LLM_PROVIDER:-echo}
       COSMAC_LLM_MODEL: ${COSMAC_LLM_MODEL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       ARK_API_KEY: ${ARK_API_KEY:-}
-      # —— OEM 授权码（P0 只登记；P1 接 Nexus 网关鉴权后成为硬凭证）——
+      ARK_BASE_URL: ${ARK_BASE_URL:-}
+      # —— OEM 体系（模块6）：授权码 + 母舰地址（心跳/网关）——
       COSMAC_OEM_KEY: ${COSMAC_OEM_KEY:-}
+      COSMAC_NEXUS_URL: ${COSMAC_NEXUS_URL:-}
       # bootstrap.py 用：初始管理员
       COSMAC_ADMIN_USER: ${COSMAC_ADMIN_USER:-admin}
       COSMAC_ADMIN_EMAIL: ${COSMAC_ADMIN_EMAIL:-}

@@ -60,14 +60,17 @@ DOMAIN="" ADMIN_EMAIL="" OEM_KEY=""
 # 容器 Caddy 改为只出明文 HTTP、绑 127.0.0.1:8080，证书归宿主反代管。
 BEHIND_PROXY=0
 PROXY_HTTP_PORT=8080
+# GuDuu Nexus 母舰地址（兑换授权 + 心跳 + LLM 网关都指它）；可用 --nexus 覆盖
+NEXUS_URL="${NEXUS_URL:-https://nexus.guduuos.com}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --domain) DOMAIN="$2"; shift 2 ;;
     --email)  ADMIN_EMAIL="$2"; shift 2 ;;
     --key)    OEM_KEY="$2"; shift 2 ;;
+    --nexus)  NEXUS_URL="$2"; shift 2 ;;
     --behind-proxy) BEHIND_PROXY=1; shift ;;
     --proxy-port) PROXY_HTTP_PORT="$2"; shift 2 ;;
-    *) die "未知参数：$1（支持 --domain/--email/--key/--behind-proxy/--proxy-port）" ;;
+    *) die "未知参数：$1（支持 --domain/--email/--key/--nexus/--behind-proxy/--proxy-port）" ;;
   esac
 done
 
@@ -81,7 +84,19 @@ esac
 [ -n "$ADMIN_EMAIL" ] || read -rp "管理员邮箱（接收证书通知 + 初始管理员账号）: " ADMIN_EMAIL
 [ -n "$ADMIN_EMAIL" ] || die "管理员邮箱不能为空。"
 
-[ -n "$OEM_KEY" ] || read -rp "OEM 授权码（P0 阶段仅登记，可留空）: " OEM_KEY
+[ -n "$OEM_KEY" ] || read -rp "OEM 授权码（CMK-XXXX-XXXX-XXXX-XXXX；留空=独立模式，无 AI 网关）: " OEM_KEY
+
+# —— 兑换授权（P1③：有授权码就向 GuDuu Nexus 真兑换，失败即终止）——
+if [ -n "$OEM_KEY" ]; then
+  say "向 GuDuu Nexus（$NEXUS_URL）兑换授权……"
+  REDEEM_RESP=$(curl -sS --max-time 20 -X POST "$NEXUS_URL/nexus/redeem" \
+    -H "Content-Type: application/json" \
+    -d "{\"key\":\"$OEM_KEY\",\"domain\":\"$DOMAIN\",\"admin_email\":\"$ADMIN_EMAIL\"}") \
+    || die "无法连接 GuDuu Nexus（$NEXUS_URL）——检查网络后重试。"
+  echo "$REDEEM_RESP" | grep -q '"instance_id"' \
+    || die "授权码兑换失败：$REDEEM_RESP"
+  say "兑换成功：$REDEEM_RESP"
+fi
 
 # SMTP：OEM 自己的发信邮箱。可留空（届时邮箱验证码注册不可用，仅管理员手动建号）
 say "配置发信邮箱（注册验证码从这里发出；全部留空可跳过，之后编辑 .env 补配）"
@@ -126,13 +141,31 @@ DOMAIN_REGEX="${DOMAIN//./\\.}"
 
 mkdir -p data/synapse data/caddy
 
+# —— AI 通道预填：有授权码=全部走母舰网关（凭证即授权码）；没有=echo 独立模式 ——
+if [ -n "$OEM_KEY" ]; then
+  LLM_PROVIDER="deepseek"
+  LLM_MODEL="deepseek-v3.2"          # 以 GuDuu 网关实际开通的模型为准
+  GW_ARK_BASE="$NEXUS_URL/gw/ark"
+  GW_ANTH_BASE="$NEXUS_URL/gw/anthropic"
+  GW_OPENAI_BASE="$NEXUS_URL/gw/openai"
+  GW_KEY="$OEM_KEY"
+else
+  LLM_PROVIDER="echo"; LLM_MODEL=""
+  GW_ARK_BASE=""; GW_ANTH_BASE=""; GW_OPENAI_BASE=""; GW_KEY=""
+fi
+
 render templates/dotenv.tpl .env \
   "DOMAIN=$DOMAIN" "ADMIN_USER=admin" "ADMIN_EMAIL=$ADMIN_EMAIL" "OEM_KEY=$OEM_KEY" \
+  "NEXUS_URL=$NEXUS_URL" \
   "PG_SYNAPSE_PASSWORD=$PG_SYNAPSE_PASSWORD" "COSMAC_DB_PASSWORD=$COSMAC_DB_PASSWORD" \
   "AS_TOKEN=$AS_TOKEN" "HS_TOKEN=$HS_TOKEN" \
   "ADMIN_TOKEN=$ADMIN_TOKEN" "REGISTRATION_SHARED_SECRET=$REGISTRATION_SHARED_SECRET" \
   "SMTP_HOST=$SMTP_HOST" "SMTP_PORT=$SMTP_PORT" "SMTP_USER=$SMTP_USER" \
-  "SMTP_PASSWORD=$SMTP_PASSWORD" "SMTP_FROM=$SMTP_FROM" "SMTP_FROM_NAME=$SMTP_FROM_NAME"
+  "SMTP_PASSWORD=$SMTP_PASSWORD" "SMTP_FROM=$SMTP_FROM" "SMTP_FROM_NAME=$SMTP_FROM_NAME" \
+  "LLM_PROVIDER=$LLM_PROVIDER" "LLM_MODEL=$LLM_MODEL" \
+  "ARK_BASE_URL=$GW_ARK_BASE" "ARK_API_KEY=$GW_KEY" \
+  "ANTHROPIC_BASE_URL=$GW_ANTH_BASE" "ANTHROPIC_API_KEY=$GW_KEY" \
+  "OPENAI_BASE_URL=$GW_OPENAI_BASE" "OPENAI_API_KEY=$GW_KEY"
 chmod 600 .env
 
 render templates/appservice.yaml.tpl data/synapse/appservice-cosmac.yaml \
@@ -189,7 +222,18 @@ done
 
 # ---------- 6. 全新实例引导：管理员 / bot 账号 / 控制室 ----------
 say "初始化实例（管理员账号 + 主 AI + 控制室）……"
-docker compose exec -T bot python /app/distro/bootstrap.py || die "引导失败。查日志：docker compose logs bot"
+BOOT_OUT=$(docker compose exec -T bot python /app/distro/bootstrap.py) \
+  || { printf '%s\n' "$BOOT_OUT"; die "引导失败。查日志：docker compose logs bot"; }
+# 展示引导输出（隐藏管理员令牌行——它是密钥，只进 .env 不上屏）
+printf '%s\n' "$BOOT_OUT" | grep -v '^COSMAC_ADMIN_TOKEN='
+# 捕获 bootstrap 铸造的**真实服务器管理员令牌**写回 .env（忘记密码/停用检查/
+# 心跳用户数统计都靠它；模板里预填的随机值只是占位）
+ADMIN_TOK=$(printf '%s\n' "$BOOT_OUT" | grep '^COSMAC_ADMIN_TOKEN=' | head -1 | cut -d= -f2-)
+if [ -n "$ADMIN_TOK" ]; then
+  sed -i.bak "s|^COSMAC_ADMIN_TOKEN=.*|COSMAC_ADMIN_TOKEN=$ADMIN_TOK|" .env && rm -f .env.bak
+  say "已写入服务器管理员令牌，重建 bot 容器使其生效……"
+  docker compose up -d bot >/dev/null 2>&1
+fi
 
 say "=============================================="
 say "安装完成 ✅"
