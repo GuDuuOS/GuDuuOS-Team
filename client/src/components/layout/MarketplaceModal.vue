@@ -61,7 +61,7 @@
               <button v-else class="mkt-btn locked" disabled>专属资源</button>
             </div>
             <div class="mkt-meta">
-              {{ it.official ? 'CosMac 官方' : '平台运营' }}
+              {{ it.official ? 'GuDuu OS 官方' : '平台运营' }}
               <template v-if="it.kind === 'agent' && it.skill_count">· 内置 {{ it.skill_count }} 项技能</template>
               <template v-if="it.kind === 'skill' && it.agents?.length">· 随【{{ it.agents.join('/') }}】激活</template>
             </div>

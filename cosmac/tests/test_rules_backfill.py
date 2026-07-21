@@ -23,7 +23,7 @@ class _C:
             "!ruled:h": {"rules": [{"label": "自定义规则", "desc": "x"}]},
             "!ctrl:h": {},
         }
-        self.names = {"!bare:h": "老专班", "!ruled:h": "有规频道", "!ctrl:h": "CosMac 控制室"}
+        self.names = {"!bare:h": "老专班", "!ruled:h": "有规频道", "!ctrl:h": "GuDuu OS 控制室"}
         self.written: List[Tuple[str, Dict[str, Any]]] = []
 
     def joined_rooms(self) -> list:

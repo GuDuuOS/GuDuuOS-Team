@@ -1,4 +1,18 @@
-# CosMac OS — 开发日志 (Dev Log)
+# GuDuu OS — 开发日志 (Dev Log)
+
+## 2026-07-21 — 品牌收敛②:「CosMac」→「GuDuu OS」(负责人拍板全局改名,产品对外统一)
+- 全局替换 35 文件(client/cosmac/distro/CLAUDE.md):登录页 logo/顶栏/引导/bot 显示名/
+  人设/echo/邮件/CLI/插件商城/频道模型选项/控制室名/文档全改 GuDuu OS。
+- **安全隔离**:品牌用大写驼峰 CosMac(大写M),代码类名用 Cosmac(小写m,如 CosmacBot/
+  CosmacConfig),替换 CosMac 天然不碰类名(已核验 0 误伤);替换顺序先"CosMac OS"再
+  "CosMac"(避免"GuDuu OS OS")。协议层 cosmac.* event/COSMAC_ env/cosmac/ 包名/
+  #cosmac-ctrl/@guduu 账号一律不动(§7 三层红线)。
+- **空格 mention**:GuDuu OS 带空格,复用当年 CosMac Star 的空格正则处理(@GuDuu OS
+  整体高亮),自动正确。
+- 验证:cosmac 615 测全过、client 构建过、浏览器登录页=GuDuu OS。品牌层级最终确定:
+  GuDuu(母公司)→GuDuu Nexus(母舰)→GuDuu OS(产品,原 CosMac)。
+- cs.guduuos.com=第一套自营实例(实例#0),部署此版并清测试频道。
+
 
 ## 2026-07-21 — feat:任务看板角标改「全部未完成数」(负责人建议)
 - 角标原只数逾期;改为 我的未完成总数(逾期+进行中+待办)。有逾期=红色示警,

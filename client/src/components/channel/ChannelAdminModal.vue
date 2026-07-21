@@ -52,7 +52,7 @@
           </div>
           <div class="cam-field">
             <label class="cam-field-label">AI 名称</label>
-            <input v-model="state.persona.aiName" class="cam-input" placeholder="如 CosMac" />
+            <input v-model="state.persona.aiName" class="cam-input" placeholder="如 GuDuu OS" />
           </div>
           <div class="cam-field">
             <label class="cam-field-label">语气 / 风格</label>

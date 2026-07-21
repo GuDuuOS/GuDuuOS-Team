@@ -1,4 +1,4 @@
-"""CosMac 主 AI —— Application Service Bot（最小骨架）。
+"""GuDuu OS 主 AI —— Application Service Bot（最小骨架）。
 
 职责（第一步，主 AI 控制层的地基）：
   1. 启动一个 HTTP 服务，接收 Synapse 推送过来的事件（这是主 AI 的"眼睛"）。
@@ -2493,16 +2493,16 @@ class CosmacBot:
     def _mention_tokens(self) -> List[str]:
         """所有"算作在叫主 AI"的开头词（大小写不敏感比较）。
 
-        这样用户不用跟 Element 的 @ 弹窗较劲——消息开头直接打 'CosMac' 即可。
+        这样用户不用跟 Element 的 @ 弹窗较劲——消息开头直接打 'GuDuu OS' 即可。
         """
         lp = self._bot_localpart()
         return [
             self.config.bot_user_id,        # @guduu:cosmac.cc（@pill）
             f"@{lp}",                        # @guduu
-            self.config.bot_displayname,     # CosMac
-            "CosMac",
-            "@CosMac",
-            "CosMac",                        # 直接打名字开头就算叫它
+            self.config.bot_displayname,     # GuDuu OS
+            "GuDuu OS",
+            "@GuDuu OS",
+            "GuDuu OS",                        # 直接打名字开头就算叫它
         ]
 
     def _agent_mention_hit(
@@ -3061,8 +3061,8 @@ class CosmacBot:
     def handle_stats(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """平台**真实运营指标**（给数据看板用，替掉演示假数据）。**仅平台管理员**可读。
 
-        只统计 CosMac 真正拥有的数据：会员（控制室）+ 工作流运行/订单/知识库（cosmac DB）。
-        影视业务数据（播放量/集数等）CosMac 不拥有，不在此处编造。每项独立兜底，缺 DB 不报错。
+        只统计 GuDuu OS 真正拥有的数据：会员（控制室）+ 工作流运行/订单/知识库（cosmac DB）。
+        影视业务数据（播放量/集数等）GuDuu OS 不拥有，不在此处编造。每项独立兜底，缺 DB 不报错。
 
         权限：这些是**全平台**聚合（总付费会员数/总订单数等），属运营敏感数据，普通登录用户
         不该看到。故限平台管理员；非管理员回 403，前端据此回退占位（不报错）。
@@ -4299,7 +4299,7 @@ class CosmacBot:
         "privacy": {
             "title": "隐私政策",
             "md": (
-                "CosMac 隐私政策\n\n最后更新：2026年7月\n\n"
+                "GuDuu OS 隐私政策\n\n最后更新：2026年7月\n\n"
                 "一、我们收集什么\n"
                 "· 账号信息：用户名、邮箱（用于注册验证与找回密码）。\n"
                 "· 使用数据：你创建的工作区/频道、发送的消息、上传的文件与知识库文档。\n"
@@ -6056,11 +6056,11 @@ class CosmacBot:
         # 专班房真建成才消费 teams 配额（与 assemble_team 工具同一本账，失败不扣）
         self._tool_quota_consume(requester, "assemble_team")
 
-        # 派单富卡：body 是纯文本兜底（Element 显示这个），card 是结构化数据（CosMac 客户端渲染）
+        # 派单富卡：body 是纯文本兜底（Element 显示这个），card 是结构化数据（GuDuu OS 客户端渲染）
         card = {
             "kind": "dispatch",
             "title": f"{name} · 专班已建立",
-            "subtitle": "由 CosMac 中枢自动派单",
+            "subtitle": "由 GuDuu OS 中枢自动派单",
             "rows": [
                 {"task": "选题锁定", "owner": "选题 Agent", "type": "ai"},
                 {"task": "脚本撰写", "owner": "文案 Agent", "type": "ai"},
@@ -7014,7 +7014,7 @@ def run(config: CosmacConfig) -> None:
         (config.listen_host, config.listen_port), handler_cls
     )
     logger.info(
-        "CosMac 主 AI Bot 已启动: 监听 http://%s:%d ，连接 Synapse %s ，模型后端=%s",
+        "GuDuu OS 主 AI Bot 已启动: 监听 http://%s:%d ，连接 Synapse %s ，模型后端=%s",
         config.listen_host,
         config.listen_port,
         config.homeserver_url,

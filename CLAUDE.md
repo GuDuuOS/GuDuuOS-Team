@@ -1,4 +1,4 @@
-# CosMac OS — 项目规范 (Project Rules)
+# GuDuu OS — 项目规范 (Project Rules)
 
 > 这是项目的"宪法"。每次开新会话，AI（Claude）必须先读这份文件，再动手。
 > 任何架构决定、目录约定、开发流程都以本文件为准；本文件过时了要先更新它，再写代码。
@@ -7,7 +7,7 @@
 
 ## 1. 这是什么项目
 
-**CosMac OS** —— 基于 [Synapse](https://github.com/element-hq/synapse)（Matrix 同构服务器）改造的**海外版 IM**。
+**GuDuu OS** —— 基于 [Synapse](https://github.com/element-hq/synapse)（Matrix 同构服务器）改造的**海外版 IM**。
 - **源码参考**：`synapse/` 目录是 matrix.org 归档版 **v1.98.0**（只读参考）。
 - **本地运行**：venv 里 pip 装的 **v1.141.0**（这是兼容 macOS arm64 + Python 3.9 的最新预编译版；1.98.0 在本机无预编译 wheel、需 Rust 编译，故运行用 1.141.0）。appservice / Module API 在两版本间稳定，不影响开发。
 
@@ -20,7 +20,7 @@
 
 ## 2. 最重要的架构原则（不可违背）
 
-> **不改 Synapse 核心代码。所有 CosMac 的业务逻辑写在独立扩展层里。**
+> **不改 Synapse 核心代码。所有 GuDuu OS 的业务逻辑写在独立扩展层里。**
 
 原因：Synapse 是个成熟的大型项目，改核心会导致以后无法跟上游更新、难以维护。Synapse 已经提供了足够强的扩展点，足以实现"主 AI 控制一切"。
 
@@ -51,16 +51,16 @@
 ┌─────────────────────────────────────────────────────┐
 │  客户端 (先用 Element 验证；个人主页/交易/工作流 UI 后做)  │
 └────────────────────────┬────────────────────────────┘
-                         │ Matrix C-S API + CosMac 自定义 API
+                         │ Matrix C-S API + GuDuu OS 自定义 API
 ┌────────────────────────▼────────────────────────────┐
 │  Synapse 核心 (v1.98.0, 尽量不动)  →  synapse/         │
 │  ┌──────────────────────────────────────────────┐   │
-│  │ CosMac Module (插进事件管线)                       │   │  ← 主要在这写
+│  │ GuDuu OS Module (插进事件管线)                       │   │  ← 主要在这写
 │  └──────────────────────────────────────────────┘   │
 └────────────────────────┬────────────────────────────┘
                          │ Appservice 协议
 ┌────────────────────────▼────────────────────────────┐
-│  CosMac AI 服务 (独立进程)  →  cosmac/                   │
+│  GuDuu OS AI 服务 (独立进程)  →  cosmac/                   │
 │  • 主AI Agent  • 多模型抽象层  • 群级记忆/知识库/Rule/Skill │
 │  • Bot/插件/工作流引擎                                  │
 └──────────────────────────────────────────────────────┘
@@ -68,12 +68,12 @@
 
 ### 目录约定（新代码放哪）
 - `synapse/` —— 上游 Synapse 仓库，**只读为主**。改动需登记（§8）。
-- `cosmac/` —— **新建**，CosMac 自己的代码（AI 服务、Module、工作流引擎等）全部放这。与 `synapse/` 同级，独立 Python 包。
+- `cosmac/` —— **新建**，GuDuu OS 自己的代码（AI 服务、Module、工作流引擎等）全部放这。与 `synapse/` 同级，独立 Python 包。
   - `cosmac/module/` —— Synapse Module（薄薄一层，转发到 AI 服务）
   - `cosmac/ai/` —— 主 AI Agent + 多模型抽象层
   - `cosmac/memory/` —— 群级记忆 / 知识库 / Rule / Skill
   - `cosmac/bots/`、`cosmac/workflows/`、`cosmac/trading/`、`cosmac/profile/` —— 后续模块
-  - `cosmac/tests/` —— CosMac 自己的测试
+  - `cosmac/tests/` —— GuDuu OS 自己的测试
 
 > 注：`cosmac/` 目录在对应模块开工时再创建，不提前建空壳。
 
@@ -82,8 +82,8 @@
 
 ### 数据存储分层（写持久化代码前先对照这张表）
 
-> 铁律：**Synapse 已经存的东西绝不在 CosMac 这边重存一份**（否则数据双写、必然不一致）。
-> 只有 Synapse 存不下/搜不了的「AI 层自己的结构化/派生数据」，才进 CosMac 自己的数据库。
+> 铁律：**Synapse 已经存的东西绝不在 GuDuu OS 这边重存一份**（否则数据双写、必然不一致）。
+> 只有 Synapse 存不下/搜不了的「AI 层自己的结构化/派生数据」，才进 GuDuu OS 自己的数据库。
 
 | 数据 | 存哪 | 说明 |
 |---|---|---|
@@ -92,19 +92,19 @@
 | **全局 AI 配置**（人设/模型/工具开关） | Matrix state event | 已实现：写在控制室 `cosmac.ai.config`（见 §9 / memory `ai-config-control-room`）。 |
 | **每账号轻量配置** | Matrix per-user **account data** | 优先用它：每用户键值、自动同步到客户端、零新基建。撑不住结构化关联时再迁 DB。 |
 | **全局 Skill / Agent 定义**（后台管理） | Matrix state event | 判断规则:有身份能接活→Agent;可复用套路/格式→Skill 绑 Agent(绝不全局注入)。 已定（负责人拍板）：存控制室 `cosmac.skills` / `cosmac.agents`，浏览器(管理后台)写、bot 读——**因为浏览器只能走 Matrix、够不到 DB**，与「全局 AI 配置」同套路。 |
-| **群级 / 个人 Skill 与用户自建 Agent** | CosMac DB | 聊天命令或前台「我的AI工坊」建的（scope=room/user，owner 隔离）；注入/名册时与全局合并、个人覆盖全局；**计入账号存储空间配额**。 |
-| **知识库** | ✅ CosMac DB + **pgvector** | 文档分块 + 向量检索(RAG)，state event 存不下也搜不了。**这是上 DB 的最硬理由**。 |
-| **群级 / Agent 记忆**（摘要、长期记忆） | ✅ CosMac DB | 派生数据，与原始聊天记录分开存。 |
+| **群级 / 个人 Skill 与用户自建 Agent** | GuDuu OS DB | 聊天命令或前台「我的AI工坊」建的（scope=room/user，owner 隔离）；注入/名册时与全局合并、个人覆盖全局；**计入账号存储空间配额**。 |
+| **知识库** | ✅ GuDuu OS DB + **pgvector** | 文档分块 + 向量检索(RAG)，state event 存不下也搜不了。**这是上 DB 的最硬理由**。 |
+| **群级 / Agent 记忆**（摘要、长期记忆） | ✅ GuDuu OS DB | 派生数据，与原始聊天记录分开存。 |
 | **工作流连接器定义**（模块3，后台编排） | Matrix state event | 已定：存控制室 `cosmac.workflows`（浏览器够不到 DB，同 Skill/Agent）。外部平台 key 只进服务端 env（`COSMAC_WF_<CRED>`），定义里只放凭据名。 |
 | **社媒数据源定义**（数据看板真实取数：平台/账号/模式/凭据名/间隔） | Matrix state event | 进行中：按工作区存 `cosmac.social_sources`（同工作流连接器套路）。两种取数模式 api(官方平台 API)/crawl(AI Agent 走工作流爬)。API key/token/cookie 只进服务端 env `COSMAC_SOCIAL_<平台>_<字段>`，定义里只放凭据名。**P1 已落前端配置 UI**(看板「接入数据源」按钮)；采集器/写 DB/回看板是 P2~P4。取回的指标时序进 cosmac DB `cosmac_social_metric`。 |
 | **入驻模板定义**（注册引导可选的「方案」：模型/人设/RULE/技能/知识库/频道/工作流/所需会员等级） | Matrix state event | 进行中：存控制室 `cosmac.onboarding_templates`（管理员后台「入驻模板」页写、首次引导读，同 skills/agents/workflows 套路）。**P1 已落后台管理 UI + 存储**；P2 引导接入(选模板→建工作区+绑 per-group Agent 让人设真生效+关联知识库)；P3 看板按模板渲染。付费模板靠 tier 字段 + 现有会员/门控体系。 |
-| **资源可用范围**（技能/智能体的账号级权限） | 资源定义内 `access` 字段 + CosMac DB | 已实现：每个全局技能/智能体带 `access`（''=所有人 / paid/creator=等级及以上 / admin / `tpl:模板key`=指定入驻模板用户），后台「技能库/智能体」页配，bot **服务端强制**（对话注入+能力名册按发起人过滤；群绑定=管理员显式授权不过滤）。「用户→模板」映射存 cosmac DB `cosmac_user_template`（引导完成经 `/cosmac/onboarding/select` 写入）。 |
+| **资源可用范围**（技能/智能体的账号级权限） | 资源定义内 `access` 字段 + GuDuu OS DB | 已实现：每个全局技能/智能体带 `access`（''=所有人 / paid/creator=等级及以上 / admin / `tpl:模板key`=指定入驻模板用户），后台「技能库/智能体」页配，bot **服务端强制**（对话注入+能力名册按发起人过滤；群绑定=管理员显式授权不过滤）。「用户→模板」映射存 cosmac DB `cosmac_user_template`（引导完成经 `/cosmac/onboarding/select` 写入）。 |
 | **会员等级**（账号权限分层：免费/付费/创作者） | Matrix state event | 已实现：存控制室 `cosmac.members`（同 admins 套路，管理员/bot 写、用户不可自改——付费门槛靠它）。**与「服务器管理员」正交**：管理员仍走 Synapse admin 标志。授予入口 `cosmac.members.MembersStore.grant`（**预留给模块4支付**）。枚举/校验见 `cosmac/members.py`。普通用户查自己等级走「DM 问 bot」命令`会员`（控制室只管理员可读）。 |
 | **功能门控策略**（能力→最低会员等级） | Matrix state event | 已实现：存控制室 `cosmac.gating`，后台「会员权限」页逐项配，bot **服务端强制**（客户端只配置）。门槛阶梯 免费<付费<创作者<仅管理员；平台管理员永远不受会员门控。能力目录 `cosmac/members.py` GATE_CATALOG（ai_chat/knowledge/create_room/workflow_run；**新增功能往这加一条**，前后端各一份）。工具层经 `Toolbox.gate_check` 同样受控（防自然语言绕过命令）。 |
-| 工作流运行记录（模块3）、交易（模块4）、个人主页（模块5） | ✅ CosMac DB | 关系型。 |
+| 工作流运行记录（模块3）、交易（模块4）、个人主页（模块5） | ✅ GuDuu OS DB | 关系型。 |
 | **OEM/Nexus 数据**（KEY·license、实例注册、token 钱包、用量计量、心跳遥测） | ✅ Nexus 独立 DB | 模块6：存**母舰侧**（GuDuu Nexus fleet 服务自己的 Postgres），与各 OEM 自部实例完全隔离；原厂 LLM key 只进网关 env，永不进发行版。 |
 
-**基建决策**：CosMac 的 DB **复用生产现成的 PostgreSQL**（Synapse 已在跑，见 `DEPLOY.md`），给 cosmac 服务**单开一个 database/schema**，按需装 **pgvector**。这走 §2 的第 3 条路径（新增独立服务/数据），与 Synapse 核心解耦、不碰它。
+**基建决策**：GuDuu OS 的 DB **复用生产现成的 PostgreSQL**（Synapse 已在跑，见 `DEPLOY.md`），给 cosmac 服务**单开一个 database/schema**，按需装 **pgvector**。这走 §2 的第 3 条路径（新增独立服务/数据），与 Synapse 核心解耦、不碰它。
 
 **实现约定**（`cosmac/db/`）：
 - 用 **SQLAlchemy（同步）**——bot 是同步的（`ThreadingHTTPServer` + `requests`），DB 层也保持同步，别引入 async 复杂度。
@@ -123,8 +123,8 @@
 | 3 | Bot / 插件 / 工作流引擎 | ✅ 完成 | **定调：不自建引擎，对接外部平台**(n8n/Make/Coze/ComfyUI/Dify)。全套上线：通用连接器引擎(`cosmac/wf.py`，含 webhook/Dify/Coze/ComfyUI)+ 聊天命令 `工作流 列表/跑` + 主 AI 工具 `run_workflow` + 异步回调协议 + 运行记录入库 + **后台编排 UI**(`AdminView.vue` 工作流面板：4 平台连接器增删改查、凭据只填名)；定义走控制室 `cosmac.workflows`、密钥走服务端 env。**安全/健壮性"够用即止"**(负责人 2026-06 拍板)：单实例下真实风险(SSRF/密钥/鉴权/DoS/重复触发/崩溃可见性)全堵；**durable 任务队列 + 多实例 fencing + per-event 精确一次**记为**已知架构边界·本期不做**(单 bot 小规模属过度设计)。增强项(更多平台适配器/graph 上传 UI)按需再补 |
 | 4 | 交易系统（会员订阅） | 🟡 进行中 | **主线=会员订阅/充值**，多渠道支付(Stripe/PayPal/USDT/支付宝/微信)按 IP 地理路由，范围"较完整"。**P1 地基已落地+单测**(`cosmac/trading/`)：套餐定义(控制室 `cosmac.plans`)+ 订单(DB `cosmac_order`)+ **可插拔支付抽象** `PaymentProvider`(密钥只进 env)+ 订单服务(下单/支付成功**幂等**开通/**续费按原到期日顺延**)+ 会员**到期**(扩 `members.py`：grant 带 expires_ts、查等级自动判过期)+ 手动/mock 支付(HMAC 验签、不接真钱跑通业务链)。**分期**：P2 Stripe 全链路+webhook端点+前端套餐页；P3 PayPal/USDT+地理路由；P4 支付宝/微信+对账/退款。会员/门控预热地基见上文存储表。 |
 | 5 | 个人主页 | ⬜ | 需要客户端 UI 配合 |
-| 6 | **OEM 体系（GuDuu Nexus + CosMac 发行版 + LLM 网关）** | 🟡 进行中 | **P0 发行版 ✅ 完成**（2026-07-19 干净 VM 端到端实测通过：样板间实例 `oem1.cosmac.cc` = 一键安装→自动 HTTPS→登录→引导建工作区→AI 回复全链路；`distro/` 四容器 compose + install/doctor/update + bootstrap 引导 + 客户端同源补丁）。下一步 **P1：GuDuu Nexus 母舰 + LLM 网关 + 皮肤系统**。**方案已定稿（2026-07-18，负责人逐项拍板）**：每 OEM **独立部署一套**（自己的服务器/域名/邮箱，docker 整栈发行版一键装，`server_name`=OEM 域名）；**完全白牌**（运行时皮肤，界面零平台标识）；KEY **买断（永久含升级）+ token 另充值**（钱包余额耗尽断 AI = 唯一续费抓手）；**原厂 LLM key 永不下发**，全部 AI 调用必经母舰 **LLM 网关**（平台 key 鉴权/逐请求计量/扣钱包/限流——对自部实例唯一的技术缰绳，也是全系统唯一单点，需高可用）；联邦 = **GuDuu 生态内互通**（Nexus 下发 federation whitelist，不接公网 Matrix）；大后台 **GuDuu Nexus** = 独立 console 前端 + fleet 服务（KEY 签发/实例注册/心跳遥测/token 钱包/数据大屏·实时树状图）。规模预期**上百家** → 兑码/下载/安装/激活**全自助**必须进 P1。分期：P0 整栈容器化 + install/doctor 脚本 → P1 Nexus + 网关 + 皮肤 + 自助闭环 → P2 大屏 + 联邦白名单 + 告警 + 最低兼容版本强制 → P3 接钱（硬依赖模块4 Stripe）。 |
-| R | **品牌化 Matrix→CosMac** | ⬜ 持续 | 贯穿全程的横切任务，按 §7 三层红线分层改，每碰到呈现层字样就顺手改 |
+| 6 | **OEM 体系（GuDuu Nexus + GuDuu OS 发行版 + LLM 网关）** | 🟡 进行中 | **P0 发行版 ✅ 完成**（2026-07-19 干净 VM 端到端实测通过：样板间实例 `oem1.cosmac.cc` = 一键安装→自动 HTTPS→登录→引导建工作区→AI 回复全链路；`distro/` 四容器 compose + install/doctor/update + bootstrap 引导 + 客户端同源补丁）。下一步 **P1：GuDuu Nexus 母舰 + LLM 网关 + 皮肤系统**。**方案已定稿（2026-07-18，负责人逐项拍板）**：每 OEM **独立部署一套**（自己的服务器/域名/邮箱，docker 整栈发行版一键装，`server_name`=OEM 域名）；**完全白牌**（运行时皮肤，界面零平台标识）；KEY **买断（永久含升级）+ token 另充值**（钱包余额耗尽断 AI = 唯一续费抓手）；**原厂 LLM key 永不下发**，全部 AI 调用必经母舰 **LLM 网关**（平台 key 鉴权/逐请求计量/扣钱包/限流——对自部实例唯一的技术缰绳，也是全系统唯一单点，需高可用）；联邦 = **GuDuu 生态内互通**（Nexus 下发 federation whitelist，不接公网 Matrix）；大后台 **GuDuu Nexus** = 独立 console 前端 + fleet 服务（KEY 签发/实例注册/心跳遥测/token 钱包/数据大屏·实时树状图）。规模预期**上百家** → 兑码/下载/安装/激活**全自助**必须进 P1。分期：P0 整栈容器化 + install/doctor 脚本 → P1 Nexus + 网关 + 皮肤 + 自助闭环 → P2 大屏 + 联邦白名单 + 告警 + 最低兼容版本强制 → P3 接钱（硬依赖模块4 Stripe）。 |
+| R | **品牌化 Matrix→GuDuu OS** | ⬜ 持续 | 贯穿全程的横切任务，按 §7 三层红线分层改，每碰到呈现层字样就顺手改 |
 
 > 状态符号：⬜未开始 / 🟡进行中 / ✅完成。开工/完成时更新这张表。
 > 已上线功能全貌见 **docs/FEATURES.md**(对外介绍/新人了解用;功能增减顺手更新)。
@@ -136,14 +136,14 @@
 - **语言**：Python（`^3.8`），热点路径有 Rust 扩展（`rust/`，PyO3）。
 - **Lint / 格式**：`ruff`，行宽 **88**。提交前跑 `poetry run ruff check synapse/ cosmac/`。
 - **类型检查**：`mypy`（配置见 `synapse/mypy.ini`）。新代码要带类型注解。
-- **测试**：Synapse 用 trial。运行：`poetry run trial tests`（CosMac 测试放 `cosmac/tests/`）。
+- **测试**：Synapse 用 trial。运行：`poetry run trial tests`（GuDuu OS 测试放 `cosmac/tests/`）。
 - **Changelog（重要）**：Synapse 仓库每个改动都要在 `synapse/changelog.d/` 加一个文件，命名 `<PR号>.<类型>`，内容一句话（句号结尾）。类型：
   - `feature` 新功能 / `bugfix` 修复 / `doc` 文档 / `removal` 移除 / `misc` 内部改动 / `docker`
-  - CosMac 自己的代码（`cosmac/`）是否沿用 towncrier 待定；定下来之前先在 commit message 写清。
+  - GuDuu OS 自己的代码（`cosmac/`）是否沿用 towncrier 待定；定下来之前先在 commit message 写清。
 - **依赖**：用 Poetry 管理（`pyproject.toml` + `poetry.lock`）。
 - **中文注释（强制）**：写代码时必须加**详细的中文注释**，越细越好。
-  - CosMac 新代码（`cosmac/`）：每个模块/类/函数都要有中文 docstring 说明"这是干嘛的、参数啥意思、返回啥"；关键逻辑行内也要中文注释解释"为什么这么写"。
-  - 改/调用 `synapse/` 时：在改动处加中文注释说明意图（方便以后定位 CosMac 的改动）。
+  - GuDuu OS 新代码（`cosmac/`）：每个模块/类/函数都要有中文 docstring 说明"这是干嘛的、参数啥意思、返回啥"；关键逻辑行内也要中文注释解释"为什么这么写"。
+  - 改/调用 `synapse/` 时：在改动处加中文注释说明意图（方便以后定位 GuDuu OS 的改动）。
   - 注释解释**意图和原因**，不要只复述代码字面意思。专有名词（如 appservice、event）可保留英文。
 
 ### 客户端路由约定（URL routing，写前端必守）
@@ -176,14 +176,14 @@
 
 ---
 
-## 7. 品牌化规则：Matrix/Synapse → CosMac（三层红线）
+## 7. 品牌化规则：Matrix/Synapse → GuDuu OS（三层红线）
 
-> 把"给人看的品牌"换成 CosMac，但**绝不动机器之间的协议**。改之前先判断属于哪一层。
+> 把"给人看的品牌"换成 GuDuu OS，但**绝不动机器之间的协议**。改之前先判断属于哪一层。
 
 | 层 | 包含什么 | 规则 |
 |---|---|---|
 | **① 协议层 🚫 绝对不改** | `/_matrix/...` API 路径、`m.*` 事件类型（如 `m.room.message`）、联邦协议格式、`.well-known` 里的协议字段、状态事件 type | **一个字都不能改**。改了客户端连不上、联邦崩、Element 不可用 |
-| **② 呈现/品牌层 ✅ 改成 CosMac** | 产品名、欢迎页"Synapse is running"、系统通知(server notices)、邮件/通知模板、面向用户的文档、日志中的品牌字样、默认 `server_name`/`user_agent`、管理后台标题 | 放心改 |
+| **② 呈现/品牌层 ✅ 改成 GuDuu OS** | 产品名、欢迎页"Synapse is running"、系统通知(server notices)、邮件/通知模板、面向用户的文档、日志中的品牌字样、默认 `server_name`/`user_agent`、管理后台标题 | 放心改 |
 | **③ 内部标识符 ⚠️ 默认不改** | `SynapseHomeServer` 等类名、内部变量名、Python 包名 `synapse` | 默认保留——改了无用户价值且会让跟上游更新疯狂冲突。仅在有充分理由时改，并登记 §8 |
 
 执行方式：这是**横切/持续任务**，不单开一个大 PR 一次性全改（风险高）。**每当在做其他模块时碰到 ② 类呈现层字样，就顺手改掉**。拿不准属于哪层时——先当作"不能改"，问负责人。
@@ -219,7 +219,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 没配 key 时会自动降级回 echo（bot 照常能跑）。可选：`COSMAC_LLM_MODEL` 换模型、`COSMAC_SYSTEM_PROMPT` 改人设。
 部署到 Google Cloud 时，把 `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`ARK_API_KEY` 配进服务的环境变量/Secret Manager 即可。
 > 方舟(DeepSeek)复用 `openai` SDK，只是 base_url 指向方舟。模型 id 以你方舟控制台实际开通/创建的接入点为准。
-CosMac 服务依赖见 `cosmac/requirements.txt`。
+GuDuu OS 服务依赖见 `cosmac/requirements.txt`。
 
 ---
 

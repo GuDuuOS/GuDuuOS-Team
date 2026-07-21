@@ -1,4 +1,4 @@
-"""CosMac 运行配置。
+"""GuDuu OS 运行配置。
 
 集中管理所有可配置项（连哪个 Synapse、用哪些 token、bot 监听哪里、用哪个 AI 模型）。
 所有值都可以用环境变量覆盖，方便在不同环境（本地/测试/生产）切换，
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class CosmacConfig:
-    """CosMac 主 AI Bot 的全部配置。
+    """GuDuu OS 主 AI Bot 的全部配置。
 
     字段说明：
         homeserver_url:  Synapse 的 HTTP 地址，bot 通过它发消息/加入房间。
@@ -52,12 +52,12 @@ class CosmacConfig:
     llm_provider: str = "echo"
     llm_model: str = ""  # 空 = 用 provider 默认模型
     system_prompt: str = (
-        "你是 CosMac —— 一个内置在 IM 群聊里的主 AI 助手。"
+        "你是 GuDuu OS —— 一个内置在 IM 群聊里的主 AI 助手。"
         "你能看到群里的消息并参与对话。"
         "回答要简洁、友好、直接、有帮助。用提问者使用的语言回复。"
     )
     # 主 AI 在群里显示的名字（用户看到的品牌名；与内部用户 id @guduu 无关）
-    bot_displayname: str = "CosMac"
+    bot_displayname: str = "GuDuu OS"
 
     # —— 运行时 AI 配置（管理后台「AI 配置」用）——
     # 控制室别名：管理后台把 AI 配置写进这个房间的 state event，bot 运行时来读。
@@ -65,7 +65,7 @@ class CosmacConfig:
     # 读不到（房间不存在/未加入/网络错）一律回退到上面的启动配置，零回归。
     control_room_alias: str = ""
 
-    # —— CosMac 自己的数据库（模块2 起：Skill/Agent/知识库/记忆等）——
+    # —— GuDuu OS 自己的数据库（模块2 起：Skill/Agent/知识库/记忆等）——
     # 见 CLAUDE.md §3「数据存储分层」。Synapse 已存的（聊天记录/成员/房间状态）不在这里重存。
     # 留空 = 由 cosmac.db 用默认：生产读环境变量 COSMAC_DATABASE_URL（指向独立 Postgres），
     # 本地开发回退 SQLite 文件 run/cosmac.db（零基建即可跑）。

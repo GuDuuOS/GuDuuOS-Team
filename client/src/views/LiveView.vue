@@ -1,5 +1,5 @@
 <!--
-  CosMac 真实客户端驾驶舱（按键布局 + 尺寸 1:1 对齐安其演示版 · 暖色皮肤 · 真实后端）
+  GuDuu OS 真实客户端驾驶舱（按键布局 + 尺寸 1:1 对齐安其演示版 · 暖色皮肤 · 真实后端）
   --------------------------------------------------------------------
   布局/尺寸/按键全部按演示版那套 CSS（topbar/sidebar/channel/composer/plugin-rail/ai-panel）
   的精确数值还原：
@@ -10,7 +10,7 @@
     · 频道头 50 高、★/ic-btn、成员堆叠；消息流为演示版扁平 Slack 风（头像+名+正文，非气泡）
     · Composer 工具条 tb-btn 28、发送键 28 圆形；右侧中枢 AI 面板 head 50、圆形发送
   真实能力（登录/频道/消息/中枢AI/退出/筛选/Markdown 工具）全部接 Synapse；
-  纯装饰按钮（升级/提及/收藏/附件等）弹轻量 toast。配色沿用 CosMac 暖色（米白+橙+暖墨），走 tokens.css。
+  纯装饰按钮（升级/提及/收藏/附件等）弹轻量 toast。配色沿用 GuDuu OS 暖色（米白+橙+暖墨），走 tokens.css。
 -->
 <script setup lang="ts">
 import { ref, computed, reactive, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
@@ -1253,17 +1253,17 @@ function renderMd(raw: string): string {
     const suffix = tail ? tail[0] : ''
     return keep(`<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`) + suffix
   })
-  // 带空格的品牌名「@CosMac」先整体成 pill 并 stash——通用 @ 正则不认空格,
-  // 只会把「@CosMac」包住、" Star" 掉在外面(负责人报的"@ 时 Star 没高亮")。
-  s = s.replace(/(^|[\s(])@CosMac(?=$|[^A-Za-z0-9])/g,
-    (_m, pre) => pre + keep('<span class="mention">@CosMac</span>'))
+  // 带空格的品牌名「@GuDuu OS」先整体成 pill 并 stash——通用 @ 正则不认空格,
+  // 只会把「@GuDuu OS」包住、" Star" 掉在外面(负责人报的"@ 时 Star 没高亮")。
+  s = s.replace(/(^|[\s(])@GuDuu OS(?=$|[^A-Za-z0-9])/g,
+    (_m, pre) => pre + keep('<span class="mention">@GuDuu OS</span>'))
   // @提及高亮（@用户 或 @用户:服务器）。主 AI 的原始账号(@guduu / @guduu:域)按品牌名
-  // 显示为 @CosMac——与后台成员弹窗同口径(负责人要求,任务到期提醒里 @ 出原始账号很难看);
+  // 显示为 @GuDuu OS——与后台成员弹窗同口径(负责人要求,任务到期提醒里 @ 出原始账号很难看);
   // 悬浮 title 保留真实账号便于排查。傀儡(@guduu-ai-*) localpart 不同,不受影响。
   s = s.replace(/(^|[\s(])@([a-zA-Z0-9_.\-]+(?::[a-zA-Z0-9_.\-]+)?)/g, (_m, pre, id) => {
     const [lp, domain = ''] = String(id).split(':')
     if (lp === 'guduu') {
-      const shown = domain ? `@CosMac:${domain}` : '@CosMac'
+      const shown = domain ? `@GuDuu OS:${domain}` : '@GuDuu OS'
       return `${pre}<span class="mention" title="@${id}">${shown}</span>`
     }
     return `${pre}<span class="mention">@${id}</span>`
@@ -1393,7 +1393,7 @@ async function onOnboardingDone(spaceId: string) {
   }
   if (spaceId) { activeSpace.value = spaceId; spaceChildIds.value = roomIdsInSpace(spaceId) }
   openBoard()
-  toast('工作台已就绪', '欢迎使用 CosMac')
+  toast('工作台已就绪', '欢迎使用 GuDuu OS')
 }
 function onOnboardingSkip() { /* 跳过即可，已标记 onboarded */ }
 
@@ -2129,7 +2129,7 @@ onBeforeUnmount(() => {
             <circle cx="3" cy="15" r="1.6" /><circle cx="9" cy="15" r="1.6" /><circle cx="15" cy="15" r="1.6" />
           </svg>
           <img :src="logoUrl" alt="" class="logo" />
-          <span class="product-name">CosMac<span class="product-x">X</span>{{ activeSpaceName }}</span>
+          <span class="product-name">GuDuu OS<span class="product-x">X</span>{{ activeSpaceName }}</span>
         </button>
         <div v-if="appMenuOpen" class="tas-pop" @click.stop>
           <button class="tas-item active"><span class="tas-ic">💬</span><span class="tas-label">频道</span><span class="tas-check">✓</span></button>
@@ -2400,7 +2400,7 @@ onBeforeUnmount(() => {
           <div class="board-scroll">
             <div class="canvas">
               <div class="ctitle">{{ activeSpaceName }}</div>
-              <div class="csub">// 实时运营画布 · 由 CosMac 自动维护</div>
+              <div class="csub">// 实时运营画布 · 由 GuDuu OS 自动维护</div>
               <!-- 一句话下达目标：真的发给中枢 AI（复用 aiSend），不再是 mock 卡片 -->
               <div class="board-ask">
                 <div class="board-ask-h">⚡ 一句话下达目标</div>
@@ -2726,7 +2726,7 @@ onBeforeUnmount(() => {
             <textarea
               ref="taRef"
               v-model="draft"
-              :placeholder="currentIsDm ? `发消息给 ${currentName}` : `发送到 #${currentName}；叫主 AI 试：CosMac 建专班 测试专班`"
+              :placeholder="currentIsDm ? `发消息给 ${currentName}` : `发送到 #${currentName}；叫主 AI 试：GuDuu OS 建专班 测试专班`"
               @keydown="onComposerKeydown"
               @input="detectMention"
               @click="detectMention"
@@ -2784,7 +2784,7 @@ onBeforeUnmount(() => {
         <!-- 顶栏（放大态作为弹窗标题栏，横跨三栏）-->
         <div class="ai-head">
           <span class="ai-dot" />
-          <span class="ai-title">中枢 AI · CosMac</span><span class="ai-dm-badge" title="这是你与中枢 AI 的一对一私人会话，内容仅你们可见；邀请成员请到目标频道里 @AI 操作">私人会话</span>
+          <span class="ai-title">中枢 AI · GuDuu OS</span><span class="ai-dm-badge" title="这是你与中枢 AI 的一对一私人会话，内容仅你们可见；邀请成员请到目标频道里 @AI 操作">私人会话</span>
           <div class="ai-head-actions">
             <!-- 放大 / 还原 -->
             <button class="ai-ic-btn" :title="aiMax ? '还原' : '放大'" @click="aiMax = !aiMax">

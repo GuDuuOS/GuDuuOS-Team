@@ -11,7 +11,7 @@ export interface CloudApp {
   name: string
   initial: string
   color: string
-  /** 安装后是否在 CosMac 建立消息桥接频道 */
+  /** 安装后是否在 GuDuu OS 建立消息桥接频道 */
   bridge?: boolean
   status: CloudStatus
 }
@@ -93,8 +93,8 @@ export const localShortcuts: LocalShortcut[] = [
 function out(type: CliLineType, text: string) { lines.push({ type, text }) }
 function welcome() {
   if (lines.length) return
-  out('sys', 'CosMac CLI — 本地连接')
-  out('sys', '安装本地 Agent 后，CosMac 可访问本地电脑的文件 / 应用 / 终端')
+  out('sys', 'GuDuu OS CLI — 本地连接')
+  out('sys', '安装本地 Agent 后，GuDuu OS 可访问本地电脑的文件 / 应用 / 终端')
   out('sys', '输入 connect 连接本地电脑，help 查看命令')
 }
 
@@ -142,7 +142,7 @@ function run(raw: string) {
       break
     case 'screenshot':
       if (!localConnected.value) { out('err', '请先 connect 连接本地电脑'); break }
-      out('ok', '✓ 已截取当前屏幕并回传 CosMac')
+      out('ok', '✓ 已截取当前屏幕并回传 GuDuu OS')
       out('out', '  screen_2026-05-24_1530.png')
       break
     case 'status':

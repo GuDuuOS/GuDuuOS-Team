@@ -111,7 +111,7 @@ class TestSetDisplayname(unittest.TestCase):
             return _Resp(200, {})
 
         with mock.patch.object(self.client._session, "put", side_effect=fake_put):
-            self.client.set_displayname("CosMac")
+            self.client.set_displayname("GuDuu OS")
         # 设自己 profile 走本体身份：URL 不能带 ?user_id=（伪装路径在 1.15x 上 500）
         self.assertIn("/profile/", captured["url"])
         self.assertNotIn("user_id=", captured["url"])

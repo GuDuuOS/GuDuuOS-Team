@@ -368,7 +368,7 @@ class MatrixClient:
         Matrix 协议不能改，所以用标准 m.room.message 承载：
         - body：纯文本兜底，Element 等不认识富卡的客户端只显示这段文字。
         - cosmac.card：自定义字段（命名空间 cosmac.*，不与协议的 m.* 冲突），
-          CosMac 自己的客户端据此把它渲染成结构化富卡。
+          GuDuu OS 自己的客户端据此把它渲染成结构化富卡。
         返回 event_id 或 None。
         """
         txn = self._txn_id()

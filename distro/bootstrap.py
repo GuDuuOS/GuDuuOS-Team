@@ -1,4 +1,4 @@
-"""CosMac 发行版 —— 全新实例引导脚本（在 bot 容器内运行）。
+"""GuDuu OS 发行版 —— 全新实例引导脚本（在 bot 容器内运行）。
 
 install.sh 在全栈起来后调用：``docker compose exec -T bot python /app/distro/bootstrap.py``
 
@@ -45,7 +45,7 @@ AS_TOKEN = _env("AS_TOKEN")
 REG_SECRET = _env("REGISTRATION_SHARED_SECRET")
 ADMIN_USER = _env("ADMIN_USER", "admin")
 ADMIN_EMAIL = _env("ADMIN_EMAIL")
-BOT_DISPLAYNAME = _env("BOT_DISPLAYNAME", "CosMac")
+BOT_DISPLAYNAME = _env("BOT_DISPLAYNAME", "GuDuu OS")
 
 CTRL_ALIAS = f"#cosmac-ctrl:{SERVER_NAME}"
 ADMIN_MXID = f"@{ADMIN_USER}:{SERVER_NAME}"
@@ -183,7 +183,7 @@ def ensure_control_room() -> None:
         f"{HS}/_matrix/client/v3/createRoom",
         json={
             "room_alias_name": "cosmac-ctrl",
-            "name": "CosMac 控制室",
+            "name": "GuDuu OS 控制室",
             "topic": "实例控制室：AI 配置/技能/门控等 state event 存这里。仅管理员可见。",
             "preset": "private_chat",
             "invite": [ADMIN_MXID],

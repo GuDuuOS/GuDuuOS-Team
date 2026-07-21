@@ -1,4 +1,4 @@
-// CosMac 客户端的 Matrix 适配层：用 matrix-js-sdk 连 Synapse 后端。
+// GuDuu OS 客户端的 Matrix 适配层：用 matrix-js-sdk 连 Synapse 后端。
 // 能力：登录（带会话记忆，刷新不用重登）→ 同步 → 列频道 → 读消息（含 cosmac.card 富卡）→ 发消息。
 
 // matrix-js-sdk 里有些代码引用了 node 风格的 global，浏览器里先补个垫片。
@@ -277,7 +277,7 @@ function fireSessionExpired(reason: string): void {
 //  loginWithEmailNoStart(经 cosmac 后端),LiveView 挂载时 restoreSession 统一启动。)
 
 // 注：注册不走 Matrix 原生开放注册（那只能发验证链接、且要服务端开放注册）。
-// CosMac 用「自建邮箱验证码」注册：见下方 registerRequestCode/registerVerify（调 cosmac 后端）。
+// GuDuu OS 用「自建邮箱验证码」注册：见下方 registerRequestCode/registerVerify（调 cosmac 后端）。
 
 
 /**
@@ -470,7 +470,7 @@ export function listRooms(): LiveRoom[] {
     .filter((r) => !aiIds.has(r.roomId))
     // 排除真人私信(DM):它们渲染在"私信"区,不是频道(含被邀请阶段的,靠 is_direct 识别)
     .filter((r) => !isDmRoom(r))
-    // 排除 CosMac 控制室：它是平台的"配置数据库"(AI配置/会员/门控/套餐等 state event 都存这),
+    // 排除 GuDuu OS 控制室：它是平台的"配置数据库"(AI配置/会员/门控/套餐等 state event 都存这),
     // 不是聊天频道。出现在列表里会被管理员当普通频道误删(实测发生过——退出后后台配置读写全断)。
     // 按 canonical alias 判定(#cosmac-ctrl),改名也藏得住。
     .filter((r) => !((r as any).getCanonicalAlias?.() || '').startsWith('#cosmac-ctrl:'))
@@ -487,7 +487,7 @@ export function listRooms(): LiveRoom[] {
 
 /**
  * 登录后自动接受所有「待接受」的频道邀请(把 invite 态 join 掉)。返回本次实际 join 的房间数。
- * 为什么:CosMac 是"AI/管理员把你拉进项目频道"的工作台模型——邀请就应入群(像 Slack 拉你进频道)。
+ * 为什么:GuDuu OS 是"AI/管理员把你拉进项目频道"的工作台模型——邀请就应入群(像 Slack 拉你进频道)。
  * 否则邀请永远挂在 invite 态,被邀请方看不到、也没真加入,成员数还里外对不上(修 QA bug 9/10/11)。
  * best-effort:单个房进不去不影响其它;全程兜异常,绝不阻断登录。
  */
@@ -711,14 +711,14 @@ export async function updateRoom(
   }
 }
 
-/* ===== 频道级 CosMac 配置（频道管理面板：人设/模型/规则等）=====
+/* ===== 频道级 GuDuu OS 配置（频道管理面板：人设/模型/规则等）=====
  * 存成每频道一条自定义 state event `cosmac.channel_config`（与 cosmac.workspace 同套命名）。
  * 选 state event 而非 account data：群级共享（所有成员/多端一致）、留在房间里、不改 Synapse 核心。
  * 写需要发状态事件的权限（房间 state_default，一般管理员），普通成员写会被服务器拒（M_FORBIDDEN）。
  */
 const CHANNEL_CONFIG_EVENT = 'cosmac.channel_config'
 
-/** 读某频道的 CosMac 配置内容；无则返回空对象 {}。 */
+/** 读某频道的 GuDuu OS 配置内容；无则返回空对象 {}。 */
 export function getChannelConfig(roomId: string): Record<string, any> {
   const room = mx?.getRoom(roomId)
   const ev = room?.currentState?.getStateEvents?.(CHANNEL_CONFIG_EVENT, '')
@@ -1554,7 +1554,7 @@ export async function deleteRoom(roomId: string, block = false): Promise<void> {
   // 入驻模板/工作流/页面内容都只存在这一个房间的 state event 里。删掉不可恢复、整个平台瘫痪。
   // 这里是删除的**唯一收口**，任何入口(含误点)都在此被挡住。
   if (await isControlRoom(roomId)) {
-    throw new Error('这是 CosMac 控制室，删除会清空全部平台配置，已阻止此操作。')
+    throw new Error('这是 GuDuu OS 控制室，删除会清空全部平台配置，已阻止此操作。')
   }
   await adminFetch(`/_synapse/admin/v1/rooms/${encodeURIComponent(roomId)}`, {
     method: 'DELETE',
@@ -1562,7 +1562,7 @@ export async function deleteRoom(roomId: string, block = false): Promise<void> {
   })
 }
 
-/** 某房间是否是 CosMac 控制室（按别名解析出的 room_id 比对）。解析不到/出错返回 false（不误拦）。 */
+/** 某房间是否是 GuDuu OS 控制室（按别名解析出的 room_id 比对）。解析不到/出错返回 false（不误拦）。 */
 export async function isControlRoom(roomId: string): Promise<boolean> {
   if (!roomId) return false
   try {
@@ -1717,11 +1717,11 @@ export async function ensureControlRoom(): Promise<string> {
 
   try {
     const res: any = await (mx as any).createRoom({
-      name: 'CosMac 控制室',
+      name: 'GuDuu OS 控制室',
       room_alias_name: CONTROL_ROOM_LOCALPART,
       preset: 'private_chat',
       invite: [botId(), ...others], // 主 AI + 其他管理员
-      topic: 'CosMac 管理后台 · 主 AI 运行时配置（请勿删除/退出）',
+      topic: 'GuDuu OS 管理后台 · 主 AI 运行时配置（请勿删除/退出）',
       power_level_content_override: { users },
     })
     return res.room_id
@@ -2325,7 +2325,7 @@ export async function fetchMarketCatalog(): Promise<MarketCatalog | null> {
   } catch { return null }
 }
 
-// 插件安装记录的 account data 类型（cc.* 前缀=CosMac 客户端自定义，非协议字段）
+// 插件安装记录的 account data 类型（cc.* 前缀=GuDuu OS 客户端自定义，非协议字段）
 const MARKET_ACCOUNT_DATA = 'cc.cosmac.market' // 旧版「获取」存这里,现已迁 cosmac DB(仅迁移时读)
 const PLUGINS_ACCOUNT_DATA = 'cc.cosmac.plugins'
 
@@ -3088,7 +3088,7 @@ export async function payGetMe(): Promise<PayMe | null> {
   } catch { return null }
 }
 
-/** 平台真实运营指标（数据看板用；CosMac 真正拥有的数据）。 */
+/** 平台真实运营指标（数据看板用；GuDuu OS 真正拥有的数据）。 */
 export interface PlatformStats {
   members_paid: number; members_creator: number
   workflow_runs: number; orders_paid: number; kb_docs: number

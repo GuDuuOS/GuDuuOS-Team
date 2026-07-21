@@ -9,7 +9,7 @@ skills_text.MAX_TOTAL_PROMPT_CHARS),预置一堆会撑爆上下文、每轮烧 t
 的 skill_slugs):平时零注入、零干扰;只有用户 @ 那个 Agent、把它指派进专班、或绑到某群时,
 对应方法论才随该 Agent 一起激活(见 appservice_bot._agent_skill_items / _skill_library)。
 
-内容取向:面向 CosMac 目标用户(个人创业者/内容创作/营销运营/教育)的**可落地方法论**——
+内容取向:面向 GuDuu OS 目标用户(个人创业者/内容创作/营销运营/教育)的**可落地方法论**——
 借鉴 ECC「技能=结构化步骤清单」的形式(【何时启用】【铁律】【流程】【硬禁】),但步骤按中文
 社媒/营销语境原创,不是搬运 ECC 的开发者技能。
 
