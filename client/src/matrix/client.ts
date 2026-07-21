@@ -205,7 +205,7 @@ async function startFrom(opts: {
           // 只有**确定的鉴权失效**才判死刑;其它 ERROR(网络抖动/5xx)SDK 会自动重试,
           // 继续等 PREPARED 或超时——别把一次网络错当"会话失效"(审查 bug#1)。
           const errcode = data?.error?.errcode || data?.error?.data?.errcode
-          if (errcode === 'M_UNKNOWN_TOKEN' || errcode === 'M_USER_DEACTIVATED') {
+          if (errcode === 'M_UNKNOWN_TOKEN' || errcode === 'M_USER_DEACTIVATED' || errcode === 'M_USER_LOCKED') {
             fail(`Matrix auth error: ${errcode}`, errcode)
           }
         }
@@ -237,7 +237,7 @@ async function startFrom(opts: {
   ;(mx as any).on('sync', (state: string, _prev: string, data: any) => {
     if (state !== 'ERROR') return
     const errcode = data?.error?.errcode || data?.error?.data?.errcode
-    if (errcode === 'M_UNKNOWN_TOKEN' || errcode === 'M_USER_DEACTIVATED') fireSessionExpired(errcode)
+    if (errcode === 'M_UNKNOWN_TOKEN' || errcode === 'M_USER_DEACTIVATED' || errcode === 'M_USER_LOCKED') fireSessionExpired(errcode)
   })
   return opts.userId
 }
@@ -372,7 +372,7 @@ export async function restoreSession(): Promise<string | null> {
   } catch (e: any) {
     // 只有**确定的鉴权失效**(token 无效/账号停用)才删会话；网络抖动/初始同步超时等瞬时失败
     // 必须保留会话——否则弱网刷新一次就把有效 token 删了、把人踢回登录页重输密码(审查 bug#1)。
-    if (e?.errcode === 'M_UNKNOWN_TOKEN' || e?.errcode === 'M_USER_DEACTIVATED') {
+    if (e?.errcode === 'M_UNKNOWN_TOKEN' || e?.errcode === 'M_USER_DEACTIVATED' || e?.errcode === 'M_USER_LOCKED') {
       localStorage.removeItem(SESSION_KEY)
     }
     return null
