@@ -3856,6 +3856,17 @@ export interface AdminRoomDetail {
   skills: { slug: string; name: string; enabled: boolean }[]
   memory: string
 }
+/** 读本频道某篇知识库文档全文(频道成员;右侧「关于此频道」点开查看)。 */
+export async function fetchRoomKbDoc(roomId: string, id: number): Promise<{ title: string; text: string }> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  const r = await fetch(`${payBase()}/cosmac/kb/room/doc?room_id=${encodeURIComponent(roomId)}&id=${id}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || `读取文档失败(${r.status})`)
+  return j
+}
+
 /** 频道规则文档「AI 一键写」:按频道上下文生成 Markdown 工作规范草稿(频道管理员)。 */
 export async function fetchRuleDocDraft(roomId: string, notes = '', existing = ''): Promise<string> {
   const token = (mx as any)?.getAccessToken?.() || ''

@@ -3135,6 +3135,46 @@ class CosmacBot:
             logger.debug("读人事花名册失败", exc_info=True)
         return 200, out
 
+    def handle_kb_room_doc(
+        self, access_token: str, room_id: str, doc_id: str
+    ) -> Tuple[int, Dict[str, Any]]:
+        """读**本频道**某篇知识库文档全文(频道成员可用;右侧「关于此频道」点开文档看内容)。
+
+        鉴权两道:①发起人是该频道成员;②文档确实挂在该频道(scope=room 且 scope_id=room_id)
+        ——防止拿着任意 doc_id 跨频道读别家文档。正文=chunks 按序拼接,截 2 万字。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        room_id = str(room_id or "").strip()
+        if not room_id.startswith("!"):
+            return 400, {"error": "无效的频道 id"}
+        if not self.client.is_joined_member(room_id, user_id):
+            return 403, {"error": "你不是该频道成员"}
+        try:
+            did = int(doc_id)
+        except (TypeError, ValueError):
+            return 400, {"error": "无效的文档 id"}
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.models import SCOPE_ROOM, KnowledgeChunk, KnowledgeDoc
+
+            with session_scope() as s:
+                doc = s.get(KnowledgeDoc, did)
+                if doc is None or doc.scope != SCOPE_ROOM or doc.scope_id != room_id:
+                    return 404, {"error": "本频道没有这篇文档(可能已删除)"}
+                chunks = (
+                    s.query(KnowledgeChunk)
+                    .filter(KnowledgeChunk.doc_id == did)
+                    .order_by(KnowledgeChunk.id)
+                    .all()
+                )
+                text = "\n".join(str(c.text or "") for c in chunks)
+                return 200, {"id": doc.id, "title": doc.title, "text": text[:20000]}
+        except Exception:
+            logger.exception("读频道知识库文档失败")
+            return 500, {"error": "读取失败(数据库不可用?)"}
+
     def handle_admin_room_detail(
         self, access_token: str, room_id: str
     ) -> Tuple[int, Dict[str, Any]]:
@@ -6333,6 +6373,17 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(code, payload, cors=True)
             return
         # 频道知识库：列本频道已上传文档（?room_id=）
+        # 频道文档全文(频道成员;右侧「关于此频道」点开查看)
+        if self.path.split("?", 1)[0] == "/cosmac/kb/room/doc":
+            from urllib.parse import parse_qs, urlparse
+            qs = parse_qs(urlparse(self.path).query)
+            code, payload = self.bot.handle_kb_room_doc(
+                self._bearer(),
+                (qs.get("room_id") or [""])[0],
+                (qs.get("id") or [""])[0],
+            )
+            self._send_json(code, payload, cors=True)
+            return
         if self.path.split("?", 1)[0] == "/cosmac/kb/room/list":
             from urllib.parse import parse_qs, urlparse
             token = self._bearer()

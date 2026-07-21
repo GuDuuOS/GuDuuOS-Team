@@ -46,11 +46,13 @@
       <div class="pinned">
         <div class="ph">📚 知识库 · KNOWLEDGE</div>
         <div class="info-list">
-          <div v-for="k in knowledge" :key="k.label" class="info-item">
+          <div v-for="k in knowledge" :key="k.label" class="info-item" :class="{ clickable: k.docId != null }" @click="k.docId != null && toggleDoc(k.docId)">
             <div class="info-main">
               <span class="info-label">{{ k.label }}</span>
+              <span v-if="k.docId != null" class="info-doc-hint">{{ docOpen === k.docId ? '收起 ▲' : '查看 ▼' }}</span>
             </div>
             <div v-if="k.desc" class="info-desc">{{ k.desc }}</div>
+            <pre v-if="k.docId != null && docOpen === k.docId" class="info-doc-text">{{ docLoading ? '加载中…' : docText }}</pre>
           </div>
         </div>
       </div>
@@ -71,8 +73,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRightPanel } from '@/composables/useRightPanel'
+import { fetchRoomKbDoc } from '@/matrix/client'
 import { useChannelAdmin } from '@/composables/useChannelAdmin'
 // .right 面板样式来自全局 right.css；真实客户端(main.ts)只加载 tokens/reset，故组件自带样式
 import '@/styles/right.css'
@@ -98,9 +101,28 @@ const skills = computed(() => state.skills)
 // 知识库 = 「来源」条目 + **真实上传入库的文档**(roomKbDocs,与频道管理弹窗共享同一份,
 // 弹窗里上传/删除后这里即时同步——负责人报的"维护知识库后右侧未同步")
 const knowledge = computed(() => [
-  ...state.knowledge,
-  ...roomKbDocs.value.map((d) => ({ label: d.title, desc: '已入库文档 · 本频道 AI 可检索' })),
+  ...state.knowledge.map((k) => ({ ...k, docId: null as number | null })),
+  // 真实入库文档带 docId → 条目可点击展开全文(负责人报的"无法点击查看")
+  ...roomKbDocs.value.map((d) => ({ label: d.title, desc: '已入库文档 · 本频道 AI 可检索', docId: d.id as number | null })),
 ])
+// 点开某篇文档看全文(频道成员端点,懒加载)
+const docOpen = ref<number | null>(null)
+const docText = ref('')
+const docLoading = ref(false)
+async function toggleDoc(id: number) {
+  if (docOpen.value === id) { docOpen.value = null; return }
+  docOpen.value = id
+  docLoading.value = true
+  docText.value = ''
+  try {
+    const rid = (useChannelAdmin().roomId as any).value as string
+    docText.value = (await fetchRoomKbDoc(rid, id)).text || '(空文档)'
+  } catch (e: any) {
+    docText.value = `读取失败:${e?.message || e}`
+  } finally {
+    docLoading.value = false
+  }
+}
 const rules = computed(() => state.rules)
 const { hide } = useRightPanel()
 </script>
