@@ -1,5 +1,12 @@
 # CosMac OS — 开发日志 (Dev Log)
 
+## 2026-07-21 — 部署切换:阿里云主站(cs.guduuos.com)首次全量升级
+- 负责人确认部署目标改为阿里云机(ssh guduu-cn),GCP/app.cosmac.cc 不再用。
+- 发现该机代码停在生产搬家时点(edde5c0)——本会话 30+ 项改动此前只上过旧 GCP。
+- 首次跑通新部署链:/root/cosmac pull(GitHub)→ /opt/cosmac/distro/update.sh
+  (compose build+滚动重启,数据不动)→ doctor 13/13 全绿,线上 hash=index-uEt8eE0i.js。
+  bot 重启后 90s 自动给存量频道补默认规则(backfill)。此后部署由 Claude 直接 SSH 执行。
+
 ## 2026-07-21 — fix:账号停用后在线会话未被踢出(负责人报的)
 - 现象:管理员锁定账号后,被停用者的已登录页面还停着,发消息报裸英文 401
   「User account has been locked」,输入框/本地回显气泡残留。
