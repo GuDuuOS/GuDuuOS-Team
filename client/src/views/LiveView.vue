@@ -229,6 +229,11 @@ async function loadTasks() { taskList.value = await getTasks() }
 const myOverdueTasks = computed(() =>
   taskList.value.filter((t) => t.status !== 'done' && t.due_ts && t.due_ts * 1000 < Date.now() && assignedToMe(t)),
 )
+// 角标口径(负责人建议):不只逾期——「我的全部未完成」=逾期+进行中+待办;
+// 有逾期时角标红色示警,无逾期但有待办时橙色。每日 toast 仍只按逾期(别把普通待办也弹)。
+const myOpenTasks = computed(() =>
+  taskList.value.filter((t) => t.status !== 'done' && assignedToMe(t)),
+)
 let overdueTimer: ReturnType<typeof setInterval> | null = null
 onBeforeUnmount(() => { if (overdueTimer) clearInterval(overdueTimer) })
 /** 每天首次登录时弹一次系统提醒(localStorage 按「账号+日期」去重,不轰炸)。 */
@@ -2250,8 +2255,15 @@ onBeforeUnmount(() => {
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
             </span>
             <span class="cs-label">任务看板</span>
-            <!-- 系统级逾期角标:我的逾期任务数,常驻可见(不依赖 AI 聊天提醒) -->
-            <span v-if="myOverdueTasks.length" class="cs-overdue-n" :title="`你有 ${myOverdueTasks.length} 个任务已逾期`">{{ myOverdueTasks.length }}</span>
+            <!-- 系统级任务角标:我的全部未完成数(逾期+进行中+待办);有逾期红色,否则橙色 -->
+            <span
+              v-if="myOpenTasks.length"
+              class="cs-overdue-n"
+              :class="{ warn: !myOverdueTasks.length }"
+              :title="myOverdueTasks.length
+                ? `你有 ${myOpenTasks.length} 个任务未完成，其中 ${myOverdueTasks.length} 个已逾期`
+                : `你有 ${myOpenTasks.length} 个任务未完成`"
+            >{{ myOpenTasks.length }}</span>
           </div>
           <!-- 置顶：图文教程（前台只读·类公众号；编辑在管理后台）-->
           <div class="cs-item pinned-item" :class="{ active: docs }" @click="openDocs">
@@ -3398,6 +3410,7 @@ onBeforeUnmount(() => {
 .cs-archived-tag { flex-shrink: 0; display: inline-flex; align-items: center; color: var(--text-2); }
 /* 任务看板逾期角标:红底白字,与私信未读同视觉级别(系统级提醒,常驻) */
 .cs-overdue-n { margin-left: auto; flex-shrink: 0; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #c0392b; color: #fff; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.cs-overdue-n.warn { background: #d68910; }  /* 无逾期只有待办:橙色,弱于红色示警 */
 /* 未归类组:计数小标 + 悬浮出现的「归入」按钮 */
 .cs-orphan-n { margin-left: auto; font-size: 11px; color: var(--text-3); background: var(--bg-soft); border-radius: 999px; padding: 0 7px; }
 .cs-adopt { flex-shrink: 0; display: none; border: 1px solid var(--border); background: var(--bg-panel); color: var(--text-2); font-size: 11px; padding: 1px 8px; border-radius: 6px; cursor: pointer; }
