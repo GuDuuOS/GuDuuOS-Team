@@ -5867,8 +5867,10 @@ class CosmacBot:
                 if "控制室" in str(name_ev.get("name") or ""):
                     continue  # 平台配置房不是聊天频道
                 cfg = self.client.get_state_event(rid, CHANNEL_CONFIG_EVENT_TYPE) or {}
-                if cfg.get("rules"):
-                    continue  # 已有规则(含手工配的),不动
+                # 「rules 键存在」(哪怕空数组)=用户动过——显式删光默认规则也算,**尊重删除,
+                # 不复活**(负责人实报:删掉「频道资源边界」重进又出现)。只补从未配置过的房。
+                if "rules" in cfg:
+                    continue  # 已有规则 或 用户显式清空,都不动
                 cfg["rules"] = [dict(self._DEFAULT_CHANNEL_RULE)]
                 if self.client.set_state_event(rid, CHANNEL_CONFIG_EVENT_TYPE, cfg):
                     done += 1

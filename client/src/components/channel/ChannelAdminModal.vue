@@ -593,15 +593,20 @@ watch(visible, (v) => {
   rLabel.value = ''; rDesc.value = ''
   dLabel.value = ''
   if (isLive.value) { refreshLiveMembers(); loadGlobalAgents(); loadRoomDocs() }
-  // 存量频道兜底(负责人:每个频道都要有可见 RULE):打开弹窗发现规则为空 → 自动补默认
-  // 「频道资源边界」。bot 端另有启动 backfill 覆盖它有权限的房;这里覆盖用户能管的房。
-  // 稍等配置从房间加载完再判(loadConfigFromRoom 异步),已有规则的不动(幂等)。
+  // 存量频道兜底(负责人:每个频道都要有可见 RULE):打开弹窗发现规则**从未配置过** →
+  // 自动补默认「频道资源边界」。⚠️ 判据是房间 state 里 rules **键缺失**,不是数组为空——
+  // 用户显式删光规则后 state 里存的是 rules:[],键存在=动过,**尊重删除不复活**
+  // (负责人实报:删掉「频道资源边界」重进又出现)。bot 端 backfill 同口径。
   if (isLive.value) {
-    setTimeout(() => {
-      if (visible.value && !state.rules.length) {
-        addItem('rules', '频道资源边界',
-          '本频道 AI 仅使用本频道的技能、智能体、规则与知识库(含管理员显式绑定进本频道的知识源)作答,不引用频道外内容。')
-      }
+    setTimeout(async () => {
+      if (!visible.value || state.rules.length) return
+      try {
+        const { getChannelConfig } = await import('../../matrix/client')
+        const saved = getChannelConfig(roomId.value) as Record<string, any>
+        if ('rules' in (saved || {})) return  // 键存在(含空数组)=用户动过,不补
+      } catch { /* 读不到按"从未配置"处理,照补 */ }
+      addItem('rules', '频道资源边界',
+        '本频道 AI 仅使用本频道的技能、智能体、规则与知识库(含管理员显式绑定进本频道的知识源)作答,不引用频道外内容。')
     }, 1200)
   }
 })
