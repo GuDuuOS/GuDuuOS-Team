@@ -18,7 +18,7 @@
           进入案例
           <span>↗</span>
         </RouterLink>
-        <a class="site-nav-login" href="https://cs.guduuos.com">登录 / 注册</a>
+        <a class="site-nav-login" :href="appHref">登录 / 注册</a>
       </div>
     </header>
 
@@ -46,7 +46,7 @@
               体验 GuDuu OS
               <span class="button-arrow">→</span>
             </RouterLink>
-            <a class="ghost-button" href="https://cs.guduuos.com">
+            <a class="ghost-button" :href="appHref">
               登录 / 注册
               <span class="button-arrow">→</span>
             </a>
@@ -444,6 +444,10 @@
 
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { appUrl } from '@/config/app'
+
+// 主站地址：运行时按当前主域推导，不写死域名（见 config/app.ts）
+const appHref = appUrl()
 
 const scrolled = ref(false)
 const siteShell = ref<HTMLElement | null>(null)
