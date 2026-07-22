@@ -2444,3 +2444,8 @@
 .site-nav-login.dim:hover { background: rgba(255,255,255,.14); box-shadow: none; }
 .ghost-button.dim { border-color: rgba(255,255,255,.22); color: rgba(255,255,255,.62) !important; }
 .ghost-button.dim:hover { border-color: rgba(255,255,255,.4); background: rgba(255,255,255,.06); }
+
+/* 企业版右上角「进入案例」= 橙色主 CTA(企业版唯一开放动作;滚动态也保持橙) */
+.site-nav-cta.cta-orange,
+.site-nav.scrolled .site-nav-cta.cta-orange { color: #fff; background: #e88533; border-color: #e88533; }
+.site-nav-cta.cta-orange:hover { box-shadow: 0 10px 24px rgba(232,133,51,.3); }

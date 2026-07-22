@@ -19,7 +19,7 @@
       </nav>
 
       <div class="nav-actions">
-        <RouterLink class="site-nav-cta" :to="{ name: 'dashboard' }">
+        <RouterLink class="site-nav-cta cta-orange" :to="{ name: 'dashboard' }">
           进入案例
           <span>↗</span>
         </RouterLink>
