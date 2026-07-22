@@ -15,6 +15,11 @@ export interface OnboardingTemplate {
   aiPersona: string      // 主 AI 默认人设（一句话，写进 system_prompt 基底）
   /** 工作区名输入框的占位示例 */
   workspacePlaceholder: string
+  /**
+   * 受众社区 —— **独立工作区**（负责人原则：粉丝/客户/学员是受众运营，
+   * 必须另立工作区，绝不塞进职能工作区当频道）。引导创建主工作区后追加建它。
+   */
+  communitySpace?: { name: string; channels: string[] }
 }
 
 export const ONBOARDING_TEMPLATES: OnboardingTemplate[] = [
@@ -24,6 +29,7 @@ export const ONBOARDING_TEMPLATES: OnboardingTemplate[] = [
     icon: '🎬',
     desc: '剧集/短视频制作、虚拟明星、粉丝运营',
     channels: ['制作中心', '分镜与脚本', '选题策划', '商单与合作'],
+    communitySpace: { name: '粉丝社区', channels: ['公告与活动', '粉丝互动'] },
     aiName: '中枢 AI',
     aiPersona: '你是这家影视内容工作室的制作中枢助手，擅长拆解制作任务、跟进剧集进度、协助粉丝运营。',
     workspacePlaceholder: '如：安其影视工作室',
@@ -34,6 +40,7 @@ export const ONBOARDING_TEMPLATES: OnboardingTemplate[] = [
     icon: '🛍️',
     desc: '选品、上架、客服、投放与复盘',
     channels: ['选品与上架', '订单管理', '投放与增长', '数据复盘'],
+    communitySpace: { name: '客户社区', channels: ['公告与活动', '客户交流'] },
     aiName: '运营助手',
     aiPersona: '你是这家电商品牌的运营助手，擅长选品分析、客服话术、投放复盘与增长建议。',
     workspacePlaceholder: '如：某某品牌旗舰店',
@@ -44,6 +51,7 @@ export const ONBOARDING_TEMPLATES: OnboardingTemplate[] = [
     icon: '📱',
     desc: '选题、脚本、多平台分发、粉丝互动',
     channels: ['选题库', '脚本与拍摄', '多平台分发', '数据复盘'],
+    communitySpace: { name: '粉丝社区', channels: ['公告与活动', '粉丝互动'] },
     aiName: '创作搭子',
     aiPersona: '你是这位博主的创作搭子，擅长找选题、写脚本、规划多平台分发与粉丝互动。',
     workspacePlaceholder: '如：小王的频道',
@@ -54,6 +62,7 @@ export const ONBOARDING_TEMPLATES: OnboardingTemplate[] = [
     icon: '📚',
     desc: '课程研发、招生、学员服务、社群',
     channels: ['课程研发', '招生与转化', '教务运营', '数据复盘'],
+    communitySpace: { name: '学员社区', channels: ['公告与活动', '学习交流'] },
     aiName: '教务助手',
     aiPersona: '你是这家教育机构的教务助手，擅长课程设计、招生话术、学员答疑与社群运营。',
     workspacePlaceholder: '如：某某学堂',

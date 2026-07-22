@@ -41,6 +41,21 @@ max_upload_size: 50M
 
 signing_key_path: "/data/{{DOMAIN}}.signing.key"
 
+# —— 限流放宽（VM 实测踩坑）——
+# Synapse 默认 rc_message 每秒 0.2/突发 10：首次引导一口气建 4 个频道要连发十几个
+# state event（m.space.child 挂接/规则/人设），必然打爆默认限流 → 后面的频道挂不进
+# 工作区成"未归类"孤儿、甚至建不出来。实例是单租户产品，引导突发是正当行为，放宽。
+rc_message:
+  per_second: 2
+  burst_count: 60
+rc_invites:
+  per_room:
+    per_second: 2
+    burst_count: 60
+  per_user:
+    per_second: 2
+    burst_count: 60
+
 # —— 注册策略：开放注册关闭，建号统一走 cosmac 后端的「邮箱验证码 + 共享密钥」——
 enable_registration: false
 registration_shared_secret: "{{REGISTRATION_SHARED_SECRET}}"

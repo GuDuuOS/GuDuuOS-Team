@@ -854,12 +854,13 @@ export async function createChannelInSpace(
   const server = serverName()
   // 双向挂接：Space 记子频道，子频道指回父 Space。**必须挂上**——挂不上频道就成孤儿、
   // 不进工作区频道树。突发建多个频道时可能限流，故 m.space.child 失败退避重试几次。
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 5; attempt++) {
     try {
       await (mx as any).sendStateEvent(spaceId, 'm.space.child', { via: [server] }, cid)
       break
     } catch {
-      if (attempt < 2) await new Promise((r) => setTimeout(r, 700 * (attempt + 1)))
+      // 限流窗口(默认恢复很慢)下 0.7s 级退避等不到,拉长到 1s/2s/3s/4s(实测:第3个频道成孤儿)
+      if (attempt < 4) await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)))
     }
   }
   try {

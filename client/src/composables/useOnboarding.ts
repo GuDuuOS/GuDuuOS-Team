@@ -41,6 +41,8 @@ export interface OnbPickTemplate {
   skillSlugs: string[]
   kbDocs: { title: string; content: string }[]
   workflowSlugs: string[]
+  /** 受众社区=独立工作区（粉丝/客户/学员绝不当频道，负责人原则） */
+  communitySpace?: { name: string; channels: string[] } | null
   tier: string
   paid: boolean
 }
@@ -49,6 +51,7 @@ interface OnbAnswers {
   templateKey: string
   workspace: string
   channels: string[]
+  communitySpace: { name: string; channels: string[] } | null
   aiName: string
   aiPersona: string
   rules: string
@@ -68,8 +71,8 @@ const createdSpaceId = ref('')
 const templates = ref<OnbPickTemplate[]>([])
 const userTier = ref('free') // 当前用户会员等级（用于付费模板门控）
 const answers = reactive<OnbAnswers>({
-  templateKey: '', workspace: '', channels: [], aiName: '', aiPersona: '', rules: '',
-  model: '', skillSlugs: [], kbDocs: [], workflowSlugs: [],
+  templateKey: '', workspace: '', channels: [], communitySpace: null,
+  aiName: '', aiPersona: '', rules: '', model: '', skillSlugs: [], kbDocs: [], workflowSlugs: [],
 })
 
 // 点「跳过」先弹确认提醒（skipConfirm=true），不再直接空跳；坚持跳才用下面的默认工作区。
@@ -77,7 +80,8 @@ const skipConfirm = ref(false)
 // 坚持跳过时给的默认工作区——营销方向（GuDuu OS 面向个人创业者，营销最通用，不留空）。
 const MARKETING_DEFAULT = {
   workspace: '营销工作区',
-  channels: ['内容策划', '社媒运营', '活动策划', '数据看板'],
+  channels: ['内容策划', '社媒运营', '活动策划', '数据复盘'],
+  communitySpace: { name: '客户社区', channels: ['公告与活动', '客户交流'] },
   aiName: '营销助手',
   aiPersona: '你是这个营销团队的中枢 AI 助手，帮助策划内容、运营社媒、维护客户、分析数据、推进营销任务。回答简洁、专业、可执行。',
 }
@@ -107,6 +111,7 @@ function builtinTemplates(): OnbPickTemplate[] {
   return ONBOARDING_TEMPLATES.map((t) => ({
     key: t.key, label: t.label, icon: t.icon, desc: t.desc,
     channels: [...t.channels], aiName: t.aiName, aiPersona: t.aiPersona,
+    communitySpace: t.communitySpace ? { name: t.communitySpace.name, channels: [...t.communitySpace.channels] } : null,
     rules: '', model: '', skillSlugs: [], kbDocs: [], workflowSlugs: [], tier: 'free', paid: false,
   }))
 }
@@ -148,6 +153,7 @@ function reset() {
   answers.templateKey = ''
   answers.workspace = ''
   answers.channels = []
+  answers.communitySpace = null
   answers.aiName = ''
   answers.aiPersona = ''
   answers.rules = ''
@@ -186,6 +192,9 @@ export function useOnboarding() {
       }
       answers.templateKey = key
       answers.channels = [...t.channels]
+      answers.communitySpace = t.communitySpace
+        ? { name: t.communitySpace.name, channels: [...t.communitySpace.channels] }
+        : null
       answers.aiName = t.aiName
       answers.aiPersona = t.aiPersona
       answers.rules = t.rules
@@ -282,6 +291,23 @@ export function useOnboarding() {
         }
         for (const cid of channelIds) {
           try { await setChannelConfig(cid, personaPatch) } catch { /* 单频道写失败不阻断 */ }
+        }
+        // 3b) 受众社区 = **独立工作区**（负责人原则：粉丝/客户/学员不进职能工作区当频道）。
+        //     主工作台已就绪，社区失败不阻断——失败只提示，用户可稍后手建。
+        if (answers.communitySpace) {
+          try {
+            await sleep(600)   // 与主工作区的突发写入错开，减小限流压力
+            const cs = answers.communitySpace
+            const csid = await createSpace(cs.name, { public: false, label: cs.name.slice(0, 2) })
+            for (let ci = 0; ci < cs.channels.length; ci++) {
+              if (ci > 0) await sleep(400)
+              let ccid = ''
+              for (let att = 0; att < 3 && !ccid; att++) {
+                if (att > 0) await sleep(1000 * att)
+                try { ccid = await createChannelInSpace(csid, cs.channels[ci], { public: false }) } catch { /* 重试 */ }
+              }
+            }
+          } catch { /* 社区工作区建失败不阻断主流程 */ }
         }
         // 4) 把模板预置知识库文档灌进本人个人知识库（best-effort，灌不进不阻断引导）
         if (answers.kbDocs.length) {

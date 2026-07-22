@@ -13,7 +13,7 @@
       <div v-if="skipConfirm" class="onb-skip-confirm">
         <div class="onb-skip-card">
           <strong>先别急着跳过 🙂</strong>
-          <p>跳过后我会给你建一个默认的「营销工作区」（含内容策划、社媒运营、活动策划、数据看板几个频道），你随时能改。要不要花一分钟自己配一个更贴合的？</p>
+          <p>跳过后我会给你建一个默认的「营销工作区」（含内容策划、社媒运营、活动策划、数据复盘几个频道），并另建一个独立的「客户社区」工作区，你随时能改。要不要花一分钟自己配一个更贴合的？</p>
           <div class="onb-skip-btns">
             <button class="onb-btn-ghost" @click="onCancelSkip">继续设置</button>
             <button class="onb-btn-primary" @click="onConfirmSkipDefault">用默认营销工作区</button>
@@ -74,6 +74,7 @@
           <div class="onb-review">
             <div class="onb-rv"><span>工作区</span><b>{{ answers.workspace }}</b></div>
             <div class="onb-rv"><span>频道</span><b>{{ answers.channels.join('、') || '（无）' }}</b></div>
+            <div v-if="answers.communitySpace" class="onb-rv"><span>社区</span><b>{{ answers.communitySpace.name }}（独立工作区）</b></div>
             <div class="onb-rv"><span>中枢 AI</span><b>{{ answers.aiName }}</b></div>
             <div v-if="answers.model" class="onb-rv"><span>模型</span><b>{{ answers.model }}</b></div>
             <div v-if="answers.skillSlugs.length" class="onb-rv"><span>技能</span><b>{{ answers.skillSlugs.length }} 项</b></div>
