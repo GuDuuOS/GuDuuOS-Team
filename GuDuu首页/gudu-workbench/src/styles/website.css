@@ -2430,3 +2430,10 @@
   border-color: rgba(255,255,255,.07);
 }
 .footer-brand { color: #fff !important; }
+
+/* —— 个人版/企业版 切换器(两页共用,全局) —— */
+.edition-switch { display: inline-flex; align-items: center; gap: 4px; padding: 4px; border: 1px solid rgba(255,255,255,.22); border-radius: 999px; }
+.edition-on, .edition-off { padding: 6px 14px; border-radius: 999px; font-size: 12.5px; letter-spacing: .02em; }
+.edition-on { background: #e88533; color: #fff !important; font-weight: 600; }
+.edition-off { color: rgba(255,255,255,.72) !important; transition: color .2s ease; }
+.edition-off:hover { color: #fff !important; }

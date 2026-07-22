@@ -6,6 +6,11 @@
         <span>GuDuu OS</span>
       </a>
 
+      <nav class="edition-switch" aria-label="版本切换">
+        <RouterLink class="edition-off" :to="{ name: 'website' }">个人版</RouterLink>
+        <span class="edition-on">企业版</span>
+      </nav>
+
       <nav class="site-nav-links" aria-label="官网导航">
         <a href="#product" @click.prevent="scrollToSection('product')">产品</a>
         <a href="#solutions" @click.prevent="scrollToSection('solutions')">解决方案</a>

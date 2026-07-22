@@ -7,10 +7,12 @@ import DuuChatView from '@/views/DuuChatView.vue'
 import TodoView from '@/views/TodoView.vue'
 import OpsChannelView from '@/views/OpsChannelView.vue'
 import WebsiteHomeView from '@/views/WebsiteHomeView.vue'
+import WebsitePersonalView from '@/views/WebsitePersonalView.vue'
 import DataCanvasView from '@/views/DataCanvasView.vue'
 
 const routes: RouteRecordRaw[] = [
-  { path: '/',          name: 'website',   component: WebsiteHomeView, meta: { website: true } },
+  { path: '/',          name: 'website',   component: WebsitePersonalView, meta: { website: true } },
+  { path: '/enterprise', name: 'enterprise', component: WebsiteHomeView, meta: { website: true } },
   { path: '/data-canvas', name: 'data-canvas', component: DataCanvasView, meta: { website: true } },
   { path: '/case',      name: 'dashboard', component: DashboardView },
   { path: '/safety',    name: 'safety',    component: SafetyView },
