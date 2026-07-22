@@ -43,7 +43,7 @@
             <span class="gradient-text">你自己的<br />操作系统</span>
           </h1>
           <p class="hero-lead reveal reveal-3">
-            GuDuu OS 基于开源 Matrix 协议构建：独立的账号与空间、数据主权归你。
+            独立的账号与空间，数据主权归你。
             在这里，你和 AI 聊天，AI 和 AI 协作，真人伙伴随时加入——
             一个属于你自己的 AI 工作系统。
           </p>
@@ -58,7 +58,7 @@
             </RouterLink>
           </div>
           <div class="hero-proof reveal reveal-5">
-            <span>开源协议</span>
+            <span>开放标准</span>
             <i></i>
             <span>数据主权</span>
             <i></i>
@@ -102,15 +102,15 @@
         </div>
       </section>
 
-      <!-- ===== Matrix 基因 ===== -->
+      <!-- ===== 数据主权 ===== -->
       <section id="dna" class="p-section">
-        <div class="section-eyebrow">BUILT ON MATRIX</div>
-        <h2 class="p-h2">生在开源协议上，<br />数据主权从第一天就归你。</h2>
+        <div class="section-eyebrow">YOUR DATA, YOUR RULES</div>
+        <h2 class="p-h2">数据主权，<br />从第一天就归你。</h2>
         <div class="p-cards3">
           <article class="p-card">
             <span class="p-card-no">01</span>
-            <h3>开源 Matrix 协议</h3>
-            <p>不是又一个封闭 App。GuDuu OS 构建在全球开源的 Matrix 通信协议之上，账号、消息、房间都遵循开放标准——你不会被任何一家平台锁死。</p>
+            <h3>开放通信标准</h3>
+            <p>不是又一个封闭 App。GuDuu OS 构建在开放的通信标准之上，账号、消息、频道都可迁移、可互通——你不会被任何一家平台锁死。</p>
           </article>
           <article class="p-card">
             <span class="p-card-no">02</span>
@@ -272,8 +272,9 @@ onBeforeUnmount(() => { document.title = 'GuDuu 工作台 · 蓝湾渔业' })
 .p-chat-foot span { color: #e88533; }
 
 /* ===== 通用板块 ===== */
-.p-section { padding: 110px 6vw; }
-.p-section-alt { background: rgba(255,255,255,.025); }
+/* 板块自带暗底——全局 body 是浅色,不设背景会发白(实测踩坑) */
+.p-section { padding: 110px 6vw; color: #fff; background: linear-gradient(180deg, #171513, #100f0e); }
+.p-section-alt { background: linear-gradient(180deg, #1c1815, #171513); }
 .p-h2 { margin: 14px 0 44px; font-size: clamp(26px, 3.4vw, 40px); line-height: 1.3; color: #fff; font-weight: 650; }
 .p-cards3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
 .p-cards4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
