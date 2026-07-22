@@ -34,6 +34,7 @@ class TestEngineErrorFallback(unittest.TestCase):
         bot = CosmacBot(CosmacConfig(
             llm_provider="echo", server_name="h", bot_user_id="@guduu:h"))
         bot.client = _FakeClient()  # type: ignore
+        bot._reply_pool = None  # 同步模式:事件路径测试要立刻看到回复(并发修复后默认线程池)
         # 隔离出「引擎抛异常」这条通路：其余前置一律放行/空。
         bot._is_ai_session_room = lambda rid: False  # type: ignore
         bot._room_is_named_channel = lambda rid: False  # type: ignore

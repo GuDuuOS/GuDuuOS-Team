@@ -1,5 +1,17 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-22 — 多账号并发 AI 回复:事务处理异步化(负责人实报互斥锁死)
+- 现象:一个账号的 AI 长任务执行中,另一账号问中枢 AI 完全无响应。根因:appservice
+  事务推送是**串行等 ack** 的,`_handle_event` 在事务线程里同步跑 LLM+工具循环
+  (可达几分钟)→ Synapse 拿不到 ack 就不推下一批 → 全平台事件流被一条消息堵死。
+- 修法(appservice_bot.py):AI 回复主体从 `_handle_event` 提取为 `_reply_to_message`,
+  经 `_reply_locked` 包装丢进 `ThreadPoolExecutor(4, "ai-reply")`——**事务立即 ack**;
+  **同房间加 per-room Lock 保序**(不乱序/不交叉),不同房/不同账号真并发。
+  `_reply_pool=None` 为同步开关(COSMAC_SYNC_REPLY=1 或单测置 None)。
+- 测试:新增 test_reply_async(事务毫秒返回/两房并发/同房串行保序/同步开关 4 项);
+  三个事件路径旧测(typing/engine_error/wf_cmd)桩上 `_reply_pool=None` 保持同步断言。
+  全量 619 过、ruff 过。
+
 ## 2026-07-21 — 品牌收敛②:「CosMac」→「GuDuu OS」(负责人拍板全局改名,产品对外统一)
 - 全局替换 35 文件(client/cosmac/distro/CLAUDE.md):登录页 logo/顶栏/引导/bot 显示名/
   人设/echo/邮件/CLI/插件商城/频道模型选项/控制室名/文档全改 GuDuu OS。
