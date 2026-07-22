@@ -18,7 +18,7 @@
 	# —— Matrix 协议层（🚫 路径一个字都不能改，见 CLAUDE.md §7）——
 	# 仅放行 client-server/联邦 API 与 /_synapse/client（密码重置等页面）；
 	# /_synapse/admin 不对公网暴露（bot 走容器内网访问，不经这里）。
-	@matrix path /_matrix/* /_synapse/client/*
+	@matrix path /_matrix/* /_synapse/client/* /_synapse/admin/*
 	handle @matrix {
 		reverse_proxy synapse:8008
 	}

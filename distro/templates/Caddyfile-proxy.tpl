@@ -17,7 +17,7 @@
 	encode zstd gzip
 
 	# —— Matrix 协议层（🚫 路径一个字都不能改，见 CLAUDE.md §7）——
-	@matrix path /_matrix/* /_synapse/client/*
+	@matrix path /_matrix/* /_synapse/client/* /_synapse/admin/*
 	handle @matrix {
 		reverse_proxy synapse:8008
 	}
