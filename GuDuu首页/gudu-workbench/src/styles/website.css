@@ -1592,7 +1592,7 @@
 .primary-button:hover { box-shadow: 0 16px 42px rgba(232,133,51,.25); }
 
 /* —— 登录/注册入口：官网直达真实应用 cs.guduuos.com（demo 按钮保留不变，这是新增的转化入口）—— */
-.nav-actions { display: inline-flex; align-items: center; gap: 10px; }
+.nav-actions { display: inline-flex; align-items: center; gap: 10px; margin-left: 34px; }
 .site-nav-login {
   display: inline-flex; align-items: center; gap: 8px;
   padding: 10px 18px;
@@ -2432,7 +2432,8 @@
 .footer-brand { color: #fff !important; }
 
 /* —— 个人版/企业版 切换器(两页共用,全局) —— */
-.edition-switch { display: inline-flex; align-items: center; gap: 4px; padding: 4px; border: 1px solid rgba(255,255,255,.22); border-radius: 999px; }
+/* margin-left 紧贴品牌 logo,margin-right:auto 把导航链接/按钮推到右侧(负责人要求靠左) */
+.edition-switch { display: inline-flex; align-items: center; gap: 4px; padding: 4px; margin-left: 22px; margin-right: auto; border: 1px solid rgba(255,255,255,.22); border-radius: 999px; }
 .edition-on, .edition-off { padding: 6px 14px; border-radius: 999px; font-size: 12.5px; letter-spacing: .02em; }
 .edition-on { background: #e88533; color: #fff !important; font-weight: 600; }
 .edition-off { color: rgba(255,255,255,.72) !important; transition: color .2s ease; }
