@@ -508,7 +508,10 @@ class Toolbox:
                 "  • agent —— 交给 AI Agent，ref 填其 slug（如 copywriter）\n"
                 "  • workflow —— 跑某工作流，ref 填其 slug\n"
                 "  • none —— 暂不指派（拿不准就用它，别瞎编一个不存在的人/agent）\n"
-                "assignee 另填一个给人看的负责人标签（人名/角色）。"
+                "assignee 另填一个给人看的负责人标签（人名/角色）。\n"
+                "**真人+AI 共同执行**：任务由 AI 执行（executor_kind=agent/workflow）但有真人"
+                "共同负责/审核时，必须把真人账号写进 assignee（如『社媒运营+duxiuzhen01』）——"
+                "系统按 assignee 里的账号名让该真人在自己的任务看板看到并推进这条任务。"
             ),
             parameters={
                 "type": "object",
@@ -790,7 +793,12 @@ class Toolbox:
                             },
                             "required": ["title"],
                         },
-                        "description": "派进专班的子任务卡（同 create_tasks 的结构，可空）。",
+                        "description": (
+                            "派进专班的子任务卡（同 create_tasks 的结构，可空）。"
+                            "任务交 AI 执行(executor_kind=agent)但成员表里有对应角色的真人时，"
+                            "把真人账号写进 assignee(如『社媒运营+duxiuzhen01』)——真人才能在"
+                            "自己的任务看板看到这条任务。"
+                        ),
                     },
                 },
                 "required": ["project"],

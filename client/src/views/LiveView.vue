@@ -279,9 +279,11 @@ const scopedTasks = computed(() => {
   })
 })
 
-/** 这条任务是否派给当前登录用户本人(与后端 handle_tasks_list 可见性口径一致)。
+/** 这条任务是否派给当前登录用户本人(与后端 _is_task_assignee 是同一份口径,改一处必须同步另一处)。
  *  比对「localpart」(去掉 @、去掉 :服务器 后缀、小写)——兼容 executor_ref 存全 id / 纯 localpart /
- *  带不带 @ 的各种写法;旧任务无 executor_ref 时按 assignee 首词兜底。 */
+ *  带不带 @ 的各种写法。executor 是 AI/workflow 或无 ref 时,从 assignee 提取词逐个比对——
+ *  **真人+AI 共同执行**(负责人实报):任务派给 agent:social、assignee 挂「社媒运营+duxiuzhen01」,
+ *  AI 执行但挂名真人也要在自己看板看到,否则任务对真人"隐身"。 */
 function assignedToMe(t: TaskItem): boolean {
   const me = localPartOf(currentUserId())
   if (!me) return false
@@ -289,9 +291,9 @@ function assignedToMe(t: TaskItem): boolean {
   if (t.executor_kind === 'human' && ref) {
     return localPartOf(ref) === me
   }
-  if (!ref) {
-    const first = (t.assignee || '').trim().split(/\s+/)[0] || ''
-    if (first && localPartOf(first) === me) return true
+  // 按「非 localpart 合法字符」切词(中文角色名/+、/、空格都算分隔);完整词相等,防 "du" 误配 "duxz"
+  for (const w of (t.assignee || '').split(/[^A-Za-z0-9._=@:-]+/)) {
+    if (w && localPartOf(w) === me) return true
   }
   return false
 }

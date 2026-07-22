@@ -133,11 +133,10 @@ def list_tasks_for_user(
             Task.executor_kind == "human",
             func.lower(func.coalesce(Task.executor_ref, "")).like(like),
         ))
-        # 旧任务无 executor_ref：按 assignee 文本含本人 localpart 兜底
-        conds.append(and_(
-            or_(Task.executor_ref.is_(None), Task.executor_ref == ""),
-            func.lower(func.coalesce(Task.assignee, "")).like(like),
-        ))
+        # assignee 文本含本人 localpart：旧任务兜底 + **真人+AI 共同执行**（负责人实报:
+        # 任务派给 agent 执行、assignee 挂「社媒运营+duxiuzhen01」,真人看板必须可见)。
+        # 不再限定 executor_ref 为空——否则 AI 执行的共同任务被 DB 层直接漏掉。
+        conds.append(func.lower(func.coalesce(Task.assignee, "")).like(like))
     stmt = select(Task).where(or_(*conds)).order_by(Task.id.desc()).limit(limit)
     return list(session.execute(stmt).scalars().all())
 
