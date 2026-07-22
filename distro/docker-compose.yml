@@ -1,10 +1,10 @@
 # ============================================================
-# CosMac 发行版 —— OEM 自部一键栈（模块6 P0）
+# GuDuu OS 发行版 —— OEM 自部一键栈（模块6 P0）
 # ------------------------------------------------------------
 # 一个实例 = 下面 4 个容器：
 #   postgres : 数据库（带 pgvector，知识库向量检索用；synapse/cosmac 两库同实例）
 #   synapse  : Matrix homeserver（官方镜像，版本与生产对齐 v1.141.0）
-#   bot      : CosMac 主 AI（appservice，代码来自本仓库 cosmac/）
+#   bot      : GuDuu OS 主 AI（appservice，代码来自本仓库 cosmac/）
 #   web      : Caddy —— 自动 HTTPS + 前端静态 + 反代 /_matrix、/cosmac
 #
 # ⚠️ 不要手动 docker compose up：请用 ./install.sh（它负责生成 .env、
@@ -55,7 +55,7 @@ services:
     # Synapse 误判成 unhealthy，卡死整条依赖链。
 
   bot:
-    # CosMac 主 AI：镜像从仓库根构建（cosmac/ 包 + bootstrap 脚本）
+    # GuDuu OS 主 AI：镜像从仓库根构建（cosmac/ 包 + bootstrap 脚本）
     build:
       context: ..
       dockerfile: distro/Dockerfile.bot

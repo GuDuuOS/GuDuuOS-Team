@@ -1,5 +1,5 @@
-# CosMac 服务运行依赖（部署到服务器/Google Cloud 时用：pip install -r guduu/requirements.txt）
-# 注意：这是 CosMac 自己的 AI 服务依赖，不含 Synapse 本体。
+# GuDuu OS 服务运行依赖（部署到服务器/Google Cloud 时用：pip install -r guduu/requirements.txt）
+# 注意：这是 GuDuu OS 自己的 AI 服务依赖，不含 Synapse 本体。
 requests>=2.31
 anthropic>=0.69
 openai>=1.50

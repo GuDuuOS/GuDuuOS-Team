@@ -80,6 +80,6 @@
 - 工作流 durable 队列/多实例 fencing/精确一次:单实例过度设计(负责人拍板"够用即止")
 - 任务编排档4b(workflow 自动回填):决定不做,run_workflow+update_task 手动够用
 - ruflo 等第三方 agent 框架:已评估否决,引擎已用官方 Claude Agent SDK
-- ECC(affaan-m/ECC):已评估——其**开发者技能**(代码审查/PR/调试)对 CosMac 产品无用、不引入;
+- ECC(affaan-m/ECC):已评估——其**开发者技能**(代码审查/PR/调试)对 GuDuu OS 产品无用、不引入;
   但**借鉴其「技能=结构化方法论清单」形式**做了 9 个面向营销/内容/运营的预置技能库
   (cosmac/ai/preset_skills.py,绑预置 Agent 激活)。后续要加方法论技能沿用此模式,别做全局注入

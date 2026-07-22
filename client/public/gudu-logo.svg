@@ -12,7 +12,7 @@
   <!-- 中间名牌带 -->
   <rect x="8" y="82" width="84" height="26" rx="6" fill="#faf6ea" stroke="#1a1a1a" stroke-width="4"/>
 
-  <!-- 名牌带文字（CosMac Star 简写） -->
+  <!-- 名牌带文字（GuDuu OS Star 简写） -->
   <text x="50" y="103" text-anchor="middle"
         font-family="Inter, -apple-system, 'PingFang SC', sans-serif"
         font-weight="900" font-size="18" fill="#1a1a1a"

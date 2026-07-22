@@ -33,7 +33,7 @@ Module API / Application Service 协议接入。这样能一直跟上游更新�
 └───────────────┬─────────────────────────────────────────────┘
                 │  Application Service 协议(bot 作为 appservice 接入)
 ┌───────────────▼─────────────────────────────────────────────┐
-│  ③ CosMac AI 服务 (cosmac/  ·  独立 Python 进程)              │
+│  ③ GuDuu OS AI 服务 (cosmac/  ·  独立 Python 进程)              │
 │     appservice bot：看到每条消息、能建群/发消息/派单           │
 │     多模型抽象层 · 工具箱 · 双层作用域 · 资源分层 · 变现门控    │
 │     ↕ 复用生产 PostgreSQL(单独 database) + 可选 pgvector       │
@@ -50,7 +50,7 @@ Module API / Application Service 协议接入。这样能一直跟上游更新�
 
 ```
 synapse/          上游 Synapse 仓库(只读参考，改动需登记 CLAUDE.md §8)
-cosmac/           CosMac 全部后端代码(独立 Python 包)
+cosmac/           GuDuu OS 全部后端代码(独立 Python 包)
   __main__.py       进程入口(python -m cosmac)
   config.py         配置(env 读取，COSMAC_* 前缀，兼容旧 GUDUU_*)
   bots/
@@ -301,7 +301,7 @@ Synapse ⇄ PostgreSQL(含 cosmac 独立 db)
 | 3.5 | AI 任务编排(能力名册/组班/派单/资源分层) | ✅ 完成(两段式 RULE 待议) |
 | 4 | 交易(会员订阅) | 🟡 地基+mock；真实支付未通 |
 | 5 | 个人主页 | ⬜ 未开工 |
-| R | 品牌化 Matrix/Synapse → CosMac(呈现层) | ⬜ 持续横切 |
+| R | 品牌化 Matrix/Synapse → GuDuu OS(呈现层) | ⬜ 持续横切 |
 
 **增强项(按需再补)**：pgvector 上量、长期记忆摘要、引擎冷启动提速、切/混用 Claude 大脑、
 群级模型联动、入驻模板 P3、社媒数据源 P2-P4、全局助理跨频道知识库聚合、两段式组班 RULE、公告定向广播。

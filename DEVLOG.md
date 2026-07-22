@@ -1,5 +1,15 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-22 — 品牌收敛③:代码层残留「CosMac」清理(负责人报:代码里还有 Cosmac 等)
+
+- 呈现层 28 文件批量改 GuDuu OS:distro 脚本输出([CosMac] 拉取/体检/安装向导全套文案)、
+  nexus/cosmac/client 的注释与 docstring、docs/FEATURES 标题、cosmac/README、tokens.css、
+  logo svg 注释、DEPLOY/CREDENTIALS 本地文档。
+- **保留不改(三层红线)**:CMK- KEY 前缀(已发授权 KEY 都带,协议层——注释改为「历史沿用
+  不可变更」)、cosmac 包名/DB 表/state event/COSMAC_ env//cosmac/ API 路径、类名
+  Cosmac*(内部标识符,§7 第③层)。DEVLOG 历史条目不改写。
+- 全量 632 测过、ruff/vue-tsc/构建过。
+
 ## 2026-07-22 — 新增 README.md(负责人报:GitHub 仓库主页没有 README)
 
 - 追加(同日):README 去除 Matrix/Synapse 底层技术表述(负责人要求,白牌定位)——
