@@ -859,7 +859,7 @@
             </label>
             <label class="adm-field">
               <span>初始频道（一行一个）</span>
-              <textarea v-model="tpChannelsText" rows="3" placeholder="制作中心&#10;分镜与脚本&#10;粉丝社区" />
+              <textarea v-model="tpChannelsText" rows="3" placeholder="制作中心&#10;分镜与脚本&#10;选题策划" />
             </label>
             <div class="adm-field">
               <span>绑定技能（勾选技能库里的技能）</span>

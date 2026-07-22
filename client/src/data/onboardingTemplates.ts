@@ -23,7 +23,7 @@ export const ONBOARDING_TEMPLATES: OnboardingTemplate[] = [
     label: '影视 / 内容工作室',
     icon: '🎬',
     desc: '剧集/短视频制作、虚拟明星、粉丝运营',
-    channels: ['制作中心', '分镜与脚本', '粉丝社区', '商单与合作'],
+    channels: ['制作中心', '分镜与脚本', '选题策划', '商单与合作'],
     aiName: '中枢 AI',
     aiPersona: '你是这家影视内容工作室的制作中枢助手，擅长拆解制作任务、跟进剧集进度、协助粉丝运营。',
     workspacePlaceholder: '如：安其影视工作室',
