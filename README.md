@@ -1,14 +1,14 @@
 # GuDuu OS
 
-> 基于 [Matrix (Synapse)](https://github.com/element-hq/synapse) 的 IM + **主 AI 控制层**。
-> 在标准 IM（聊天/群组/联邦）之上，叠加一个能感知并操作 IM 全部功能的 AI 系统：
+> IM + **主 AI 控制层**。在标准即时通讯（聊天/群组/多实例互通）之上，
+> 叠加一个能感知并操作 IM 全部功能的 AI 系统：
 > 主 AI 能拆解任务、组建专班、调配「人 / AI 同事 / 技能 / 知识库 / 规则」，
 > 并内置会员变现、外部工作流对接与 OEM 白牌发行体系。
 
 ## 核心特性
 
 - **主 AI 中枢**：私聊即全局助理——跨频道统筹、拆任务、建专班拉人派单、审核回填；频道内是该频道的专属分身（资源严格隔离）
-- **群级智能配置**：每个频道独立的 人设 / 技能 / 智能体 / 规则（条目+Markdown 规则文档）/ 知识库（RAG）/ 记忆，写入房间 state 多端同步，服务端强制隔离
+- **群级智能配置**：每个频道独立的 人设 / 技能 / 智能体 / 规则（条目+Markdown 规则文档）/ 知识库（RAG）/ 记忆，多端同步，服务端强制隔离
 - **任务看板**：AI 拆解登记、真人+AI 共同执行、逾期提醒、归档催办
 - **多模型可插拔**：Claude / OpenAI / DeepSeek(方舟或官方) / Gemini 统一抽象，配置切换、无 key 自动降级
 - **会员与门控**：免费/付费/创作者分层，能力门控+用量配额服务端强制；订单/支付抽象已就绪
@@ -19,12 +19,12 @@
 
 | 目录 | 说明 |
 |---|---|
-| `cosmac/` | GuDuu OS 服务端（appservice bot、AI 抽象层、知识库/技能/会员/交易、DB） |
+| `cosmac/` | GuDuu OS 服务端（AI 中枢、模型抽象层、知识库/技能/会员/交易、DB） |
 | `client/` | Web 客户端（Vue 3 + Vite） |
 | `distro/` | OEM 发行版（docker compose 四容器 + install/update/doctor 脚本） |
 | `nexus/` | GuDuu Nexus 母舰（KEY 签发/实例注册/心跳/token 钱包） |
 | `console/` | Nexus 数据大屏前端 |
-| `synapse/` | 上游 Synapse 源码（**只读参考**，协议层零改动） |
+| `synapse/` | 消息底座上游源码（**只读参考**，不修改） |
 | `docs/` | 功能清单（FEATURES）、版本规则（VERSIONING）等 |
 
 ## 文档地图
@@ -44,9 +44,8 @@
 
 ## 架构铁律
 
-**不改 Synapse 核心。** 全部业务逻辑在独立扩展层 `cosmac/`，经 Synapse 的
-Application Service 协议与管理 API 接入；Matrix 协议层（`/_matrix/*`、`m.*` 事件）零改动，
-标准 Matrix 客户端始终兼容。
+**不改消息底座核心。** 全部业务逻辑在独立扩展层 `cosmac/`，经标准扩展协议与管理 API 接入；
+底座通信协议零改动，随上游升级不受影响。
 
 ## 本地开发
 
@@ -61,7 +60,7 @@ cd client && npm install && npm run dev
 .venv/bin/ruff check cosmac/
 ```
 
-完整的本地运行环境（Synapse + bot + 客户端联调）见 [CLAUDE.md](CLAUDE.md) §9。
+完整的本地运行环境联调步骤见 [CLAUDE.md](CLAUDE.md) §9。
 
 ---
 
