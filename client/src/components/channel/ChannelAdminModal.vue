@@ -555,6 +555,7 @@ watch(visible, (v) => {
   liveErr.value = ''
   liveInvite.value = ''
   kbErr.value = ''
+  ruleDocErr.value = ''   // 规则文档上传/AI一键写的报错(负责人报:关了重开旧红字还在)
   // 清掉所有 tab 的「添加」草稿输入——填了没点添加就关弹窗,再打开不该还挂着上次的
   // 半截内容(负责人报的:技能三个框残留)。已点添加的,add 函数本来就即时清。
   mName.value = ''; mRole.value = ''
