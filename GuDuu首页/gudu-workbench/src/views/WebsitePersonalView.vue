@@ -103,7 +103,7 @@
       </section>
 
       <!-- ===== 数据主权 ===== -->
-      <section id="dna" class="p-section">
+      <section id="dna" class="p-section p-light">
         <div class="section-eyebrow">YOUR DATA, YOUR RULES</div>
         <h2 class="p-h2">数据主权，<br />从第一天就归你。</h2>
         <div class="p-cards3">
@@ -126,7 +126,7 @@
       </section>
 
       <!-- ===== 人与 AI · AI 与 AI ===== -->
-      <section id="collab" class="p-section p-section-alt">
+      <section id="collab" class="p-section p-dark">
         <div class="section-eyebrow">HUMAN × AI × AI</div>
         <h2 class="p-h2">你和 AI 对话，<br />AI 和 AI 协作。</h2>
         <div class="p-cards2">
@@ -154,7 +154,7 @@
       </section>
 
       <!-- ===== 搭建你自己的 OS ===== -->
-      <section id="build" class="p-section">
+      <section id="build" class="p-section p-cream">
         <div class="section-eyebrow">BUILD YOUR OWN OS</div>
         <h2 class="p-h2">不是用一个工具，<br />是搭一个属于你的系统。</h2>
         <div class="p-cards4">
@@ -178,7 +178,7 @@
       </section>
 
       <!-- ===== 未来 ===== -->
-      <section id="future" class="p-section p-section-alt">
+      <section id="future" class="p-section p-orange">
         <div class="section-eyebrow">WHAT'S NEXT</div>
         <h2 class="p-h2">这是一个正在生长的 AI 系统。</h2>
         <div class="p-cards2">
@@ -272,25 +272,43 @@ onBeforeUnmount(() => { document.title = 'GuDuu 工作台 · 蓝湾渔业' })
 .p-chat-foot span { color: #e88533; }
 
 /* ===== 通用板块 ===== */
-/* 板块自带暗底——全局 body 是浅色,不设背景会发白(实测踩坑) */
-.p-section { padding: 110px 6vw; color: #fff; background: linear-gradient(180deg, #171513, #100f0e); }
-.p-section-alt { background: linear-gradient(180deg, #1c1815, #171513); }
-.p-h2 { margin: 14px 0 44px; font-size: clamp(26px, 3.4vw, 40px); line-height: 1.3; color: #fff; font-weight: 650; }
+/* 板块配色完全对齐企业版的明暗节奏(website-fashion.css 同源取色):
+   米白 #fbf5ed(manifesto) → 暖黑 #211d1a(bridge) → 浅米 #f5eee6(advantages) → 橙渐变(case) */
+.p-section { padding: 110px 6vw; }
+.p-light { color: #24211f; background: #fbf5ed; }
+.p-cream { color: #24211f; background: #f5eee6; }
+.p-dark  { color: #fff8f1; background: radial-gradient(circle at 72% 30%, rgba(109,91,183,.18), transparent 30%), #211d1a; }
+.p-orange { color: #fff; background: radial-gradient(circle at 80% 18%, rgba(109,91,183,.3), transparent 31%), linear-gradient(135deg, #d66d20 0%, #e88533 48%, #bd5630 100%); }
+.p-light :deep(.section-eyebrow), .p-cream :deep(.section-eyebrow) { color: #b65b20; }
+.p-dark :deep(.section-eyebrow) { color: #efaa70; }
+.p-orange :deep(.section-eyebrow) { color: rgba(255,255,255,.85); }
+.p-h2 { margin: 14px 0 44px; font-size: clamp(26px, 3.4vw, 40px); line-height: 1.3; font-weight: 650; }
+.p-light .p-h2, .p-cream .p-h2 { color: #24211f; }
+.p-dark .p-h2, .p-orange .p-h2 { color: #fff; }
 .p-cards3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
 .p-cards4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
 .p-cards2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
-.p-card { padding: 26px 24px; border: 1px solid rgba(255,255,255,.1); border-radius: 14px; background: rgba(255,255,255,.03); transition: transform .25s ease, border-color .25s ease; }
-.p-card:hover { transform: translateY(-4px); border-color: rgba(232,133,51,.5); }
-.p-card-no { font: 600 11px/1 var(--font-mono, monospace); color: #e88533; letter-spacing: .12em; }
-.p-card h3 { margin: 12px 0 10px; font-size: 16.5px; color: #fff; }
-.p-card p { font-size: 13.5px; line-height: 1.75; color: rgba(255,255,255,.62); }
-.p-bigcard { padding: 32px 30px; border: 1px solid rgba(255,255,255,.1); border-radius: 16px; background: rgba(255,255,255,.03); }
-.p-bigcard-tag { display: inline-block; padding: 5px 12px; border-radius: 999px; font: 600 11px/1 var(--font-mono, monospace); letter-spacing: .1em; color: #e88533; border: 1px solid rgba(232,133,51,.45); }
+/* 卡片双态:浅段=白卡暖描边(企业版 advantages 取色);暗/橙段=半透明白 */
+.p-card { padding: 26px 24px; border-radius: 14px; transition: transform .25s ease, border-color .25s ease, background .25s ease; }
+.p-light .p-card, .p-cream .p-card { border: 1px solid #e7dcd1; background: #fffdf9; }
+.p-light .p-card:hover, .p-cream .p-card:hover { transform: translateY(-4px); border-color: #e88533; }
+.p-card-no { font: 600 11px/1 var(--font-mono, monospace); color: #b65b20; letter-spacing: .12em; }
+.p-light .p-card h3, .p-cream .p-card h3 { color: #24211f; }
+.p-card h3 { margin: 12px 0 10px; font-size: 16.5px; }
+.p-light .p-card p, .p-cream .p-card p { color: #746b64; }
+.p-card p { font-size: 13.5px; line-height: 1.75; }
+.p-bigcard { padding: 32px 30px; border-radius: 16px; }
+.p-dark .p-bigcard { border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.04); }
+.p-orange .p-bigcard { border: 1px solid rgba(255,255,255,.32); background: rgba(255,255,255,.12); backdrop-filter: blur(4px); }
+.p-bigcard-tag { display: inline-block; padding: 5px 12px; border-radius: 999px; font: 600 11px/1 var(--font-mono, monospace); letter-spacing: .1em; }
+.p-dark .p-bigcard-tag { color: #efaa70; border: 1px solid rgba(239,170,112,.5); }
+.p-orange .p-bigcard-tag { color: #fff; border: 1px solid rgba(255,255,255,.55); }
 .p-bigcard h3 { margin: 16px 0 12px; font-size: 20px; color: #fff; }
-.p-bigcard p { font-size: 14px; line-height: 1.8; color: rgba(255,255,255,.66); }
+.p-bigcard p { font-size: 14px; line-height: 1.8; color: rgba(255,255,255,.78); }
 .p-bigcard ul { margin: 14px 0 0; padding: 0; list-style: none; }
-.p-bigcard li { position: relative; padding: 6px 0 6px 20px; font-size: 13.5px; color: rgba(255,255,255,.72); }
-.p-bigcard li::before { content: ''; position: absolute; left: 0; top: 13px; width: 8px; height: 8px; border-radius: 2px; background: #e88533; }
+.p-bigcard li { position: relative; padding: 6px 0 6px 20px; font-size: 13.5px; color: rgba(255,255,255,.85); }
+.p-bigcard li::before { content: ''; position: absolute; left: 0; top: 13px; width: 8px; height: 8px; border-radius: 2px; background: #efaa70; }
+.p-orange .p-bigcard li::before { background: #fff; }
 .p-soon { border-style: dashed; }
 
 /* ===== 响应式 ===== */
