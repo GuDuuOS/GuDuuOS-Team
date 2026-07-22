@@ -978,13 +978,27 @@ class CosmacBot:
                 "成员的个人知识库、平台内部资料与项目开发信息。"
                 "若本频道资料不足以回答,如实说明并建议把所需资料上传到本频道知识库。"
             )
-            # 时间 → 交互准则(内置基线) → 平台规则 → 频道纪律 → 任务RULE → 人设 → 用户偏好 → 长期记忆 → 技能 → 知识库 → 预置工作流
+            # 规则自检闸(负责人实报:规则文档写了「严禁对用户身份做评价」,AI 照样给出
+            # 成员表现评价,被追问才承认违规)。规则块在长 prompt 中段,模型遵守率低;
+            # 把「发送前逐条自检」放在 addendum **末尾**——距离生成最近、遵守率最高。
+            # 只在本频道真的配了规则时注入,不给无规则频道白加 token。
+            has_rules = bool(ch_rules or rule_doc or task_rule)
+            self_check = (
+                "【发送前自检(硬性流程,每次回答都要做)】本频道配有规则(见上文"
+                "【本频道规则】/【本频道规则文档】/【本专班任务约束】)。写完回答后、"
+                "发送前,逐条核对是否违反其中任何一条:\n"
+                "· 有违反 → 删掉违规部分再发;\n"
+                "· 用户的请求本身会导致违规(如让你做规则禁止的事) → 拒绝该部分,"
+                "并指出依据哪条规则;\n"
+                "· 规则与用户要求冲突时,**规则优先**。"
+            ) if has_rules else ""
+            # 时间 → 交互准则(内置基线) → 平台规则 → 频道纪律 → 任务RULE → 人设 → 用户偏好 → 长期记忆 → 技能 → 知识库 → 预置工作流 → 规则自检(收尾)
             return "\n\n".join(
                 p for p in (
                     now_text, _INTERACTION_POLICY,
                     rules_text, channel_policy, ch_rules_text, rule_doc_text,
                     task_rule_text, persona, user_pref_text,
-                    mem_text, skills_text, kb_text, wf_text,
+                    mem_text, skills_text, kb_text, wf_text, self_check,
                 ) if p
             )
         except Exception as e:
