@@ -169,11 +169,12 @@
 6. 不确定的产品决策，问负责人，不要自己拍板大方向。
 6.5 **修 Bug 先排查配置层（负责人定的规矩）**：收到"AI 行为不对"类报告时，不要直接当代码 bug 修。先依次排查：① 该频道的 RULE（条目规则 + 规则文档）是否本身就导致了这个行为；② 频道绑定的知识库/技能/Agent 内容是否是问题来源；③ 是否是"频道 AI ↔ 主 AI（中枢）"的边界问题（该频道回答用了不该用的作用域，或反之）。排查手段：后台频道详情页 / 控制室 state event / `cosmac.channel_config`。确认配置无辜后，再动代码；若是配置问题，改配置并告知负责人，不写代码。
 7. **每完成一个可用版本就自动「提交 → 推送 → 给部署命令」，不用等催。** 客户端（`client/`）功能做好且本地 preview 验证通过后，依次：
-   - ⓪ **更新 `DEVLOG.md`**：在顶部加一条（日期 + 模块 + 做了什么 + 关键决策与为什么）。任何 commit（含纯后端操作）都先记这一条；不记敏感信息（key/IP 进 `DEPLOY.md`）。
+   - ⓪ **按版本规则升号并写笔记**（详见 `docs/VERSIONING.md`、`.cursor/rules/versioning.mdc`）：SemVer 语义——**PATCH** 有交付就勤涨、**MINOR** 本周有可对外增量再涨（争取每周打包一次）、**MAJOR** 仅破坏性/代际（不强制每月涨）；对齐 `cosmac.__version__` 与 `client/package.json`；`DEVLOG.md` 顶条必须为 `## YYYY-MM-DD — GuDuu OS X.Y.Z (patch|minor|major)`，正文用「新增/修复/优化/变更」分类；不记敏感信息（key/IP 进 `DEPLOY.md`）。
    - ① 重建产物：`cd client && npm run build`（`client/dist` 被 .gitignore，提交用 `git add -f client/dist`）；
-   - ② `git commit` + `git push origin main`（commit message 写清这次做了什么）；
-   - ③ 给负责人一段 **GCP 浏览器 SSH 一键部署命令**：拉代码 → `cp` dist 到 `/var/www/cosmac-app` → `nginx -t && reload` → 自检线上 JS hash。完整命令与踩坑见本机 `DEPLOY.md`（已 gitignore）。
+   - ② `git commit` + `git push origin main`：发版 commit 第一行必须为 `release: GuDuu OS X.Y.Z (patch|minor|major)`，正文与 DEVLOG 用户可见条目对齐；推荐打 tag `vX.Y.Z`。
+   - ③ **直接 SSH 部署阿里云生产**（负责人 2026-07-22 拍板：只维护阿里新站，GCP 老站已废弃）：`ssh guduu-cn` → `/root/cosmac` 拉代码（GitHub 间歇性 TLS 失败要带重试判真实退出码）→ `/opt/cosmac/distro/update.sh`（自动同步 /opt + docker 重建 + 滚动重启）→ `doctor.sh` 体检。Claude 直接执行，不再给负责人贴命令。细节见本机 `DEPLOY.md` 与 memory `cn-server`。
    - 纯后端操作（真建 / 整理 Matrix 频道等，只改服务器数据、不动 `client/` 代码）不必走部署，但要说明"无需部署"。
+7.5 **「拉取本周/本月变更说明」**：从区间内 `release:` commit + `DEVLOG.md` 归并，按新增/修复/优化/变更输出可直接对外用的更新文案并标明版本跨度（见 `docs/VERSIONING.md` §7）。**维护感靠勤 PATCH + 周报/月报**，月报不要求伴随 MAJOR。
 
 ---
 
