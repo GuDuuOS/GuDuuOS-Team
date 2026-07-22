@@ -4207,6 +4207,9 @@ class CosmacBot:
             from cosmac.db.models import SCOPE_USER
 
             with session_scope() as s:
+                # 同名=覆盖更新(与频道库同口径,负责人实报重复上传不去重)
+                replaced = kb.delete_docs_by_title(
+                    s, scope=SCOPE_USER, scope_id=user_id, title=title)
                 cur = len(kb.list_docs(s, scope=SCOPE_USER, scope_id=user_id))
                 if kb_limit >= 0 and cur >= kb_limit:
                     return 400, {"error": f"知识库已满（{cur}/{kb_limit} 篇）。升级会员可扩容。"}
@@ -4217,7 +4220,8 @@ class CosmacBot:
                     title=title, source="upload", text=content,
                 )
                 # 在 session 内取出需要的标量值返回（关闭后惰性加载会报错）
-                out = {"ok": True, "id": doc.id, "title": doc.title, "chunks": len(doc.chunks)}
+                out = {"ok": True, "id": doc.id, "title": doc.title,
+                       "chunks": len(doc.chunks), "replaced": replaced}
             self._storage_cache = {}  # L3：个人库存量变了，作废 60s 缓存（与工坊路径一致）
             return 200, out
         except Exception:
@@ -4323,6 +4327,10 @@ class CosmacBot:
             from cosmac.db.models import SCOPE_ROOM
 
             with session_scope() as s:
+                # 同名=覆盖更新(负责人实报:同一文件反复上传堆出一串相同记录)——
+                # 先删旧同名篇再入库,篇数上限按删完后的数量判。
+                replaced = kb.delete_docs_by_title(
+                    s, scope=SCOPE_ROOM, scope_id=room_id, title=title or "未命名文档")
                 cur = len(kb.list_docs(s, scope=SCOPE_ROOM, scope_id=room_id))
                 if cur >= MAX_DOCS_PER_SCOPE:
                     return 400, {
@@ -4332,7 +4340,8 @@ class CosmacBot:
                     s, scope=SCOPE_ROOM, scope_id=room_id,
                     title=title or "未命名文档", source="upload", text=content,
                 )
-                return 200, {"ok": True, "id": doc.id, "title": doc.title, "chunks": len(doc.chunks)}
+                return 200, {"ok": True, "id": doc.id, "title": doc.title,
+                             "chunks": len(doc.chunks), "replaced": replaced}
         except Exception:
             logger.exception("频道知识库入库失败")
             return 500, {"error": "入库失败（数据库不可用？）"}

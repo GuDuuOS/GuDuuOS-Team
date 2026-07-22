@@ -395,13 +395,17 @@ export function useChannelAdmin() {
     },
     removeMember(i: number) { current.value.members.splice(i, 1) },
 
-    addItem(kind: 'skills' | 'knowledge' | 'rules', label: string, desc: string, tag?: string) {
+    addItem(kind: 'skills' | 'knowledge' | 'rules', label: string, desc: string, tag?: string): boolean {
       const l = label.trim()
-      if (!l) return
+      if (!l) return false
+      // 同名查重(负责人实报:知识库来源重名能反复添加,列表堆一串相同记录)——
+      // 技能/规则同理,同名条目没有第二条的意义。返回 false 让调用方提示。
+      if (current.value[kind].some((x) => (x.label || '').trim() === l)) return false
       const item: ChannelInfoItem = { label: l }
       if (desc.trim()) item.desc = desc.trim()
       if (tag && tag.trim()) item.tag = tag.trim()
       current.value[kind].push(item)
+      return true
     },
     removeItem(kind: 'skills' | 'knowledge' | 'rules', i: number) { current.value[kind].splice(i, 1) },
 

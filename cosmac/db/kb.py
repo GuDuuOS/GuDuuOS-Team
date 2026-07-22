@@ -138,6 +138,29 @@ def list_docs(
     return list(session.scalars(stmt).all())
 
 
+def delete_docs_by_title(
+    session: Session, *, scope: str, scope_id: str, title: str
+) -> int:
+    """删除某作用域下**同名**文档，返回删除篇数。
+
+    上传入口用它实现「同名=覆盖更新」语义（负责人实报：同一份文件反复上传，
+    既不去重也不覆盖，列表堆出好几条一模一样的记录）。按 title 精确匹配。
+    """
+    t = (title or "").strip()
+    if not t:
+        return 0
+    stmt = select(KnowledgeDoc).where(
+        KnowledgeDoc.scope == scope,
+        KnowledgeDoc.scope_id == scope_id,
+        KnowledgeDoc.title == t,
+    )
+    docs = list(session.scalars(stmt).all())
+    for d in docs:
+        session.delete(d)
+    session.flush()
+    return len(docs)
+
+
 def delete_doc(session: Session, doc_id: int) -> bool:
     """删除一篇文档（连带其分块，cascade）。删掉返回 True。"""
     doc = session.get(KnowledgeDoc, doc_id)
