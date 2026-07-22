@@ -1071,8 +1071,46 @@ class Toolbox:
         self._room_kind_cache[room_id] = kind
         return kind
 
+    def _space_map(self, room_ids: List[str]) -> "Dict[str, Tuple[str, Set[str]]]":
+        """从一批房间里识别**工作区(Space)**并读出其子频道关系。
+
+        返回 {space_room_id: (工作区名, {子频道 room_id, ...})}。
+        负责人实报:中枢 AI 列频道清单时不知道频道归属哪个工作区,只能"按讨论推测归类"
+        瞎猜——侧栏明明有从属关系。真相在 Space 房间的 m.space.child state 里,但 bot
+        通常**不在**用户的工作区房(客户端建的、没拉 bot),所以必须走管理员 API 读 state
+        (admin_room_state)。没配 ADMIN_TOKEN / 读失败 → 返回空 dict,调用方回退平铺。
+        """
+        out: Dict[str, Tuple[str, Set[str]]] = {}
+        for rid in room_ids:
+            try:
+                state = self.client.admin_room_state(rid)
+                if not state:
+                    continue
+                is_space = False
+                name = ""
+                children: Set[str] = set()
+                for ev in state:
+                    et = ev.get("type")
+                    if et == "m.room.create":
+                        is_space = (ev.get("content") or {}).get("type") == "m.space"
+                        if not is_space:
+                            break  # 普通房间,不用读完全部 state
+                    elif et == "m.room.name":
+                        name = str((ev.get("content") or {}).get("name") or "")
+                    elif et == "m.space.child":
+                        # content 为空 = 已从工作区摘除(Matrix 语义),不算子频道
+                        if ev.get("content"):
+                            child = str(ev.get("state_key") or "")
+                            if child:
+                                children.add(child)
+                if is_space:
+                    out[rid] = (name or "(未命名工作区)", children)
+            except Exception:
+                continue  # 单个房读不出不影响整体(回退时该房当普通频道处理)
+        return out
+
     def _tool_list_my_rooms(self, args: Dict[str, Any], ctx: ToolContext) -> str:
-        """列出发起人所在的频道。全局模式(私聊)专用;频道模式拒绝(分身只看本频道)。"""
+        """列出发起人所在的频道(按工作区分组)。全局模式(私聊)专用;频道模式拒绝。"""
         if not ctx.is_dm:
             return (
                 "我现在是这个频道的专属 AI，不提供跨频道清单。"
@@ -1100,11 +1138,21 @@ class Toolbox:
             candidates = sorted(bot_rooms)
         if not candidates:
             return "暂时拿不到频道列表(服务波动?),请稍后再试。"
+        # 工作区从属关系(负责人实报"AI 只能猜"):经管理员 API 读 Space 的 m.space.child,
+        # 输出按工作区分组;没配 token / 读不到 → spaces 为空,自然回退平铺。
+        spaces = self._space_map(candidates[:150])
+        child_to_space: Dict[str, str] = {}
+        for sid, (_sname, kids) in spaces.items():
+            for k in kids:
+                child_to_space.setdefault(k, sid)
         import time as _time
         now = _time.time()
-        out: List[str] = []
+        # entries: (工作区id或"" , 显示行) —— 先收集再按工作区分组渲染
+        entries: List[Tuple[str, str]] = []
         for rid in candidates[:150]:
             try:
+                if rid in spaces:
+                    continue  # 工作区本身是个房间,不能当频道列(会被邀人/误操作)
                 in_bot = rid in bot_rooms
                 if in_bot:
                     if self._room_kind(rid) != "channel":
@@ -1129,16 +1177,33 @@ class Toolbox:
                 if "控制室" in name:
                     continue  # 平台配置房,不是聊天频道
                 tag = "" if in_bot else "（AI 未进驻——把 @GuDuu OS 邀进频道后我才能读它的内容）"
-                out.append(f"· {name or '(未命名频道)'} — {rid}{tag}")
+                entries.append((child_to_space.get(rid, ""),
+                                f"  · {name or '(未命名频道)'} — {rid}{tag}"))
             except Exception:
                 continue  # 单个房读不出不影响整体
-        if not out:
+        if not entries:
             return "没有找到你所在的频道。"
-        head = f"全部频道({len(out)} 个,跨工作区)" if is_admin else f"你所在的频道({len(out)} 个)"
+        total = len(entries)
+        head = f"全部频道({total} 个,跨工作区)" if is_admin else f"你所在的频道({total} 个)"
+        # 按工作区分组渲染:有归属的按工作区名列;孤儿归「未归类」;完全没读到 Space → 平铺
+        lines: List[str] = []
+        if spaces:
+            for sid, (sname, _kids) in spaces.items():
+                group = [ln for gid, ln in entries if gid == sid]
+                if group:
+                    lines.append(f"▸ 工作区「{sname}」:")
+                    lines.extend(group)
+            orphans = [ln for gid, ln in entries if not gid]
+            if orphans:
+                lines.append("▸ 未归类(不属于任何工作区):")
+                lines.extend(orphans)
+        else:
+            lines = [ln.strip() for _g, ln in entries]
+            lines.append("(⚠️ 工作区归属信息暂不可用——服务端管理员通道未配置,只能平铺列出。)")
         note = "" if user_rooms is not None else \
             "\n⚠️ 本清单按 AI 所在频道统计,可能不含 AI 未进驻的频道。"
         return (
-            f"{head}:\n" + "\n".join(out) + note
+            f"{head}:\n" + "\n".join(lines) + note
             + "\n\n(要看某个频道最近聊了什么,我可以用 get_recent_messages 调取。)"
         )
 

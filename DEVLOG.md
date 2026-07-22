@@ -1,5 +1,19 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-22 — 中枢AI频道清单带工作区归属(负责人实报:AI 只能猜频道在哪个工作区)
+- 现象:问中枢 AI"我的频道清单",它列得出频道却不知道从属哪个工作区,回答里"按之前
+  讨论推测归类"瞎猜——侧栏明明有从属关系。
+- 根因:list_my_rooms 只列平铺频道;工作区(Space)→频道关系存在 Space 房的
+  m.space.child state 里,而 bot 通常**不在**用户的工作区房,普通视角读不到。
+- 修法(tools.py):新增 `_space_map`——经管理员 API(admin_room_state)读 Space 的
+  create/name/m.space.child;清单按「工作区名」分组输出,孤儿频道归「未归类」,
+  Space 本身不再可能混进频道清单(防被当邀人目标)。无 ADMIN_TOKEN → 回退平铺并
+  自报"工作区归属信息暂不可用",不硬编。
+- 生产配套:COSMAC_ADMIN_TOKEN 已被「后踢前」互斥踢失效(admin 账号在浏览器登录过,
+  服务端 token 被当旧设备删了)→ 建专用服务账号 @cosmacsvc(server admin,永不给人
+  登录),用它的 token 替换 .env,不再被互斥波及。
+- 测试:新增 test_rooms_spaces 4 项(分组/Space 排除/AI房排除/回退平铺);全量 631 过。
+
 ## 2026-07-22 — 真人+AI 共同执行任务:挂名真人的看板可见(负责人实报"隐身")
 - 现象:专班派单把任务派给 agent:social、assignee 写「社媒运营+duxiuzhen01」——AI 执行,
   但真人 duxiuzhen01 的任务看板看不到这条任务。
