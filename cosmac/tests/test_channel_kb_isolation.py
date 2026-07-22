@@ -111,6 +111,21 @@ class TestChannelKbIsolation(unittest.TestCase):
         # 4000 截断:注入段里的 x 串不超过 4000-len(前缀)
         self.assertNotIn("x" * 4200, out)
 
+    def test_self_check_gate_when_rules_present(self) -> None:
+        """规则自检闸(负责人实报:规则写了「严禁评价用户」AI 照样评价):配了规则的频道,
+        addendum 末尾必须带「发送前自检」块;没配规则的不加(省 token)。"""
+        self.bot.client.cfg = {"ruleDoc": "# 规范\n严禁对用户身份做任何记录或评价。"}
+        out = self.bot._skill_addendum(ROOM, U, query="他表现怎么样", is_dm=False)
+        self.assertIn("发送前自检", out)
+        self.assertIn("规则优先", out)
+        # 自检块在规则文档之后(收尾位置,距生成最近、遵守率最高)
+        self.assertLess(out.index("本频道规则文档"), out.index("发送前自检"))
+        # 无规则频道:不注入自检块
+        self.bot.client.cfg = {}
+        self.bot._gctx_cache.clear()  # 群上下文有 TTL 缓存,清掉才能读到新 cfg
+        out2 = self.bot._skill_addendum(ROOM, U, query="随便", is_dm=False)
+        self.assertNotIn("发送前自检", out2)
+
     def test_rules_tab_injected(self) -> None:
         """频道管理「规则」tab 的规则真正注入(此前从未生效——配了等于摆设)。"""
         self.bot.client.cfg = {"rules": [
