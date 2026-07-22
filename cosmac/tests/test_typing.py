@@ -44,6 +44,7 @@ def _bot_with_fake():
 
     bot = CosmacBot(CosmacConfig(llm_provider="echo"))
     bot.client = FakeClient()
+    bot._reply_pool = None  # 同步模式:事件路径测试要立刻看到回复(并发修复后默认线程池)
     # 隔离慢路径里会打网络/控制室的环节，聚焦 typing 行为
     bot._try_handle_command = lambda *a, **k: False  # type: ignore
     bot._gate_allows = lambda u, c: True              # type: ignore

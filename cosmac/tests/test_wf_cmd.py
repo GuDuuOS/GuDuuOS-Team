@@ -49,6 +49,7 @@ def _bot(workflows=None) -> CosmacBot:
         public_url="https://hs.cosmac.cc",
     ))
     bot.client = FakeClient(workflows if workflows is not None else [WF])
+    bot._reply_pool = None  # 同步模式:事件路径测试要立刻看到回复(并发修复后默认线程池)
     bot.toolbox = bot.toolbox.__class__(bot.client, control_room_alias="#cosmac-ctrl:host")
     # 测试里的权限/门控都走同一个假 client，禁止误连本机 Synapse。
     bot.members = MembersStore(bot.client, bot.config.control_room_alias)

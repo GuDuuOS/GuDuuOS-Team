@@ -318,6 +318,16 @@ class CosmacBot:
         # SDK 引擎回退告警的节流时间戳(1小时最多向控制室发一条,防刷屏)
         self._engine_alert_ts: float = 0.0        # 上次读到的配置覆盖
         # —— 任务时效提醒（定时扫描）——扫描间隔 + "快到期"窗口，都可用 env 调；单实例内定时够用。
+        # 【并发】AI 回复线程池:appservice 事务是串行等 ack 的,LLM 长任务若在事务线程
+        # 同步跑会堵死全平台消息(负责人实报:一个账号执行中,另一账号问 AI 完全无响应)。
+        # 回复剥到工作线程,事务立即 ack;同房间加锁保序,不同房/不同账号并发。
+        # None = 同步模式(单测/调试用,COSMAC_SYNC_REPLY=1 或测试里置 None)。
+        from concurrent.futures import ThreadPoolExecutor
+        self._reply_pool: Optional[ThreadPoolExecutor] = (
+            None if _env_int("SYNC_REPLY", 0) else
+            ThreadPoolExecutor(max_workers=4, thread_name_prefix="ai-reply")
+        )
+        self._room_reply_locks: Dict[str, threading.Lock] = {}
         self._reminder_interval_secs = _env_int("TASK_REMINDER_INTERVAL", 900)  # 默认每 15 分钟扫一次
         _soon_hours = _env_int("TASK_REMINDER_SOON_HOURS", 24)                  # 默认到期前 24h 提醒
         self._reminder_soon_secs = max(1, _soon_hours) * 3600
@@ -558,120 +568,18 @@ class CosmacBot:
             if not self._gate_allows(sender, "ai_chat"):
                 self.client.send_text(room_id, self._gate_denied_text("ai_chat"))
                 return
-            # 用量配额（变现第二步）：每天 AI 对话条数。超额提示升级并停在这（不消耗 LLM）。
-            # L2：这里**只查不扣**——真正出成回复后才计数(见下方 send_text 成功之后)。否则 LLM
-            # 报错/超时/工具循环崩了也照扣，用户白白少一次额度却没得到任何回复(与工具路径"成功
-            # 才扣"、#7 失败兜底同口径)。
-            quota_msg = self._rate_quota_blocked(sender, "ai_msg_daily", consume=False)
-            if quota_msg:
-                self.client.send_text(room_id, quota_msg)
-                return
-            #     它能边想边调用工具（建群/发消息/查记录），最后把结论发回群。
-            #     （echo 后端不支持工具，会自动退化为纯文本回复。）
-            # ③ 流式体感：进入可能较慢的 LLM 生成/工具调用前打开"正在输入…"，让用户看到
-            # bot 在干活而非死寂；try/finally 保证无论成功失败都关掉、不卡住输入中状态。
-            self.client.set_typing(room_id, True)
-            try:
-                # 回复前先按管理后台下发的运行时配置（人设/模型/工具开关）对齐一次。
-                self._apply_runtime_config()
-                # 本群上下文读一次（人设/绑定技能/模型覆盖），供 addendum 与选模型共用。
-                gctx = self._group_context(room_id)
-                # 档3b：消息点名了某可路由智能体(worker/自建/已获取)→ 以它的人设/技能/模型
-                # 回这条(任务RULE 不变);没点名维持 lead。⚠️ 传**原始正文** user_text +
-                # m.mentions——与触发判定同一输入(text 被 _strip_mention 剥过句首 @,
-                # 用它路由会让「@文案 …」永远切不到已获取智能体,评审 #1)。
-                gctx = self._apply_worker_routing(
-                    user_text, gctx, sender=sender, mentioned_ids=mentioned_ids,
+            # 【并发修复·负责人实报】AI 回复(LLM+工具循环)可能跑几分钟——事务线程里
+            # 同步跑会让 Synapse 等 ack、后续所有用户的消息被堵死。改为线程池异步:
+            # 事务立即 ack;同房间加锁保序,不同房/不同账号并发互不影响。
+            if self._reply_pool is None:   # 同步模式(单测/调试)
+                self._reply_locked(room_id, sender, user_text, text,
+                                   content, is_dm, event_id or "", mentioned_ids)
+            else:
+                self._reply_pool.submit(
+                    self._reply_locked, room_id, sender, user_text, text,
+                    content, is_dm, event_id or "", mentioned_ids,
                 )
-                # 按 (本群, 发起人) 算出本轮 system addendum：人设 + 技能 + 知识库检索片段(RAG)。
-                # 任何失败（DB 没装/没数据/出错）都返回空串、绝不阻断回复（见 _skill_addendum）。
-                # 图文教程答疑：全局图文(付费可读)会在 _kb_context 里按 doc_read 门控自动纳入 RAG，
-                # 让中枢 AI 也能基于平台图文内容作答（无需前端传作用域）。
-                extra_system = self._skill_addendum(
-                    room_id, sender, query=text or user_text, gctx=gctx,
-                    is_dm=is_dm,
-                )
-                # 双层作用域指令(频道分身 vs 全局助理):告诉 AI 它现在是哪种身份、边界在哪。
-                # 智能水平两种模式相同(同一引擎/能同样拆任务建专班),只是"能拿到的原料"不同。
-                extra_system = self._scope_directive(is_dm) + (
-                    ("\n\n" + extra_system) if extra_system else ""
-                )
-                # 频道感知(负责人报:中枢 AI 在多频道切换时把上一频道的约束带进当前频道):
-                # 全局会话横跨多个频道话题,前端随消息捎「当前所在频道」,历史消息也带同款
-                # 标记(见 _recent_history 的〔当时在频道:X〕前缀)——在此明确告诫按频道区分。
-                if is_dm:
-                    active_room = str(content.get("cosmac.active_room_name") or "").strip()
-                    where = f"用户此刻正在查看频道「{active_room}」。" if active_room else ""
-                    extra_system += (
-                        f"\n\n【频道上下文纪律】{where}你们的对话历史横跨多个频道/项目"
-                        "(历史消息前的〔当时在频道:X〕标记了当时的频道)。回答本条时:"
-                        "只依据用户本条消息与其当前频道的语境;**其他频道的规则、约束、任务、"
-                        "人设一律不得带入**,除非用户明确提到。不确定用户指哪个频道时,先确认再答。"
-                    )
-                # 短期记忆：把本房间最近的对话(不含当前这条)喂给模型，主 AI 才"记得"上文。
-                history = self._recent_history(room_id, sender, user_text)
-                # 本群若绑定的智能体指定了模型 → 用该模型的 Agent 回这条（否则用默认 Agent）。
-                agent = self._agent_for_model(gctx.get("model", ""))
-                tool_ctx = ToolContext(
-                    room_id=room_id, sender=sender,
-                    source_key=f"event:{event_id}:ai" if event_id else "",
-                    is_dm=is_dm,   # 工具层防"把人邀进私聊"等语义事故
-                    # 前端随每条发给中枢AI 的消息带上当前工作区；拆任务时盖在任务上，
-                    # 任务看板据此按工作区过滤（私聊房的 room_id 归不了工作区）。
-                    space_id=str(content.get("cosmac.doc_space") or "")[:255],
-                )
-                reply = self._run_agent_engine(
-                    agent, text or user_text, tool_ctx, extra_system, history,
-                    model_override=gctx.get("model", ""),  # 群级模型联动:SDK 引擎也认群模型
-                )
-                # 幂等发送：用 event_id 派生固定 txn_id，让 Synapse 据此去重。
-                # 场景：同一事务里若有别的事件失败，handle_transaction 会让 Synapse 重发**整批**，
-                # 已成功的这条 AI 回复会被重新处理；固定 txn_id 保证群里不会冒出两条同样的回复。
-                # 方案B:worker 路由若解析出傀儡账号(as_user),回复以该 AI 同事本人身份发——
-                # 时间线上显示它的名字/头像;傀儡发送失败退回主 AI 身份,绝不丢回复。
-                as_user = str(gctx.get("as_user") or "")
-                if as_user:
-                    # 发送前确保傀儡在本房(评审#7:普通频道 @ 已获取智能体/旧专班里
-                    # 傀儡从未 join,不在房 send_text_as 必 403)。带在房缓存,平时零开销;
-                    # 拉不进房(权限等)则清空 as_user,直接走主 AI 身份,省一次注定失败的请求。
-                    _slug = self._worker_slug_of(as_user)
-                    if _slug and not self._ensure_worker_in_room(room_id, _slug):
-                        as_user = ""
-                sent_ok = False
-                if as_user:
-                    sent_ok = bool(self.client.send_text_as(
-                        room_id, reply, as_user,
-                        txn_id=f"cosmac-ai-{event_id}" if event_id else None,
-                    ))
-                if not sent_ok:
-                    # 兜底 txn 带 -fb 后缀:防"傀儡实际已发成功但响应丢失"时,主 AI 复用同
-                    # txn 被 Synapse 去重成静默——宁可极端情况下重复一条,不可丢回复。
-                    self.client.send_text(
-                        room_id, reply,
-                        txn_id=f"cosmac-ai-fb-{event_id}" if event_id else None,
-                    )
-                # L2：回复真正发出后才消费当日 AI 对话额度（失败走下面的 except 分支、不扣）。
-                self._rate_quota_blocked(sender, "ai_msg_daily", consume=True)
-            except Exception:
-                # 引擎/LLM 本体调用失败（网络错、模型不存在、后端 4xx/5xx 等）：绝不让异常穿透到
-                # handle_transaction —— 那会使其返回 False、Synapse 重发**整批**、整条 Agent run
-                # 从头重跑，而循环中途已执行的建群/发消息/邀人等工具**没有幂等键**、会重复副作用
-                #（#7）。这里就地兜住：给用户一条明确失败提示（带 txn_id 幂等，纵使别的事件触发
-                # 重发也不刷屏），然后正常返回——本条事务视为已消化，不再重试。
-                logger.exception("AI 回复失败（引擎/LLM 调用异常），已就地兜底、不重试")
-                try:
-                    self.client.send_text(
-                        room_id,
-                        "😵 抱歉，AI 暂时不可用（可能是模型服务波动或配置异常），请稍后再试一次。",
-                        txn_id=f"cosmac-ai-err-{event_id}" if event_id else None,
-                    )
-                except Exception:
-                    logger.debug("发送 AI 失败提示也失败了（忽略）", exc_info=True)
-                return
-            finally:
-                self.client.set_typing(room_id, False)  # 关掉"正在输入…"
-            # 长期记忆：回复发完后推进本群滚动摘要（到阈值才后台重摘要，绝不阻塞本次回复）。
-            self._maybe_update_memory(room_id, history, text or user_text, reply, sender)
+            return
 
     # 短期记忆窗口：最多带最近这么多条历史；单条正文截断长度（控 token）。
     _HISTORY_LIMIT = 12
@@ -679,6 +587,143 @@ class CosmacBot:
     # 长期记忆：每多少轮回复后台重摘要一次（攒一批再摘，省 LLM 调用）；摘要字数上限。
     _MEMORY_SUMMARIZE_EVERY = 8
     _MEMORY_SUMMARY_CHARS = 400
+
+    def _reply_locked(
+        self, room_id: str, sender: str, user_text: str, text: str,
+        content: Dict[str, Any], is_dm: bool, event_id: str,
+        mentioned_ids: List[str],
+    ) -> None:
+        """AI 回复工作线程入口:同房间串行(锁)防乱序/重复,不同房并发。绝不抛异常。"""
+        lock = self._room_reply_locks.setdefault(room_id, threading.Lock())
+        with lock:
+            try:
+                self._reply_to_message(
+                    room_id, sender, user_text, text, content, is_dm,
+                    event_id, mentioned_ids,
+                )
+            except Exception:
+                logger.exception("异步 AI 回复失败(已兜底,不影响其他消息)")
+
+    def _reply_to_message(
+        self, room_id: str, sender: str, user_text: str, text: str,
+        content: Dict[str, Any], is_dm: bool, event_id: str,
+        mentioned_ids: List[str],
+    ) -> None:
+        """生成并发送一条 AI 回复(原 _handle_event 内联主体,并发修复时提取)。"""
+        # 用量配额（变现第二步）：每天 AI 对话条数。超额提示升级并停在这（不消耗 LLM）。
+        # L2：这里**只查不扣**——真正出成回复后才计数(见下方 send_text 成功之后)。否则 LLM
+        # 报错/超时/工具循环崩了也照扣，用户白白少一次额度却没得到任何回复(与工具路径"成功
+        # 才扣"、#7 失败兜底同口径)。
+        quota_msg = self._rate_quota_blocked(sender, "ai_msg_daily", consume=False)
+        if quota_msg:
+            self.client.send_text(room_id, quota_msg)
+            return
+        #     它能边想边调用工具（建群/发消息/查记录），最后把结论发回群。
+        #     （echo 后端不支持工具，会自动退化为纯文本回复。）
+        # ③ 流式体感：进入可能较慢的 LLM 生成/工具调用前打开"正在输入…"，让用户看到
+        # bot 在干活而非死寂；try/finally 保证无论成功失败都关掉、不卡住输入中状态。
+        self.client.set_typing(room_id, True)
+        try:
+            # 回复前先按管理后台下发的运行时配置（人设/模型/工具开关）对齐一次。
+            self._apply_runtime_config()
+            # 本群上下文读一次（人设/绑定技能/模型覆盖），供 addendum 与选模型共用。
+            gctx = self._group_context(room_id)
+            # 档3b：消息点名了某可路由智能体(worker/自建/已获取)→ 以它的人设/技能/模型
+            # 回这条(任务RULE 不变);没点名维持 lead。⚠️ 传**原始正文** user_text +
+            # m.mentions——与触发判定同一输入(text 被 _strip_mention 剥过句首 @,
+            # 用它路由会让「@文案 …」永远切不到已获取智能体,评审 #1)。
+            gctx = self._apply_worker_routing(
+                user_text, gctx, sender=sender, mentioned_ids=mentioned_ids,
+            )
+            # 按 (本群, 发起人) 算出本轮 system addendum：人设 + 技能 + 知识库检索片段(RAG)。
+            # 任何失败（DB 没装/没数据/出错）都返回空串、绝不阻断回复（见 _skill_addendum）。
+            # 图文教程答疑：全局图文(付费可读)会在 _kb_context 里按 doc_read 门控自动纳入 RAG，
+            # 让中枢 AI 也能基于平台图文内容作答（无需前端传作用域）。
+            extra_system = self._skill_addendum(
+                room_id, sender, query=text or user_text, gctx=gctx,
+                is_dm=is_dm,
+            )
+            # 双层作用域指令(频道分身 vs 全局助理):告诉 AI 它现在是哪种身份、边界在哪。
+            # 智能水平两种模式相同(同一引擎/能同样拆任务建专班),只是"能拿到的原料"不同。
+            extra_system = self._scope_directive(is_dm) + (
+                ("\n\n" + extra_system) if extra_system else ""
+            )
+            # 频道感知(负责人报:中枢 AI 在多频道切换时把上一频道的约束带进当前频道):
+            # 全局会话横跨多个频道话题,前端随消息捎「当前所在频道」,历史消息也带同款
+            # 标记(见 _recent_history 的〔当时在频道:X〕前缀)——在此明确告诫按频道区分。
+            if is_dm:
+                active_room = str(content.get("cosmac.active_room_name") or "").strip()
+                where = f"用户此刻正在查看频道「{active_room}」。" if active_room else ""
+                extra_system += (
+                    f"\n\n【频道上下文纪律】{where}你们的对话历史横跨多个频道/项目"
+                    "(历史消息前的〔当时在频道:X〕标记了当时的频道)。回答本条时:"
+                    "只依据用户本条消息与其当前频道的语境;**其他频道的规则、约束、任务、"
+                    "人设一律不得带入**,除非用户明确提到。不确定用户指哪个频道时,先确认再答。"
+                )
+            # 短期记忆：把本房间最近的对话(不含当前这条)喂给模型，主 AI 才"记得"上文。
+            history = self._recent_history(room_id, sender, user_text)
+            # 本群若绑定的智能体指定了模型 → 用该模型的 Agent 回这条（否则用默认 Agent）。
+            agent = self._agent_for_model(gctx.get("model", ""))
+            tool_ctx = ToolContext(
+                room_id=room_id, sender=sender,
+                source_key=f"event:{event_id}:ai" if event_id else "",
+                is_dm=is_dm,   # 工具层防"把人邀进私聊"等语义事故
+                # 前端随每条发给中枢AI 的消息带上当前工作区；拆任务时盖在任务上，
+                # 任务看板据此按工作区过滤（私聊房的 room_id 归不了工作区）。
+                space_id=str(content.get("cosmac.doc_space") or "")[:255],
+            )
+            reply = self._run_agent_engine(
+                agent, text or user_text, tool_ctx, extra_system, history,
+                model_override=gctx.get("model", ""),  # 群级模型联动:SDK 引擎也认群模型
+            )
+            # 幂等发送：用 event_id 派生固定 txn_id，让 Synapse 据此去重。
+            # 场景：同一事务里若有别的事件失败，handle_transaction 会让 Synapse 重发**整批**，
+            # 已成功的这条 AI 回复会被重新处理；固定 txn_id 保证群里不会冒出两条同样的回复。
+            # 方案B:worker 路由若解析出傀儡账号(as_user),回复以该 AI 同事本人身份发——
+            # 时间线上显示它的名字/头像;傀儡发送失败退回主 AI 身份,绝不丢回复。
+            as_user = str(gctx.get("as_user") or "")
+            if as_user:
+                # 发送前确保傀儡在本房(评审#7:普通频道 @ 已获取智能体/旧专班里
+                # 傀儡从未 join,不在房 send_text_as 必 403)。带在房缓存,平时零开销;
+                # 拉不进房(权限等)则清空 as_user,直接走主 AI 身份,省一次注定失败的请求。
+                _slug = self._worker_slug_of(as_user)
+                if _slug and not self._ensure_worker_in_room(room_id, _slug):
+                    as_user = ""
+            sent_ok = False
+            if as_user:
+                sent_ok = bool(self.client.send_text_as(
+                    room_id, reply, as_user,
+                    txn_id=f"cosmac-ai-{event_id}" if event_id else None,
+                ))
+            if not sent_ok:
+                # 兜底 txn 带 -fb 后缀:防"傀儡实际已发成功但响应丢失"时,主 AI 复用同
+                # txn 被 Synapse 去重成静默——宁可极端情况下重复一条,不可丢回复。
+                self.client.send_text(
+                    room_id, reply,
+                    txn_id=f"cosmac-ai-fb-{event_id}" if event_id else None,
+                )
+            # L2：回复真正发出后才消费当日 AI 对话额度（失败走下面的 except 分支、不扣）。
+            self._rate_quota_blocked(sender, "ai_msg_daily", consume=True)
+        except Exception:
+            # 引擎/LLM 本体调用失败（网络错、模型不存在、后端 4xx/5xx 等）：绝不让异常穿透到
+            # handle_transaction —— 那会使其返回 False、Synapse 重发**整批**、整条 Agent run
+            # 从头重跑，而循环中途已执行的建群/发消息/邀人等工具**没有幂等键**、会重复副作用
+            #（#7）。这里就地兜住：给用户一条明确失败提示（带 txn_id 幂等，纵使别的事件触发
+            # 重发也不刷屏），然后正常返回——本条事务视为已消化，不再重试。
+            logger.exception("AI 回复失败（引擎/LLM 调用异常），已就地兜底、不重试")
+            try:
+                self.client.send_text(
+                    room_id,
+                    "😵 抱歉，AI 暂时不可用（可能是模型服务波动或配置异常），请稍后再试一次。",
+                    txn_id=f"cosmac-ai-err-{event_id}" if event_id else None,
+                )
+            except Exception:
+                logger.debug("发送 AI 失败提示也失败了（忽略）", exc_info=True)
+            return
+        finally:
+            self.client.set_typing(room_id, False)  # 关掉"正在输入…"
+        # 长期记忆：回复发完后推进本群滚动摘要（到阈值才后台重摘要，绝不阻塞本次回复）。
+        self._maybe_update_memory(room_id, history, text or user_text, reply, sender)
 
     def _maybe_update_memory(
         self, room_id: str, history: List[Message], user_text: str, reply: str,
