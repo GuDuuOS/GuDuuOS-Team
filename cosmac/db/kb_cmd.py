@@ -28,8 +28,40 @@ PersonalAddGuard = Callable[[int, int], Optional[str]]
 PREFIXES = ("知识", "/知识", "kb", "/kb")
 
 # 容量护栏（与技能命令同理，防滥用撑爆 DB / 上下文）
-MAX_DOC_CHARS = 20000          # 单篇正文上限
+# 单篇上限 2 万→5 万(负责人 2026-07-22 反馈:产品手册/价格表轻松超 2 万;分块检索
+# 架构下大文档无技术障碍,仍留上限防滥用——篇数/存储另有会员配额管控)。
+MAX_DOC_CHARS = 50000          # 单篇正文上限
 MAX_DOCS_PER_SCOPE = 200       # 每个作用域文档数上限
+
+
+def clean_upload_text(text: str, filename: str = "") -> str:
+    """上传文档入库前的内容清洗——修「空 CSV 报太长」(负责人实报)。
+
+    Excel 把"看起来空"的工作表另存为 CSV 时,会导出成千上万行纯逗号(空单元格
+    分隔符),视觉空文件实际两万多字,直接按原文计数就误报"太长"。清洗规则:
+    - CSV/TSV(按文件名后缀):剔除**纯分隔符行**(去掉 ,;、制表符、引号、空白后
+      什么都不剩的行)——真实数据行含内容字符,不受影响;
+    - 所有文件:每行去尾部空白,3 个以上连续空行压成 1 个。
+    清洗结果同时用于**计数与入库**——不清洗就入库会把分隔符噪音灌进检索。
+    """
+    lines = [ln.rstrip() for ln in (text or "").splitlines()]
+    if filename.lower().rsplit(".", 1)[-1] in ("csv", "tsv"):
+        # 纯分隔符行:去掉分隔符与引号后为空 → 是 Excel 导出的空单元格行,丢弃
+        lines = [
+            ln for ln in lines
+            if ln.translate(str.maketrans("", "", ",;\t\"' ")).strip()
+        ]
+    out: list = []
+    blank = 0
+    for ln in lines:
+        if ln == "":
+            blank += 1
+            if blank > 1:
+                continue  # 连续空行只留 1 个
+        else:
+            blank = 0
+        out.append(ln)
+    return "\n".join(out).strip()
 
 
 def looks_like_kb_command(text: str) -> bool:

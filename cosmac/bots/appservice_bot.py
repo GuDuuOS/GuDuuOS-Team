@@ -4307,8 +4307,13 @@ class CosmacBot:
         content = str((body or {}).get("content") or "").strip()
         if not content:
             return 400, {"error": "文件内容为空（仅支持文本文件）"}
-        from cosmac.db.kb_cmd import MAX_DOC_CHARS, MAX_DOCS_PER_SCOPE
+        from cosmac.db.kb_cmd import MAX_DOC_CHARS, MAX_DOCS_PER_SCOPE, clean_upload_text
 
+        # 清洗后再计数/入库(负责人实报:Excel 另存的"空"CSV 满是逗号,原文两万多字
+        # 误报"太长";清洗还能避免把分隔符噪音灌进检索)。title 即前端传的文件名。
+        content = clean_upload_text(content, filename=title)
+        if not content:
+            return 400, {"error": "文件内容为空（清洗掉空单元格/空行后没有实际内容）"}
         if len(content) > MAX_DOC_CHARS:
             return 400, {
                 "error": f"文件太长（{len(content)} 字），上限 {MAX_DOC_CHARS} 字，请拆分后再传"

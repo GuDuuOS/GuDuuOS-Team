@@ -511,7 +511,23 @@ const kbErr = ref('')
 const kbFileInput = ref<HTMLInputElement>()
 // 可读为文本的类型：文本/markdown/csv/json/日志等。PDF/Word 需服务端解析，暂不支持。
 const KB_TEXT_RE = /\.(txt|md|markdown|csv|tsv|json|log|text|rst|yaml|yml|xml|html?)$/i
-const KB_MAX_CHARS = 20000  // 与后端 MAX_DOC_CHARS 对齐，本地先拦、提示更友好
+const KB_MAX_CHARS = 50000  // 与后端 MAX_DOC_CHARS 对齐(2万→5万,产品手册轻松超2万),本地先拦、提示更友好
+/** 上传前内容清洗(与后端 kb_cmd.clean_upload_text 同口径,改一处必须同步另一处)。
+ *  修「空 CSV 报太长」:Excel 把空表另存 CSV 会导出上万行纯逗号,视觉空文件按原文
+ *  计数就误报超限。CSV/TSV 剔除纯分隔符行;所有文件去行尾空白、压缩连续空行。 */
+function cleanUploadText(text: string, filename: string): string {
+  let lines = text.split(/\r?\n/).map((ln) => ln.replace(/\s+$/, ''))
+  if (/\.(csv|tsv)$/i.test(filename)) {
+    lines = lines.filter((ln) => ln.replace(/[,;\t"' ]/g, '').trim() !== '')
+  }
+  const out: string[] = []
+  let blank = 0
+  for (const ln of lines) {
+    if (ln === '') { blank++; if (blank > 1) continue } else { blank = 0 }
+    out.push(ln)
+  }
+  return out.join('\n').trim()
+}
 async function loadRoomDocs() { await loadRoomKbDocs() }
 function pickKbFile() { if (!kbUploading.value) kbFileInput.value?.click() }
 async function onKbFilePicked(e: Event) {
@@ -523,8 +539,8 @@ async function onKbFilePicked(e: Event) {
   try {
     for (const f of files) {
       if (!KB_TEXT_RE.test(f.name)) { kbErr.value = `${f.name}：暂只支持文本文件（.txt/.md/.csv/.json 等），PDF/Word 稍后支持`; continue }
-      const text = (await f.text()).trim()
-      if (!text) { kbErr.value = `${f.name}：内容为空，跳过`; continue }
+      const text = cleanUploadText((await f.text()), f.name)
+      if (!text) { kbErr.value = `${f.name}：内容为空（清洗掉空单元格/空行后没有实际内容），跳过`; continue }
       if (text.length > KB_MAX_CHARS) { kbErr.value = `${f.name}：太长（${text.length} 字 > ${KB_MAX_CHARS}），请拆分后再传`; continue }
       await kbRoomAdd(roomId.value, f.name, text)
     }
