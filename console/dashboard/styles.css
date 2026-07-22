@@ -202,6 +202,19 @@ a:focus-visible {
   gap: 16px;
 }
 
+/* 后台入口链接（进入 /portal 控制台） */
+.portal-link {
+  padding: 7px 16px;
+  border: 1px solid rgba(255, 176, 106, 0.45);
+  border-radius: 999px;
+  color: #ffb06a;
+  text-decoration: none;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.portal-link:hover { background: rgba(255, 176, 106, 0.14); color: #ffd0a0; }
+
 .system-live {
   display: flex;
   align-items: center;

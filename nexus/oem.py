@@ -261,6 +261,22 @@ def my_instances(s, oem_id: int) -> List[Dict[str, Any]]:
     return out
 
 
+def list_oems(s) -> List[Dict[str, Any]]:
+    """全部 OEM 账号 + 认领的 KEY 数（**超管**控制台"客户列表"数据源）。
+
+    只给超管端点用（service.py 里挂在 /nexus/admin/ 下、走 NEXUS_ADMIN_TOKEN 鉴权），
+    OEM 自己永远看不到别人。
+    """
+    rows = s.execute(select(NexusOem).order_by(NexusOem.id.desc())).scalars().all()
+    # 一次查出每个 OEM 的认领数，避免 N+1
+    counts: Dict[int, int] = {}
+    for (oid,) in s.execute(select(NexusKeyClaim.oem_id)).all():
+        counts[int(oid)] = counts.get(int(oid), 0) + 1
+    return [
+        {**public_oem(r), "keys_claimed": counts.get(r.id, 0)} for r in rows
+    ]
+
+
 def owns_instance(s, oem_id: int, instance_id: int) -> bool:
     """校验某实例是否归该 OEM（写操作/充值申请前的归属守卫）。"""
     inst = s.get(NexusInstance, int(instance_id))
@@ -282,6 +298,7 @@ __all__ = [
     "claim_key",
     "my_keys",
     "my_instances",
+    "list_oems",
     "owns_instance",
     "normalize_key",
 ]

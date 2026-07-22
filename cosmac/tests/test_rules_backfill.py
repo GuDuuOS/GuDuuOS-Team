@@ -21,9 +21,13 @@ class _C:
         self.cfgs: Dict[str, Dict[str, Any]] = {
             "!bare:h": {"persona": {"aiName": "旧人设"}, "kbScopes": ["platform"]},
             "!ruled:h": {"rules": [{"label": "自定义规则", "desc": "x"}]},
+            # 用户**显式删光**规则的房:rules 键存在但为空数组——绝不能复活默认规则
+            # (负责人实报:删掉「频道资源边界」重进又出现)
+            "!cleared:h": {"rules": []},
             "!ctrl:h": {},
         }
-        self.names = {"!bare:h": "老专班", "!ruled:h": "有规频道", "!ctrl:h": "GuDuu OS 控制室"}
+        self.names = {"!bare:h": "老专班", "!ruled:h": "有规频道",
+                      "!cleared:h": "已清空规则频道", "!ctrl:h": "GuDuu OS 控制室"}
         self.written: List[Tuple[str, Dict[str, Any]]] = []
 
     def joined_rooms(self) -> list:
@@ -60,7 +64,7 @@ class TestRulesBackfill(unittest.TestCase):
 
     def test_backfills_only_bare_channels_and_merges(self) -> None:
         n = self.bot.backfill_channel_rules()
-        self.assertEqual(n, 1)
+        self.assertEqual(n, 1)  # 只补 !bare(从未配置);!cleared(显式删空)绝不补
         [(room, content)] = self.bot.client.written
         self.assertEqual(room, "!bare:h")
         # 补上了默认规则

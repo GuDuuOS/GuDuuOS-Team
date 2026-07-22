@@ -1,0 +1,135 @@
+/* GuDuu Nexus 控制台样式——与大屏同一暗色科技风、品牌橙 #e88533 */
+
+:root {
+  --bg: #100f0e;
+  --panel: #18151300;
+  --card: rgba(255, 252, 247, .04);
+  --line: rgba(255, 239, 224, .12);
+  --ink: #f4efe9;
+  --muted: #9e9187;
+  --orange: #e88533;
+  --green: #57e6a5;
+  --red: #ff7a6b;
+  --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  min-height: 100vh;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 85% 8%, rgba(232, 133, 51, .12), transparent 32%),
+    radial-gradient(circle at 8% 90%, rgba(109, 91, 183, .1), transparent 34%),
+    var(--bg);
+  font: 14px/1.65 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+/* —— 顶栏 —— */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 28px; border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; backdrop-filter: blur(8px); background: rgba(16,15,14,.82); z-index: 5;
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 12px var(--orange); }
+.brand b { letter-spacing: .04em; }
+.brand em { font-style: normal; color: var(--muted); font-size: 12.5px; }
+.topnav { display: flex; align-items: center; gap: 14px; }
+.topnav a { color: var(--muted); text-decoration: none; font-size: 13px; }
+.topnav a:hover { color: var(--orange); }
+.who { font-size: 12.5px; color: var(--muted); padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; }
+.who.admin { color: var(--orange); border-color: rgba(232,133,51,.5); }
+
+/* —— 通用按钮/表单 —— */
+button { cursor: pointer; font: inherit; }
+.primary {
+  padding: 9px 22px; border: 0; border-radius: 9px; color: #fff; font-weight: 600;
+  background: linear-gradient(135deg, #f09a4e, #d96f1e);
+}
+.primary:hover { box-shadow: 0 8px 22px rgba(232,133,51,.32); }
+.ghost {
+  padding: 7px 16px; border-radius: 9px; background: transparent;
+  border: 1px solid var(--line); color: var(--muted);
+}
+.ghost:hover { color: var(--ink); border-color: rgba(255,239,224,.3); }
+.ghost.small { padding: 4px 12px; font-size: 12.5px; }
+input {
+  width: 100%; padding: 9px 12px; border-radius: 9px; color: var(--ink);
+  background: rgba(255,252,247,.05); border: 1px solid var(--line); font: inherit;
+}
+input:focus { outline: none; border-color: rgba(232,133,51,.6); }
+label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 12px; }
+label input { margin-top: 5px; }
+
+/* —— 登录 —— */
+.login-wrap { display: grid; place-items: center; min-height: calc(100vh - 62px); padding: 30px; }
+.login-card {
+  width: 400px; max-width: 94vw; padding: 30px 30px 24px;
+  border: 1px solid var(--line); border-radius: 16px;
+  background: rgba(24, 20, 17, .72); backdrop-filter: blur(10px);
+}
+.login-card h1 { font-size: 19px; margin-bottom: 18px; }
+.tabs { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.tab {
+  padding: 7px 13px; background: none; border: 0; color: var(--muted); font-size: 13px;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tab.on { color: var(--orange); border-bottom-color: var(--orange); font-weight: 600; }
+.pane .primary { width: 100%; margin-top: 4px; }
+.hint { font-size: 12px; color: var(--muted); margin-top: 10px; }
+.err { margin-top: 12px; color: var(--red); font-size: 13px; }
+.ok { margin-top: 10px; color: var(--green); font-size: 13px; }
+
+/* —— 页面/面板 —— */
+.page { max-width: 1060px; margin: 0 auto; padding: 30px 24px 70px; }
+.page-title { font-size: 21px; margin-bottom: 20px; letter-spacing: .02em; }
+.panel {
+  border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px;
+  background: rgba(24, 20, 17, .5); margin-bottom: 20px;
+}
+.panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.panel-head h2 { font-size: 15px; letter-spacing: .02em; }
+.inline-form { display: flex; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.inline-form input { width: auto; min-width: 180px; }
+
+/* —— 统计条 —— */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.stat {
+  border: 1px solid var(--line); border-radius: 12px; padding: 13px 16px;
+  background: rgba(24,20,17,.5);
+}
+.stat small { display: block; color: var(--muted); font-size: 12px; }
+.stat b { font-size: 21px; font-family: var(--mono); color: var(--orange); }
+.stat b.plain { color: var(--ink); }
+
+/* —— 表格 —— */
+.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tbl th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tbl td { padding: 8px 10px; border-bottom: 1px solid rgba(255,239,224,.06); font-family: var(--mono); }
+.tbl td.zh { font-family: inherit; }
+.tbl tr:hover td { background: rgba(255,252,247,.03); }
+.badge { padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-family: inherit; }
+.badge.active { color: var(--green); background: rgba(87,230,165,.12); }
+.badge.warning { color: var(--orange); background: rgba(232,133,51,.14); }
+.badge.offline, .badge.revoked, .badge.disabled { color: var(--red); background: rgba(255,122,107,.12); }
+.badge.idle { color: var(--muted); background: rgba(255,252,247,.07); }
+
+/* —— OEM 实例卡 —— */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.inst-card { border: 1px solid var(--line); border-radius: 12px; padding: 15px 17px; background: var(--card); }
+.inst-card h3 { font-size: 15px; margin-bottom: 6px; font-family: var(--mono); }
+.inst-card .row { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted); padding: 2.5px 0; }
+.inst-card .row b { color: var(--ink); font-family: var(--mono); font-weight: 500; }
+.inst-card .row b.low { color: var(--red); }
+.empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
+
+/* —— 签发结果 —— */
+.issued { border: 1px solid rgba(232,133,51,.5); background: rgba(232,133,51,.08); border-radius: 10px; padding: 12px 15px; margin: 10px 0; font-size: 13px; }
+.issued pre { font-family: var(--mono); margin-top: 7px; user-select: all; line-height: 1.9; }
+
+/* —— toast —— */
+.toast {
+  position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%);
+  padding: 10px 20px; border-radius: 10px; background: rgba(24,20,17,.95);
+  border: 1px solid var(--line); font-size: 13px; z-index: 9;
+}
+.toast.bad { border-color: rgba(255,122,107,.5); color: var(--red); }

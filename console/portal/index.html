@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GuDuu Nexus · 控制台</title>
+<link rel="stylesheet" href="/portal/portal.css" />
+</head>
+<body>
+<!--
+  GuDuu Nexus 控制台（模块6 P1 第2片）
+  ——————————————————————————————
+  单页三视图（vanilla JS，与大屏同栈零构建）：
+    · 登录页：OEM 邮箱账号（登录/注册）+ 平台超管（粘贴 NEXUS_ADMIN_TOKEN）
+    · OEM 门户：我的实例 / 认领授权码 / 我的授权码
+    · 超管视图：舰队实例 / KEY 签发与吊销 / 手动充值 / OEM 客户列表
+  权限全部由服务端强制（/nexus/admin/* 走超管令牌、/nexus/oem/* 走会话令牌），
+  本页只是展示层。
+-->
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-dot"></span>
+    <b>GuDuu Nexus</b><em>控制台</em>
+  </div>
+  <nav class="topnav">
+    <a id="nav-dash" href="/" target="_blank" rel="noopener">运营大屏 ↗</a>
+    <span id="who" class="who" hidden></span>
+    <button id="btn-logout" class="ghost" hidden>退出</button>
+  </nav>
+</header>
+
+<!-- ====== 登录视图 ====== -->
+<main id="view-login" class="login-wrap" hidden>
+  <section class="login-card">
+    <h1>登录控制台</h1>
+    <div class="tabs">
+      <button data-tab="oem-login" class="tab on">OEM 登录</button>
+      <button data-tab="oem-reg" class="tab">OEM 注册</button>
+      <button data-tab="admin" class="tab">平台超管</button>
+    </div>
+
+    <form id="form-oem-login" class="pane" data-pane="oem-login">
+      <label>邮箱<input name="email" type="email" autocomplete="username" required placeholder="you@company.com" /></label>
+      <label>密码<input name="password" type="password" autocomplete="current-password" required placeholder="········" /></label>
+      <button class="primary">登录</button>
+    </form>
+
+    <form id="form-oem-reg" class="pane" data-pane="oem-reg" hidden>
+      <label>公司 / 称呼<input name="name" type="text" placeholder="例：星辰传媒" /></label>
+      <label>邮箱<input name="email" type="email" autocomplete="username" required placeholder="you@company.com" /></label>
+      <label>密码<input name="password" type="password" autocomplete="new-password" required placeholder="至少 8 位，含字母和数字" /></label>
+      <button class="primary">注册并登录</button>
+      <p class="hint">注册后可在门户认领授权码（KEY）、查看自己实例的余额与状态。</p>
+    </form>
+
+    <form id="form-admin" class="pane" data-pane="admin" hidden>
+      <label>超管令牌<input name="token" type="password" autocomplete="off" required placeholder="NEXUS_ADMIN_TOKEN" /></label>
+      <button class="primary">进入超管视图</button>
+      <p class="hint">令牌保存在母舰服务器 /etc/nexus.env，仅平台方持有。</p>
+    </form>
+
+    <p id="login-err" class="err" hidden></p>
+  </section>
+</main>
+
+<!-- ====== OEM 门户 ====== -->
+<main id="view-oem" class="page" hidden>
+  <h1 class="page-title">我的 GuDuu OS</h1>
+
+  <section class="panel">
+    <div class="panel-head"><h2>我的实例</h2></div>
+    <div id="oem-instances" class="cards"></div>
+    <p id="oem-noinst" class="empty" hidden>还没有已开通的实例——认领授权码后，在你的服务器上运行安装命令即可开通。</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>认领授权码</h2></div>
+    <form id="form-claim" class="inline-form">
+      <input name="key" placeholder="CMK-XXXX-XXXX-XXXX-XXXX" required />
+      <button class="primary">认领</button>
+    </form>
+    <p class="hint">购买后从 GuDuu 获得授权码，认领即归入你的账号；随后在自己服务器安装时使用它开通实例。</p>
+    <p id="claim-msg" class="ok" hidden></p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>我的授权码</h2></div>
+    <table class="tbl" id="oem-keys">
+      <thead><tr><th>编号</th><th>尾号</th><th>状态</th><th>附赠 Token</th><th>实例</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+
+<!-- ====== 超管视图 ====== -->
+<main id="view-admin" class="page" hidden>
+  <h1 class="page-title">舰队总控</h1>
+
+  <section id="admin-stats" class="stats"></section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>实例</h2>
+      <button id="btn-refresh" class="ghost small">刷新</button>
+    </div>
+    <table class="tbl" id="admin-instances">
+      <thead><tr><th>#</th><th>域名</th><th>状态</th><th>版本</th><th>最近心跳</th><th>余额</th><th>操作</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>授权码（KEY）</h2></div>
+    <form id="form-issue" class="inline-form">
+      <input name="count" type="number" min="1" max="100" value="1" title="数量" style="width:70px" />
+      <input name="token_grant" type="number" min="0" value="100000000" title="附赠 token" style="width:150px" />
+      <input name="note" placeholder="备注（卖给谁/订单号）" style="flex:1" />
+      <button class="primary">签发</button>
+    </form>
+    <div id="issued-box" class="issued" hidden>
+      <b>⚠️ 明文仅此一次显示，请立即复制发给客户：</b>
+      <pre id="issued-keys"></pre>
+    </div>
+    <table class="tbl" id="admin-keys">
+      <thead><tr><th>#</th><th>尾号</th><th>状态</th><th>附赠</th><th>备注</th><th>实例</th><th>操作</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>OEM 客户</h2></div>
+    <table class="tbl" id="admin-oems">
+      <thead><tr><th>#</th><th>邮箱</th><th>称呼</th><th>状态</th><th>认领 KEY</th><th>注册时间</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<script src="/portal/portal.js"></script>
+</body>
+</html>

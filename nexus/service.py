@@ -182,6 +182,12 @@ class NexusHandler(BaseHTTPRequestHandler):
                     lambda s: self._json(200, {"instances": fleet.list_instances(s)})
                 )
             return
+        if path == "/nexus/admin/oems":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(200, {"oems": oem_svc.list_oems(s)})
+                )
+            return
         if path == "/nexus/dash/summary":
             if self._check_dash():
                 self._with_session(lambda s: self._json(200, fleet.dash_summary(s)))
@@ -216,6 +222,12 @@ class NexusHandler(BaseHTTPRequestHandler):
         "console",
         "dashboard",
     )
+    # 控制台（portal）静态目录：/portal/* → console/portal/*（登录页+超管+OEM 门户）
+    _PORTAL_DIR = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "console",
+        "portal",
+    )
     _MIME = {
         ".html": "text/html; charset=utf-8",
         ".js": "application/javascript; charset=utf-8",
@@ -229,16 +241,23 @@ class NexusHandler(BaseHTTPRequestHandler):
     }
 
     def _serve_dashboard(self, path: str) -> bool:
-        """把 GET 路径映射到 console/dashboard 下的文件。返回是否已处理。
+        """把 GET 路径映射到静态目录。返回是否已处理。
 
-        安全：normpath 后必须仍在大屏目录内（掐死 ../ 穿越）；扩展名白名单。
+        路由：``/portal`` 前缀 → console/portal（控制台）；其余 → console/dashboard（大屏）。
+        安全：normpath 后必须仍在对应目录内（掐死 ../ 穿越）；扩展名白名单。
         """
-        if not os.path.isdir(self._DASH_DIR):
+        # —— 控制台：/portal 或 /portal/xxx → console/portal/ ——
+        if path == "/portal" or path.startswith("/portal/"):
+            base_dir = self._PORTAL_DIR
+            rel = path[len("/portal"):].lstrip("/") or "index.html"
+        else:
+            base_dir = self._DASH_DIR
+            rel = path.lstrip("/") or "index.html"
+        if not os.path.isdir(base_dir):
             return False
-        rel = path.lstrip("/") or "index.html"
-        full = os.path.normpath(os.path.join(self._DASH_DIR, rel))
-        if not full.startswith(self._DASH_DIR + os.sep) and full != os.path.join(
-            self._DASH_DIR, "index.html"
+        full = os.path.normpath(os.path.join(base_dir, rel))
+        if not full.startswith(base_dir + os.sep) and full != os.path.join(
+            base_dir, "index.html"
         ):
             return False
         ext = os.path.splitext(full)[1].lower()
