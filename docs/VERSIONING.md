@@ -170,8 +170,8 @@ release: GuDuu OS X.Y.Z (patch|minor|major)
 AI 步骤（产出应**直接可用**）：
 
 1. **取源**（并集去重）：  
-   - `git log`：区间内 `release: GuDuu OS`（兼容历史 `release: CosMac OS`）；  
-   - `DEVLOG.md`：同区间含 `GuDuu OS X.Y.Z`（或历史 CosMac）的条目；  
+   - `git log`：区间内 `release: GuDuu OS`（兼容历史 `release: GuDuu OS`）；  
+   - `DEVLOG.md`：同区间含 `GuDuu OS X.Y.Z`（或历史 GuDuu OS）的条目；  
    - tag `vX.Y.Z`（若有）。  
 2. **归并**：按 `新增 / 修复 / 优化 / 变更` 合并；去掉「决策」与敏感信息。  
 3. **版本跨度**：区间内最早 → 最新产品号。  

@@ -1,5 +1,5 @@
 # ============================================================
-# CosMac 发行版 —— Synapse homeserver 配置模板
+# GuDuu OS 发行版 —— Synapse homeserver 配置模板
 # ------------------------------------------------------------
 # install.sh 会把 {{占位符}} 替换成真实值后写到 data/synapse/homeserver.yaml。
 # 签名密钥 / 日志配置由「synapse generate」预先生成（install.sh 负责编排顺序），
@@ -73,7 +73,7 @@ trusted_key_servers:
   - server_name: "matrix.org"
 suppress_key_server_warning: true
 
-# CosMac 主 AI 的 appservice 注册（install.sh 渲染生成）
+# GuDuu OS 主 AI 的 appservice 注册（install.sh 渲染生成）
 app_service_config_files:
   - /data/appservice-cosmac.yaml
 

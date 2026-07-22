@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================
-# CosMac 发行版 —— OEM 一键安装脚本（模块6 P0）
+# GuDuu OS 发行版 —— OEM 一键安装脚本（模块6 P0）
 # ------------------------------------------------------------
 # 目标：一台干净的 Ubuntu 22.04+/Debian 12 服务器 + 一个解析好的域名，
-#       跑一遍本脚本 = 一个完整可用的 CosMac 实例（自动 HTTPS）。
+#       跑一遍本脚本 = 一个完整可用的 GuDuu OS 实例（自动 HTTPS）。
 #
 # 用法（在 distro/ 目录下）：
 #   ./install.sh                # 交互式提问
@@ -23,7 +23,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # ---------- 小工具 ----------
-say()  { printf '\033[1;36m[CosMac]\033[0m %s\n' "$*"; }
+say()  { printf '\033[1;36m[GuDuu OS]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[警告]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[失败]\033[0m %s\n' "$*" >&2; exit 1; }
 
@@ -74,7 +74,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-say "== CosMac 实例安装 =="
+say "== GuDuu OS 实例安装 =="
 [ -n "$DOMAIN" ] || { read -rp "实例域名（如 im.example.com，需已解析到本机公网 IP）: " DOMAIN; }
 [ -n "$DOMAIN" ] || die "域名不能为空。"
 case "$DOMAIN" in
@@ -107,7 +107,7 @@ if [ -n "$SMTP_HOST" ]; then
   read -rp "SMTP 账号: " SMTP_USER
   read -rsp "SMTP 密码: " SMTP_PASSWORD; echo
   read -rp "发件地址（默认同账号）: " SMTP_FROM; SMTP_FROM="${SMTP_FROM:-$SMTP_USER}"
-  read -rp "发件人名称 [CosMac]: " SMTP_FROM_NAME; SMTP_FROM_NAME="${SMTP_FROM_NAME:-CosMac}"
+  read -rp "发件人名称 [GuDuu OS]: " SMTP_FROM_NAME; SMTP_FROM_NAME="${SMTP_FROM_NAME:-GuDuu OS}"
 fi
 
 # ---------- 2. DNS / 端口体检（只警告不拦截：可能在 LB/NAT 后面）----------

@@ -61,7 +61,7 @@ if [ -d "$APP/.git" ]; then
 else
   say "拉取代码……"
   mkdir -p "$(dirname "$APP")"
-  git clone --depth 1 "https://${GH_TOKEN}@github.com/GuDuuOS/CosMac.git" "$APP"
+  git clone --depth 1 "https://${GH_TOKEN}@github.com/GuDuuOS/GuDuu OS.git" "$APP"
 fi
 [ -d "$VENV" ] || python3 -m venv "$VENV"
 "$VENV/bin/pip" install -q -r "$APP/nexus/requirements.txt"

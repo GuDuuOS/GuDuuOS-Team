@@ -59,7 +59,7 @@ class NexusKey(Base):
 
 
 class NexusInstance(Base):
-    """一个已兑换开通的 OEM 实例（= 一套自部的 CosMac 发行版）。"""
+    """一个已兑换开通的 OEM 实例（= 一套自部的 GuDuu OS 发行版）。"""
 
     __tablename__ = "nexus_instance"
 

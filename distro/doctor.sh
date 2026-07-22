@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# CosMac 发行版 —— 自诊断脚本（OEM 排障第一入口）
+# GuDuu OS 发行版 —— 自诊断脚本（OEM 排障第一入口）
 # ------------------------------------------------------------
 # 逐项体检并打 ✓/✗，最后汇总。哪项 ✗ 就按提示处理；仍搞不定时，
 # 把本脚本完整输出发给技术支持（不含密钥，可放心转发）。
@@ -12,7 +12,7 @@ PASS=0; FAIL=0
 ok()   { printf '  \033[1;32m✓\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
 bad()  { printf '  \033[1;31m✗\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
 
-echo "== CosMac 实例体检 =="
+echo "== GuDuu OS 实例体检 =="
 
 # ---------- 基础环境 ----------
 command -v docker >/dev/null 2>&1 && ok "docker 已安装" || bad "docker 未安装"
@@ -54,11 +54,11 @@ code="$(curl -so /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/_mat
 code="$(curl -so /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/.well-known/matrix/server" 2>/dev/null || true)"
 [ "$code" = "200" ] && ok "联邦服务发现正常" || bad "well-known 异常（HTTP ${code:-超时}）"
 
-# ---------- CosMac bot ----------
+# ---------- GuDuu OS bot ----------
 # 任何非 502/超时的响应（含 401/404）都说明 bot 进程活着且路由通
 code="$(curl -so /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/cosmac/onboarding/templates" 2>/dev/null || true)"
-if [ -n "$code" ] && [ "$code" != "502" ] && [ "$code" != "000" ]; then ok "CosMac 主 AI 服务可达（HTTP $code）"
-else bad "CosMac 主 AI 服务不可达——看日志：docker compose logs bot"; fi
+if [ -n "$code" ] && [ "$code" != "502" ] && [ "$code" != "000" ]; then ok "GuDuu OS 主 AI 服务可达（HTTP $code）"
+else bad "GuDuu OS 主 AI 服务不可达——看日志：docker compose logs bot"; fi
 
 # ---------- P1 预留：GuDuu Nexus 网关连通性检查加在这里 ----------
 

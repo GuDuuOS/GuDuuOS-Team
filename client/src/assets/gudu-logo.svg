@@ -12,9 +12,9 @@
   <!-- 中间名牌带 -->
   <rect x="8" y="82" width="84" height="26" rx="6" fill="#faf6ea" stroke="#1a1a1a" stroke-width="4"/>
 
-  <!-- CosMac 文字 -->
+  <!-- GuDuu OS 文字 -->
   <text x="50" y="103" text-anchor="middle"
         font-family="Inter, -apple-system, 'PingFang SC', sans-serif"
         font-weight="900" font-size="18" fill="#1a1a1a"
-        letter-spacing="-0.5">CosMac</text>
+        letter-spacing="-0.5">GuDuu OS</text>
 </svg>

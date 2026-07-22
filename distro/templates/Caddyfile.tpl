@@ -1,5 +1,5 @@
 # ============================================================
-# CosMac 发行版 —— Caddy 配置模板（install.sh 渲染到 data/caddy/Caddyfile）
+# GuDuu OS 发行版 —— Caddy 配置模板（install.sh 渲染到 data/caddy/Caddyfile）
 # ------------------------------------------------------------
 # 选 Caddy 而非 nginx+certbot：自动签发/续期 Let's Encrypt 证书，
 # OEM 自部零证书运维——这是发行版“一条命令装完”的关键简化。
@@ -23,7 +23,7 @@
 		reverse_proxy synapse:8008
 	}
 
-	# —— CosMac 自有 API（注册验码/入驻/商城/皮肤等，bot 提供）——
+	# —— GuDuu OS 自有 API（注册验码/入驻/商城/皮肤等，bot 提供）——
 	handle /cosmac/* {
 		reverse_proxy bot:9000
 	}

@@ -1,5 +1,5 @@
 # ============================================================
-# CosMac 发行版 —— 主 AI Application Service 注册模板
+# GuDuu OS 发行版 —— 主 AI Application Service 注册模板
 # ------------------------------------------------------------
 # install.sh 渲染后写到 data/synapse/appservice-cosmac.yaml（Synapse 读），
 # 同一对 token 也写进 .env 喂给 bot 容器——两边必须一致，否则事件推送/调用全挂。

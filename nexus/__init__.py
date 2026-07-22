@@ -1,7 +1,7 @@
 """GuDuu Nexus —— OEM 体系的母舰控制平面（模块6 P1）。
 
 与 ``cosmac/``（实例内的主 AI 服务）完全独立的一套服务：部署在**你自己的**
-Nexus 小 VM 上，管理散布在各 OEM 服务器上的 CosMac 发行版实例。
+Nexus 小 VM 上，管理散布在各 OEM 服务器上的 GuDuu OS 发行版实例。
 
 包结构：
     nexus/db.py      —— 独立数据库（KEY / 实例 / token 钱包 / 用量 / 心跳）

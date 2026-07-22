@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# CosMac 发行版 —— 升级脚本
+# GuDuu OS 发行版 —— 升级脚本
 # ------------------------------------------------------------
 # 拉最新代码 → 重建镜像 → 滚动重启。数据（data/ 与数据库卷）不动。
 # 发行版承诺「买断永久含升级」（模块6 拍板），OEM 定期跑这一条即可。
@@ -12,16 +12,16 @@ cd "$(dirname "$0")"
 
 [ -f .env ] || { echo "[失败] 未找到 .env——本机尚未安装，先跑 ./install.sh" >&2; exit 1; }
 
-echo "[CosMac] 拉取最新版本……"
+echo "[GuDuu OS] 拉取最新版本……"
 git -C .. pull --ff-only
 
-echo "[CosMac] 重建镜像（前端构建约需几分钟）……"
+echo "[GuDuu OS] 重建镜像（前端构建约需几分钟）……"
 docker compose build
 
-echo "[CosMac] 滚动重启……"
+echo "[GuDuu OS] 滚动重启……"
 docker compose up -d
 
-echo "[CosMac] 清理旧镜像……"
+echo "[GuDuu OS] 清理旧镜像……"
 docker image prune -f >/dev/null
 
-echo "[CosMac] 升级完成 ✅ 建议跑 ./doctor.sh 体检一遍。"
+echo "[GuDuu OS] 升级完成 ✅ 建议跑 ./doctor.sh 体检一遍。"

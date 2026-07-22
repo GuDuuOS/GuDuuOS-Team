@@ -1,6 +1,6 @@
-# CosMac 发行版（OEM 自部版）
+# GuDuu OS 发行版（OEM 自部版）
 
-> 模块6 P0 产物：把整套 CosMac（Matrix homeserver + 主 AI + 客户端 + HTTPS）
+> 模块6 P0 产物：把整套 GuDuu OS（Matrix homeserver + 主 AI + 客户端 + HTTPS）
 > 打包成 OEM 可以装在**自己服务器、自己域名**上的一键安装栈。
 > 装完后在管理后台换 logo / 颜色 / 产品名（P1 皮肤系统），即成 OEM 自己品牌的产品。
 
@@ -56,7 +56,7 @@ distro/
 
 ## 架构与边界（给技术负责人）
 
-- 4 个容器：`postgres`（pgvector）/ `synapse`（Matrix homeserver）/ `bot`（CosMac 主 AI）/ `web`（Caddy）。
+- 4 个容器：`postgres`（pgvector）/ `synapse`（Matrix homeserver）/ `bot`（GuDuu OS 主 AI）/ `web`（Caddy）。
   仅 `web` 对公网开放 80/443；其余全部走容器内网。
 - 账号身份是 `@用户名:你的域名` —— 数据与身份完全归属本实例（数据主权在 OEM）。
 - 联邦范围：GuDuu 生态内互通（P2 起由 GuDuu Nexus 下发成员名单）；不与公网 Matrix 联邦。

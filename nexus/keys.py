@@ -15,7 +15,7 @@ import secrets
 # 32 个不易混淆的字符：16 位随机 = 32^16 ≈ 2^80 种组合，暴力不可行
 _ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
-# KEY 展示格式：CMK-XXXX-XXXX-XXXX-XXXX（CMK = CosMac Key，便于一眼识别）
+# KEY 展示格式：CMK-XXXX-XXXX-XXXX-XXXX（CMK = 授权 KEY 固定前缀(历史沿用,已发 KEY 均以此开头,不可变更)）
 _PREFIX = "CMK"
 _GROUPS = 4
 _GROUP_LEN = 4
