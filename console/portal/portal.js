@@ -65,7 +65,9 @@
     var headers = { "Content-Type": "application/json" };
     if (opts.token) headers["Authorization"] = "Bearer " + opts.token;
     else if (auth) headers["Authorization"] = "Bearer " + auth.token;
-    return fetch(path, {
+    // 用 origin 拼绝对地址：当页面地址栏带 basic-auth 凭据(user:pass@host)时，
+    // 相对路径 fetch 会被浏览器整体拒绝；origin 永不含凭据，稳。
+    return fetch(new URL(path, window.location.origin).href, {
       method: opts.method || (opts.body ? "POST" : "GET"),
       headers: headers,
       body: opts.body ? JSON.stringify(opts.body) : undefined,

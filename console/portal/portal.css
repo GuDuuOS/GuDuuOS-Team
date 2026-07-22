@@ -13,6 +13,8 @@
   --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
+/* hidden 属性必须压过任何 display 设定(否则 .login-wrap{display:grid} 会让 hidden 失效) */
+[hidden] { display: none !important; }
 body {
   min-height: 100vh;
   color: var(--ink);
