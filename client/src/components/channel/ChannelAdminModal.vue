@@ -444,10 +444,23 @@ const rLabel = ref(''); const rDesc = ref('')
 const dLabel = ref(''); const dLevel = ref<Confidential>('内部'); const dAccess = ref<AccessLevel>('只读')
 
 function doAddMember() { addMember(mName.value, mRole.value); mName.value = ''; mRole.value = '' }
-function doAddSkill() { addItem('skills', sLabel.value, sDesc.value, sTag.value); sLabel.value = ''; sTag.value = ''; sDesc.value = '' }
-function doAddKnowledge() { addItem('knowledge', kLabel.value, kDesc.value); kLabel.value = ''; kDesc.value = '' }
+function doAddSkill() {
+  if (!addItem('skills', sLabel.value, sDesc.value, sTag.value)) return  // 同名拦截:输入保留,用户可改名
+  sLabel.value = ''; sTag.value = ''; sDesc.value = ''
+}
+function doAddKnowledge() {
+  kbErr.value = ''
+  if (!addItem('knowledge', kLabel.value, kDesc.value)) {
+    kbErr.value = `「${kLabel.value.trim()}」已存在，无需重复添加（可先删除旧条目再加）`
+    return
+  }
+  kLabel.value = ''; kDesc.value = ''
+}
 const ruleAddOpen = ref(false)   // 单条规则添加行默认折叠(文档区是主角)
-function doAddRule() { addItem('rules', rLabel.value, rDesc.value); rLabel.value = ''; rDesc.value = ''; ruleAddOpen.value = false }
+function doAddRule() {
+  if (!addItem('rules', rLabel.value, rDesc.value)) return  // 同名拦截:输入保留
+  rLabel.value = ''; rDesc.value = ''; ruleAddOpen.value = false
+}
 // 频道规则文档:上传 .md 填入(编辑区 v-model 直接绑 state.ruleDoc,自动保存走 composable watch)
 const RULEDOC_MAX = 4000  // 每轮全文注入,给上限防挤占对话空间(后端注入同样截断兜底)
 const ruleDocFileInput = ref<HTMLInputElement>()
