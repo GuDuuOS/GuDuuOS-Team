@@ -2,6 +2,9 @@
 
 ## 2026-07-22 — 新增 README.md(负责人报:GitHub 仓库主页没有 README)
 
+- 追加(同日):README 去除 Matrix/Synapse 底层技术表述(负责人要求,白牌定位)——
+  改「消息底座/标准扩展协议」中性说法;内部文档(CLAUDE/ARCHITECTURE)不变。
+
 - 项目定位+核心特性+仓库结构+文档地图+版本追溯入口(tags/DEVLOG)+架构铁律+本地开发。
 - 不含任何服务器 IP/域名细节/key(敏感信息仍只在本机 DEPLOY.md/CREDENTIALS)。
 
