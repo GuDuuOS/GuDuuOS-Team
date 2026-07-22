@@ -123,6 +123,53 @@ class NexusHeartbeat(Base):
     stats_json = Column(Text, nullable=False, default="{}")
 
 
+class NexusOem(Base):
+    """OEM 客户账号（模块6 P1：邮箱+密码独立账号，可拥有多个 KEY/实例）。
+
+    与「平台超管」正交——超管走 NEXUS_ADMIN_TOKEN（看全部、签发 KEY、充值）；
+    OEM 登录后只能看/操作自己认领的 KEY 及其实例（服务端强制分权，见 oem.py）。
+    密码只存 pbkdf2 派生串（``pbkdf2$迭代$salt$hash``），绝不存明文。
+    """
+
+    __tablename__ = "nexus_oem"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String(255), nullable=False, unique=True, index=True)
+    password_hash = Column(String(255), nullable=False)
+    name = Column(String(120), nullable=False, default="")
+    # active=正常 / disabled=被平台停用（停用后不能登录）
+    status = Column(String(16), nullable=False, default="active")
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
+class NexusSession(Base):
+    """OEM 登录会话（可撤销）。库里只存 token 的 sha256，明文只在登录响应里给一次。"""
+
+    __tablename__ = "nexus_session"
+
+    # sha256(token) 作主键：查会话/登出都拿哈希比对
+    token_hash = Column(String(64), primary_key=True)
+    oem_id = Column(Integer, nullable=False, index=True)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    expires_ts = Column(BigInteger, nullable=False)
+
+
+class NexusKeyClaim(Base):
+    """OEM 认领 KEY 的归属边：一把 KEY 只归一个 OEM。
+
+    为什么单开一张表而不在 nexus_key 上加列：本项目没有迁移框架、建表靠
+    ``create_all``——新表能自动建，给**现存**表加列却不会自动 ALTER。归属做成
+    独立表，既零迁移风险，又把「KEY 签发（超管）」与「KEY 认领（OEM）」解耦。
+    实例归属 = 实例 → 其 key_id → 本表 → oem_id。
+    """
+
+    __tablename__ = "nexus_key_claim"
+
+    key_id = Column(Integer, primary_key=True)  # = NexusKey.id
+    oem_id = Column(Integer, nullable=False, index=True)
+    claimed_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
 # 组合索引：按实例翻流水/心跳是最高频查询
 Index("ix_nexus_ledger_inst_ts", NexusLedger.instance_id, NexusLedger.ts)
 Index("ix_nexus_hb_inst_ts", NexusHeartbeat.instance_id, NexusHeartbeat.ts)

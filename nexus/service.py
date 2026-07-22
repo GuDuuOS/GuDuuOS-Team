@@ -32,15 +32,17 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict
 
-from nexus import db, fleet
+from nexus import db, fleet, oem as oem_svc
 from nexus.fleet import FleetError
 
 logger = logging.getLogger("nexus.service")
 
-# ---------- 兑换限频（内存桶：单实例部署够用；多实例部署时换 Redis，P2 再说）----------
+# ---------- 内存限频桶（单实例部署够用；多实例部署时换 Redis，P2 再说）----------
 _BUCKET_LOCK = threading.Lock()
 _BUCKET: Dict[str, list] = {}
 _REDEEM_MAX_PER_HOUR = 10
+# OEM 注册/登录：按 IP 每小时 30 次（防账号枚举/密码爆破，正常人用不到这么多）
+_AUTH_MAX_PER_HOUR = 30
 
 
 def _rate_ok(ip: str) -> bool:
@@ -53,6 +55,20 @@ def _rate_ok(ip: str) -> bool:
             return False
         window.append(now)
         _BUCKET[ip] = window
+        return True
+
+
+def _auth_rate_ok(ip: str) -> bool:
+    """OEM 注册/登录限频（独立桶，key 前缀 auth: 与兑换桶隔开）。"""
+    now = time.time()
+    key = "auth:" + ip
+    with _BUCKET_LOCK:
+        window = [t for t in _BUCKET.get(key, []) if now - t < 3600]
+        if len(window) >= _AUTH_MAX_PER_HOUR:
+            _BUCKET[key] = window
+            return False
+        window.append(now)
+        _BUCKET[key] = window
         return True
 
 
@@ -112,6 +128,22 @@ class NexusHandler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _bearer(self) -> str:
+        """取 Authorization: Bearer <token> 里的 token（无则空串）。"""
+        got = self.headers.get("Authorization") or ""
+        return got[7:] if got.startswith("Bearer ") else ""
+
+    def _oem(self, s):
+        """解析 OEM 会话令牌 → OEM 账号。无效则回 401 并返回 None。
+
+        供 /nexus/oem/* 端点在 _with_session 内调用（需要 Session 查会话表）。
+        """
+        oem = oem_svc.resolve_session(s, self._bearer())
+        if oem is None:
+            self._err(401, "NEXUS_FORBIDDEN", "请先登录")
+            return None
+        return oem
+
     def _check_dash(self) -> bool:
         """大屏端点鉴权：只读令牌 NEXUS_DASH_TOKEN（大屏挂墙上，权限与管理
         令牌分开——泄露只读令牌看得到数据、动不了 KEY 和钱包）；admin 令牌也放行。"""
@@ -153,6 +185,22 @@ class NexusHandler(BaseHTTPRequestHandler):
         if path == "/nexus/dash/summary":
             if self._check_dash():
                 self._with_session(lambda s: self._json(200, fleet.dash_summary(s)))
+            return
+        # —— OEM 门户：登录后看自己的账号 + 实例 + KEY ——
+        if path == "/nexus/oem/me":
+            def _me(s):
+                oem = self._oem(s)
+                if oem is None:
+                    return
+                self._json(
+                    200,
+                    {
+                        "oem": oem_svc.public_oem(oem),
+                        "instances": oem_svc.my_instances(s, oem.id),
+                        "keys": oem_svc.my_keys(s, oem.id),
+                    },
+                )
+            self._with_session(_me)
             return
         # —— 其余 GET：当静态请求，托管数据大屏（console/dashboard）——
         if self._serve_dashboard(path):
@@ -256,6 +304,54 @@ class NexusHandler(BaseHTTPRequestHandler):
                     ),
                 )
             )
+            return
+
+        # —— OEM 账号：注册 / 登录（免鉴权，按 IP 限频）/ 登出 / 认领 KEY ——
+        if path in ("/nexus/oem/register", "/nexus/oem/login"):
+            if not _auth_rate_ok(self._client_ip()):
+                self._err(429, "NEXUS_RATE_LIMIT", "尝试过于频繁，请稍后再试")
+                return
+            if path == "/nexus/oem/register":
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "oem": oem_svc.register(
+                                s,
+                                str(body.get("email", "")),
+                                str(body.get("password", "")),
+                                str(body.get("name", "")),
+                            )
+                        },
+                    )
+                )
+            else:
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        oem_svc.login(
+                            s,
+                            str(body.get("email", "")),
+                            str(body.get("password", "")),
+                        ),
+                    )
+                )
+            return
+
+        if path == "/nexus/oem/logout":
+            token = self._bearer()
+            self._with_session(
+                lambda s: (oem_svc.logout(s, token), self._json(200, {"ok": True}))[-1]
+            )
+            return
+
+        if path == "/nexus/oem/claim":
+            def _claim(s):
+                oem = self._oem(s)
+                if oem is None:
+                    return
+                self._json(200, oem_svc.claim_key(s, oem.id, str(body.get("key", ""))))
+            self._with_session(_claim)
             return
 
         if path == "/nexus/admin/keys":
