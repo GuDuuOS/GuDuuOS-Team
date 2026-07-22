@@ -3165,7 +3165,7 @@ export async function getTasks(): Promise<TaskItem[]> {
 
 /** 改任务状态/进度（看板手动操作）。返回是否成功。 */
 export async function updateTask(
-  id: number, patch: { status?: string; progress?: number },
+  id: number, patch: { status?: string; progress?: number; due?: string },
 ): Promise<{ ok: boolean; error?: string }> {
   const token = (mx as any)?.getAccessToken?.() || ''
   if (!token) return { ok: false, error: '登录已失效，请重新登录' }

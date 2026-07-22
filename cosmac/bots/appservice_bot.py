@@ -3625,6 +3625,20 @@ class CosmacBot:
         status = _normalize_task_status(body.get("status"))
         if status is not None and status not in _TASK_STATUSES:
             return 400, {"error": "任务状态非法（只能是 待办/进行中/已完成）"}
+        # 改期(负责人报:逾期提醒让去看板改期,看板却不支持)——due 语义:
+        # 字段缺失=不动;空串=清除截止;'YYYY-MM-DD[ HH:MM]'=设置(解析失败给明确 400)。
+        due_kwargs: Dict[str, Any] = {}
+        if "due" in (body or {}):
+            raw_due = str(body.get("due") or "").strip()
+            if not raw_due:
+                due_kwargs["due_ts"] = None  # 显式清除截止时间
+            else:
+                from cosmac.ai.tools import _parse_due_to_epoch
+
+                ep = _parse_due_to_epoch(raw_due)
+                if ep is None:
+                    return 400, {"error": "截止时间格式无效(用 YYYY-MM-DD 或 YYYY-MM-DD HH:MM)"}
+                due_kwargs["due_ts"] = ep
         try:
             from cosmac.db import session_scope
             from cosmac.db.task_repo import get_task, update_task
@@ -3641,6 +3655,7 @@ class CosmacBot:
                     status=status,
                     progress=body.get("progress"),
                     result=body.get("result"),
+                    **due_kwargs,
                 )
         except Exception:
             logger.exception("更新任务失败 id=%s", task_id)

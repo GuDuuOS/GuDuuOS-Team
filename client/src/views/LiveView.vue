@@ -375,6 +375,33 @@ async function moveTask(t: TaskItem, status: string) {
   }
 }
 
+// ── 任务改期(负责人报:逾期提醒让去看板"处理或改期",看板却不支持改期) ──
+const rescheduleTask = ref<TaskItem | null>(null)  // 正在改期的任务(null=浮层关闭)
+const rescheduleVal = ref('')                       // datetime-local 输入值
+function openReschedule(t: TaskItem) {
+  rescheduleTask.value = t
+  // 预填现有截止(转 datetime-local 的 'YYYY-MM-DDTHH:MM');无截止默认明天 18:00
+  const base = t.due_ts ? new Date(t.due_ts * 1000) : new Date(Date.now() + 86400000)
+  if (!t.due_ts) base.setHours(18, 0, 0, 0)
+  const p = (n: number) => String(n).padStart(2, '0')
+  rescheduleVal.value = `${base.getFullYear()}-${p(base.getMonth() + 1)}-${p(base.getDate())}T${p(base.getHours())}:${p(base.getMinutes())}`
+}
+async function submitReschedule(clear = false) {
+  const t = rescheduleTask.value
+  if (!t) return
+  // datetime-local 'YYYY-MM-DDTHH:MM' → 后端认的 'YYYY-MM-DD HH:MM';clear=清除截止
+  const due = clear ? '' : rescheduleVal.value.replace('T', ' ')
+  if (!clear && !due) return
+  const res = await updateTask(t.id, { due })
+  if (res.ok) {
+    t.due_ts = clear ? 0 : Math.floor(new Date(rescheduleVal.value).getTime() / 1000)
+    toast('已更新', clear ? `#${t.id} 已清除截止时间` : `#${t.id} 截止时间已改为 ${due}`)
+    rescheduleTask.value = null
+  } else {
+    toast('改期失败', res.error || '请稍后重试')
+  }
+}
+
 
 // homeserver 基址：主站/本地连 hs.cosmac.cc，OEM 自部实例（发行版）为同源——见 config/hs.ts
 const HS = defaultHsUrl()
@@ -2527,7 +2554,8 @@ onBeforeUnmount(() => {
                   <div v-for="t in tasksByStatus(col.key)" :key="t.id" class="kan-card" :class="{ done: t.status === 'done' }" @click="col.key !== 'done' && moveTask(t, nextStatus(col.key))">
                     <!-- 任务 ID 前置:AI 在频道/对话里引用任务只说 #编号,看板不显示编号就对不上号(负责人报的) -->
                     <div class="kan-title"><span class="kan-id">#{{ t.id }}</span>{{ t.title }}</div>
-                    <div v-if="dueMeta(t)" class="kan-due" :class="dueMeta(t)!.cls">🕒 {{ dueMeta(t)!.text }}</div>
+                    <!-- 截止徽章可点改期(负责人报:逾期提醒让来看板改期,此前不支持) -->
+                    <div v-if="dueMeta(t)" class="kan-due kan-due-btn" :class="dueMeta(t)!.cls" title="点击改期" @click.stop="openReschedule(t)">🕒 {{ dueMeta(t)!.text }} ✎</div>
                     <div v-if="t.assignee || execLabel(t) || t.progress > 0" class="kan-foot">
                       <span v-if="t.assignee" class="kan-who">
                         <span class="kan-who-ava">{{ t.assignee.slice(0, 1) }}</span>{{ t.assignee }}
@@ -2540,6 +2568,7 @@ onBeforeUnmount(() => {
                     </div>
                     <div class="kan-btns">
                       <button v-if="col.key !== 'todo'" class="kan-btn" title="退回" @click.stop="moveTask(t, prevStatus(col.key))">←</button>
+                      <button v-if="col.key !== 'done' && !t.due_ts" class="kan-btn" title="设置截止时间" @click.stop="openReschedule(t)">📅</button>
                       <span class="kan-spacer" />
                       <button v-if="col.key !== 'done'" class="kan-btn primary" @click.stop="moveTask(t, nextStatus(col.key))">{{ col.key === 'todo' ? '开始 →' : '完成 ✓' }}</button>
                     </div>
@@ -2551,6 +2580,20 @@ onBeforeUnmount(() => {
                 </div>
               </div>
             </div>
+            </div>
+          </div>
+
+          <!-- 任务改期浮层(产品风格,不用原生 prompt) -->
+          <div v-if="rescheduleTask" class="resc-mask" @click.self="rescheduleTask = null">
+            <div class="resc-card">
+              <div class="resc-title">改期 · <span class="kan-id">#{{ rescheduleTask.id }}</span>{{ rescheduleTask.title }}</div>
+              <input v-model="rescheduleVal" type="datetime-local" class="resc-input" />
+              <div class="resc-btns">
+                <button v-if="rescheduleTask.due_ts" class="kan-btn" @click="submitReschedule(true)">清除截止</button>
+                <span class="kan-spacer" />
+                <button class="kan-btn" @click="rescheduleTask = null">取消</button>
+                <button class="kan-btn primary" @click="submitReschedule()">确定</button>
+              </div>
             </div>
           </div>
         </template>
@@ -3519,6 +3562,15 @@ onBeforeUnmount(() => {
 .kan-due { display: inline-flex; align-items: center; gap: 3px; margin-top: 7px; font-size: var(--fs-75); color: var(--text-2); background: var(--bg-soft); border-radius: 999px; padding: 2px 9px; }
 .kan-due.soon { color: #8a5a10; background: #f7e3b8; }
 .kan-due.overdue { color: #b23b3b; background: #f6d6d6; }
+/* 改期入口:截止徽章可点(负责人报:逾期提醒让来看板改期) */
+.kan-due-btn { cursor: pointer; }
+.kan-due-btn:hover { filter: brightness(0.93); }
+/* 改期浮层:轻量小卡片,风格贴现有弹层 */
+.resc-mask { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center; background: rgba(30, 24, 12, 0.35); }
+.resc-card { width: min(92vw, 380px); background: var(--bg, #fff); border-radius: 14px; padding: 18px; box-shadow: 0 12px 40px rgba(0,0,0,.18); display: flex; flex-direction: column; gap: 12px; }
+.resc-title { font-weight: 600; font-size: var(--fs-95, 14px); line-height: 1.4; }
+.resc-input { width: 100%; padding: 9px 10px; border: 1px solid var(--line, #e5decf); border-radius: 9px; font-size: var(--fs-95, 14px); background: var(--bg-soft, #faf7f0); }
+.resc-btns { display: flex; align-items: center; gap: 8px; }
 .kan-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 11px; }
 .kan-who { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-75); color: var(--text-2); background: var(--bg-soft); border-radius: 999px; padding: 2px 10px 2px 2px; }
 .kan-who-ava { width: 19px; height: 19px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 10px; font-weight: var(--fw-bold); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }

@@ -93,5 +93,52 @@ class TestUpdateTaskDue(unittest.TestCase):
             self.assertEqual(get_task(s, self.tid).reminded, 0)
 
 
+class _BotClient:
+    """打桩 client:whoami 固定回下单人(即有权改)。"""
+
+    def whoami(self, token):
+        return "@u:h"
+
+    def resolve_alias(self, alias):
+        return None
+
+    def set_displayname(self, *a, **k):
+        pass
+
+
+class TestTaskUpdateEndpointDue(unittest.TestCase):
+    """看板改期端点(负责人报:逾期提醒让去看板改期,看板此前不支持)。"""
+
+    def setUp(self) -> None:
+        from cosmac.bots.appservice_bot import CosmacBot
+        from cosmac.config import CosmacConfig
+
+        init_engine("sqlite://", create_all=True)
+        self.bot = CosmacBot(CosmacConfig(llm_provider="echo", server_name="h"))
+        self.bot.client = _BotClient()
+        with session_scope() as s:
+            rows = create_tasks(s, goal="g", items=[{"title": "改期目标"}],
+                                room_id=ROOM, sender="@u:h")
+            self.tid = rows[0].id
+
+    def test_set_due_via_endpoint(self) -> None:
+        code, out = self.bot.handle_task_update("tok", {"id": self.tid, "due": "2026-08-01 18:00"})
+        self.assertEqual(code, 200)
+        with session_scope() as s:
+            self.assertIsNotNone(get_task(s, self.tid).due_ts)
+
+    def test_clear_due_via_endpoint(self) -> None:
+        self.bot.handle_task_update("tok", {"id": self.tid, "due": "2026-08-01"})
+        code, _ = self.bot.handle_task_update("tok", {"id": self.tid, "due": ""})
+        self.assertEqual(code, 200)
+        with session_scope() as s:
+            self.assertIsNone(get_task(s, self.tid).due_ts)
+
+    def test_bad_due_rejected_400(self) -> None:
+        code, out = self.bot.handle_task_update("tok", {"id": self.tid, "due": "下周三"})
+        self.assertEqual(code, 400)
+        self.assertIn("格式无效", out["error"])
+
+
 if __name__ == "__main__":
     unittest.main()
