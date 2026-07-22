@@ -246,6 +246,12 @@ async function writePatch(rid: string, batch: Record<string, any>): Promise<void
       }
     } catch { /* 重试仍失败 */ }
     saveState.value = ok ? 'saved' : 'error'
+    // 【回滚·负责人实报】保存失败时本地乐观更新必须撤销——非管理员点「添加来源」,
+    // 提示"保存失败没权限"但列表里新条目还挂着,看起来"实际写入成功"了(假象,
+    // state 里根本没有)。从房间 state 重读一遍,把本地假象冲掉、恢复真实配置。
+    if (!ok && rid === currentRoomId.value) {
+      loadConfigFromRoom(currentKey.value, rid)
+    }
   }
 }
 

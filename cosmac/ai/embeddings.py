@@ -170,7 +170,48 @@ def get_embedder() -> Embedder:
     if base_url is None and key.startswith("ark-"):
         base_url = _DEFAULT_ARK_BASE_URL
     try:
-        return OpenAICompatEmbedder(api_key=key, model=model, base_url=base_url)
+        return ResilientEmbedder(
+            OpenAICompatEmbedder(api_key=key, model=model, base_url=base_url)
+        )
     except Exception:
         # openai 没装/初始化失败 → 别让知识库瘫，降级哈希
         return HashingEmbedder()
+
+
+class ResilientEmbedder(Embedder):
+    """带故障降级的嵌入器：首选真嵌入,**调用失败即进程内永久降级**哈希词袋。
+
+    线上实报:OPENAI_API_KEY 填的是 Nexus 网关授权码、OPENAI_BASE_URL 指网关,
+    而网关白名单不放行 /embeddings → 每次知识库入库都 403 → 整个上传 500。
+    key"看起来有"≠嵌入可用,必须以**真实调用结果**为准。
+
+    降级是**粘性的**(类级 flag,进程内所有实例共享):一次失败后,入库与检索
+    此后都稳定用同一个 hash 向量空间——避免"时好时坏"导致向量空间分裂、
+    部分分块检索不到(tag 机制只比同空间向量)。恢复真嵌入=修好配置后重启。
+    """
+
+    name = "resilient"
+    _degraded = False  # 类级:进程内共享,入库/检索一致降级
+
+    def __init__(self, primary: Embedder):
+        self._primary = primary
+        self._hash = HashingEmbedder()
+
+    @property
+    def tag(self) -> str:
+        # 跟随当前实际生效的后端——tag 决定向量空间,必须与 embed 输出一致
+        return self._hash.tag if ResilientEmbedder._degraded else self._primary.tag
+
+    def embed(self, texts: List[str]) -> List[List[float]]:
+        if not ResilientEmbedder._degraded:
+            try:
+                return self._primary.embed(texts)
+            except Exception:
+                import logging
+
+                logging.getLogger("cosmac.embeddings").warning(
+                    "真嵌入调用失败(key/端点不可用?),知识库降级哈希词袋检索;"
+                    "修好配置后重启恢复", exc_info=True,
+                )
+                ResilientEmbedder._degraded = True
+        return self._hash.embed(texts)
