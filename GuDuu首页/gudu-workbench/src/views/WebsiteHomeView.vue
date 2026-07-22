@@ -23,7 +23,7 @@
           进入案例
           <span>↗</span>
         </RouterLink>
-        <a class="site-nav-login" :href="appHref">登录 / 注册</a>
+        <a class="site-nav-login dim" :href="appHref">登录 / 注册</a>
       </div>
     </header>
 
@@ -51,7 +51,7 @@
               体验 GuDuu OS
               <span class="button-arrow">→</span>
             </RouterLink>
-            <a class="ghost-button" :href="appHref">
+            <a class="ghost-button dim" :href="appHref">
               登录 / 注册
               <span class="button-arrow">→</span>
             </a>

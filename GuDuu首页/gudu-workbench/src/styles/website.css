@@ -2438,3 +2438,9 @@
 .edition-on { background: #e88533; color: #fff !important; font-weight: 600; }
 .edition-off { color: rgba(255,255,255,.72) !important; transition: color .2s ease; }
 .edition-off:hover { color: #fff !important; }
+
+/* 企业版暂未开放:登录/注册按钮暗化(个人版保持橙色亮态) */
+.site-nav-login.dim { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.28); color: rgba(255,255,255,.78) !important; }
+.site-nav-login.dim:hover { background: rgba(255,255,255,.14); box-shadow: none; }
+.ghost-button.dim { border-color: rgba(255,255,255,.22); color: rgba(255,255,255,.62) !important; }
+.ghost-button.dim:hover { border-color: rgba(255,255,255,.4); background: rgba(255,255,255,.06); }
