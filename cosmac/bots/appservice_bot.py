@@ -19,6 +19,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import socket
 import threading
 import time
@@ -3482,12 +3483,19 @@ class CosmacBot:
 
     @staticmethod
     def _is_task_assignee(user_id: str, task: Any) -> bool:
-        """user_id 是否是这条任务的**被指派者**（executor_ref 指向本人）。
+        """user_id 是否是这条任务的**被指派者**（含真人+AI 共同执行）。
 
         与 handle_tasks_list 的可见性口径**完全一致**：比对 localpart，兼容 executor_ref 存
-        全 id / 纯 localpart / 带不带 @；旧任务无 executor_ref 时按 assignee 首词兜底。
+        全 id / 纯 localpart / 带不带 @。
         —— 这是「看得到 = 改得动」的关键：可见性放行了被指派者，改状态的鉴权也必须同样放行，
         否则被派单的人在看板点「开始」会 403（线上实测）。
+
+        判定规则（前端 LiveView.assignedToMe 是同一份口径，改一处必须同步另一处）：
+        - executor_kind=human 且有 ref → 只认 ref 指向本人（不扩权到 assignee，防误伤）；
+        - 其余（executor 是 agent/workflow，或旧任务无 ref）→ 从 assignee 文本里提取
+          ASCII 词逐个比对本人 localpart。**共同执行者**场景（负责人实报）：专班派单
+          把任务派给 agent:social、assignee 写「社媒运营+duxiuzhen01」——AI 执行，但
+          挂名真人也必须在自己看板看到并能推进，否则任务对真人"隐身"。
         """
         if not user_id:
             return False
@@ -3501,10 +3509,13 @@ class CosmacBot:
         ref = str(getattr(task, "executor_ref", "") or "").strip()
         if getattr(task, "executor_kind", "") == "human" and ref:
             return _lp(ref) == localpart
-        if not ref:  # 旧任务无类型化执行者：按 assignee 首词兜底
-            a = str(getattr(task, "assignee", "") or "").strip()
-            first = a.split()[0] if a else ""
-            return bool(first) and _lp(first) == localpart
+        # AI/workflow 执行 或 无类型化执行者：assignee 里挂的真人=共同执行者。
+        # 按「非 localpart 合法字符」切词(中文角色名/+、/、空格都算分隔)，任一词等于本人即命中；
+        # 词内再过 _lp 兼容 @xx:server 全 id 写法。完整词相等、非子串——防 "du" 误配 "duxz"。
+        a = str(getattr(task, "assignee", "") or "")
+        for w in re.split(r"[^A-Za-z0-9._=@:\-]+", a):
+            if w and _lp(w) == localpart:
+                return True
         return False
 
     def _can_access_task(self, user_id: str, task: Any) -> bool:

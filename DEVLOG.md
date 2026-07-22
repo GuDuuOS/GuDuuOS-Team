@@ -1,5 +1,18 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-22 — 真人+AI 共同执行任务:挂名真人的看板可见(负责人实报"隐身")
+- 现象:专班派单把任务派给 agent:social、assignee 写「社媒运营+duxiuzhen01」——AI 执行,
+  但真人 duxiuzhen01 的任务看板看不到这条任务。
+- 根因:可见性判定(后端 `_is_task_assignee` + 前端 `assignedToMe` 同口径)在
+  executor_kind=agent 且 ref 非空时直接 False,完全不看 assignee;DB 超集查询
+  (`list_tasks_for_user`)的 assignee LIKE 也限定 ref 为空 → 双层都把共同任务漏掉。
+- 修法(前后端同步):human+ref 保持只认 ref(不扩权);其余(agent/workflow/无 ref)
+  → assignee 按非 localpart 字符切词、任一词完整等于本人 localpart 即命中(防子串误配);
+  DB 层 assignee LIKE 去掉 ref 为空限制。create_tasks/assemble_team 工具说明补
+  「共同执行者写进 assignee」约定,让 AI 派单行为稳定。
+- 测试:新增 test_co_assignee 8 项(命中/他人不命中/防子串/全id/旧任务/human独占/DB两项);
+  全量 627 过、ruff 过、vue-tsc 过。
+
 ## 2026-07-22 — 多账号并发 AI 回复:事务处理异步化(负责人实报互斥锁死)
 - 现象:一个账号的 AI 长任务执行中,另一账号问中枢 AI 完全无响应。根因:appservice
   事务推送是**串行等 ack** 的,`_handle_event` 在事务线程里同步跑 LLM+工具循环
