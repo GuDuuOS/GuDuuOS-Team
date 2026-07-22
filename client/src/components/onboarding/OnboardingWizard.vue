@@ -13,7 +13,7 @@
       <div v-if="skipConfirm" class="onb-skip-confirm">
         <div class="onb-skip-card">
           <strong>先别急着跳过 🙂</strong>
-          <p>跳过后我会给你建一个默认的「营销工作区」（含内容策划、社媒运营、客户互动、数据看板几个频道），你随时能改。要不要花一分钟自己配一个更贴合的？</p>
+          <p>跳过后我会给你建一个默认的「营销工作区」（含内容策划、社媒运营、活动策划、数据看板几个频道），你随时能改。要不要花一分钟自己配一个更贴合的？</p>
           <div class="onb-skip-btns">
             <button class="onb-btn-ghost" @click="onCancelSkip">继续设置</button>
             <button class="onb-btn-primary" @click="onConfirmSkipDefault">用默认营销工作区</button>
