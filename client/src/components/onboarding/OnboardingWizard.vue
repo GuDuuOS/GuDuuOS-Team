@@ -9,6 +9,18 @@
         <button v-if="step !== 'creating'" class="onb-skip" @click="onSkip">跳过，直接进入</button>
       </header>
 
+      <!-- 跳过二次确认：提醒别空着；坚持跳就给一个默认营销工作区 -->
+      <div v-if="skipConfirm" class="onb-skip-confirm">
+        <div class="onb-skip-card">
+          <strong>先别急着跳过 🙂</strong>
+          <p>跳过后我会给你建一个默认的「营销工作区」（含内容策划、社媒运营、客户互动、数据看板几个频道），你随时能改。要不要花一分钟自己配一个更贴合的？</p>
+          <div class="onb-skip-btns">
+            <button class="onb-btn-ghost" @click="onCancelSkip">继续设置</button>
+            <button class="onb-btn-primary" @click="onConfirmSkipDefault">用默认营销工作区</button>
+          </div>
+        </div>
+      </div>
+
       <!-- 对话区 -->
       <div ref="scroll" class="onb-chat">
         <div v-for="(m, i) in messages" :key="i" class="onb-msg" :class="m.role">
@@ -93,6 +105,7 @@ const {
   visible, step, messages, busy, error, answers, templates, templateLocked,
   pickTemplate: pick, submitName, addChannel, removeChannel, confirmChannels,
   submitPersona, goStep, runCreate, skip,
+  skipConfirm, cancelSkip, fillMarketingDefault,
 } = useOnboarding()
 
 // 各步骤输入
@@ -126,7 +139,12 @@ async function onCreate() {
 }
 // 组件卸载时清掉未触发的定时器，避免卸载后还 emit('done')/改 visible（对已销毁实例操作）。
 onBeforeUnmount(() => { if (doneTimer) { clearTimeout(doneTimer); doneTimer = null } })
-async function onSkip() { await skip(); emit('skip') }
+function onSkip() { skip() }                 // 点「跳过」先弹二次确认，不直接空跳
+function onCancelSkip() { cancelSkip() }      // 「继续设置」：回引导
+async function onConfirmSkipDefault() {        // 「用默认营销工作区」：填默认答案后真建工作区
+  fillMarketingDefault()
+  await onCreate()   // 复用 onCreate：runCreate + emit('done')
+}
 
 // 新消息自动滚到底
 const scroll = ref<HTMLElement | null>(null)
@@ -137,12 +155,22 @@ watch(messages, () => { nextTick(() => { if (scroll.value) scroll.value.scrollTo
 /* 毛玻璃遮罩：半透明 + 背景模糊，让后面的应用数据透出来但虚化，聚焦在 AI 引导卡片上。
    （backdrop-filter 不支持的旧浏览器会回退成半透明底色，仍可用。）*/
 .onb-mask { position: fixed; inset: 0; z-index: 3000; background: rgba(245, 243, 238, 0.35); backdrop-filter: blur(5px) saturate(1.05); -webkit-backdrop-filter: blur(5px) saturate(1.05); display: flex; align-items: center; justify-content: center; padding: 24px; }
-.onb { width: 100%; max-width: 560px; height: min(680px, 90vh); display: flex; flex-direction: column; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 24px 64px rgba(0,0,0,.18); overflow: hidden; }
+.onb { position: relative; width: 100%; max-width: 560px; height: min(680px, 90vh); display: flex; flex-direction: column; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 24px 64px rgba(0,0,0,.18); overflow: hidden; }
 .onb-head { display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--border); }
 .onb-logo { font-weight: 800; color: var(--text); letter-spacing: .3px; }
 .onb-sub { font-size: 12px; color: var(--text-3); }
 .onb-skip { margin-left: auto; border: none; background: transparent; color: var(--text-3); font-size: 12px; cursor: pointer; }
 .onb-skip:hover { color: var(--text); text-decoration: underline; }
+/* 跳过二次确认弹窗（覆盖在引导卡片上）*/
+.onb-skip-confirm { position: absolute; inset: 0; z-index: 20; background: rgba(0,0,0,.3); display: grid; place-items: center; padding: 20px; }
+.onb-skip-card { width: 100%; max-width: 380px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 14px; padding: 22px 22px 18px; box-shadow: 0 16px 48px rgba(0,0,0,.24); }
+.onb-skip-card strong { font-size: 16px; color: var(--text); }
+.onb-skip-card p { margin: 10px 0 18px; font-size: 13px; line-height: 1.65; color: var(--text-2); }
+.onb-skip-btns { display: flex; gap: 10px; justify-content: flex-end; }
+.onb-btn-ghost { padding: 9px 16px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--text); font-size: 13px; cursor: pointer; }
+.onb-btn-ghost:hover { background: rgba(0,0,0,.04); }
+.onb-btn-primary { padding: 9px 18px; border: none; border-radius: 8px; background: #e88533; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+.onb-btn-primary:hover { filter: brightness(1.05); }
 
 .onb-chat { flex: 1; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
 .onb-msg { display: flex; gap: 8px; align-items: flex-start; max-width: 90%; }

@@ -72,6 +72,16 @@ const answers = reactive<OnbAnswers>({
   model: '', skillSlugs: [], kbDocs: [], workflowSlugs: [],
 })
 
+// 点「跳过」先弹确认提醒（skipConfirm=true），不再直接空跳；坚持跳才用下面的默认工作区。
+const skipConfirm = ref(false)
+// 坚持跳过时给的默认工作区——营销方向（GuDuu OS 面向个人创业者，营销最通用，不留空）。
+const MARKETING_DEFAULT = {
+  workspace: '营销工作区',
+  channels: ['内容策划', '社媒运营', '客户互动', '数据看板'],
+  aiName: '营销助手',
+  aiPersona: '你是这个营销团队的中枢 AI 助手，帮助策划内容、运营社媒、维护客户、分析数据、推进营销任务。回答简洁、专业、可执行。',
+}
+
 function ai(text: string) { messages.value.push({ role: 'ai', text }) }
 function user(text: string) { messages.value.push({ role: 'user', text }) }
 
@@ -152,7 +162,7 @@ function reset() {
 export function useOnboarding() {
   return {
     visible, step, messages, busy, error, answers, createdSpaceId, templates, userTier,
-    templateLocked,
+    templateLocked, skipConfirm,
 
     /** 登录后调用：没引导过才自动弹（已引导/已跳过则什么都不做）。 */
     maybeAutoStart() {
@@ -303,10 +313,17 @@ export function useOnboarding() {
       }
     },
 
-    /** 跳过引导（也标记已引导，避免反复弹）。 */
-    async skip() {
-      try { await setOnboarded(true) } catch { /* 忽略 */ }
-      visible.value = false
+    /** 点「跳过」：不再直接空跳，先弹确认提醒（skipConfirm，组件据此弹二次确认）。 */
+    skip() { skipConfirm.value = true },
+    /** 确认弹窗「继续设置」：收起提醒、回到引导。 */
+    cancelSkip() { skipConfirm.value = false },
+    /** 确认弹窗「仍要跳过」：填入默认营销工作区答案（随后组件调 runCreate 真建，不留空）。 */
+    fillMarketingDefault() {
+      skipConfirm.value = false
+      Object.assign(answers, {
+        templateKey: '', rules: '', model: '', skillSlugs: [], kbDocs: [], workflowSlugs: [],
+        ...MARKETING_DEFAULT,
+      })
     },
   }
 }
