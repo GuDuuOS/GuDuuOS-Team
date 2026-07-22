@@ -165,6 +165,19 @@ class OemScopingTest(unittest.TestCase):
         self.assertTrue(oem.owns_instance(self.s, self.a, a_inst[0]["id"]))
         self.assertFalse(oem.owns_instance(self.s, self.b, a_inst[0]["id"]))
 
+    def test_list_oems_for_admin(self):
+        # 超管客户列表：全量账号 + 每家认领数；绝不含密码哈希
+        k1 = self._issue()
+        k2 = self._issue()
+        oem.claim_key(self.s, self.a, k1)
+        oem.claim_key(self.s, self.a, k2)
+        rows = oem.list_oems(self.s)
+        self.assertEqual(len(rows), 2)
+        by_id = {r["id"]: r for r in rows}
+        self.assertEqual(by_id[self.a]["keys_claimed"], 2)
+        self.assertEqual(by_id[self.b]["keys_claimed"], 0)
+        self.assertNotIn("password_hash", rows[0])
+
 
 if __name__ == "__main__":
     unittest.main()
