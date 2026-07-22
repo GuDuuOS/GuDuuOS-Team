@@ -1,0 +1,164 @@
+/* GuDuu OS workbench theme: pine, warm white and restrained celadon. */
+.topbar {
+  background: #ffffff;
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 8px rgba(22, 54, 42, 0.035);
+}
+
+.topbar .top-brand-btn,
+.topbar .product-name {
+  color: var(--text);
+}
+
+.topbar .top-brand-btn .apps-ic,
+.topbar .ic-btn {
+  color: var(--text-3);
+}
+
+.topbar .top-brand-btn:hover,
+.topbar .ic-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.topbar .top-brand-btn:active {
+  background: var(--bg-active);
+}
+
+.topbar .product-name .product-x {
+  color: #d94b4b;
+}
+
+.topbar .search {
+  background: #f7f4f1;
+  border-color: var(--border);
+  color: var(--text-2);
+}
+
+.topbar .search:hover {
+  background: #fff1e5;
+  border-color: #efc39f;
+}
+
+.topbar .search .search-kbd {
+  color: var(--text-3);
+  border-color: var(--border);
+  background: #ffffff;
+}
+
+.topbar .top-upgrade {
+  background: #e88533;
+  color: #ffffff;
+  box-shadow: 0 3px 12px rgba(184, 91, 24, 0.18);
+}
+
+.topbar .top-upgrade:hover {
+  background: #d57224;
+  filter: none;
+}
+
+.topbar .user-chip .avatar {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.topbar .user-chip .online-dot {
+  border-color: #ffffff;
+}
+
+.ws-rail,
+.plugin-rail {
+  background: #ffffff;
+  border-color: var(--border);
+}
+
+.ws-rail .ws-icon,
+.plugin-rail .pr-icon {
+  background: #f1eeea;
+  color: var(--text-2);
+}
+
+.ws-rail .ws-icon:hover,
+.plugin-rail .pr-icon:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.ws-rail .ws-icon.active,
+.plugin-rail .pr-icon.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(232, 133, 51, 0.2);
+}
+
+.plugin-rail .pr-icon.active::after {
+  background: var(--accent);
+}
+
+.plugin-rail .pr-divider {
+  background: var(--border);
+}
+
+.plugin-rail .pr-icon.plus {
+  border-color: var(--border);
+  color: var(--text-3);
+}
+
+.plugin-rail .pr-icon.plus:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.plugin-rail .pr-icon .dot {
+  border-color: #ffffff;
+}
+
+.layout {
+  background: #ffffff;
+}
+
+.main {
+  border: 1px solid var(--border);
+  box-shadow: 0 7px 24px rgba(22, 54, 42, 0.045);
+}
+
+.btn.primary,
+.composer-toolbar .send,
+.ai-panel .ai-new-chat-btn,
+.ai-panel .ai-send-ic {
+  background: #e88533;
+  border-color: #e88533;
+  color: #ffffff;
+}
+
+.btn.primary:hover,
+.composer-toolbar .send:hover,
+.ai-panel .ai-new-chat-btn:hover,
+.ai-panel .ai-send-ic:hover {
+  background: #d57224;
+  border-color: #d57224;
+}
+
+button:focus-visible,
+[role="button"]:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline-color: rgba(232, 133, 51, 0.38);
+}
+
+.channels .cs-item.active {
+  background: var(--accent-soft);
+  color: #9f4c16;
+}
+
+.msg:hover {
+  background: #faf6f2;
+}
+
+.composer,
+.right-panel,
+.ai-panel {
+  border-color: var(--border);
+}

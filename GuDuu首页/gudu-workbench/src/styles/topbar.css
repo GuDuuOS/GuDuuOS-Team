@@ -1,0 +1,194 @@
+.topbar {
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 10px;
+  border-bottom: none;
+  background: var(--bg-soft);
+  position: relative;
+  z-index: 20;
+}
+
+/* === 左侧：整体 brand 按键（apps + logo + 产品名）=== */
+.topbar .top-brand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 12px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text);
+  transition: background 0.12s ease;
+}
+.topbar .top-brand-btn:hover {
+  background: var(--bg-hover);
+}
+.topbar .top-brand-btn:active {
+  background: var(--bg-active);
+}
+
+.topbar .top-brand-btn .apps-ic {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.topbar .top-brand-btn .logo {
+  width: 22px;
+  height: 32px;
+  display: block;
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.topbar .product-name {
+  font-family: var(--font-heading);
+  font-size: var(--fs-200);
+  line-height: var(--lh-200);
+  font-weight: var(--fw-bold);
+  color: var(--text);
+  letter-spacing: -0.2px;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.topbar .product-name .product-x {
+  color: var(--accent);
+  font-weight: 800;
+  margin: 0 8px;
+  font-family: var(--font-heading);
+  font-size: var(--fs-200);
+  font-style: italic;
+  letter-spacing: 0;
+}
+
+/* === 中间：搜索 === */
+.topbar .top-mid {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+
+.topbar .search {
+  /* 绝对定位到整个 topbar 的中点，不受左右 brand/icon 宽度影响 */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 360px;
+  height: 32px;
+  background: rgb(202, 204, 207);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 10px;
+  color: var(--text-2);
+  font-size: 13px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.topbar .search:hover {
+  background: #b8babd;
+}
+.topbar .search .search-kbd {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 5px;
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+/* 升级会员：放在右侧组、@ 图标左边 */
+.topbar .top-upgrade {
+  border: none;
+  background: linear-gradient(90deg, var(--accent), var(--warn));
+  color: #fff;
+  font-size: 12px;
+  font-weight: var(--fw-bold);
+  padding: 7px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-right: 4px;
+  transition: filter 0.12s ease;
+}
+.topbar .top-upgrade:hover { filter: brightness(1.06); }
+
+/* === 右侧：icon 按钮 + 头像 === */
+.topbar .top-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.topbar .ic-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.topbar .ic-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.topbar .user-chip {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 4px;
+}
+
+.topbar .user-chip .avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1;
+  overflow: hidden;
+  user-select: none;
+}
+
+.topbar .user-chip .online-dot {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ok);
+  border: 2px solid var(--bg-panel);
+}
+.topbar .user-chip:hover .avatar { filter: brightness(1.05); }

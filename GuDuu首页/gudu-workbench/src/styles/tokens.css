@@ -1,0 +1,82 @@
+:root {
+  /* === GuDuu Logo 品牌配色 ===
+     炭黑与暖白构成界面骨架，Logo 橙负责主要操作，彩色仅用于身份识别。
+  */
+  --bg:          #fffdf9;
+  --bg-soft:     #f2efeb;
+  --bg-side:     #f8f6f2;
+  --bg-panel:    #ffffff;
+  --bg-code:     #f2efeb;
+  --bg-hover:    #f6ebe2;
+  --bg-active:   #f0ded0;
+
+  --text:        #24211f;
+  --text-2:      #5d5752;
+  --text-3:      #7b746e;
+  --text-dim:    #a39c96;
+
+  --border:      #eee5dc;
+  --border-soft: #f6efe8;
+
+  --accent:      #e88533;
+  --accent-soft: #fff0e3;
+  --bot-avatar:  #e88533;
+  --bot-avatar-text: #ffffff;
+  --warn:        #d97706;
+  --danger:      #dc2626;
+  --ok:          #16a34a;
+  --info:        #e88533;
+
+  --ws-active:      #e88533;
+  --ws-active-soft: #fff0e3;
+
+  --action:      #e88533;
+  --action-hover:#d57224;
+
+  /* === 字体栈：Mattermost Compass Design System === */
+  /* body：Open Sans  /  heading：Metropolis  /  mono：等宽 */
+  --font-body:    "Open Sans", -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-heading: "Metropolis", "Open Sans", -apple-system, "PingFang SC", system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono", "SF Mono", "Menlo", "Consolas", monospace;
+
+  /* 保留旧别名（其他地方逐步替换） */
+  --sans:  var(--font-body);
+  --serif: var(--font-heading);
+  --mono:  var(--font-mono);
+
+  /* === Compass Font Weights === */
+  /* light:300  regular:400  bold:600 （注意不是 700） */
+  --fw-light:   300;
+  --fw-regular: 400;
+  --fw-bold:    600;
+
+  /* === Compass Typography Scale === */
+  /* 命名沿用 Compass 的 size token：数字越大越粗壮 */
+  --fs-50:  11px;  --lh-50:  16px;
+  --fs-75:  12px;  --lh-75:  16px;
+  --fs-100: 14px;  --lh-100: 20px;   /* body 默认 */
+  --fs-200: 16px;  --lh-200: 24px;   /* heading 200 */
+  --fs-300: 18px;  --lh-300: 24px;   /* heading 300 / text 300 (28) */
+  --fs-400: 20px;  --lh-400: 28px;
+  --fs-500: 22px;  --lh-500: 28px;
+  --fs-600: 25px;  --lh-600: 30px;
+  --fs-700: 28px;  --lh-700: 36px;
+  --fs-800: 32px;  --lh-800: 40px;
+
+  /* === 布局尺寸 === */
+  --topbar-h:       46px;
+  --ws-rail-w:      60px;
+  --plugin-rail-w:  40px;
+  --channels-w:     250px;
+  --right-w:        300px;
+
+  --content-pad-x: 24px;
+}
+
+/* Body 全局：Open Sans 14/20 regular */
+html, body {
+  font-family: var(--font-body);
+  font-size: var(--fs-100);
+  line-height: var(--lh-100);
+  font-weight: var(--fw-regular);
+}

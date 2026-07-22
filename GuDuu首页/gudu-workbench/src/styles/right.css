@@ -1,0 +1,142 @@
+.right {
+  width: var(--right-w);
+  border-left: none;
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  margin: 8px 8px 8px 0;
+  overflow: hidden;
+}
+.right .right-head {
+  height: 50px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-heading);
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-200);
+  line-height: var(--lh-200);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  background: var(--bg-panel);
+}
+.right .right-head .close {
+  margin-left: auto;
+  color: var(--text-3);
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  transition: background 0.12s ease, color 0.12s ease;
+  user-select: none;
+}
+.right .right-head .close:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.right .right-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 16px;
+}
+
+.pinned {
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+}
+.pinned .ph {
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  margin-bottom: 6px;
+}
+.pinned .pc {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+
+.members-list .m {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+}
+.members-list .m .a {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+}
+.members-list .m .a.bot {
+  background: var(--bot-avatar);
+  color: var(--bot-avatar-text);
+}
+.members-list .m .n { font-size: 13px; }
+.members-list .m .r {
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  margin-left: auto;
+}
+.members-list .m .presence {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  margin-left: -12px;
+  border: 2px solid var(--bg-panel);
+  margin-bottom: -12px;
+}
+
+/* === Skill / 知识库 / Rule 列表 === */
+.info-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.info-list .info-item {
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+}
+.info-list .info-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.info-list .info-label {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: var(--fw-bold);
+}
+.info-list .info-tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.info-list .info-desc {
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.5;
+  margin-top: 2px;
+}

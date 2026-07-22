@@ -1,0 +1,37 @@
+/* Stable identity colors shared by GuDuu OS and GuDuu DI. */
+[data-avatar] {
+  color: #ffffff !important;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+
+[data-avatar="G"]  { background: linear-gradient(145deg, #f39a4b, #d66d20) !important; }
+[data-avatar="捕"] { background: linear-gradient(145deg, #54a6dc, #3377b2) !important; }
+[data-avatar="养"] { background: linear-gradient(145deg, #48b8a6, #278a7c) !important; }
+[data-avatar="加"] { background: linear-gradient(145deg, #9a7bd1, #6f55ac) !important; }
+[data-avatar="销"] { background: linear-gradient(145deg, #ef806d, #cc5243) !important; }
+[data-avatar="仓"] { background: linear-gradient(145deg, #7187d3, #4e61ae) !important; }
+[data-avatar="质"] { background: linear-gradient(145deg, #6db882, #438e5b) !important; }
+[data-avatar="警"] { background: linear-gradient(145deg, #ed7181, #c64055) !important; }
+[data-avatar="析"] { background: linear-gradient(145deg, #55b6c8, #338799) !important; }
+
+[data-avatar="林"] { background: linear-gradient(145deg, #ee9a4e, #c96b2d) !important; }
+[data-avatar="赵"] { background: linear-gradient(145deg, #5e9bc6, #37749f) !important; }
+[data-avatar="吴"] { background: linear-gradient(145deg, #739781, #4f735d) !important; }
+[data-avatar="黄"] { background: linear-gradient(145deg, #d7ad4f, #ae8326) !important; }
+[data-avatar="徐"] { background: linear-gradient(145deg, #9a7db8, #765995) !important; }
+[data-avatar="钱"] { background: linear-gradient(145deg, #ce8064, #a95740) !important; }
+[data-avatar="周"] { background: linear-gradient(145deg, #bd739a, #944e75) !important; }
+[data-avatar="孙"] { background: linear-gradient(145deg, #6da6a0, #477d78) !important; }
+[data-avatar="王"] { background: linear-gradient(145deg, #8d7bc4, #6757a1) !important; }
+[data-avatar="陈"] { background: linear-gradient(145deg, #5f9bb8, #3e748f) !important; }
+[data-avatar="李"] { background: linear-gradient(145deg, #87a85e, #627f3f) !important; }
+
+.ws-rail .ws-icon[data-workspace]:not(.active) {
+  color: #ffffff;
+  border-color: transparent;
+}
+.ws-rail .ws-icon[data-workspace="hq"]:not(.active) { background: #2d2926; }
+.ws-rail .ws-icon[data-workspace="fish"]:not(.active) { background: #4389bd; }
+.ws-rail .ws-icon[data-workspace="farm"]:not(.active) { background: #3b9c8c; }
+.ws-rail .ws-icon[data-workspace="proc"]:not(.active) { background: #8268b5; }
+.ws-rail .ws-icon[data-workspace="sale"]:not(.active) { background: #dc6655; }

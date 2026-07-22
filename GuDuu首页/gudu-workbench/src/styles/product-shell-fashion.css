@@ -1,0 +1,1705 @@
+/* Final product shell: warm sand frame, cream surfaces and champagne borders. */
+:root {
+  --bg: #fffaf4;
+  --bg-soft: #eadfd4;
+  --bg-side: #f6ede4;
+  --bg-panel: #fffaf4;
+  --bg-code: #f3e9df;
+  --bg-hover: #f3e4d7;
+  --bg-active: #ecd7c5;
+  --border: #dfc9b5;
+  --border-soft: #eee0d4;
+}
+
+/* GuDuu OS */
+.topbar {
+  background: #fffaf4;
+  border-bottom-color: #dfc9b5;
+  box-shadow: 0 5px 22px rgba(104, 73, 48, .07);
+}
+
+.layout {
+  background:
+    radial-gradient(circle at 15% 0%, rgba(255,255,255,.42), transparent 31%),
+    #eadfd4;
+}
+
+.ws-rail,
+.plugin-rail {
+  background: #f6ede4;
+  border-color: #dfc9b5;
+}
+
+.channels {
+  background: #f8f0e8;
+  border: 1px solid #dfc9b5;
+  box-shadow: 0 8px 24px rgba(104, 73, 48, .055);
+}
+
+.main {
+  background: #fffaf4;
+  border-color: #dfc9b5;
+  box-shadow: 0 12px 34px rgba(94, 64, 42, .075);
+}
+
+.ch-header,
+.composer,
+.right,
+.ai-panel {
+  background: #fffaf4;
+  border-color: #dfc9b5;
+}
+
+.right,
+.ai-panel {
+  box-shadow: -8px 0 28px rgba(99, 69, 47, .055);
+}
+
+.composer-box,
+.ai-panel .ai-input-box,
+.canvas .panel,
+.pinned,
+.cam-modal,
+.ca-modal {
+  background: #fffdf9;
+  border-color: #dfc9b5;
+}
+
+.topbar .search,
+.channels .cs-filter-input {
+  background-color: #fffdf9;
+  border-color: #dfc9b5;
+}
+
+.ws-rail .ws-icon:not([data-workspace]),
+.plugin-rail .pr-icon:not(.has-color):not(.has-image):not(.active) {
+  background-color: #eadfd4;
+}
+
+/* GuDuu DI */
+.data-studio {
+  --studio-bg: #eadfd4;
+  --studio-panel: #fffaf4;
+  --studio-line: #dfc9b5;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255,255,255,.4), transparent 28%),
+    var(--studio-bg);
+}
+
+.studio-topbar {
+  background: #fffaf4;
+  border-bottom-color: var(--studio-line);
+  box-shadow: 0 5px 22px rgba(104, 73, 48, .07);
+}
+
+.studio-back,
+.studio-ghost,
+.credits,
+.folder-switcher,
+.saas-sidebar section > div button {
+  background: #fffdf9;
+  border-color: var(--studio-line);
+}
+
+.studio-body {
+  background: #eadfd4;
+}
+
+.asset-panel,
+.query-panel {
+  background: #fffaf4;
+}
+
+.canvas-workspace {
+  background: #eee3d8;
+  box-shadow: inset 12px 0 24px rgba(100, 69, 46, .025), inset -12px 0 24px rgba(100, 69, 46, .025);
+}
+
+.canvas-toolbar,
+.query-tabs,
+.panel-heading {
+  background: #fffaf4;
+  border-color: var(--studio-line);
+}
+
+.semantic-canvas {
+  background: #f1e8df;
+}
+
+.canvas-grid {
+  background-image: radial-gradient(#d8c3b0 1px, transparent 1px);
+  opacity: .62;
+}
+
+.canvas-label,
+.model-node,
+.query-box,
+.detail-card,
+.result-card {
+  background: rgba(255, 253, 249, .96);
+  border-color: var(--studio-line);
+  box-shadow: 0 8px 24px rgba(103, 71, 47, .07);
+}
+
+.asset-search,
+.panel-heading button,
+.canvas-tools button:not(.active) {
+  background: #fffdf9;
+  border-color: var(--studio-line);
+}
+
+.source-status {
+  background: #f8efe7;
+  border-top-color: var(--studio-line);
+}
+
+.saas-page {
+  background: #eadfd4;
+}
+
+.saas-sidebar,
+.knowledge-sidebar {
+  background: #f6ede4;
+  border-right-color: var(--studio-line);
+}
+
+.saas-main,
+.knowledge-main {
+  background: #fffaf4;
+  box-shadow: inset 1px 0 0 var(--studio-line);
+}
+
+.dashboard-kpis article,
+.api-overview-grid article,
+.dashboard-grid article,
+.ask-suggestions button,
+.home-query-box,
+.knowledge-table,
+.glossary-grid article,
+.rule-grid article,
+.endpoint-list,
+.api-doc {
+  background-color: #fffdf9;
+  border-color: var(--studio-line);
+  box-shadow: 0 7px 22px rgba(103, 71, 47, .045);
+}
+
+.knowledge-table th,
+.home-query-box footer,
+.api-doc aside {
+  background: #f8efe7;
+}
+
+/* Shared GuDuu OS button language for Data Intelligence. */
+.data-studio button {
+  transition:
+    color .16s ease,
+    background-color .16s ease,
+    border-color .16s ease,
+    box-shadow .16s ease,
+    transform .16s ease;
+}
+
+.data-studio .studio-publish,
+.data-studio .deployment-bar button,
+.data-studio .query-box button,
+.data-studio .result-actions .send-agent,
+.data-studio .home-query-box > div button,
+.data-studio .saas-page-heading button.primary,
+.data-studio .saas-page-heading > button.primary,
+.data-studio .dialog-actions button[type="submit"],
+.data-studio .publish-modal button {
+  color: #fff;
+  background: #e88533;
+  border-color: #e88533;
+  box-shadow: 0 4px 12px rgba(184, 91, 24, .16);
+}
+
+.data-studio .studio-publish:hover,
+.data-studio .deployment-bar button:hover,
+.data-studio .query-box button:hover:not(:disabled),
+.data-studio .result-actions .send-agent:hover,
+.data-studio .home-query-box > div button:hover,
+.data-studio .saas-page-heading button.primary:hover,
+.data-studio .saas-page-heading > button.primary:hover,
+.data-studio .dialog-actions button[type="submit"]:hover,
+.data-studio .publish-modal button:hover {
+  color: #fff;
+  background: #d57224;
+  border-color: #d57224;
+  box-shadow: 0 7px 18px rgba(184, 91, 24, .2);
+  transform: translateY(-1px);
+}
+
+.data-studio .studio-ghost,
+.data-studio .panel-heading button,
+.data-studio .canvas-tools button:not(.active),
+.data-studio .result-actions button:not(.send-agent),
+.data-studio .dialog-actions button:first-child,
+.data-studio .saas-page-heading button:not(.primary),
+.data-studio .saas-sidebar section > div button,
+.data-studio .rule-grid header button,
+.data-studio .endpoint-list button {
+  color: #5d5752;
+  background: #fffdf9;
+  border-color: #dfc9b5;
+  box-shadow: none;
+}
+
+.data-studio .studio-ghost:hover:not(:disabled),
+.data-studio .panel-heading button:hover,
+.data-studio .canvas-tools button:hover:not(:disabled):not(.active),
+.data-studio .result-actions button:not(.send-agent):hover,
+.data-studio .dialog-actions button:first-child:hover,
+.data-studio .saas-page-heading button:not(.primary):hover,
+.data-studio .saas-sidebar section > div button:hover,
+.data-studio .rule-grid header button:hover,
+.data-studio .endpoint-list button:hover {
+  color: #b65d20;
+  background: #fff0e3;
+  border-color: #efb984;
+}
+
+.data-studio .studio-main-nav button.active,
+.data-studio .canvas-tools button.active {
+  color: #fff;
+  background: #e88533;
+  border-color: #e88533;
+  box-shadow: 0 4px 12px rgba(184, 91, 24, .14);
+}
+
+.data-studio .asset-tabs button.active,
+.data-studio .query-tabs button.active,
+.data-studio .knowledge-sidebar button.active {
+  color: #a94f17;
+  background: #fff0e3;
+}
+
+.data-studio .asset-tabs button.active::after,
+.data-studio .query-tabs button.active::after {
+  background: #e88533;
+}
+
+.data-studio .agentic-toggle,
+.data-studio .model-assistant {
+  color: #a94f17 !important;
+  background: #fff0e3 !important;
+  border-color: #efb984 !important;
+}
+
+.data-studio .agentic-toggle:hover,
+.data-studio .model-assistant:hover {
+  background: #ffe5cf !important;
+  border-color: #e99b5b !important;
+}
+
+.data-studio button:focus-visible {
+  outline: 2px solid rgba(232, 133, 51, .38);
+  outline-offset: 2px;
+}
+
+.data-studio button:disabled {
+  box-shadow: none;
+  transform: none;
+}
+
+/* 2026 visual refresh: quiet neutrals, precise orange and restrained identity color. */
+:root {
+  --bg: #fbfaf8;
+  --bg-soft: #eeece8;
+  --bg-side: #f6f4f0;
+  --bg-panel: #fffefa;
+  --bg-code: #f2efeb;
+  --bg-hover: #f3eee8;
+  --bg-active: #f8e7d9;
+  --border: #e4ded6;
+  --border-soft: #eee9e3;
+  --text: #262321;
+  --text-2: #5d5853;
+  --text-3: #807972;
+  --text-dim: #aaa29a;
+  --accent: #e77d2f;
+  --accent-soft: #fff0e4;
+  --action: #e77d2f;
+  --action-hover: #ce6820;
+  --ws-active: #e77d2f;
+  --ws-active-soft: #fff0e4;
+  --ok: #2d9b68;
+  --warn: #d5912f;
+  --info: #4d8fa9;
+}
+
+/* GuDuu OS shell */
+.topbar {
+  background: rgba(255, 254, 250, .97);
+  border-bottom: 1px solid #e9e3dc;
+  box-shadow: 0 1px 0 rgba(70, 57, 46, .03), 0 6px 24px rgba(70, 57, 46, .045);
+  backdrop-filter: blur(18px);
+}
+
+.topbar .top-brand-btn:hover,
+.topbar .ic-btn:hover {
+  color: #b75a1d;
+  background: #f5eee7;
+}
+
+.topbar .search {
+  background: #f5f3ef;
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px rgba(107, 94, 82, .08);
+}
+
+.topbar .search:hover {
+  background: #fff;
+  border-color: #dfb38f;
+  box-shadow: 0 4px 16px rgba(83, 61, 45, .06);
+}
+
+.topbar .top-upgrade {
+  background: linear-gradient(135deg, #f08a37 0%, #dd6e26 100%);
+  box-shadow: 0 6px 16px rgba(190, 88, 24, .2);
+}
+
+.layout {
+  background:
+    radial-gradient(circle at 42% -18%, rgba(255, 255, 255, .92), transparent 34%),
+    #eeece8;
+}
+
+.ws-rail,
+.plugin-rail {
+  background: #f3f1ed;
+  border-color: #e3ddd5;
+}
+
+.ws-rail .ws-icon:not([data-workspace]),
+.plugin-rail .pr-icon:not(.has-color):not(.has-image):not(.active) {
+  background: #e7e3dd;
+  color: #716a63;
+}
+
+.ws-rail .ws-icon.active,
+.plugin-rail .pr-icon.active {
+  background: linear-gradient(145deg, #ef8b3d, #dc7027);
+  border-color: transparent;
+  box-shadow: 0 6px 16px rgba(190, 88, 24, .2);
+}
+
+.ws-rail .ws-icon[data-workspace="hq"]:not(.active) { background: #34312f; }
+.ws-rail .ws-icon[data-workspace="fish"]:not(.active) { background: #4d8faf; }
+.ws-rail .ws-icon[data-workspace="farm"]:not(.active) { background: #469887; }
+.ws-rail .ws-icon[data-workspace="proc"]:not(.active) { background: #806caf; }
+.ws-rail .ws-icon[data-workspace="sale"]:not(.active) { background: #d86653; }
+
+.channels {
+  background: rgba(248, 246, 242, .96);
+  border: 1px solid #e3ddd5;
+  box-shadow: 0 10px 30px rgba(70, 57, 46, .055);
+}
+
+.channels .cs-filter-input,
+.topbar .search .search-kbd {
+  background: #fff;
+  border-color: #e3ddd5;
+}
+
+.channels .cs-item.active {
+  color: #a34c16;
+  background: linear-gradient(90deg, #fff0e4 0%, #fbede1 100%);
+  box-shadow: inset 3px 0 0 #e77d2f;
+}
+
+.main {
+  background: #fcfbf8;
+  border: 1px solid #e3ddd5;
+  border-radius: 14px;
+  box-shadow: 0 14px 38px rgba(70, 57, 46, .065);
+}
+
+.ch-header {
+  background: rgba(255, 254, 250, .92);
+  border-color: #e8e2da;
+  backdrop-filter: blur(14px);
+}
+
+.canvas {
+  background:
+    radial-gradient(circle at 90% 0%, rgba(231, 125, 47, .035), transparent 28%),
+    #fcfbf8;
+}
+
+.canvas .kpi,
+.canvas .panel {
+  background: #fff;
+  border-color: #e6e0d9;
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(67, 53, 42, .035);
+}
+
+.canvas .kpi.clickable:hover,
+.canvas .panel.clickable:hover {
+  border-color: #d8b698;
+  box-shadow: 0 10px 25px rgba(78, 57, 41, .075);
+}
+
+.unit {
+  background: #fbfaf7;
+  border-color: #ebe5de;
+  border-radius: 8px;
+}
+
+.right,
+.ai-panel {
+  background: #f9f7f3;
+  border: 1px solid #e3ddd5;
+  border-radius: 14px;
+  box-shadow: 0 12px 34px rgba(70, 57, 46, .055);
+}
+
+.right .right-head,
+.ai-panel .ai-head {
+  background: rgba(255, 254, 250, .8);
+  border-color: #e8e2da;
+}
+
+.pinned,
+.composer-box,
+.ai-panel .ai-input-box {
+  background: #fff;
+  border-color: #e4ded6;
+  border-radius: 10px;
+}
+
+.pinned {
+  box-shadow: inset 3px 0 0 #e77d2f;
+}
+
+.composer {
+  background: #fcfbf8;
+  border-color: #e8e2da;
+}
+
+.composer-box:focus-within,
+.ai-panel .ai-input-box:focus-within {
+  border-color: #dfaa82;
+  box-shadow: 0 0 0 3px rgba(231, 125, 47, .1), 0 8px 22px rgba(73, 53, 39, .055);
+}
+
+.btn.primary,
+.composer-toolbar .send,
+.ai-panel .ai-new-chat-btn,
+.ai-panel .ai-send-ic {
+  background: linear-gradient(135deg, #ef8938, #dc7027);
+  border-color: #dc7027;
+  box-shadow: 0 5px 14px rgba(190, 88, 24, .17);
+}
+
+.btn.primary:hover,
+.composer-toolbar .send:hover,
+.ai-panel .ai-new-chat-btn:hover,
+.ai-panel .ai-send-ic:hover {
+  background: linear-gradient(135deg, #df7629, #c85f1d);
+  border-color: #c85f1d;
+}
+
+.msg:hover {
+  background: rgba(243, 238, 232, .58);
+}
+
+/* Data Intelligence follows the same material and contrast system. */
+.data-studio {
+  --studio-bg: #eeece8;
+  --studio-panel: #fffefa;
+  --studio-line: #e4ded6;
+  --studio-ink: #262321;
+  --studio-muted: #807972;
+  background:
+    radial-gradient(circle at 35% -10%, rgba(255, 255, 255, .88), transparent 32%),
+    #eeece8;
+}
+
+.studio-topbar {
+  background: rgba(255, 254, 250, .97);
+  border-bottom-color: #e8e2da;
+  box-shadow: 0 6px 24px rgba(70, 57, 46, .045);
+  backdrop-filter: blur(18px);
+}
+
+.studio-brand-button:hover,
+.studio-brand-button.open {
+  background: #f3eee8;
+  border-color: #e4ded6;
+}
+
+.studio-product-menu {
+  background: #fffefa;
+  border-color: #e0d9d1;
+  box-shadow: 0 18px 46px rgba(66, 50, 38, .14), 0 2px 6px rgba(66, 50, 38, .06);
+}
+
+.studio-product-menu > button:hover {
+  background: #f3eee8;
+}
+
+.studio-product-menu > button.active {
+  background: #fff0e4;
+}
+
+.studio-body,
+.saas-page {
+  background: #eeece8;
+}
+
+.asset-panel,
+.query-panel,
+.saas-sidebar,
+.knowledge-sidebar {
+  background: #f7f5f1;
+  border-color: #e3ddd5;
+}
+
+.canvas-workspace {
+  background: #eeece8;
+  box-shadow: inset 12px 0 30px rgba(69, 55, 44, .025), inset -12px 0 30px rgba(69, 55, 44, .025);
+}
+
+.canvas-toolbar,
+.query-tabs,
+.panel-heading,
+.saas-main,
+.knowledge-main {
+  background: #fffefa;
+  border-color: #e4ded6;
+}
+
+.semantic-canvas {
+  background: #f3f1ed;
+}
+
+.canvas-grid {
+  background-image: radial-gradient(#d6cec5 .9px, transparent .9px);
+  opacity: .7;
+}
+
+.canvas-label,
+.model-node,
+.query-box,
+.detail-card,
+.result-card,
+.dashboard-kpis article,
+.api-overview-grid article,
+.dashboard-grid article,
+.ask-suggestions button,
+.home-query-box,
+.knowledge-table,
+.glossary-grid article,
+.rule-grid article,
+.endpoint-list,
+.api-doc {
+  background: #fff;
+  border-color: #e5dfd8;
+  border-radius: 10px;
+  box-shadow: 0 7px 22px rgba(68, 53, 42, .05);
+}
+
+.knowledge-table th,
+.home-query-box footer,
+.api-doc aside,
+.source-status {
+  background: #f5f2ee;
+  border-color: #e4ded6;
+}
+
+.data-studio .studio-publish,
+.data-studio .deployment-bar button,
+.data-studio .query-box button,
+.data-studio .result-actions .send-agent,
+.data-studio .home-query-box > div button,
+.data-studio .saas-page-heading button.primary,
+.data-studio .saas-page-heading > button.primary,
+.data-studio .dialog-actions button[type="submit"],
+.data-studio .publish-modal button,
+.data-studio .studio-main-nav button.active,
+.data-studio .canvas-tools button.active {
+  background: linear-gradient(135deg, #ef8938, #dc7027);
+  border-color: #dc7027;
+  box-shadow: 0 5px 14px rgba(190, 88, 24, .16);
+}
+
+.data-studio .studio-ghost,
+.data-studio .panel-heading button,
+.data-studio .canvas-tools button:not(.active),
+.data-studio .result-actions button:not(.send-agent),
+.data-studio .dialog-actions button:first-child,
+.data-studio .saas-page-heading button:not(.primary),
+.data-studio .saas-sidebar section > div button,
+.data-studio .rule-grid header button,
+.data-studio .endpoint-list button {
+  background: #fff;
+  border-color: #e2dcd4;
+}
+
+/* Data Intelligence typography aligned with the GuDuu OS 14px Compass scale. */
+.data-studio {
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.data-studio .studio-product-name {
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.data-studio .studio-main-nav button {
+  padding: 8px 12px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.data-studio .studio-project,
+.data-studio .studio-actions button,
+.data-studio .credits,
+.data-studio .folder-switcher {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.data-studio .studio-actions button {
+  height: 34px;
+  padding-inline: 14px;
+}
+
+.data-studio .panel-heading strong,
+.data-studio .saas-sidebar section strong,
+.data-studio .connected-apps > strong,
+.data-studio .query-intro strong,
+.data-studio .history-heading strong,
+.data-studio .endpoint-list h2 {
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.data-studio .panel-heading span,
+.data-studio .canvas-label,
+.data-studio .core-kicker,
+.data-studio .saas-page-heading > div:first-child > span {
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.data-studio .asset-search input,
+.data-studio .asset-tabs button,
+.data-studio .asset-group-title,
+.data-studio .asset-item b,
+.data-studio .canvas-breadcrumb,
+.data-studio .canvas-tools button,
+.data-studio .model-node header b,
+.data-studio .query-tabs button,
+.data-studio .query-box textarea,
+.data-studio .query-box button,
+.data-studio .suggestions button,
+.data-studio .result-answer > p,
+.data-studio .node-detail input,
+.data-studio .node-detail textarea,
+.data-studio .node-detail select,
+.data-studio .asset-dialog input,
+.data-studio .asset-dialog select,
+.data-studio .history-item b,
+.data-studio .create-menu b,
+.data-studio .node-context-menu button,
+.data-studio .saas-list-item span,
+.data-studio .connected-apps > span,
+.data-studio .saas-page-heading p,
+.data-studio .dashboard-grid header,
+.data-studio .dashboard-alerts button b,
+.data-studio .ask-suggestions b,
+.data-studio .home-query-result,
+.data-studio .home-query-box textarea,
+.data-studio .knowledge-sidebar button,
+.data-studio .knowledge-table th,
+.data-studio .knowledge-table td,
+.data-studio .rule-grid header b,
+.data-studio .rule-grid p,
+.data-studio .glossary-grid p,
+.data-studio .endpoint-list span {
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.data-studio .asset-item small,
+.data-studio .asset-item em,
+.data-studio .source-status span,
+.data-studio .source-status small,
+.data-studio .model-node header small,
+.data-studio .node-fields > div,
+.data-studio .node-fields small,
+.data-studio .metric-body small,
+.data-studio .metric-body span,
+.data-studio .agent-body > span,
+.data-studio .agent-body small,
+.data-studio .query-intro p,
+.data-studio .query-box span,
+.data-studio .suggestions > span,
+.data-studio .result-head span,
+.data-studio .result-head button,
+.data-studio .result-metrics small,
+.data-studio .result-metrics em,
+.data-studio .detail-meta,
+.data-studio .history-item small,
+.data-studio .create-menu small,
+.data-studio .saas-list-item small,
+.data-studio .connected-apps > span small,
+.data-studio .dashboard-alerts button small,
+.data-studio .ask-hero p,
+.data-studio .ask-suggestions small,
+.data-studio .ask-suggestions span,
+.data-studio .home-query-box footer,
+.data-studio .home-query-box footer button,
+.data-studio .endpoint-list button,
+.data-studio .status-chip,
+.data-studio .api-status {
+  font-size: 12px !important;
+  line-height: 16px;
+}
+
+.data-studio .model-node header,
+.data-studio .node-fields > div {
+  min-height: 28px;
+}
+
+.data-studio .asset-item,
+.data-studio .saas-list-item {
+  min-height: 44px;
+}
+
+.data-studio .knowledge-table th,
+.data-studio .knowledge-table td {
+  padding-block: 15px;
+}
+
+.data-studio .saas-page-heading h1,
+.data-studio .ask-hero h1 {
+  font-size: 28px;
+  line-height: 36px;
+}
+
+.data-studio .dashboard-kpis span,
+.data-studio .api-overview-grid span,
+.data-studio .dashboard-kpis small,
+.data-studio .api-overview-grid small {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.data-studio .dashboard-kpis b,
+.data-studio .api-overview-grid b {
+  font-size: 25px;
+  line-height: 30px;
+}
+
+.data-studio .knowledge-table code,
+.data-studio .endpoint-list code,
+.data-studio .endpoint-list b,
+.data-studio .api-doc aside button,
+.data-studio .api-doc pre,
+.data-studio .sql-preview {
+  font-size: 12px;
+  line-height: 20px;
+}
+
+/* Data Intelligence layout rebuilt for the larger typography scale. */
+.data-studio .studio-topbar {
+  height: 68px;
+  grid-template-columns: minmax(300px, 1fr) auto minmax(520px, 1fr);
+  gap: 24px;
+  padding: 0 24px;
+}
+
+.data-studio .studio-brand {
+  gap: 12px;
+}
+
+.data-studio .studio-brand-button {
+  height: 44px;
+  padding: 0 12px;
+}
+
+.data-studio .studio-brand-button img {
+  width: 28px;
+  height: 28px;
+}
+
+.data-studio .studio-main-nav {
+  gap: 6px;
+  margin: 0;
+  justify-self: center;
+  padding: 4px;
+  background: #f3f1ed;
+  border: 1px solid #e8e2da;
+  border-radius: 12px;
+}
+
+.data-studio .studio-project {
+  min-width: 0;
+  height: 34px;
+  padding: 0 11px;
+  color: #716a63;
+  background: #f5f3ef;
+  border: 1px solid #e6e0d9;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.data-studio .studio-actions {
+  justify-self: end;
+  gap: 10px;
+}
+
+.data-studio .studio-main-nav button {
+  min-width: 64px;
+  border-radius: 8px;
+}
+
+.data-studio .studio-main-nav button:not(.active):hover {
+  color: #a94f17;
+  background: #fff;
+}
+
+.data-studio .studio-body {
+  height: calc(100vh - 68px);
+  grid-template-columns: 280px minmax(660px, 1fr) 420px;
+}
+
+.data-studio .panel-heading {
+  height: 68px;
+  padding: 0 18px;
+}
+
+.data-studio .panel-heading button {
+  width: 34px;
+  height: 34px;
+}
+
+.data-studio .asset-search {
+  height: 42px;
+  margin: 14px 14px 10px;
+  padding: 0 12px;
+  border-radius: 8px;
+}
+
+.data-studio .asset-tabs {
+  margin: 0 14px 10px;
+}
+
+.data-studio .asset-tabs button {
+  padding: 11px 8px;
+}
+
+.data-studio .asset-list {
+  padding: 4px 10px 82px;
+}
+
+.data-studio .asset-group-title {
+  height: 38px;
+  padding: 0 9px;
+}
+
+.data-studio .asset-item {
+  gap: 10px;
+  min-height: 54px;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.data-studio .asset-item > i {
+  width: 34px;
+  height: 34px;
+  border-radius: 7px;
+}
+
+.data-studio .source-status {
+  width: 279px;
+  padding: 13px 18px;
+}
+
+.data-studio .deployment-bar {
+  min-height: 52px;
+  height: auto;
+  padding: 9px 18px;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.data-studio .deployment-bar button,
+.data-studio .model-assistant {
+  min-height: 34px;
+  padding: 7px 12px;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.data-studio .canvas-toolbar {
+  min-height: 60px;
+  height: auto;
+  gap: 14px;
+  padding: 9px 16px 9px 18px;
+}
+
+.data-studio .canvas-breadcrumb {
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.data-studio .canvas-tools {
+  flex: 0 0 auto;
+}
+
+.data-studio .canvas-tools button {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 7px;
+}
+
+.data-studio .canvas-tools b {
+  min-width: 42px;
+  font-size: 12px;
+}
+
+.data-studio .canvas-label {
+  left: 18px;
+  top: 16px;
+  padding: 7px 10px;
+  border-radius: 7px;
+}
+
+.data-studio .canvas-viewport {
+  width: 1160px;
+  height: 760px;
+  left: max(0px, calc(50% - 580px));
+  top: max(0px, calc(50% - 380px));
+}
+
+.data-studio .model-node {
+  width: 240px;
+  min-height: 170px;
+}
+
+.data-studio .model-node header {
+  min-height: 58px;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.data-studio .model-node header > i {
+  width: 34px;
+  height: 34px;
+  border-radius: 7px;
+  font-size: 11px;
+}
+
+.data-studio .node-fields {
+  padding: 7px 0;
+}
+
+.data-studio .node-fields > div {
+  height: 32px;
+  padding: 0 12px;
+}
+
+.data-studio .metric-body,
+.data-studio .agent-body {
+  padding: 17px;
+}
+
+.data-studio .metric-body strong {
+  font-size: 22px;
+  line-height: 28px;
+}
+
+.data-studio .canvas-minimap {
+  width: 180px;
+  height: 110px;
+  right: 16px;
+  bottom: 16px;
+  border-radius: 8px;
+}
+
+.data-studio .query-tabs {
+  height: 60px;
+}
+
+.data-studio .query-intro {
+  gap: 12px;
+  padding: 22px 20px 15px;
+}
+
+.data-studio .query-spark {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+}
+
+.data-studio .query-box,
+.data-studio .query-result {
+  margin-right: 18px;
+  margin-left: 18px;
+  border-radius: 10px;
+}
+
+.data-studio .query-box textarea {
+  min-height: 104px;
+  padding: 16px;
+}
+
+.data-studio .query-box > div {
+  padding: 10px 12px;
+}
+
+.data-studio .query-box button {
+  min-height: 36px;
+  padding: 8px 12px;
+  border-radius: 7px;
+}
+
+.data-studio .suggestions {
+  gap: 8px;
+  padding: 16px 18px 20px;
+}
+
+.data-studio .suggestions button {
+  padding: 8px 11px;
+}
+
+.data-studio .result-head {
+  min-height: 44px;
+  height: auto;
+  padding: 9px 14px;
+}
+
+.data-studio .result-answer {
+  padding: 16px;
+}
+
+.data-studio .result-metrics {
+  gap: 8px;
+}
+
+.data-studio .result-metrics > div {
+  padding: 11px;
+  border-radius: 8px;
+}
+
+.data-studio .result-actions {
+  gap: 9px;
+  padding: 12px;
+}
+
+.data-studio .result-actions button {
+  min-height: 40px;
+  padding: 8px;
+  font-size: 12px;
+}
+
+.data-studio .node-detail {
+  padding: 24px 20px;
+}
+
+.data-studio .node-detail > strong {
+  margin: -52px 0 32px 76px;
+  font-size: 16px;
+}
+
+.data-studio .node-detail label > span,
+.data-studio .detail-section-title {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.data-studio .node-detail input,
+.data-studio .node-detail textarea,
+.data-studio .node-detail select,
+.data-studio .asset-dialog input,
+.data-studio .asset-dialog select {
+  min-height: 42px;
+  padding: 10px 12px;
+}
+
+.data-studio .field-edit-row {
+  grid-template-columns: minmax(0, 1fr) 104px 32px;
+  gap: 7px;
+}
+
+.data-studio .saas-page {
+  height: calc(100vh - 68px);
+  grid-template-columns: 290px minmax(0, 1fr);
+}
+
+.data-studio .folder-switcher {
+  min-height: 44px;
+  margin: 18px 14px 10px;
+  padding: 11px 13px;
+}
+
+.data-studio .saas-sidebar section {
+  padding: 16px 14px 6px;
+}
+
+.data-studio .saas-list-item {
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 9px;
+  min-height: 48px;
+  padding: 9px 10px;
+  border-radius: 8px;
+}
+
+.data-studio .connected-apps {
+  margin: 20px 14px;
+  padding-top: 16px;
+}
+
+.data-studio .connected-apps > span {
+  grid-template-columns: 12px 1fr auto;
+  padding: 9px 5px;
+}
+
+.data-studio .saas-main,
+.data-studio .knowledge-main {
+  padding: 36px clamp(28px, 4vw, 58px);
+}
+
+.data-studio .saas-page-heading {
+  gap: 30px;
+  margin-bottom: 30px;
+}
+
+.data-studio .saas-page-heading p {
+  max-width: 760px;
+}
+
+.data-studio .saas-page-heading button {
+  min-height: 40px;
+  padding: 9px 14px;
+  font-size: 12px;
+}
+
+.data-studio .dashboard-kpis,
+.data-studio .api-overview-grid {
+  gap: 14px;
+}
+
+.data-studio .dashboard-kpis article,
+.data-studio .api-overview-grid article {
+  min-height: 132px;
+  padding: 20px;
+}
+
+.data-studio .dashboard-grid {
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.data-studio .dashboard-grid article {
+  padding: 22px;
+}
+
+.data-studio .ask-home {
+  justify-content: flex-start;
+  padding: clamp(42px, 6vh, 68px) 0 28px;
+}
+
+.data-studio .ask-hero img {
+  width: 46px;
+  height: 46px;
+}
+
+.data-studio .ask-hero h1 {
+  margin-top: 12px;
+  margin-bottom: 5px;
+}
+
+.data-studio .ask-suggestions {
+  width: min(1120px, 88%);
+  gap: 14px;
+  margin-top: 24px;
+}
+
+.data-studio .ask-suggestions button {
+  min-height: 142px;
+  padding: 18px 20px;
+}
+
+.data-studio .home-query-result {
+  width: min(1120px, 88%);
+  margin-top: 14px;
+  padding: 16px 18px;
+}
+
+.data-studio .home-query-box {
+  width: min(1120px, 88%);
+  margin-top: 14px;
+  margin-bottom: 0;
+}
+
+.data-studio .home-query-box textarea {
+  min-height: 76px;
+  padding: 12px;
+}
+
+.data-studio .knowledge-sidebar {
+  padding-top: 22px;
+}
+
+.data-studio .knowledge-sidebar button {
+  min-height: 48px;
+  padding: 13px 20px;
+}
+
+.data-studio .rule-grid,
+.data-studio .glossary-grid {
+  gap: 16px;
+}
+
+.data-studio .rule-grid article,
+.data-studio .glossary-grid article {
+  min-height: 190px;
+  padding: 22px;
+}
+
+.data-studio .endpoint-list > div {
+  grid-template-columns: 70px minmax(180px, 240px) minmax(220px, 1fr) auto;
+  gap: 14px;
+  padding: 16px 18px;
+}
+
+.data-studio .api-doc {
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+
+@media (max-width: 1540px) {
+  .data-studio .studio-topbar {
+    grid-template-columns: minmax(300px, 1fr) auto minmax(430px, 1fr);
+    gap: 10px;
+    padding-inline: 14px;
+  }
+
+  .data-studio .studio-project {
+    max-width: 170px;
+  }
+
+  .data-studio .studio-project > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .data-studio .studio-body {
+    grid-template-columns: 250px minmax(620px, 1fr) 370px;
+  }
+
+  .data-studio .source-status {
+    width: 249px;
+  }
+
+  .data-studio .saas-page {
+    grid-template-columns: 260px minmax(0, 1fr);
+  }
+
+  .data-studio .dashboard-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1180px) {
+  .data-studio .studio-topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .data-studio .studio-main-nav {
+    padding: 3px;
+  }
+
+  .data-studio .studio-main-nav button {
+    min-width: 52px;
+    padding-inline: 9px;
+  }
+
+  .data-studio .studio-project,
+  .data-studio .credits {
+    display: none;
+  }
+
+  .data-studio .studio-body {
+    grid-template-columns: 240px minmax(650px, 1fr);
+    overflow-x: auto;
+  }
+
+  .data-studio .source-status {
+    width: 239px;
+  }
+
+  .data-studio .query-panel {
+    position: fixed;
+    z-index: 30;
+    top: 68px;
+    right: 0;
+    bottom: 0;
+    width: min(420px, 72vw);
+    background: #f7f5f1;
+    box-shadow: -18px 0 42px rgba(62, 48, 38, .15);
+  }
+
+  .data-studio .saas-main,
+  .data-studio .knowledge-main {
+    padding: 30px 28px;
+  }
+
+  .data-studio .rule-grid,
+  .data-studio .glossary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .data-studio .endpoint-list > div {
+    grid-template-columns: 62px minmax(150px, 210px) minmax(180px, 1fr);
+  }
+
+  .data-studio .endpoint-list > div button {
+    grid-column: 2 / -1;
+    justify-self: start;
+  }
+}
+
+@media (max-width: 760px) {
+  .data-studio .studio-topbar {
+    height: 64px;
+    padding-inline: 10px;
+  }
+
+  .data-studio .studio-back {
+    display: none;
+  }
+
+  .data-studio .studio-apps-icon {
+    display: none;
+  }
+
+  .data-studio .studio-brand-button {
+    max-width: calc(100vw - 210px);
+    padding-inline: 7px;
+  }
+
+  .data-studio .studio-product-name {
+    overflow: hidden;
+    font-size: 14px;
+    text-overflow: ellipsis;
+  }
+
+  .data-studio .studio-actions .studio-ghost {
+    display: none;
+  }
+
+  .data-studio .studio-main-nav {
+    display: none;
+  }
+
+  .data-studio .agentic-toggle {
+    display: none;
+  }
+
+  .data-studio .studio-body,
+  .data-studio .saas-page {
+    height: calc(100vh - 64px);
+  }
+
+  .data-studio .studio-body {
+    grid-template-columns: 220px minmax(620px, 1fr);
+  }
+
+  .data-studio .source-status {
+    width: 219px;
+  }
+
+  .data-studio .query-panel {
+    top: 64px;
+    width: min(390px, 78vw);
+  }
+
+  .data-studio .saas-page {
+    grid-template-columns: 220px minmax(660px, 1fr);
+    overflow-x: auto;
+  }
+
+  .data-studio .ask-suggestions,
+  .data-studio .rule-grid,
+  .data-studio .glossary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Final DI control audit: every control follows the GuDuu OS button language. */
+.data-studio .agentic-toggle {
+  color: #5d5853 !important;
+  background: #fff !important;
+  border: 1px solid #e2dcd4 !important;
+  box-shadow: none !important;
+}
+
+.data-studio .agentic-toggle.active {
+  color: #fff !important;
+  background: linear-gradient(135deg, #ef8938, #dc7027) !important;
+  border-color: #dc7027 !important;
+  box-shadow: 0 5px 14px rgba(190, 88, 24, .18) !important;
+}
+
+.data-studio .agentic-toggle:hover {
+  color: #b75a1d !important;
+  background: #fff0e4 !important;
+  border-color: #dfaa82 !important;
+}
+
+.data-studio .agentic-toggle.active:hover {
+  color: #fff !important;
+  background: linear-gradient(135deg, #df7629, #c85f1d) !important;
+  border-color: #c85f1d !important;
+}
+
+.data-studio .model-assistant,
+.data-studio .query-panel-toggle {
+  color: #a94f17 !important;
+  background: #fff !important;
+  border-color: #dfb38f !important;
+  box-shadow: none !important;
+}
+
+.data-studio .query-panel-toggle.active {
+  color: #fff !important;
+  background: linear-gradient(135deg, #ef8938, #dc7027) !important;
+  border-color: #dc7027 !important;
+  box-shadow: 0 4px 12px rgba(190, 88, 24, .16) !important;
+}
+
+.data-studio .asset-tabs button.active,
+.data-studio .query-tabs button.active,
+.data-studio .knowledge-sidebar button.active,
+.data-studio .api-doc aside button.active,
+.data-studio .workspace-menu button.active {
+  color: #a94f17;
+  background: #fff0e4;
+}
+
+.data-studio .asset-item:hover,
+.data-studio .saas-list-item:hover,
+.data-studio .history-item:hover,
+.data-studio .api-doc aside button:hover,
+.data-studio .workspace-menu button:hover {
+  color: #a94f17;
+  background: #fff0e4;
+}
+
+.data-studio .rule-grid header button.active,
+.data-studio .status-chip.active {
+  color: #a94f17 !important;
+  background: #fff0e4 !important;
+  border: 1px solid #efb984 !important;
+}
+
+.data-studio .status-chip:not(.active),
+.data-studio .rule-grid header button:not(.active) {
+  color: #716a63 !important;
+  background: #f3f1ed !important;
+  border: 1px solid #e2dcd4 !important;
+}
+
+.data-studio .query-tabs {
+  align-items: stretch;
+}
+
+.data-studio .query-tabs .query-close {
+  flex: 0 0 44px;
+  color: #807972;
+  background: transparent;
+  border-left: 1px solid #e8e2da;
+  font-size: 20px;
+}
+
+.data-studio .query-tabs .query-close:hover {
+  color: #a94f17;
+  background: #fff0e4;
+}
+
+.data-studio .studio-body.query-closed {
+  grid-template-columns: 280px minmax(660px, 1fr);
+}
+
+.data-studio .semantic-canvas {
+  cursor: grab;
+}
+
+.data-studio .semantic-canvas.panning {
+  cursor: grabbing;
+}
+
+.data-studio .canvas-grid {
+  pointer-events: none;
+}
+
+.data-studio .canvas-viewport {
+  transform-origin: center;
+  will-change: transform;
+}
+
+.data-studio .workspace-menu {
+  margin: -3px 14px 8px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid #e2dcd4;
+  border-radius: 10px;
+  box-shadow: 0 10px 26px rgba(68, 53, 42, .08);
+}
+
+.data-studio .workspace-menu button {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  color: #5d5853;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  text-align: left;
+}
+
+.data-studio .api-doc aside button.active {
+  box-shadow: inset 3px 0 0 #e77d2f;
+}
+
+.data-studio .studio-product-menu > button,
+.data-studio .folder-switcher,
+.data-studio .saas-list-item,
+.data-studio .history-item,
+.data-studio .api-doc aside button,
+.data-studio .dashboard-alerts button,
+.data-studio .ask-suggestions button {
+  transition:
+    color .16s ease,
+    background-color .16s ease,
+    border-color .16s ease,
+    box-shadow .16s ease,
+    transform .16s ease;
+}
+
+.data-studio .dashboard-alerts button:hover,
+.data-studio .ask-suggestions button:hover {
+  border-color: #dfb38f;
+  box-shadow: 0 8px 22px rgba(78, 57, 41, .07);
+  transform: translateY(-1px);
+}
+
+@media (max-width: 1540px) {
+  .data-studio .studio-body.query-closed {
+    grid-template-columns: 250px minmax(620px, 1fr);
+  }
+}
+
+@media (max-width: 1180px) {
+  .data-studio .studio-body.query-closed {
+    grid-template-columns: 240px minmax(650px, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .data-studio .studio-body.query-closed {
+    grid-template-columns: 220px minmax(620px, 1fr);
+  }
+}
+
+/* Topbar overflow hardening: actions never overlap the center nav.
+   The project pill is the first thing to give up space (shrink → ellipsis → hide),
+   then secondary chrome collapses step by step as the viewport narrows. */
+.data-studio .studio-actions {
+  min-width: 0;
+}
+
+.data-studio .studio-actions > * {
+  flex: 0 0 auto;
+}
+
+.data-studio .studio-actions .studio-project {
+  flex: 0 1 auto;
+  min-width: 36px;
+}
+
+.data-studio .studio-project > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1460px) {
+  .data-studio .studio-topbar {
+    gap: 12px;
+  }
+
+  .data-studio .studio-actions {
+    gap: 7px;
+  }
+
+  .data-studio .studio-actions button {
+    padding: 0 10px;
+  }
+
+  .data-studio .studio-actions .studio-icon-btn {
+    padding: 0;
+  }
+
+  .data-studio .canvas-breadcrumb > span,
+  .data-studio .canvas-breadcrumb > i {
+    display: none;
+  }
+
+  .data-studio .canvas-breadcrumb {
+    flex-wrap: nowrap;
+  }
+
+  .data-studio .canvas-breadcrumb > b {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 1360px) {
+  .data-studio .studio-actions .studio-project {
+    display: none;
+  }
+
+  .data-studio .studio-main-nav button {
+    min-width: 56px;
+    padding-inline: 10px;
+  }
+}
+
+@media (max-width: 1180px) {
+  /* Re-assert a 3-column single-row topbar (the older 2-column rule
+     pushed .studio-actions onto a second row). */
+  .data-studio .studio-topbar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .data-studio .studio-main-nav {
+    justify-self: center;
+  }
+}
+
+@media (max-width: 1080px) {
+  .data-studio .studio-product-name,
+  .data-studio .studio-brand-chevron {
+    display: none;
+  }
+
+  .data-studio .studio-actions .agentic-toggle {
+    padding: 0 9px;
+  }
+}

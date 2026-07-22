@@ -1,0 +1,469 @@
+.ai-panel {
+  width: 360px;
+  flex-shrink: 0;
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  margin: 8px 0 8px 0;
+  overflow: hidden;
+}
+
+/* === 展开模式：浮在主区之上，不挤主区尺寸 === */
+.ai-panel.expanded {
+  position: fixed;
+  top: calc(var(--topbar-h) + 8px);
+  bottom: 8px;
+  right: calc(var(--plugin-rail-w) + 8px);
+  width: 720px;
+  margin: 0;
+  z-index: 50;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* === 浮窗模式：完全脱离 dock，居中漂在页面、三栏 === */
+.ai-panel.floating {
+  position: fixed;
+  width: min(1200px, 95vw);
+  height: min(720px, 90vh);
+  margin: 0;
+  z-index: 80;
+  border-radius: 14px;
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.22),
+    0 4px 12px rgba(0, 0, 0, 0.10),
+    0 0 0 1px var(--border);
+}
+
+/* 浮窗 header 当 handle */
+.ai-panel .ai-head.draggable {
+  cursor: grab;
+  user-select: none;
+}
+.ai-panel .ai-head.draggable:active { cursor: grabbing; }
+
+/* === 主体容器（默认单列；浮窗时改成 3 栏）=== */
+.ai-panel .ai-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-panel .ai-center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.ai-panel.floating .ai-main {
+  flex-direction: row;
+}
+.ai-panel.floating .ai-center {
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+
+/* === 左右侧栏（仅 floating 显示）=== */
+.ai-panel .ai-side {
+  width: 240px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 12px;
+  overflow-y: auto;
+  background: var(--bg-soft);
+}
+.ai-panel .ai-side-left  { /* 左 */ }
+.ai-panel .ai-side-right { width: 280px; background: var(--bg-panel); }
+
+.ai-panel .ai-new-chat-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--ws-active);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-family: var(--font-body);
+  font-size: var(--fs-100);
+  font-weight: var(--fw-bold);
+  cursor: pointer;
+  margin-bottom: 14px;
+  transition: background 0.12s ease;
+}
+.ai-panel .ai-new-chat-btn:hover { background: #154dc4; }
+
+.ai-panel .ai-side-sec { margin-bottom: 18px; }
+.ai-panel .ai-side-title {
+  font-size: var(--fs-75);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  margin-bottom: 8px;
+  padding: 0 4px;
+}
+.ai-panel .ai-side-title.with-meta {
+  display: flex;
+  justify-content: space-between;
+}
+.ai-panel .ai-side-meta { color: var(--ws-active); font-weight: var(--fw-bold); }
+
+.ai-panel .ai-side-list,
+.ai-panel .ai-progress-list,
+.ai-panel .ai-ctx-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ai-panel .ai-side-list li {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: var(--fs-100);
+  color: var(--text-2);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai-panel .ai-side-list li:hover { background: var(--bg-hover); color: var(--text); }
+.ai-panel .ai-side-list li.act {
+  background: var(--bg-panel);
+  color: var(--text);
+  font-weight: var(--fw-bold);
+  box-shadow: inset 3px 0 0 var(--ws-active);
+}
+
+/* 进度列表 */
+.ai-panel .ai-progress-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 4px;
+  font-size: var(--fs-100);
+  color: var(--text-2);
+  position: relative;
+  padding-left: 26px;
+}
+.ai-panel .ai-progress-list li::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-dim);
+  background: transparent;
+}
+.ai-panel .ai-progress-list li.done {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+.ai-panel .ai-progress-list li.done::before {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+.ai-panel .ai-progress-list li.done::after {
+  content: "";
+  position: absolute;
+  left: 7.5px;
+  top: 50%;
+  width: 7px;
+  height: 4px;
+  border-left: 2px solid #fff;
+  border-bottom: 2px solid #fff;
+  transform: translateY(-65%) rotate(-45deg);
+}
+.ai-panel .ai-progress-list li.in {
+  color: var(--ws-active);
+  font-weight: var(--fw-bold);
+}
+.ai-panel .ai-progress-list li.in::before {
+  border-color: var(--ws-active);
+  background: var(--ws-active-soft);
+}
+
+/* 上下文列表 */
+.ai-panel .ai-ctx-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: var(--fs-100);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.ai-panel .ai-ctx-list li:hover { background: var(--bg-hover); color: var(--text); }
+.ai-panel .ai-ctx-list li .ic {
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* ===== Header ===== */
+.ai-panel .ai-head {
+  height: 50px;
+  flex-shrink: 0;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ai-panel .ai-title {
+  font-family: var(--font-heading);
+  font-size: var(--fs-200);
+  line-height: var(--lh-200);
+  font-weight: var(--fw-bold);
+  color: var(--text);
+}
+.ai-panel .ai-head-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.ai-panel .ai-ic-btn {
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.ai-panel .ai-ic-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* ===== Body ===== */
+.ai-panel .ai-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 18px 16px;
+}
+
+.ai-panel .ai-intro {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 0;
+  margin-bottom: 14px;
+}
+
+.ai-panel .ai-avatar {
+  grid-row: 1 / span 2;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  object-fit: contain;
+  padding: 4px;
+  box-sizing: border-box;
+  background: var(--bot-avatar);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.ai-panel .ai-name {
+  font-family: var(--font-heading);
+  font-size: var(--fs-200);
+  line-height: var(--lh-200);
+  font-weight: var(--fw-bold);
+  color: var(--text);
+}
+
+.ai-panel .ai-handle {
+  font-size: var(--fs-75);
+  line-height: var(--lh-75);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+}
+
+.ai-panel .ai-clear-btn {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: var(--fs-75);
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.ai-panel .ai-clear-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.ai-panel .ai-desc {
+  font-size: var(--fs-100);
+  line-height: var(--lh-100);
+  color: var(--text);
+  margin: 6px 0;
+}
+.ai-panel .ai-desc.dim { color: var(--text-3); }
+
+.ai-panel .ai-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 14px 0;
+}
+
+.ai-panel .ai-tip {
+  font-size: var(--fs-100);
+  line-height: var(--lh-100);
+  color: var(--text-2);
+}
+.ai-panel .ai-tip code {
+  font-family: var(--font-mono);
+  background: var(--bg-code);
+  color: var(--text);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: var(--fs-75);
+}
+
+/* ===== Composer ===== */
+.ai-panel .ai-composer {
+  flex-shrink: 0;
+  padding: 10px 14px 14px;
+  position: relative;
+}
+
+.ai-panel .ai-input-box {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  padding: 8px 8px 4px 12px;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.ai-panel .ai-input-box:focus-within {
+  border-color: var(--ws-active);
+  box-shadow: 0 0 0 3px var(--ws-active-soft);
+}
+.ai-panel .ai-input-box textarea {
+  width: 100%;
+  min-height: 44px;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: var(--font-body);
+  font-size: var(--fs-100);
+  line-height: var(--lh-100);
+  color: var(--text);
+  background: transparent;
+  padding: 2px 4px;
+}
+.ai-panel .ai-input-box textarea::placeholder {
+  color: var(--text-dim);
+}
+
+/* === 输入框内工具栏 === */
+.ai-panel .ai-toolbar {
+  display: flex;
+  align-items: center;
+  margin-top: 4px;
+  padding-top: 4px;
+}
+.ai-panel .ai-tb-left {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+.ai-panel .ai-tb-btn {
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.ai-panel .ai-tb-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.ai-panel .ai-send-ic {
+  margin-left: auto;
+  background: var(--ws-active);
+  color: #fff;
+  border: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.12s ease, opacity 0.12s ease;
+}
+.ai-panel .ai-send-ic:hover { background: #154dc4; }
+.ai-panel .ai-send-ic:disabled {
+  background: #cbd2e0;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* === Slash 命令弹层 === */
+.ai-panel .ai-slash-pop {
+  position: absolute;
+  bottom: 90px;
+  left: 14px;
+  right: 14px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+  padding: 6px;
+  z-index: 30;
+}
+.ai-panel .ai-slash-sh {
+  font-size: var(--fs-50);
+  color: var(--text-3);
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+.ai-panel .ai-slash-si {
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--fs-100);
+}
+.ai-panel .ai-slash-si:hover,
+.ai-panel .ai-slash-si.act { background: var(--bg-hover); }
+.ai-panel .ai-slash-si .cmd {
+  font-family: var(--font-mono);
+  color: var(--ws-active);
+  font-weight: var(--fw-bold);
+  width: 100px;
+}
+.ai-panel .ai-slash-si .desc {
+  color: var(--text-3);
+  font-size: var(--fs-75);
+}

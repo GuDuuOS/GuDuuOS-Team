@@ -1,0 +1,291 @@
+/* === AI 配置弹窗（频道管理 / 系统 AI 设置 共用）=== */
+.cam-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: cam-fade 0.14s ease;
+}
+@keyframes cam-fade { from { opacity: 0 } to { opacity: 1 } }
+
+.cam-modal {
+  width: 720px;
+  max-width: calc(100vw - 48px);
+  height: 660px;
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  animation: cam-pop 0.16s ease;
+}
+@keyframes cam-pop { from { opacity: 0; transform: translateY(8px) scale(0.98) } to { opacity: 1; transform: none } }
+
+.cam-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.cam-title {
+  font-family: var(--font-heading);
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-300);
+  color: var(--text);
+}
+.cam-sub { font-size: var(--fs-75); color: var(--text-3); }
+.cam-close {
+  margin-left: auto;
+  width: 28px; height: 28px;
+  border: none; background: transparent;
+  font-size: 22px; line-height: 1;
+  color: var(--text-3); cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.cam-close:hover { background: var(--bg-hover); color: var(--text); }
+
+.cam-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.cam-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 9px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-size: var(--fs-100);
+  color: var(--text-3);
+  white-space: nowrap;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.cam-tab:hover { color: var(--text); }
+.cam-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: var(--fw-bold); }
+.cam-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  background: var(--bg-soft);
+  border-radius: 9px;
+  padding: 0 6px;
+}
+
+.cam-body {
+  flex: 1;
+  min-height: 0;
+  padding: 16px 18px 18px;
+  overflow-y: auto;
+}
+
+/* —— 列表行 —— */
+.cam-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.cam-row:last-of-type { border-bottom: none; }
+.cam-ava {
+  width: 30px; height: 30px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600;
+  flex-shrink: 0;
+}
+.cam-ava.bot {
+  background: var(--bot-avatar);
+  color: var(--bot-avatar-text);
+}
+.cam-row-main { flex: 1; min-width: 0; }
+.cam-row-label {
+  font-size: var(--fs-100);
+  font-weight: var(--fw-bold);
+  color: var(--text);
+  display: flex; align-items: center; gap: 8px;
+}
+.cam-tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.cam-level {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-weight: var(--fw-regular);
+}
+.cam-level.lv-公开 { background: var(--bg-soft); color: var(--text-3); }
+.cam-level.lv-内部 { background: #fef3c7; color: var(--warn); }
+.cam-level.lv-机密 { background: #fee2e2; color: var(--danger); }
+.cam-row-desc { font-size: var(--fs-75); color: var(--text-3); margin-top: 2px; }
+.cam-del {
+  width: 26px; height: 26px;
+  border: none; background: transparent;
+  color: var(--text-3); cursor: pointer;
+  font-size: 18px; line-height: 1;
+  border-radius: 6px; flex-shrink: 0;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.cam-del:hover { background: #fee2e2; color: var(--danger); }
+
+/* —— 成员展开 + 可勾选数据 —— */
+.cam-member { border-bottom: 1px solid var(--border-soft); }
+.cam-member:last-of-type { border-bottom: none; }
+.cam-member .cam-row { border-bottom: none; }
+.cam-row.clickable { cursor: pointer; border-radius: 8px; transition: background 0.12s ease; }
+.cam-row.clickable:hover { background: var(--bg-soft); }
+.cam-expand {
+  width: 26px; height: 26px;
+  color: var(--text-3);
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.cam-row.clickable:hover .cam-expand { color: var(--text); }
+.cam-expand svg { transition: transform 0.15s ease; }
+.cam-expand.open svg { transform: rotate(180deg); }
+.cam-data {
+  margin: 0 0 10px 40px;
+  padding: 8px 0 4px;
+}
+.cam-data-tip { font-size: var(--fs-75); color: var(--text-3); margin-bottom: 6px; }
+.cam-data-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  cursor: pointer;
+  font-size: var(--fs-75);
+}
+.cam-data-item input { accent-color: var(--accent); cursor: pointer; }
+.cam-data-v { font-family: var(--font-heading); font-weight: var(--fw-bold); color: var(--text); min-width: 64px; }
+.cam-data-l { color: var(--text-3); }
+.cam-data-item.off .cam-data-v { color: var(--text-3); }
+
+/* —— 添加行 —— */
+.cam-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+.cam-input {
+  flex: 1;
+  min-width: 120px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: var(--fs-100);
+  color: var(--text);
+  background: var(--bg-panel);
+  outline: none;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.cam-input-sm { flex: 0 0 130px; min-width: 0; font-family: var(--mono); }
+.cam-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.cam-input::placeholder { color: var(--text-3); }
+.cam-add-btn {
+  flex: 0 0 auto;
+  height: 34px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: var(--fs-100);
+  font-weight: var(--fw-bold);
+  cursor: pointer;
+  transition: filter 0.12s ease, opacity 0.12s ease;
+}
+.cam-add-btn:hover { filter: brightness(1.05); }
+.cam-add-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* —— select —— */
+.cam-select {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: var(--fs-100);
+  color: var(--text);
+  background: var(--bg-panel);
+  outline: none;
+  cursor: pointer;
+}
+.cam-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.cam-select-sm { flex: 0 0 auto; }
+.cam-select.off { color: var(--text-3); }
+
+/* —— 表单字段 —— */
+.cam-field { margin-bottom: 16px; }
+.cam-field-row { display: flex; align-items: center; justify-content: space-between; }
+.cam-field-label {
+  display: block;
+  font-size: var(--fs-75);
+  color: var(--text-3);
+  margin-bottom: 6px;
+  font-weight: var(--fw-bold);
+}
+.cam-field-row .cam-field-label { margin-bottom: 0; }
+.cam-field .cam-input,
+.cam-field .cam-select { width: 100%; }
+.cam-textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: var(--fs-100);
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg-panel);
+  outline: none;
+  resize: vertical;
+  font-family: var(--font-body);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.cam-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.cam-help { font-size: var(--fs-75); color: var(--text-3); line-height: 1.6; margin-top: 6px; }
+.cam-help-top { margin: 0 0 12px; }
+
+/* —— 开关 —— */
+.cam-switch {
+  width: 40px; height: 22px;
+  border-radius: 999px;
+  border: none;
+  background: var(--border);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s ease;
+  flex-shrink: 0;
+}
+.cam-switch.on { background: var(--accent); }
+.cam-switch-dot {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s ease;
+}
+.cam-switch.on .cam-switch-dot { transform: translateX(18px); }

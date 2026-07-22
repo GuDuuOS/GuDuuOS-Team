@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- 上半 cream -->
+  <path d="M 8 16 V 10 A 8 8 0 0 1 24 10 V 16 Z" fill="#faf6ea"/>
+  <!-- 下半 orange -->
+  <path d="M 8 16 V 22 A 8 8 0 0 0 24 22 V 16 Z" fill="#e88533"/>
+  <!-- 胶囊描边 -->
+  <rect x="8" y="2" width="16" height="28" rx="8" stroke="#1a1a1a" stroke-width="2.5"/>
+  <!-- 顶部小圆 -->
+  <circle cx="16" cy="10" r="2.5" stroke="#1a1a1a" stroke-width="2" fill="#faf6ea"/>
+</svg>

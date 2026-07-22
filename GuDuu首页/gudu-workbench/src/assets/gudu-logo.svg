@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 12.5 100 150" fill="none">
+  <!-- 胶囊主体填充：上半 cream / 下半 orange，与黑色描边胶囊精确对齐（顶圆心 50,55 / 底圆心 50,120）-->
+  <path d="M 25 95 L 25 55 A 25 25 0 0 1 75 55 L 75 95 Z" fill="#faf6ea"/>
+  <path d="M 25 95 L 25 120 A 25 25 0 0 0 75 120 L 75 95 Z" fill="#e88533"/>
+
+  <!-- 黑色外描边胶囊 -->
+  <rect x="25" y="30" width="50" height="115" rx="25" stroke="#1a1a1a" stroke-width="5"/>
+
+  <!-- 顶部小圆环 -->
+  <circle cx="50" cy="55" r="9" stroke="#1a1a1a" stroke-width="5" fill="#faf6ea"/>
+
+  <!-- 中间名牌带 -->
+  <rect x="8" y="82" width="84" height="26" rx="6" fill="#faf6ea" stroke="#1a1a1a" stroke-width="4"/>
+
+  <!-- GuDuu 文字 -->
+  <text x="50" y="103" text-anchor="middle"
+        font-family="Inter, -apple-system, 'PingFang SC', sans-serif"
+        font-weight="900" font-size="18" fill="#1a1a1a"
+        letter-spacing="-0.5">GuDuu</text>
+</svg>

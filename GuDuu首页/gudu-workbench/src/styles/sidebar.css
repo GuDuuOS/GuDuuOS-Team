@@ -1,0 +1,355 @@
+/* === 左侧 Workspace 栏 === */
+.ws-rail {
+  width: var(--ws-rail-w);
+  background: var(--bg-soft);
+  border-right: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 0;
+  gap: 8px;
+}
+
+.ws-rail .ws-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgb(202, 204, 207);
+  border: 2px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-heading);
+  font-weight: var(--fw-bold);
+  color: var(--text);
+  cursor: pointer;
+  position: relative;
+  font-size: 13px;
+  line-height: 1;
+  letter-spacing: -0.5px;
+  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease, color 0.12s ease;
+  user-select: none;
+}
+
+/* hover：颜色微深 */
+.ws-rail .ws-icon:hover {
+  background: #b8babd;
+  color: var(--text);
+}
+.ws-rail .ws-icon:hover::after {
+  content: "";
+  position: absolute;
+  right: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-right: 6px solid var(--text);
+}
+
+/* active：白底 + 蓝色描边 + 深字 */
+.ws-rail .ws-icon.active {
+  background: var(--bg-panel);
+  color: var(--text);
+  border-color: var(--ws-active);
+  box-shadow: 0 0 0 2px var(--ws-active-soft);
+}
+.ws-rail .ws-icon.active:hover {
+  background: var(--bg-panel);
+  color: var(--text);
+}
+.ws-rail .ws-icon.active:hover::after { display: none; }
+
+.ws-rail .ws-icon.plus {
+  color: var(--text-3);
+  font-size: 18px;
+  border-style: dashed;
+  border-color: var(--border);
+  background: transparent;
+}
+.ws-rail .ws-icon.plus:hover {
+  border-color: var(--text-3);
+  background: var(--bg-hover);
+}
+.ws-rail .ws-icon.plus:hover::after { display: none; }
+
+/* 底部工具图标（CLI / 商城 / 个人主页）—— 锚定到栏底，从下往上排 */
+.ws-rail .ws-sep {
+  width: 24px;
+  height: 1px;
+  background: var(--border);
+  margin-top: auto;
+  flex-shrink: 0;
+}
+.ws-rail .ws-icon.ws-tool {
+  background: transparent;
+  color: var(--text-3);
+}
+.ws-rail .ws-icon.ws-tool:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.ws-rail .ws-icon.ws-tool:hover::after { display: none; }
+
+/* === 频道侧栏（Mattermost 风重构）=== */
+.channels {
+  width: var(--channels-w);
+  background: var(--bg-side);
+  display: flex;
+  flex-direction: column;
+  /* 浮卡：去掉外侧 border，加圆角，跟周围 rail 留缝让灰底浮上来 */
+  border: none;
+  border-radius: 12px;
+  margin: 8px 0 8px 8px;
+  overflow: hidden;
+}
+
+/* workspace 名 + 添加按钮 */
+.channels .cs-ws-head {
+  display: flex;
+  align-items: center;
+  padding: 8px 8px 8px 14px;
+  gap: 6px;
+  height: 48px;
+  flex-shrink: 0;
+}
+.channels .cs-ws-name {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+.channels .cs-ws-name:hover { background: var(--bg-hover); }
+.channels .cs-ws-name .name {
+  font-family: var(--font-heading);
+  font-size: var(--fs-200);
+  line-height: var(--lh-200);
+  font-weight: var(--fw-bold);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.channels .cs-ws-name .chev { color: var(--text-3); flex-shrink: 0; }
+
+.channels .cs-add {
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.channels .cs-add:hover { background: var(--bg-hover); color: var(--text); }
+
+/* 过滤行 */
+.channels .cs-filter {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px 10px;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.channels .cs-filter-funnel {
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.channels .cs-filter-funnel:hover { background: var(--bg-hover); color: var(--text); }
+.channels .cs-filter-input {
+  flex: 1;
+  height: 28px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  border-radius: 6px;
+  padding: 0 12px 0 30px;
+  font-size: 13px;
+  font-family: var(--font-body);
+  color: var(--text);
+  outline: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>");
+  background-repeat: no-repeat;
+  background-position: 10px center;
+  min-width: 0;
+}
+.channels .cs-filter-input:focus { border-color: var(--text-3); }
+.channels .cs-filter-input::placeholder { color: var(--text-dim); }
+
+/* 列表区 */
+.channels .cs-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px 14px;
+}
+
+/* 通用条目 */
+.channels .cs-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  margin: 1px 0;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: 14px;
+  font-family: var(--sans);
+  min-width: 0;
+}
+.channels .cs-item:hover { background: var(--bg-hover); color: var(--text); }
+.channels .cs-item.active {
+  background: var(--bg-panel);
+  color: var(--text);
+  font-weight: 600;
+  position: relative;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.channels .cs-item.active::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.channels .cs-item.has-unread { color: var(--text); font-weight: 600; }
+.channels .cs-item .cs-ic {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.channels .cs-item.active .cs-ic,
+.channels .cs-item.has-unread .cs-ic { color: var(--text); }
+.channels .cs-item .cs-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.channels .cs-item .cs-warn { color: var(--warn); font-size: 11px; }
+.channels .cs-item .cs-badge {
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--mono);
+  padding: 1px 7px;
+  border-radius: 9px;
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.channels .cs-item .cs-edit-ic {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.channels .cs-item .cs-edit-ic.show-on-hover { opacity: 0; transition: opacity 0.12s ease; }
+.channels .cs-item:hover .cs-edit-ic.show-on-hover { opacity: 1; }
+
+/* emphasized（如官方频道）加粗显示 */
+.channels .cs-item.emphasized { font-weight: 600; color: var(--text); }
+
+/* group 折叠头 */
+.channels .cs-group { margin-top: 8px; }
+.channels .cs-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  font-size: 13px;
+  font-family: var(--sans);
+  font-weight: 500;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  border-radius: 6px;
+}
+.channels .cs-group-head:hover { background: var(--bg-hover); color: var(--text); }
+.channels .cs-group-head .caret {
+  transition: transform 0.12s ease;
+  flex-shrink: 0;
+}
+.channels .cs-group-head .caret.open { transform: rotate(90deg); }
+
+/* 添加频道 / 邀请成员 行 */
+.channels .cs-item.cs-add-row { color: var(--text-3); }
+.channels .cs-item .cs-ic-box {
+  width: 18px;
+  height: 18px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+/* DM 头像 */
+.channels .cs-dm-av {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+  position: relative;
+}
+.channels .cs-dm-av.bot {
+  background: var(--bot-avatar);
+  color: var(--bot-avatar-text);
+  border-radius: 6px;
+}
+.channels .cs-dm-av .dot-online {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  border: 1.5px solid var(--bg-soft);
+}

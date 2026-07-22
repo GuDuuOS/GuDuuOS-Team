@@ -1,0 +1,124 @@
+.plugin-rail {
+  width: var(--plugin-rail-w);
+  background: var(--bg-soft);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 0;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.plugin-rail .pr-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  overflow-y: auto;
+  width: 100%;
+}
+.plugin-rail .pr-list::-webkit-scrollbar { display: none; }
+
+.plugin-rail .pr-divider {
+  width: 18px;
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.plugin-rail .pr-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgb(202, 204, 207);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: var(--fw-bold);
+  color: var(--text);
+  cursor: pointer;
+  position: relative;
+  font-size: 11px;
+  line-height: 1;
+  flex-shrink: 0;
+  overflow: hidden;
+  user-select: none;
+  transition: transform 0.12s ease, background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+.plugin-rail .pr-icon:hover {
+  background: #b8babd;
+  color: var(--text);
+}
+
+/* 商城获取的彩色 Agent 图标：保持底色，hover 仅轻微放大 */
+.plugin-rail .pr-icon.has-color:hover {
+  transform: scale(1.06);
+  filter: brightness(1.06);
+}
+
+/* 图片头像图标：无灰底，让图本身露出来 */
+.plugin-rail .pr-icon.has-image {
+  background: var(--bg-panel);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+.plugin-rail .pr-icon.has-image:hover {
+  background: var(--bg-panel);
+  transform: scale(1.06);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+.plugin-rail .pr-icon .pr-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 3px;
+  box-sizing: border-box;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.plugin-rail .pr-icon.active {
+  background: var(--ws-active);
+  color: #fff;
+}
+.plugin-rail .pr-icon.active::after {
+  content: "";
+  position: absolute;
+  left: -9px;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--text);
+}
+
+.plugin-rail .pr-icon.plus,
+.plugin-rail .pr-icon.gear {
+  color: var(--text-3);
+  font-size: 16px;
+}
+/* 新增：参考左侧部门「+」——虚线边框 + 透明底，保持圆形 */
+.plugin-rail .pr-icon.plus {
+  background: transparent;
+  border: 2px dashed var(--border);
+  color: var(--text-3);
+}
+.plugin-rail .pr-icon.plus:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-3);
+  color: var(--text);
+}
+
+/* 右上角"已安装"小角标，可选 */
+.plugin-rail .pr-icon .dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  border: 1.5px solid var(--bg-soft);
+}
