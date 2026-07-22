@@ -1,5 +1,10 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-22 — 新增 README.md(负责人报:GitHub 仓库主页没有 README)
+
+- 项目定位+核心特性+仓库结构+文档地图+版本追溯入口(tags/DEVLOG)+架构铁律+本地开发。
+- 不含任何服务器 IP/域名细节/key(敏感信息仍只在本机 DEPLOY.md/CREDENTIALS)。
+
 ## 2026-07-22 — 仓库清理:删除废弃目录(负责人授权,GitHub+阿里云同步)
 
 - 删除 `GuDuu首页/`(gudu-workbench 官网原型——线上开发官网从独立目录 /opt/guduu-home/dist
