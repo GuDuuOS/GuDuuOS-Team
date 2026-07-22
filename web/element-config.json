@@ -1,9 +1,0 @@
-{
-  "default_server_config": {
-    "m.homeserver": { "base_url": "https://hs.cosmac.cc", "server_name": "cosmac.cc" }
-  },
-  "brand": "CosMac Star",
-  "branding": { "auth_header_logo_url": "https://app.cosmac.cc/cosmac-logo.png" },
-  "disable_guests": true,
-  "default_country_code": "CN"
-}

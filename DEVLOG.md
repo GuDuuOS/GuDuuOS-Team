@@ -1,5 +1,13 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-22 — 仓库清理:删除废弃目录(负责人授权,GitHub+阿里云同步)
+
+- 删除 `GuDuu首页/`(gudu-workbench 官网原型——线上开发官网从独立目录 /opt/guduu-home/dist
+  服务,不依赖仓库;源码留在 git 历史可随时恢复)。
+- 删除 `web/`(4 月 Element 时代的落地页/品牌定制,已被 client/ 全面取代,distro 构建零引用)。
+- 删除本地 `guduu-di-online/`(91MB,DI 独立项目的本地拷贝,未入 git)。
+- 保留:两个对外介绍 .docx(负责人工作文件)、console/(Nexus 大屏,活跃)、run//.venv(本地产物)。
+
 ## 2026-07-22 — GuDuu OS 1.0.1 (patch)
 
 - 新增：中枢 AI 频道清单带工作区归属（按工作区分组，不再猜测）。
