@@ -77,7 +77,7 @@ const skipConfirm = ref(false)
 // 坚持跳过时给的默认工作区——营销方向（GuDuu OS 面向个人创业者，营销最通用，不留空）。
 const MARKETING_DEFAULT = {
   workspace: '营销工作区',
-  channels: ['内容策划', '社媒运营', '客户互动', '数据看板'],
+  channels: ['内容策划', '社媒运营', '活动策划', '数据看板'],
   aiName: '营销助手',
   aiPersona: '你是这个营销团队的中枢 AI 助手，帮助策划内容、运营社媒、维护客户、分析数据、推进营销任务。回答简洁、专业、可执行。',
 }
