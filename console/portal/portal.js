@@ -238,12 +238,14 @@
           '<td class="zh">' + (k.status === "active" ? '<button class="ghost small" data-revoke="' + k.id + '">吊销</button>' : "—") + "</td></tr>";
       }).join("") || '<tr><td colspan="7" class="zh empty">尚未签发</td></tr>';
 
-      // OEM 客户表
+      // OEM 客户表（自助注册模式：超管唯一管控 = 停用/启用；账号状态用"正常/停用"措辞）
       $("#admin-oems tbody").innerHTML = oems.map(function (o) {
+        var on = o.status === "active";
         return "<tr><td>#" + o.id + "</td><td>" + esc(o.email) + "</td><td class=\"zh\">" + esc(o.name || "—") + "</td>" +
-          "<td class=\"zh\">" + badge(o.status === "active" ? "active" : "disabled") + "</td>" +
-          "<td>" + o.keys_claimed + "</td><td>" + fmtTime(o.created_ts) + "</td></tr>";
-      }).join("") || '<tr><td colspan="6" class="zh empty">暂无注册客户</td></tr>';
+          '<td class="zh"><span class="badge ' + (on ? "active" : "disabled") + '">' + (on ? "正常" : "停用") + "</span></td>" +
+          "<td>" + o.keys_claimed + "</td><td>" + fmtTime(o.created_ts) + "</td>" +
+          '<td class="zh"><button class="ghost small" data-oemstatus="' + o.id + '" data-tostatus="' + (on ? "disabled" : "active") + '" data-email="' + esc(o.email) + '">' + (on ? "停用" : "启用") + "</button></td></tr>";
+      }).join("") || '<tr><td colspan="7" class="zh empty">暂无注册客户</td></tr>';
     }).catch(function (err) { toast(err.message, true); });
   }
 
@@ -282,6 +284,14 @@
       if (!(n > 0)) return toast("请输入正整数", true);
       api("/nexus/admin/topup", { body: { instance_id: Number(t.dataset.topup), tokens: n, note: "控制台手动充值" } })
         .then(function (r) { toast("充值成功，新余额 " + fmtTokens(r.balance_tokens)); loadAdmin(); })
+        .catch(function (err) { toast(err.message, true); });
+    }
+    if (t.dataset && t.dataset.oemstatus) {
+      var to = t.dataset.tostatus;
+      // 停用是打断客户使用的动作，要确认；启用无副作用直接放行
+      if (to === "disabled" && !confirm("确认停用 " + t.dataset.email + "？停用后其登录与已有会话立即失效（数据保留，可随时启用恢复）。")) return;
+      api("/nexus/admin/oem_status", { body: { oem_id: Number(t.dataset.oemstatus), status: to } })
+        .then(function () { toast(to === "disabled" ? "已停用" : "已启用"); loadAdmin(); })
         .catch(function (err) { toast(err.message, true); });
     }
   });

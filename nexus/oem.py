@@ -277,6 +277,23 @@ def list_oems(s) -> List[Dict[str, Any]]:
     ]
 
 
+def set_oem_status(s, oem_id: int, status: str) -> Dict[str, Any]:
+    """超管停用/启用某个 OEM 账号（自助注册模式下的唯一管控抓手）。
+
+    disabled 的效果（既有逻辑已生效，这里只负责切状态）：
+      - 不能再登录（login 校验 status）；
+      - 已发出的会话立即失效（resolve_session 校验 status）；
+      - 已认领的 KEY/实例数据保留——误停可无损恢复。
+    """
+    if status not in ("active", "disabled"):
+        raise FleetError("NEXUS_BAD_STATUS", "状态只能是 active 或 disabled")
+    row = s.get(NexusOem, int(oem_id))
+    if row is None:
+        raise FleetError("NEXUS_OEM_NOT_FOUND", f"OEM id={oem_id} 不存在", 404)
+    row.status = status
+    return public_oem(row)
+
+
 def owns_instance(s, oem_id: int, instance_id: int) -> bool:
     """校验某实例是否归该 OEM（写操作/充值申请前的归属守卫）。"""
     inst = s.get(NexusInstance, int(instance_id))
@@ -299,6 +316,7 @@ __all__ = [
     "my_keys",
     "my_instances",
     "list_oems",
+    "set_oem_status",
     "owns_instance",
     "normalize_key",
 ]

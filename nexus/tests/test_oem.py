@@ -88,6 +88,24 @@ class OemAccountTest(unittest.TestCase):
         oem.logout(self.s, token)
         self.assertIsNone(oem.resolve_session(self.s, token))
 
+    def test_set_oem_status(self):
+        pub = oem.register(self.s, "f@example.com", "abc12345")
+        token = oem.login(self.s, "f@example.com", "abc12345")["token"]
+        # 超管停用：会话立即失效、不能再登录
+        out = oem.set_oem_status(self.s, pub["id"], "disabled")
+        self.assertEqual(out["status"], "disabled")
+        self.assertIsNone(oem.resolve_session(self.s, token))
+        with self.assertRaises(FleetError):
+            oem.login(self.s, "f@example.com", "abc12345")
+        # 启用恢复：可重新登录（数据无损）
+        oem.set_oem_status(self.s, pub["id"], "active")
+        self.assertIn("token", oem.login(self.s, "f@example.com", "abc12345"))
+        # 非法状态/不存在的账号
+        with self.assertRaises(FleetError):
+            oem.set_oem_status(self.s, pub["id"], "banned")
+        with self.assertRaises(FleetError):
+            oem.set_oem_status(self.s, 99999, "disabled")
+
     def test_disabled_account_cannot_login(self):
         pub = oem.register(self.s, "e@example.com", "abc12345")
         token = oem.login(self.s, "e@example.com", "abc12345")["token"]

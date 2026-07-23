@@ -398,6 +398,22 @@ class NexusHandler(BaseHTTPRequestHandler):
                 self._with_session(_do)
             return
 
+        if path == "/nexus/admin/oem_status":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "oem": oem_svc.set_oem_status(
+                                s,
+                                int(body.get("oem_id") or 0),
+                                str(body.get("status", "")),
+                            )
+                        },
+                    )
+                )
+            return
+
         if path == "/nexus/admin/topup":
             if self._check_admin():
                 self._with_session(
