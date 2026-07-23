@@ -187,8 +187,29 @@
         return "<tr><td>#" + k.id + "</td><td>···" + esc(k.tail) + "</td><td class=\"zh\">" + badge(st) + "</td>" +
           "<td>" + fmtTokens(k.token_grant) + "</td><td class=\"zh\">" + (k.instance_id ? "#" + k.instance_id : "—") + "</td></tr>";
       }).join("") || '<tr><td colspan="5" class="zh empty">尚未认领任何授权码</td></tr>';
+      // 申请单列表（approved 且未装机时展示明文——即交付通道；装机后明文被服务端清空）
+      var reqs = r.requests || [];
+      var REQ_ZH = { pending: "待处理", approved: "已批准", rejected: "已拒绝" };
+      var REQ_CLS = { pending: "warning", approved: "active", rejected: "revoked" };
+      $("#oem-requests").hidden = reqs.length === 0;
+      $("#oem-requests tbody").innerHTML = reqs.map(function (q) {
+        var keyCell = q.key
+          ? '<b style="user-select:all">' + esc(q.key) + "</b>"
+          : (q.status === "approved" ? '<span class="zh">已使用（实例开通）</span>' : "—");
+        return "<tr><td>#" + q.id + '</td><td class="zh"><span class="badge ' + (REQ_CLS[q.status] || "idle") + '">' + (REQ_ZH[q.status] || q.status) + "</span>" +
+          (q.status === "rejected" && q.decide_note ? '<div class="hint">' + esc(q.decide_note) + "</div>" : "") + "</td>" +
+          '<td class="zh">' + esc(q.note || "—") + "</td><td>" + keyCell + "</td><td>" + fmtTime(q.created_ts) + "</td></tr>";
+      }).join("");
     }).catch(function (err) { toast(err.message, true); });
   }
+
+  $("#form-request").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var f = e.target;
+    api("/nexus/oem/request_key", { body: { note: f.note.value } })
+      .then(function () { toast("申请已提交，等待平台处理"); f.reset(); loadOem(); })
+      .catch(function (err) { toast(err.message, true); });
+  });
 
   $("#form-claim").addEventListener("submit", function (e) {
     e.preventDefault();
@@ -208,8 +229,20 @@
       api("/nexus/admin/instances"),
       api("/nexus/admin/keys"),
       api("/nexus/admin/oems"),
+      api("/nexus/admin/requests"),
     ]).then(function (rs) {
       var insts = rs[0].instances, keys = rs[1].keys, oems = rs[2].oems;
+      var reqs = rs[3].requests || [];
+
+      // 待处理申请（无申请时整个面板隐藏，不占版面）
+      $("#panel-requests").hidden = reqs.length === 0;
+      $("#admin-requests tbody").innerHTML = reqs.map(function (q) {
+        return "<tr><td>#" + q.id + "</td><td>" + esc(q.oem_email) + '</td><td class="zh">' + esc(q.note || "—") + "</td>" +
+          "<td>" + fmtTime(q.created_ts) + "</td>" +
+          '<td class="zh"><input type="number" min="0" value="100000000" style="width:130px" data-grantfor="' + q.id + '" title="附赠 token" /></td>' +
+          '<td class="zh"><button class="ghost small" data-approve="' + q.id + '">批准签发</button> ' +
+          '<button class="ghost small" data-reject="' + q.id + '">拒绝</button></td></tr>';
+      }).join("");
 
       // 统计条
       var online = insts.filter(function (i) { return hbStatus(i) !== "offline"; }).length;
@@ -284,6 +317,21 @@
       if (!(n > 0)) return toast("请输入正整数", true);
       api("/nexus/admin/topup", { body: { instance_id: Number(t.dataset.topup), tokens: n, note: "控制台手动充值" } })
         .then(function (r) { toast("充值成功，新余额 " + fmtTokens(r.balance_tokens)); loadAdmin(); })
+        .catch(function (err) { toast(err.message, true); });
+    }
+    if (t.dataset && t.dataset.approve) {
+      var rid = t.dataset.approve;
+      var grantInput = document.querySelector('input[data-grantfor="' + rid + '"]');
+      var grant = grantInput ? Number(grantInput.value) || 0 : 0;
+      api("/nexus/admin/request_decide", { body: { request_id: Number(rid), approve: true, token_grant: grant } })
+        .then(function () { toast("已批准，授权码已交付到对方门户"); loadAdmin(); })
+        .catch(function (err) { toast(err.message, true); });
+    }
+    if (t.dataset && t.dataset.reject) {
+      var reason = prompt("拒绝理由（会展示给申请人，可留空）");
+      if (reason === null) return; // 点了取消 = 中止，不是"空理由拒绝"
+      api("/nexus/admin/request_decide", { body: { request_id: Number(t.dataset.reject), approve: false, decide_note: reason } })
+        .then(function () { toast("已拒绝"); loadAdmin(); })
         .catch(function (err) { toast(err.message, true); });
     }
     if (t.dataset && t.dataset.oemstatus) {

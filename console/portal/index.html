@@ -78,12 +78,25 @@
   </section>
 
   <section class="panel">
+    <div class="panel-head"><h2>申请授权码</h2></div>
+    <form id="form-request" class="inline-form">
+      <input name="note" placeholder="用途说明（如：部署到 my-brand.com）" style="flex:1" />
+      <button class="primary">提交申请</button>
+    </form>
+    <p class="hint">提交后由 GuDuu 平台处理；批准后授权码会直接出现在下方列表，复制即可用于安装。</p>
+    <table class="tbl" id="oem-requests" hidden>
+      <thead><tr><th>#</th><th>状态</th><th>用途</th><th>授权码</th><th>申请时间</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="panel">
     <div class="panel-head"><h2>认领授权码</h2></div>
     <form id="form-claim" class="inline-form">
       <input name="key" placeholder="CMK-XXXX-XXXX-XXXX-XXXX" required />
       <button class="primary">认领</button>
     </form>
-    <p class="hint">购买后从 GuDuu 获得授权码，认领即归入你的账号；随后在自己服务器安装时使用它开通实例。</p>
+    <p class="hint">线下拿到的授权码在此认领归入你的账号（门户申请批准的码已自动归属，无需再认领）。</p>
     <p id="claim-msg" class="ok" hidden></p>
   </section>
 
@@ -111,6 +124,15 @@
       <thead><tr><th>#</th><th>域名</th><th>状态</th><th>版本</th><th>最近心跳</th><th>余额</th><th>操作</th></tr></thead>
       <tbody></tbody>
     </table>
+  </section>
+
+  <section class="panel" id="panel-requests" hidden>
+    <div class="panel-head"><h2>待处理申请</h2></div>
+    <table class="tbl" id="admin-requests">
+      <thead><tr><th>#</th><th>申请人</th><th>用途</th><th>申请时间</th><th>附赠 Token</th><th>操作</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="hint">批准 = 自动签发一把 KEY 并归属申请人，授权码直接出现在对方门户（无需人肉传码）。</p>
   </section>
 
   <section class="panel">
@@ -142,6 +164,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=5"></script>
+<script src="/portal/portal.js?v=6"></script>
 </body>
 </html>

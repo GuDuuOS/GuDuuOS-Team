@@ -197,5 +197,54 @@ class OemScopingTest(unittest.TestCase):
         self.assertNotIn("password_hash", rows[0])
 
 
+class KeyRequestTest(unittest.TestCase):
+    """授权码申请闭环：申请→批准(签发+归属+明文交付)→装机兑换后明文销毁。"""
+
+    def setUp(self):
+        self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self._tmp.close()
+        db.init_engine("sqlite:///" + self._tmp.name)
+        self.s = db.session()
+        self.a = oem.register(self.s, "a@x.com", "abc12345")["id"]
+
+    def tearDown(self):
+        self.s.close()
+        os.unlink(self._tmp.name)
+
+    def test_request_and_approve_delivers_key(self):
+        req = oem.request_key(self.s, self.a, "部署到 my-brand.com")
+        self.assertEqual(req["status"], "pending")
+        # 超管批准：签发 + 自动归属 + 明文交付
+        out = oem.decide_request(self.s, req["id"], True, token_grant=5000)
+        self.assertEqual(out["status"], "approved")
+        self.assertTrue(out["key"].startswith("CMK-"))
+        # 申请人门户可见明文；KEY 已在其名下
+        mine = oem.my_requests(self.s, self.a)
+        self.assertEqual(mine[0]["key"], out["key"])
+        self.assertEqual(oem.my_keys(self.s, self.a)[0]["id"], out["key_id"])
+        # 超管列表不含明文
+        self.assertNotIn("key", oem.list_requests(self.s, status="approved")[0])
+        # 装机兑换成功 → 明文销毁,其余字段保留
+        fleet.redeem(self.s, out["key"], "my-brand.com")
+        oem.clear_plain_by_key(self.s, out["key"])
+        after = oem.my_requests(self.s, self.a)[0]
+        self.assertIsNone(after["key"])
+        self.assertEqual(after["status"], "approved")
+
+    def test_reject_and_pending_cap(self):
+        req = oem.request_key(self.s, self.a, "")
+        out = oem.decide_request(self.s, req["id"], False, decide_note="请先联系商务")
+        self.assertEqual(out["status"], "rejected")
+        self.assertEqual(out["decide_note"], "请先联系商务")
+        # 已处理的申请不能再裁决
+        with self.assertRaises(FleetError):
+            oem.decide_request(self.s, req["id"], True)
+        # 挂起上限 3 张
+        for _ in range(3):
+            oem.request_key(self.s, self.a, "")
+        with self.assertRaises(FleetError):
+            oem.request_key(self.s, self.a, "第4张")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -204,9 +204,18 @@ class NexusHandler(BaseHTTPRequestHandler):
                         "oem": oem_svc.public_oem(oem),
                         "instances": oem_svc.my_instances(s, oem.id),
                         "keys": oem_svc.my_keys(s, oem.id),
+                        "requests": oem_svc.my_requests(s, oem.id),
                     },
                 )
             self._with_session(_me)
+            return
+        if path == "/nexus/admin/requests":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200, {"requests": oem_svc.list_requests(s, status="pending")}
+                    )
+                )
             return
         # —— 其余 GET：当静态请求，托管数据大屏（console/dashboard）——
         if self._serve_dashboard(path):
@@ -297,17 +306,18 @@ class NexusHandler(BaseHTTPRequestHandler):
             if not _rate_ok(self._client_ip()):
                 self._err(429, "NEXUS_RATE_LIMIT", "尝试过于频繁，请一小时后再试")
                 return
-            self._with_session(
-                lambda s: self._json(
-                    200,
-                    fleet.redeem(
-                        s,
-                        str(body.get("key", "")),
-                        str(body.get("domain", "")),
-                        str(body.get("admin_email", "")),
-                    ),
+
+            def _redeem(s):
+                out = fleet.redeem(
+                    s,
+                    str(body.get("key", "")),
+                    str(body.get("domain", "")),
+                    str(body.get("admin_email", "")),
                 )
-            )
+                # 装机成功后销毁申请单里存的交付明文（阅后即焚的"焚"时刻）
+                oem_svc.clear_plain_by_key(s, str(body.get("key", "")))
+                self._json(200, out)
+            self._with_session(_redeem)
             return
 
         if path == "/nexus/heartbeat":
@@ -371,6 +381,36 @@ class NexusHandler(BaseHTTPRequestHandler):
                     return
                 self._json(200, oem_svc.claim_key(s, oem.id, str(body.get("key", ""))))
             self._with_session(_claim)
+            return
+
+        if path == "/nexus/oem/request_key":
+            def _req(s):
+                oem = self._oem(s)
+                if oem is None:
+                    return
+                self._json(
+                    200,
+                    {"request": oem_svc.request_key(s, oem.id, str(body.get("note", "")))},
+                )
+            self._with_session(_req)
+            return
+
+        if path == "/nexus/admin/request_decide":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "request": oem_svc.decide_request(
+                                s,
+                                int(body.get("request_id") or 0),
+                                bool(body.get("approve")),
+                                token_grant=int(body.get("token_grant") or 0),
+                                decide_note=str(body.get("decide_note", "")),
+                            )
+                        },
+                    )
+                )
             return
 
         if path == "/nexus/admin/keys":

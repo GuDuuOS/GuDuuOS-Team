@@ -154,6 +154,32 @@ class NexusSession(Base):
     expires_ts = Column(BigInteger, nullable=False)
 
 
+class NexusKeyRequest(Base):
+    """OEM 的授权码申请单（P1 手动闭环：申请→超管签发→门户交付明文）。
+
+    明文交付策略（负责人"够用即止"原则下的务实解）：
+      - 批准时把新 KEY 的明文存进 ``key_plain``，申请人登录门户即可看到并复制
+        （这就是交付通道，替代邮件/微信人肉传码）；
+      - 实例**兑换成功后自动清空** key_plain（装机后明文再无保存价值）；
+      - 拖库风险窗口 = 「已签发未装机」的码，且每码只绑定一个 OEM，可接受。
+    """
+
+    __tablename__ = "nexus_key_request"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    oem_id = Column(Integer, nullable=False, index=True)
+    # 申请留言（用途/域名计划），给超管审batch时看
+    note = Column(Text, nullable=False, default="")
+    # pending=待处理 / approved=已签发 / rejected=已拒绝
+    status = Column(String(16), nullable=False, default="pending")
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    decided_ts = Column(BigInteger, nullable=True, default=None)
+    # 批准后关联的 KEY 与其明文（兑换后清空）；拒绝时可留拒绝理由
+    key_id = Column(Integer, nullable=True, default=None)
+    key_plain = Column(String(64), nullable=False, default="")
+    decide_note = Column(Text, nullable=False, default="")
+
+
 class NexusKeyClaim(Base):
     """OEM 认领 KEY 的归属边：一把 KEY 只归一个 OEM。
 

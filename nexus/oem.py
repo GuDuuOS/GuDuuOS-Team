@@ -25,6 +25,7 @@ from nexus.db import (
     NexusInstance,
     NexusKey,
     NexusKeyClaim,
+    NexusKeyRequest,
     NexusOem,
     NexusSession,
     NexusWallet,
@@ -277,6 +278,122 @@ def list_oems(s) -> List[Dict[str, Any]]:
     ]
 
 
+# ---------- 授权码申请闭环（OEM 申请 → 超管签发 → 门户交付明文）----------
+
+# 同一 OEM 最多同时挂起的申请数（防手滑/刷单；正常客户一次买一两把）
+_MAX_PENDING_REQUESTS = 3
+
+
+def request_key(s, oem_id: int, note: str = "") -> Dict[str, Any]:
+    """OEM 在门户提交一张授权码申请单（一单=一把 KEY）。"""
+    pending = s.execute(
+        select(NexusKeyRequest).where(
+            NexusKeyRequest.oem_id == int(oem_id),
+            NexusKeyRequest.status == "pending",
+        )
+    ).scalars().all()
+    if len(pending) >= _MAX_PENDING_REQUESTS:
+        raise FleetError(
+            "NEXUS_TOO_MANY_REQUESTS",
+            f"已有 {len(pending)} 张待处理申请，请等待平台处理后再提交",
+            429,
+        )
+    row = NexusKeyRequest(oem_id=int(oem_id), note=(note or "").strip()[:500])
+    s.add(row)
+    s.flush()
+    return _public_request(row)
+
+
+def my_requests(s, oem_id: int) -> List[Dict[str, Any]]:
+    """该 OEM 的申请单列表（含已批准单的 KEY 明文——这就是交付通道）。"""
+    rows = s.execute(
+        select(NexusKeyRequest)
+        .where(NexusKeyRequest.oem_id == int(oem_id))
+        .order_by(NexusKeyRequest.id.desc())
+    ).scalars().all()
+    return [_public_request(r) for r in rows]
+
+
+def _public_request(r: NexusKeyRequest) -> Dict[str, Any]:
+    return {
+        "id": r.id,
+        "oem_id": r.oem_id,
+        "note": r.note,
+        "status": r.status,
+        "created_ts": r.created_ts,
+        "decided_ts": r.decided_ts,
+        "key_id": r.key_id,
+        # 明文只在「已批准且尚未装机兑换」窗口内可见，兑换后被清空
+        "key": r.key_plain or None,
+        "decide_note": r.decide_note,
+    }
+
+
+def list_requests(s, status: str = "pending") -> List[Dict[str, Any]]:
+    """超管视角的申请列表（默认只看待处理；带申请人邮箱便于辨认）。"""
+    q = select(NexusKeyRequest).order_by(NexusKeyRequest.id.desc())
+    if status:
+        q = q.where(NexusKeyRequest.status == status)
+    rows = s.execute(q).scalars().all()
+    emails: Dict[int, str] = {}
+    for r in rows:
+        if r.oem_id not in emails:
+            acc = s.get(NexusOem, r.oem_id)
+            emails[r.oem_id] = acc.email if acc else f"#{r.oem_id}"
+    out = []
+    for r in rows:
+        item = _public_request(r)
+        item.pop("key", None)  # 超管列表不需要明文（交付走 OEM 门户）
+        item["oem_email"] = emails.get(r.oem_id, "")
+        out.append(item)
+    return out
+
+
+def decide_request(
+    s, request_id: int, approve: bool, token_grant: int = 0, decide_note: str = ""
+) -> Dict[str, Any]:
+    """超管裁决申请：批准=签发一把 KEY 并自动认领到申请人名下 + 明文存单交付。
+
+    延迟导入 fleet 避免模块级循环依赖（fleet 不知道 oem 层，反向单向依赖）。
+    """
+    from nexus import fleet
+
+    row = s.get(NexusKeyRequest, int(request_id))
+    if row is None:
+        raise FleetError("NEXUS_REQUEST_NOT_FOUND", f"申请 #{request_id} 不存在", 404)
+    if row.status != "pending":
+        raise FleetError("NEXUS_REQUEST_DECIDED", "该申请已处理过", 409)
+    row.decided_ts = _now_ms()
+    row.decide_note = (decide_note or "").strip()[:200]
+    if not approve:
+        row.status = "rejected"
+        return _public_request(row)
+    issued = fleet.issue_keys(
+        s, count=1, note=f"申请单#{row.id} · {row.note[:60]}", token_grant=token_grant
+    )[0]
+    row.status = "approved"
+    row.key_id = issued["id"]
+    row.key_plain = issued["key"]
+    # 自动认领到申请人名下：申请→签发→归属一步到位，OEM 无需再手动认领
+    s.add(NexusKeyClaim(key_id=issued["id"], oem_id=row.oem_id))
+    return _public_request(row)
+
+
+def clear_plain_by_key(s, raw_key: str) -> None:
+    """按明文 KEY 清空所有申请单里存的交付明文（实例兑换成功后调用，幂等）。"""
+    if not looks_like_key(raw_key):
+        return
+    key = s.execute(
+        select(NexusKey).where(NexusKey.key_hash == hash_key(raw_key))
+    ).scalar_one_or_none()
+    if key is None:
+        return
+    for r in s.execute(
+        select(NexusKeyRequest).where(NexusKeyRequest.key_id == key.id)
+    ).scalars():
+        r.key_plain = ""
+
+
 def set_oem_status(s, oem_id: int, status: str) -> Dict[str, Any]:
     """超管停用/启用某个 OEM 账号（自助注册模式下的唯一管控抓手）。
 
@@ -317,6 +434,11 @@ __all__ = [
     "my_instances",
     "list_oems",
     "set_oem_status",
+    "request_key",
+    "my_requests",
+    "list_requests",
+    "decide_request",
+    "clear_plain_by_key",
     "owns_instance",
     "normalize_key",
 ]
