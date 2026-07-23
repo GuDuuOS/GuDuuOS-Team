@@ -119,7 +119,15 @@ async function load() {
   if (!cat) { loadError.value = true; return }
   items.value = cat.items
 }
-watch(visible, (v) => { if (v) { hint.value = ''; load() } })
+// 每次打开都回到干净状态(负责人报:再次进商城还留着上次的搜索词)——
+// q/active/hint 都是模块级单例(弹窗常驻不销毁),不显式重置就会带着上次的筛选进来。
+watch(visible, (v) => {
+  if (!v) return
+  q.value = ''
+  active.value = 'all'
+  hint.value = ''
+  load()
+})
 
 /** 「获取」：记入服务端(cosmac DB)——主 AI 名册立刻优先这些同事，我的AI工坊也能看到；
  *  随后给出在聊天里怎么用的指引。已获取的再点只重放指引。 */
