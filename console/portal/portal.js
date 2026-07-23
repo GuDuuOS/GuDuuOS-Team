@@ -160,9 +160,10 @@
     var cur = document.documentElement.dataset.theme === "light" ? "light" : "dark";
     applyTheme(cur === "light" ? "dark" : "light");
   });
+  // 默认白色(负责人 2026-07-23 拍板);仅明确切过暗色的用户保持暗色
   applyTheme((function () {
-    try { return localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark"; }
-    catch (e) { return "dark"; }
+    try { return localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light"; }
+    catch (e) { return "light"; }
   })());
 
   // ---------- OEM 门户 ----------
