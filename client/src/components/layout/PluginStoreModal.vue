@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { usePluginStore } from '@/composables/usePluginStore'
 import { PLUGIN_CAT_META, type PluginCat } from '@/data/pluginStore'
 
@@ -80,6 +80,9 @@ const cats: { key: CatKey; label: string }[] = [
 ]
 const active = ref<CatKey>('all')
 const q = ref('')
+// 每次打开回到干净状态(与 AI Agent 商城同口径):弹窗常驻不销毁,不重置会带着
+// 上次的搜索词/分类进来(负责人在 AI 商城实报过同款问题)。
+watch(visible, (v) => { if (v) { q.value = ''; active.value = 'all' } })
 
 const catLabel = (c: PluginCat) => PLUGIN_CAT_META[c].label
 const catColor = (c: PluginCat) => PLUGIN_CAT_META[c].color
