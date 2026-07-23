@@ -49,11 +49,15 @@ def remove_acquired(session: Session, *, user_id: str, kind: str, slug: str) -> 
 
 
 def list_acquired(session: Session, user_id: str) -> List[Tuple[str, str]]:
-    """列某用户全部已获取项,返回 [(kind, slug), ...](按获取先后)。"""
+    """列某用户全部已获取项,返回 [(kind, slug), ...]，**最近获取的在最前**。
+
+    倒序是「我的AI工坊 · 已获取」的展示需要(负责人建议:刚获取的排最前,不用往下翻)。
+    另两个调用方只用它做 set 判定与计数(配额),与顺序无关,故直接在这里定序。
+    """
     rows = session.execute(
         select(MarketAcquisition)
         .where(MarketAcquisition.user_id == user_id)
-        .order_by(MarketAcquisition.id)
+        .order_by(MarketAcquisition.id.desc())
     ).scalars()
     return [(r.kind, r.slug) for r in rows]
 
