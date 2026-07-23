@@ -9,7 +9,7 @@
         <button class="mp-close" title="关闭" @click="close">×</button>
       </div>
 
-      <div class="mp-body">
+      <div ref="bodyEl" class="mp-body">
         <!-- 编辑能力：给已有联系人(user_id 固定) 或 手动添加新人(user_id 可编辑) -->
         <div v-if="editing" class="mp-edit">
           <input v-if="adding" v-model.trim="form.user_id" class="mp-input"
@@ -66,8 +66,22 @@
 </template>
 
 <script setup lang="ts">
+import { nextTick, ref, watch } from 'vue'
 import { useMyPeople } from '@/composables/useMyPeople'
 const { visible, rows, loading, busy, editing, adding, errText, form, close, startEdit, startAdd, save, remove } = useMyPeople()
+
+// 滚动位置保持(负责人报:列表滑到中间,进「编辑能力」再取消,滚回顶部还得重新找人)。
+// 列表与编辑视图在同一滚动容器 .mp-body 里 v-if 切换——进编辑时列表销毁、返回时重建,
+// scrollTop 归零。进编辑前记下位置,退出编辑后 nextTick(DOM 重建完)恢复。
+const bodyEl = ref<HTMLElement>()
+let savedScroll = 0
+watch(editing, (v) => {
+  if (v) {
+    savedScroll = bodyEl.value?.scrollTop || 0
+  } else {
+    nextTick(() => { if (bodyEl.value) bodyEl.value.scrollTop = savedScroll })
+  }
+})
 </script>
 
 <style scoped>
