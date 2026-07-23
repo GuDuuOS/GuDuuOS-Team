@@ -175,6 +175,16 @@ label input { margin-top: 5px; }
 .inst-card .row b.low { color: var(--red); }
 .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
 
+/* —— 购买与充值 —— */
+.shop-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.shop-row:last-of-type { border-bottom: 0; }
+.shop-info b { display: block; font-size: 14px; }
+.shop-info small { color: var(--muted); font-size: 12.5px; }
+.shop-price { color: var(--orange); font-family: var(--mono); font-size: 17px; font-weight: 700; margin-right: 10px; }
+.shop-actions { display: inline-flex; align-items: center; gap: 8px; }
+select { padding: 8px 10px; border-radius: 9px; color: var(--ink); background: var(--input-bg); border: 1px solid var(--line); font: inherit; }
+select:focus { outline: none; border-color: var(--orange); }
+
 /* —— 签发结果 —— */
 .issued { border: 1px solid var(--orange); background: var(--issued-bg); border-radius: 10px; padding: 12px 15px; margin: 10px 0; font-size: 13px; }
 .issued pre { font-family: var(--mono); margin-top: 7px; user-select: all; line-height: 1.9; }

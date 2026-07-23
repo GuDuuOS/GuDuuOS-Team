@@ -167,8 +167,91 @@
   })());
 
   // ---------- OEM 门户 ----------
+  var CH_ZH = { alipay: "支付宝", wechat: "微信支付", mock: "模拟支付(开发)" };
+  function fmtYuan(cents) {
+    var y = (Number(cents) || 0) / 100;
+    return "¥" + (y % 1 ? y.toFixed(2) : String(y));
+  }
+
+  // 渲染「购买与充值」区（定价 + 渠道可用性 + 我的实例下拉）
+  function renderShop(products, instances) {
+    var pricing = products.pricing, ch = products.channels;
+    // 渠道按钮：可用=亮橙可点；未配凭据=灰禁用(开通中)
+    function chButtons(attr, extra) {
+      return ["alipay", "wechat", "mock"].filter(function (c) { return c !== "mock" || ch.mock; })
+        .map(function (c) {
+          var ok = !!ch[c];
+          return '<button class="' + (ok ? "primary" : "ghost") + ' small" ' + (ok ? "" : "disabled title=\"渠道开通中\" ") +
+            'data-' + attr + '="' + c + '"' + (extra || "") + ">" + CH_ZH[c] + (ok ? "" : "·开通中") + "</button>";
+        }).join("");
+    }
+    var keyOn = pricing.key_price_cents > 0;
+    var topupOn = pricing.topup_packs.length > 0 && instances.length > 0;
+    $("#shop-key").hidden = !keyOn;
+    if (keyOn) {
+      $("#shop-key-desc").textContent = "附赠 " + fmtTokens(pricing.key_token_grant) + " token · 付款后授权码即时出码";
+      $("#shop-key-btns").innerHTML = '<span class="shop-price">' + fmtYuan(pricing.key_price_cents) + "</span>" + chButtons("buykey");
+    }
+    $("#shop-topup").hidden = !topupOn;
+    if (topupOn) {
+      $("#topup-inst").innerHTML = instances.map(function (i) {
+        return '<option value="' + i.id + '">' + esc(i.domain) + "（余额 " + fmtTokens(i.balance_tokens) + "）</option>";
+      }).join("");
+      $("#topup-pack").innerHTML = pricing.topup_packs.map(function (p, idx) {
+        return '<option value="' + idx + '">' + fmtTokens(p.tokens) + " token · " + fmtYuan(p.cents) + "</option>";
+      }).join("");
+      $("#shop-topup-btns").innerHTML = chButtons("buytopup");
+    }
+    $("#shop-none").hidden = keyOn || topupOn;
+  }
+
+  // 渲染「我的订单」
+  var ORDER_ST = { pending: ["warning", "待支付"], paid: ["active", "已支付"], closed: ["idle", "已关闭"] };
+  function renderOrders(orders) {
+    $("#panel-orders").hidden = orders.length === 0;
+    $("#oem-orders tbody").innerHTML = orders.map(function (o) {
+      var st = ORDER_ST[o.status] || ["idle", o.status];
+      var what = o.kind === "key" ? "授权码 ×1" : "充值 " + fmtTokens(o.tokens) + "（实例 #" + o.instance_id + "）";
+      var keyCell = o.key ? '<b style="user-select:all">' + esc(o.key) + "</b>"
+        : (o.kind === "key" && o.status === "paid" ? '<span class="zh">已使用</span>' : "—");
+      return "<tr><td>" + esc(o.order_no) + '</td><td class="zh">' + what + "</td><td>" + fmtYuan(o.amount_cents) + "</td>" +
+        '<td class="zh">' + (CH_ZH[o.channel] || o.channel) + '</td><td class="zh"><span class="badge ' + st[0] + '">' + st[1] + "</span></td>" +
+        "<td>" + keyCell + "</td><td>" + fmtTime(o.created_ts) + "</td></tr>";
+    }).join("");
+  }
+
+  // 创建订单 → mock 渠道给"模拟支付"按钮；真渠道(接入后)按返回类型跳转/出码
+  function placeOrder(bodyData) {
+    api("/nexus/oem/order", { body: bodyData }).then(function (r) {
+      var box = $("#pay-pending");
+      $("#pay-pending-msg").textContent = r.order.order_no + "（" + fmtYuan(r.order.amount_cents) + "）";
+      box.hidden = false;
+      var mock = r.pay && r.pay.type === "mock";
+      var btn = $("#btn-mock-pay");
+      btn.hidden = !mock;
+      if (mock) btn.dataset.orderNo = r.order.order_no;
+      if (r.pay && r.pay.type === "url") window.open(r.pay.url, "_blank"); // 支付宝(接入后)
+      loadOem();
+    }).catch(function (err) { toast(err.message, true); });
+  }
+
+  $("#btn-mock-pay").addEventListener("click", function () {
+    var no = this.dataset.orderNo;
+    if (!no) return;
+    api("/nexus/pay/mock/confirm", { body: { order_no: no } })
+      .then(function (r) {
+        $("#pay-pending").hidden = true;
+        toast(r.order.kind === "key" ? "支付成功，授权码已发放到「我的订单」" : "支付成功，token 已到账");
+        loadOem();
+      })
+      .catch(function (err) { toast(err.message, true); });
+  });
+
   function loadOem() {
-    api("/nexus/oem/me").then(function (r) {
+    Promise.all([api("/nexus/oem/me"), api("/nexus/oem/products")]).then(function (rs) {
+      var r = rs[0];
+      renderShop(rs[1], r.instances);
+      renderOrders(r.orders || []);
       // 实例卡
       var box = $("#oem-instances");
       box.innerHTML = r.instances.map(function (i) {
@@ -230,9 +313,36 @@
       api("/nexus/admin/keys"),
       api("/nexus/admin/oems"),
       api("/nexus/admin/requests"),
+      api("/nexus/admin/pricing"),
+      api("/nexus/admin/orders"),
     ]).then(function (rs) {
       var insts = rs[0].instances, keys = rs[1].keys, oems = rs[2].oems;
       var reqs = rs[3].requests || [];
+      var pricing = rs[4].pricing, orders = rs[5].orders || [];
+
+      // 定价表单回填（仅在超管未编辑时覆盖,避免打字被刷新冲掉）
+      var pf = $("#form-pricing");
+      if (document.activeElement === null || !pf.contains(document.activeElement)) {
+        pf.key_yuan.value = (pricing.key_price_cents / 100) || 0;
+        pf.key_grant.value = pricing.key_token_grant;
+        if (document.activeElement !== $("#pricing-packs")) {
+          $("#pricing-packs").value = pricing.topup_packs.map(function (p) {
+            return (p.cents / 100) + ":" + p.tokens;
+          }).join("\n");
+        }
+      }
+
+      // 订单表（超管全量;无单隐藏）
+      $("#panel-admin-orders").hidden = orders.length === 0;
+      var oemEmailById = {};
+      oems.forEach(function (o) { oemEmailById[o.id] = o.email; });
+      $("#admin-orders tbody").innerHTML = orders.map(function (o) {
+        var st = ORDER_ST[o.status] || ["idle", o.status];
+        var what = o.kind === "key" ? "授权码" : "充值 " + fmtTokens(o.tokens);
+        return "<tr><td>" + esc(o.order_no) + "</td><td>" + esc(oemEmailById[o.oem_id] || "#" + o.oem_id) + "</td>" +
+          '<td class="zh">' + what + "</td><td>" + fmtYuan(o.amount_cents) + '</td><td class="zh">' + (CH_ZH[o.channel] || o.channel) + "</td>" +
+          '<td class="zh"><span class="badge ' + st[0] + '">' + st[1] + "</span></td><td>" + fmtTime(o.created_ts) + "</td></tr>";
+      }).join("");
 
       // 待处理申请（无申请时整个面板隐藏，不占版面）
       $("#panel-requests").hidden = reqs.length === 0;
@@ -289,6 +399,32 @@
 
   $("#btn-refresh").addEventListener("click", loadAdmin);
 
+  // 定价保存：packs 文本每行 "元:token"，空行忽略；格式错就地报错不提交
+  $("#form-pricing").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var f = e.target;
+    var packs = [];
+    var lines = $("#pricing-packs").value.split("\n");
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i].trim();
+      if (!ln) continue;
+      var m = ln.split(":");
+      var yuan = Number(m[0]), tokens = Number(m[1]);
+      if (m.length !== 2 || !(yuan > 0) || !(tokens > 0)) {
+        return toast("充值包第 " + (i + 1) + " 行格式应为 元:token数（如 99:50000000）", true);
+      }
+      packs.push({ cents: Math.round(yuan * 100), tokens: tokens });
+    }
+    api("/nexus/admin/pricing", {
+      body: {
+        key_price_cents: Math.round(Number(f.key_yuan.value || 0) * 100),
+        key_token_grant: Number(f.key_grant.value || 0),
+        topup_packs: packs,
+      },
+    }).then(function () { toast("定价已保存，即刻生效"); loadAdmin(); })
+      .catch(function (err) { toast(err.message, true); });
+  });
+
   // 签发 KEY：明文只回显一次
   $("#form-issue").addEventListener("submit", function (e) {
     e.preventDefault();
@@ -323,6 +459,17 @@
       api("/nexus/admin/topup", { body: { instance_id: Number(t.dataset.topup), tokens: n, note: "控制台手动充值" } })
         .then(function (r) { toast("充值成功，新余额 " + fmtTokens(r.balance_tokens)); loadAdmin(); })
         .catch(function (err) { toast(err.message, true); });
+    }
+    if (t.dataset && t.dataset.buykey) {
+      placeOrder({ kind: "key", channel: t.dataset.buykey });
+    }
+    if (t.dataset && t.dataset.buytopup) {
+      placeOrder({
+        kind: "topup",
+        channel: t.dataset.buytopup,
+        instance_id: Number($("#topup-inst").value),
+        pack_index: Number($("#topup-pack").value),
+      });
     }
     if (t.dataset && t.dataset.approve) {
       var rid = t.dataset.approve;

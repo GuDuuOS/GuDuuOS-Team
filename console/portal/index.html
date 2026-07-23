@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
 <script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=2" />
+<link rel="stylesheet" href="/portal/portal.css?v=3" />
 </head>
 <body>
 <!--
@@ -76,6 +76,41 @@
     <div class="panel-head"><h2>我的实例</h2></div>
     <div id="oem-instances" class="cards"></div>
     <p id="oem-noinst" class="empty" hidden>还没有已开通的实例——认领授权码后，在你的服务器上运行安装命令即可开通。</p>
+  </section>
+
+  <section class="panel" id="panel-shop">
+    <div class="panel-head"><h2>购买与充值</h2></div>
+    <div id="shop-key" class="shop-row" hidden>
+      <div class="shop-info">
+        <b>GuDuu OS 授权码（买断 · 永久含升级）</b>
+        <small id="shop-key-desc"></small>
+      </div>
+      <div class="shop-actions" id="shop-key-btns"></div>
+    </div>
+    <div id="shop-topup" class="shop-row" hidden>
+      <div class="shop-info">
+        <b>Token 充值</b>
+        <small>为你的实例补充 AI 用量（余额耗尽 AI 服务会暂停）</small>
+      </div>
+      <div class="inline-form" id="shop-topup-form">
+        <select id="topup-inst"></select>
+        <select id="topup-pack"></select>
+        <span class="shop-actions" id="shop-topup-btns"></span>
+      </div>
+    </div>
+    <p id="shop-none" class="empty" hidden>在线购买暂未开放——请使用下方「申请授权码」，或联系 GuDuu 商务。</p>
+    <div id="pay-pending" class="issued" hidden>
+      <b>订单已创建：</b><span id="pay-pending-msg"></span>
+      <div style="margin-top:8px"><button id="btn-mock-pay" class="primary" hidden>模拟支付成功（开发环境）</button></div>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-orders" hidden>
+    <div class="panel-head"><h2>我的订单</h2></div>
+    <table class="tbl" id="oem-orders">
+      <thead><tr><th>订单号</th><th>内容</th><th>金额</th><th>渠道</th><th>状态</th><th>授权码</th><th>时间</th></tr></thead>
+      <tbody></tbody>
+    </table>
   </section>
 
   <section class="panel">
@@ -155,6 +190,27 @@
   </section>
 
   <section class="panel">
+    <div class="panel-head"><h2>定价设置（在线购买）</h2></div>
+    <form id="form-pricing" class="inline-form">
+      <label style="margin:0">授权码价格（元，0=不开放在线购买）<input name="key_yuan" type="number" min="0" step="0.01" style="width:150px" /></label>
+      <label style="margin:0">附赠 Token<input name="key_grant" type="number" min="0" style="width:150px" /></label>
+      <button class="primary">保存</button>
+    </form>
+    <label>充值包（每行一档：<code>元:token数</code>，如 <code>99:50000000</code>）
+      <textarea id="pricing-packs" rows="3" style="width:100%;font-family:var(--mono);background:var(--input-bg);color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:9px 12px"></textarea>
+    </label>
+    <p class="hint">保存后立即生效；支付宝/微信渠道在凭据配置到服务器后自动亮起（当前可用渠道见门户购买区）。</p>
+  </section>
+
+  <section class="panel" id="panel-admin-orders" hidden>
+    <div class="panel-head"><h2>订单</h2></div>
+    <table class="tbl" id="admin-orders">
+      <thead><tr><th>订单号</th><th>客户</th><th>内容</th><th>金额</th><th>渠道</th><th>状态</th><th>时间</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="panel">
     <div class="panel-head"><h2>OEM 客户</h2></div>
     <table class="tbl" id="admin-oems">
       <thead><tr><th>#</th><th>邮箱</th><th>称呼</th><th>邀请人</th><th>状态</th><th>认领 KEY</th><th>注册时间</th><th>操作</th></tr></thead>
@@ -165,6 +221,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=7"></script>
+<script src="/portal/portal.js?v=8"></script>
 </body>
 </html>

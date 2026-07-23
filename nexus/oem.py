@@ -430,7 +430,7 @@ def decide_request(
 
 
 def clear_plain_by_key(s, raw_key: str) -> None:
-    """按明文 KEY 清空所有申请单里存的交付明文（实例兑换成功后调用，幂等）。"""
+    """按明文 KEY 清空交付明文（申请单 + 订单，实例兑换成功后调用，幂等）。"""
     if not looks_like_key(raw_key):
         return
     key = s.execute(
@@ -442,6 +442,9 @@ def clear_plain_by_key(s, raw_key: str) -> None:
         select(NexusKeyRequest).where(NexusKeyRequest.key_id == key.id)
     ).scalars():
         r.key_plain = ""
+    # 在线购买的订单同策略销毁明文（延迟导入避免 oem↔pay 环）
+    from nexus import pay
+    pay.clear_order_plain_by_key_id(s, key.id)
 
 
 def set_oem_status(s, oem_id: int, status: str) -> Dict[str, Any]:

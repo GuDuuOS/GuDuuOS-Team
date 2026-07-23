@@ -32,7 +32,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict
 
-from nexus import db, fleet, oem as oem_svc
+from nexus import db, fleet, oem as oem_svc, pay
 from nexus.fleet import FleetError
 
 logger = logging.getLogger("nexus.service")
@@ -205,9 +205,34 @@ class NexusHandler(BaseHTTPRequestHandler):
                         "instances": oem_svc.my_instances(s, oem.id),
                         "keys": oem_svc.my_keys(s, oem.id),
                         "requests": oem_svc.my_requests(s, oem.id),
+                        "orders": pay.my_orders(s, oem.id),
                     },
                 )
             self._with_session(_me)
+            return
+        # —— 商品与渠道（登录后查询：定价 + 各渠道可用性）——
+        if path == "/nexus/oem/products":
+            def _products(s):
+                oem = self._oem(s)
+                if oem is None:
+                    return
+                self._json(
+                    200,
+                    {"pricing": pay.get_pricing(s), "channels": pay.channels(s)},
+                )
+            self._with_session(_products)
+            return
+        if path == "/nexus/admin/orders":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(200, {"orders": pay.list_orders(s)})
+                )
+            return
+        if path == "/nexus/admin/pricing":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(200, {"pricing": pay.get_pricing(s)})
+                )
             return
         if path == "/nexus/admin/requests":
             if self._check_admin():
@@ -394,6 +419,66 @@ class NexusHandler(BaseHTTPRequestHandler):
                     {"request": oem_svc.request_key(s, oem.id, str(body.get("note", "")))},
                 )
             self._with_session(_req)
+            return
+
+        # —— 在线购买/充值（订单创建；topup 校验实例归属）——
+        if path == "/nexus/oem/order":
+            def _order(s):
+                oem = self._oem(s)
+                if oem is None:
+                    return
+                kind = str(body.get("kind", ""))
+                inst = body.get("instance_id")
+                if kind == "topup" and not oem_svc.owns_instance(s, oem.id, int(inst or 0)):
+                    self._err(403, "NEXUS_FORBIDDEN", "该实例不属于你的账号")
+                    return
+                self._json(
+                    200,
+                    pay.create_order(
+                        s,
+                        oem.id,
+                        kind,
+                        str(body.get("channel", "")),
+                        instance_id=int(inst) if inst else None,
+                        pack_index=int(body.get("pack_index", -1)),
+                    ),
+                )
+            self._with_session(_order)
+            return
+
+        # mock 渠道确认（仅 NEXUS_PAY_MOCK=1 环境；买家本人对自己的单确认）
+        if path == "/nexus/pay/mock/confirm":
+            def _mock(s):
+                if os.environ.get("NEXUS_PAY_MOCK", "").strip() != "1":
+                    self._err(404, "NEXUS_UNKNOWN", "未知端点")
+                    return
+                oem = self._oem(s)
+                if oem is None:
+                    return
+                order = pay.get_order_for(s, oem.id, str(body.get("order_no", "")))
+                self._json(200, {"order": pay.mark_paid(s, order.order_no, "MOCK")})
+            self._with_session(_mock)
+            return
+
+        # 支付渠道异步回调（骨架：验签在 provider 内，API 接入前一律 503）
+        if path in ("/nexus/pay/notify/alipay", "/nexus/pay/notify/wechat"):
+            channel = path.rsplit("/", 1)[-1]
+            def _notify(s):
+                provider = pay._PROVIDERS[channel]
+                info = provider.verify_notify(dict(self.headers), b"")
+                pay.mark_paid(s, info["order_no"], info.get("provider_txn", ""))
+                # 支付宝要求回 success 文本；这里统一 JSON,接真 API 时按渠道要求调整
+                self._json(200, {"ok": True})
+            self._with_session(_notify)
+            return
+
+        if path == "/nexus/admin/pricing":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200, {"pricing": pay.set_pricing(s, body)}
+                    )
+                )
             return
 
         if path == "/nexus/admin/request_decide":

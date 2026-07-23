@@ -154,6 +154,54 @@ class NexusSession(Base):
     expires_ts = Column(BigInteger, nullable=False)
 
 
+class NexusSetting(Base):
+    """母舰级键值配置（首个用户：商品定价 pricing）。
+
+    为什么不用 env：定价要超管在控制台随时改、改了立即生效，env 改一次要
+    登服务器重启——运营动作必须进 DB。v 存 JSON 文本。
+    """
+
+    __tablename__ = "nexus_setting"
+
+    k = Column(String(64), primary_key=True)
+    v = Column(Text, nullable=False, default="{}")
+    updated_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
+class NexusOrder(Base):
+    """支付订单（模块6 P3：KEY 在线购买 / token 在线充值）。
+
+    负责人 2026-07-23 拍板：国内市场，渠道=支付宝+微信（Stripe/PayPal 不做）；
+    真实渠道 API 待接（1~2 天后），先落订单闭环 + mock 通道全链路可测。
+    金额单位：人民币**分**（整数，杜绝浮点）。
+    """
+
+    __tablename__ = "nexus_order"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # 商户订单号（我们生成，传给支付渠道；回调按它定位订单）
+    order_no = Column(String(40), nullable=False, unique=True, index=True)
+    oem_id = Column(Integer, nullable=False, index=True)
+    # key=买断授权码 / topup=token 充值
+    kind = Column(String(16), nullable=False)
+    # 充值目标实例（kind=topup 时必填；kind=key 为空）
+    instance_id = Column(Integer, nullable=True, default=None)
+    # alipay / wechat / mock（mock 仅 NEXUS_PAY_MOCK=1 的环境可用）
+    channel = Column(String(16), nullable=False)
+    amount_cents = Column(BigInteger, nullable=False)
+    # 本单对应的 token 量（key=附赠额度；topup=充值额度）
+    tokens = Column(BigInteger, nullable=False, default=0)
+    # pending=待支付 / paid=已支付（业务已履约）/ closed=关闭
+    status = Column(String(16), nullable=False, default="pending")
+    # kind=key 履约后：签发的 KEY 与交付明文（与申请单同策略：装机兑换后清空）
+    key_id = Column(Integer, nullable=True, default=None)
+    key_plain = Column(String(64), nullable=False, default="")
+    # 渠道流水号（支付回调带回，对账用）
+    provider_txn = Column(String(128), nullable=False, default="")
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    paid_ts = Column(BigInteger, nullable=True, default=None)
+
+
 class NexusOemInvite(Base):
     """OEM 邀请关系边（分销层级树，大屏"星球图"的数据源）。
 
