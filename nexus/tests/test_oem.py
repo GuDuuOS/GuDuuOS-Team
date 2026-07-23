@@ -50,7 +50,7 @@ class OemAccountTest(unittest.TestCase):
         os.unlink(self._tmp.name)
 
     def test_register_and_login(self):
-        pub = oem.register(self.s, "A@Example.com ", "abc12345", "张三", inviter="GUDUU")
+        pub = oem.register(self.s, "A@Example.com ", "abc12345", "张三", inviter="GUDUU", company="测试公司", contact_name="张三", phone="13800000000")
         # 邮箱归一化为小写、去空白；返回不含密码
         self.assertEqual(pub["email"], "a@example.com")
         self.assertEqual(pub["name"], "张三")
@@ -65,16 +65,16 @@ class OemAccountTest(unittest.TestCase):
         self.assertEqual(who.id, pub["id"])
 
     def test_register_rejects_dup_and_bad_input(self):
-        oem.register(self.s, "dup@example.com", "abc12345", inviter="GUDUU")
+        oem.register(self.s, "dup@example.com", "abc12345", inviter="GUDUU", company="测试公司", contact_name="张三", phone="13800000000")
         with self.assertRaises(FleetError):
-            oem.register(self.s, "dup@example.com", "abc12345", inviter="GUDUU")  # 邮箱重复
+            oem.register(self.s, "dup@example.com", "abc12345", inviter="GUDUU", company="测试公司", contact_name="张三", phone="13800000000")  # 邮箱重复
         with self.assertRaises(FleetError):
-            oem.register(self.s, "not-an-email", "abc12345", inviter="GUDUU")      # 邮箱非法
+            oem.register(self.s, "not-an-email", "abc12345", inviter="GUDUU", company="测试公司", contact_name="张三", phone="13800000000")      # 邮箱非法
         with self.assertRaises(FleetError):
-            oem.register(self.s, "b@example.com", "123", inviter="GUDUU")          # 弱密码
+            oem.register(self.s, "b@example.com", "123", inviter="GUDUU", company="测试公司", contact_name="张三", phone="13800000000")          # 弱密码
 
     def test_login_wrong_password(self):
-        oem.register(self.s, "c@example.com", "abc12345", inviter="GUDUU")
+        oem.register(self.s, "c@example.com", "abc12345", inviter="GUDUU", company="测试公司", contact_name="张三", phone="13800000000")
         with self.assertRaises(FleetError):
             oem.login(self.s, "c@example.com", "nope1234")
         # 不存在的邮箱与密码错误返回同一错误（不泄露账号是否存在）
@@ -82,14 +82,14 @@ class OemAccountTest(unittest.TestCase):
             oem.login(self.s, "ghost@example.com", "abc12345")
 
     def test_logout_invalidates_session(self):
-        oem.register(self.s, "d@example.com", "abc12345", inviter="GUDUU")
+        oem.register(self.s, "d@example.com", "abc12345", inviter="GUDUU", company="测试公司", contact_name="张三", phone="13800000000")
         token = oem.login(self.s, "d@example.com", "abc12345")["token"]
         self.assertIsNotNone(oem.resolve_session(self.s, token))
         oem.logout(self.s, token)
         self.assertIsNone(oem.resolve_session(self.s, token))
 
     def test_set_oem_status(self):
-        pub = oem.register(self.s, "f@example.com", "abc12345", inviter="GUDUU")
+        pub = oem.register(self.s, "f@example.com", "abc12345", inviter="GUDUU", company="测试公司", contact_name="张三", phone="13800000000")
         token = oem.login(self.s, "f@example.com", "abc12345")["token"]
         # 超管停用：会话立即失效、不能再登录
         out = oem.set_oem_status(self.s, pub["id"], "disabled")
@@ -107,7 +107,7 @@ class OemAccountTest(unittest.TestCase):
             oem.set_oem_status(self.s, 99999, "disabled")
 
     def test_disabled_account_cannot_login(self):
-        pub = oem.register(self.s, "e@example.com", "abc12345", inviter="GUDUU")
+        pub = oem.register(self.s, "e@example.com", "abc12345", inviter="GUDUU", company="测试公司", contact_name="张三", phone="13800000000")
         token = oem.login(self.s, "e@example.com", "abc12345")["token"]
         # 平台停用账号后：已有会话失效 + 无法再登录
         row = self.s.get(db.NexusOem, pub["id"])
@@ -127,8 +127,8 @@ class OemScopingTest(unittest.TestCase):
         db.init_engine("sqlite:///" + self._tmp.name)
         self.s = db.session()
         # 两个 OEM
-        self.a = oem.register(self.s, "a@x.com", "abc12345", inviter="GUDUU")["id"]
-        self.b = oem.register(self.s, "b@x.com", "abc12345", inviter="GUDUU")["id"]
+        self.a = oem.register(self.s, "a@x.com", "abc12345", inviter="GUDUU", company="测试公司", contact_name="张三", phone="13800000000")["id"]
+        self.b = oem.register(self.s, "b@x.com", "abc12345", inviter="GUDUU", company="测试公司", contact_name="张三", phone="13800000000")["id"]
 
     def tearDown(self):
         self.s.close()
@@ -213,20 +213,20 @@ class InviteTest(unittest.TestCase):
     def test_inviter_required_and_validated(self):
         # 不填 → 拒
         with self.assertRaises(FleetError):
-            oem.register(self.s, "a@x.com", "abc12345")
+            oem.register(self.s, "a@x.com", "abc12345", company="测试公司", contact_name="张三", phone="13800000000")
         # 填了不存在的 → 拒(填错不能注册)
         with self.assertRaises(FleetError):
-            oem.register(self.s, "a@x.com", "abc12345", inviter="ghost@x.com")
+            oem.register(self.s, "a@x.com", "abc12345", inviter="ghost@x.com", company="测试公司", contact_name="张三", phone="13800000000")
         # 官方码不分大小写 → 平台直属
-        pub = oem.register(self.s, "a@x.com", "abc12345", inviter="guduu")
+        pub = oem.register(self.s, "a@x.com", "abc12345", inviter="guduu", company="测试公司", contact_name="张三", phone="13800000000")
         edge = self.s.get(db.NexusOemInvite, pub["id"])
         self.assertIsNotNone(edge)
         self.assertIsNone(edge.inviter_id)
 
     def test_downline_chain_recorded(self):
-        top = oem.register(self.s, "top@x.com", "abc12345", inviter="GUDUU")
+        top = oem.register(self.s, "top@x.com", "abc12345", inviter="GUDUU", company="测试公司", contact_name="张三", phone="13800000000")
         # 下线填上线邮箱(大小写/空白容错)
-        sub = oem.register(self.s, "sub@x.com", "abc12345", inviter=" Top@X.com ")
+        sub = oem.register(self.s, "sub@x.com", "abc12345", inviter=" Top@X.com ", company="测试公司", contact_name="张三", phone="13800000000")
         edge = self.s.get(db.NexusOemInvite, sub["id"])
         self.assertEqual(edge.inviter_id, top["id"])
         # 超管列表能看到层级展示名
@@ -235,10 +235,81 @@ class InviteTest(unittest.TestCase):
         self.assertEqual(rows["top@x.com"]["inviter"], "GuDuu")
 
     def test_disabled_inviter_cannot_recruit(self):
-        top = oem.register(self.s, "t2@x.com", "abc12345", inviter="GUDUU")
+        top = oem.register(self.s, "t2@x.com", "abc12345", inviter="GUDUU", company="测试公司", contact_name="张三", phone="13800000000")
         oem.set_oem_status(self.s, top["id"], "disabled")
         with self.assertRaises(FleetError):
-            oem.register(self.s, "s2@x.com", "abc12345", inviter="t2@x.com")
+            oem.register(self.s, "s2@x.com", "abc12345", inviter="t2@x.com", company="测试公司", contact_name="张三", phone="13800000000")
+
+
+class ProfileAndFilesTest(unittest.TestCase):
+    """客户档案(注册强制三项)与合同附件(上传/下载/删除/白名单/上限)。"""
+
+    def setUp(self):
+        self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self._tmp.close()
+        db.init_engine("sqlite:///" + self._tmp.name)
+        self.s = db.session()
+
+    def tearDown(self):
+        self.s.close()
+        os.unlink(self._tmp.name)
+
+    def test_profile_required_on_register(self):
+        # 缺任意一项都拒
+        with self.assertRaises(FleetError):
+            oem.register(self.s, "p1@x.com", "abc12345", inviter="GUDUU",
+                         contact_name="张三", phone="13800000000")  # 缺企业
+        with self.assertRaises(FleetError):
+            oem.register(self.s, "p1@x.com", "abc12345", inviter="GUDUU",
+                         company="星辰传媒", phone="13800000000")   # 缺联系人
+        with self.assertRaises(FleetError):
+            oem.register(self.s, "p1@x.com", "abc12345", inviter="GUDUU",
+                         company="星辰传媒", contact_name="张三")   # 缺联系方式
+        pub = oem.register(self.s, "p1@x.com", "abc12345", inviter="GUDUU",
+                           company="星辰传媒", contact_name="张三", phone="13800000000")
+        # 档案落库 + 显示名默认取企业名
+        detail = oem.oem_detail(self.s, pub["id"])
+        self.assertEqual(detail["company"], "星辰传媒")
+        self.assertEqual(detail["contact_name"], "张三")
+        self.assertEqual(detail["phone"], "13800000000")
+        self.assertFalse(detail["profile_missing"])
+        self.assertEqual(pub["name"], "星辰传媒")
+
+    def test_admin_note_and_detail_summary(self):
+        pub = oem.register(self.s, "p2@x.com", "abc12345", inviter="GUDUU",
+                           company="测试公司", contact_name="李四", phone="13900000000")
+        oem.set_admin_note(self.s, pub["id"], "重点客户,谈到 8 折")
+        d = oem.oem_detail(self.s, pub["id"])
+        self.assertEqual(d["admin_note"], "重点客户,谈到 8 折")
+        self.assertEqual(d["inviter"], "GuDuu")
+        self.assertEqual(d["keys"], [])
+        with self.assertRaises(FleetError):
+            oem.oem_detail(self.s, 99999)
+
+    def test_contract_files(self):
+        pub = oem.register(self.s, "p3@x.com", "abc12345", inviter="GUDUU",
+                           company="测试公司", contact_name="王五", phone="13700000000")
+        # 白名单外扩展名拒;空内容拒;超限拒
+        with self.assertRaises(FleetError):
+            oem.add_oem_file(self.s, pub["id"], "evil.exe", "app/x", b"x")
+        with self.assertRaises(FleetError):
+            oem.add_oem_file(self.s, pub["id"], "c.pdf", "application/pdf", b"")
+        with self.assertRaises(FleetError):
+            oem.add_oem_file(self.s, pub["id"], "big.pdf", "application/pdf",
+                             b"x" * (oem.FILE_MAX_BYTES + 1))
+        # 正常上传(路径注入被掐成纯文件名)
+        f = oem.add_oem_file(self.s, pub["id"], "../../合同2026.pdf",
+                             "application/pdf", b"%PDF-1.4 fake")
+        self.assertEqual(f["filename"], "合同2026.pdf")
+        d = oem.oem_detail(self.s, pub["id"])
+        self.assertEqual(len(d["files"]), 1)
+        self.assertEqual(d["files"][0]["size"], len(b"%PDF-1.4 fake"))
+        # 下载内容一致;删除后消失(幂等)
+        row = oem.get_oem_file(self.s, f["id"])
+        self.assertEqual(bytes(row.data), b"%PDF-1.4 fake")
+        oem.delete_oem_file(self.s, f["id"])
+        oem.delete_oem_file(self.s, f["id"])
+        self.assertEqual(oem.oem_detail(self.s, pub["id"])["files"], [])
 
 
 class KeyRequestTest(unittest.TestCase):
@@ -249,7 +320,7 @@ class KeyRequestTest(unittest.TestCase):
         self._tmp.close()
         db.init_engine("sqlite:///" + self._tmp.name)
         self.s = db.session()
-        self.a = oem.register(self.s, "a@x.com", "abc12345", inviter="GUDUU")["id"]
+        self.a = oem.register(self.s, "a@x.com", "abc12345", inviter="GUDUU", company="测试公司", contact_name="张三", phone="13800000000")["id"]
 
     def tearDown(self):
         self.s.close()

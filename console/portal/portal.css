@@ -189,6 +189,27 @@ select:focus { outline: none; border-color: var(--orange); }
 .issued { border: 1px solid var(--orange); background: var(--issued-bg); border-radius: 10px; padding: 12px 15px; margin: 10px 0; font-size: 13px; }
 .issued pre { font-family: var(--mono); margin-top: 7px; user-select: all; line-height: 1.9; }
 
+/* —— 客户详情弹窗 —— */
+.mask { position: fixed; inset: 0; background: rgba(10, 8, 7, .48); display: grid; place-items: center; z-index: 8; }
+.modal {
+  width: 680px; max-width: 94vw; max-height: 86vh; overflow: auto;
+  background: var(--panel-strong); border: 1px solid var(--line);
+  border-radius: 16px; padding: 22px 24px; backdrop-filter: blur(10px);
+}
+.modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.modal-head b { font-size: 16px; }
+.modal-sec { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.modal-sec h3 { font-size: 13.5px; margin-bottom: 8px; color: var(--muted); font-weight: 600; }
+.kv { display: grid; grid-template-columns: 96px 1fr 96px 1fr; gap: 6px 10px; font-size: 13px; }
+.kv small { color: var(--muted); }
+.kv b { font-weight: 500; word-break: break-all; }
+.file-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.file-row:last-child { border-bottom: 0; }
+.file-row .fname { flex: 1; word-break: break-all; }
+.file-row small { color: var(--muted); white-space: nowrap; }
+textarea { width: 100%; font: inherit; color: var(--ink); background: var(--input-bg); border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px; }
+textarea:focus { outline: none; border-color: var(--orange); }
+
 /* —— toast —— */
 .toast {
   position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%);

@@ -50,12 +50,14 @@
     </form>
 
     <form id="form-oem-reg" class="pane" data-pane="oem-reg" hidden>
-      <label>公司 / 称呼<input name="name" type="text" placeholder="例：星辰传媒" /></label>
+      <label>企业 / 团队名称<input name="company" type="text" required placeholder="例：星辰传媒有限公司" /></label>
+      <label>联系人姓名<input name="contact_name" type="text" required placeholder="真实姓名" /></label>
+      <label>联系方式<input name="phone" type="text" required placeholder="手机号 / 微信号" /></label>
       <label>邮箱<input name="email" type="email" autocomplete="username" required placeholder="you@company.com" /></label>
       <label>密码<input name="password" type="password" autocomplete="new-password" required placeholder="至少 8 位，含字母和数字" /></label>
       <label>邀请人邮箱<input name="inviter" type="text" required placeholder="邀请你的合作伙伴邮箱" /></label>
       <button class="primary">注册并登录</button>
-      <p class="hint">邀请人必须是已注册的合作伙伴（填错无法注册）；GuDuu 平台直接客户填 <b>GUDUU</b>。</p>
+      <p class="hint">以上信息均为必填。邀请人必须是已注册的合作伙伴（填错无法注册）；GuDuu 平台直接客户填 <b>GUDUU</b>。</p>
     </form>
 
     <form id="form-admin" class="pane" data-pane="admin" hidden>
@@ -219,8 +221,30 @@
   </section>
 </main>
 
+<!-- 客户详情弹窗（超管）：档案 / 资产汇总 / 合同附件 / 备注 -->
+<div id="detail-mask" class="mask" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <b id="dt-title">客户详情</b>
+      <button id="dt-close" class="ghost small">关闭</button>
+    </div>
+    <div class="kv" id="dt-kv"></div>
+    <div class="modal-sec"><h3>合同 / 附件</h3>
+      <div id="dt-files"></div>
+      <div class="inline-form" style="margin-top:8px">
+        <input id="dt-upload" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.zip" />
+      </div>
+      <p class="hint">支持 pdf / word / excel / 图片 / zip，单个 20MB 以内；文件存于母舰数据库，随库备份。</p>
+    </div>
+    <div class="modal-sec"><h3>备注（客户不可见）</h3>
+      <textarea id="dt-note" rows="3"></textarea>
+      <div style="margin-top:8px"><button id="dt-note-save" class="primary">保存备注</button></div>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=8"></script>
+<script src="/portal/portal.js?v=9"></script>
 </body>
 </html>

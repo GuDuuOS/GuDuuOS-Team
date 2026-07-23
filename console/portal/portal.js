@@ -134,7 +134,10 @@
     e.preventDefault();
     var f = e.target;
     var email = f.email.value, pw = f.password.value;
-    api("/nexus/oem/register", { body: { email: email, password: pw, name: f.name.value, inviter: f.inviter.value }, noKick: true })
+    api("/nexus/oem/register", { body: {
+      email: email, password: pw, inviter: f.inviter.value,
+      company: f.company.value, contact_name: f.contact_name.value, phone: f.phone.value,
+    }, noKick: true })
       .then(function () { return api("/nexus/oem/login", { body: { email: email, password: pw }, noKick: true }); })
       .then(function (r) { setAuth({ mode: "oem", token: r.token, email: r.oem.email }); toast("注册成功，欢迎！"); route(); })
       .catch(function (err) { loginErr(err.message); });
@@ -392,12 +395,87 @@
           "<td>" + inviter + "</td>" +
           '<td class="zh"><span class="badge ' + (on ? "active" : "disabled") + '">' + (on ? "正常" : "停用") + "</span></td>" +
           "<td>" + o.keys_claimed + "</td><td>" + fmtTime(o.created_ts) + "</td>" +
-          '<td class="zh"><button class="ghost small" data-oemstatus="' + o.id + '" data-tostatus="' + (on ? "disabled" : "active") + '" data-email="' + esc(o.email) + '">' + (on ? "停用" : "启用") + "</button></td></tr>";
+          '<td class="zh"><button class="ghost small" data-detail="' + o.id + '">详情</button> ' +
+          '<button class="ghost small" data-oemstatus="' + o.id + '" data-tostatus="' + (on ? "disabled" : "active") + '" data-email="' + esc(o.email) + '">' + (on ? "停用" : "启用") + "</button></td></tr>";
       }).join("") || '<tr><td colspan="8" class="zh empty">暂无注册客户</td></tr>';
     }).catch(function (err) { toast(err.message, true); });
   }
 
   $("#btn-refresh").addEventListener("click", loadAdmin);
+
+  // ---------- 客户详情弹窗（档案/资产/合同附件/备注） ----------
+  var detailOemId = 0; // 当前弹窗对应的客户 id
+
+  function fmtSize(n) {
+    n = Number(n) || 0;
+    if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";
+    if (n >= 1024) return Math.round(n / 1024) + " KB";
+    return n + " B";
+  }
+
+  function openDetail(oemId) {
+    detailOemId = oemId;
+    api("/nexus/admin/oem_detail?oem_id=" + oemId).then(function (d) {
+      $("#dt-title").textContent = (d.company || d.email) + "（#" + d.id + "）";
+      var rows = [
+        ["企业名称", d.company || (d.profile_missing ? "未补录(历史账号)" : "—")],
+        ["联系人", d.contact_name || "—"],
+        ["联系方式", d.phone || "—"],
+        ["登录邮箱", d.email],
+        ["邀请人", d.inviter],
+        ["注册时间", fmtTime(d.created_ts)],
+        ["账号状态", d.status === "active" ? "正常" : "停用"],
+        ["授权码", d.keys.length + " 把"],
+        ["实例", d.instances.map(function (i) { return i.domain; }).join("、") || "未开通"],
+        ["钱包余额", fmtTokens(d.balance_total) + " token"],
+      ];
+      $("#dt-kv").innerHTML = rows.map(function (r) {
+        return "<small>" + r[0] + "</small><b>" + esc(String(r[1])) + "</b>";
+      }).join("");
+      $("#dt-files").innerHTML = d.files.map(function (f) {
+        return '<div class="file-row"><span class="fname">' + esc(f.filename) + "</span>" +
+          "<small>" + fmtSize(f.size) + " · " + fmtTime(f.uploaded_ts) + "</small>" +
+          '<span><button class="ghost small" data-dlfile="' + f.id + '" data-fname="' + esc(f.filename) + '">下载</button> ' +
+          '<button class="ghost small" data-delfile="' + f.id + '">删除</button></span></div>';
+      }).join("") || '<p class="empty">尚未上传任何附件</p>';
+      $("#dt-note").value = d.admin_note || "";
+      $("#detail-mask").hidden = false;
+    }).catch(function (err) { toast(err.message, true); });
+  }
+
+  $("#dt-close").addEventListener("click", function () { $("#detail-mask").hidden = true; });
+  $("#detail-mask").addEventListener("click", function (e) {
+    if (e.target === this) this.hidden = true; // 点遮罩空白处关闭
+  });
+
+  // 上传：原始字节直传（Content-Type 带文件类型，文件名走 query 转义）
+  $("#dt-upload").addEventListener("change", function () {
+    var file = this.files && this.files[0];
+    this.value = "";
+    if (!file || !detailOemId) return;
+    if (file.size > 20 * 1048576) return toast("单个文件不能超过 20MB", true);
+    var auth = getAuth();
+    fetch(new URL("/nexus/admin/oem_upload?oem_id=" + detailOemId + "&filename=" + encodeURIComponent(file.name), window.location.origin).href, {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + (auth ? auth.token : ""),
+        "Content-Type": file.type || "application/octet-stream",
+      },
+      body: file,
+    }).then(function (res) { return res.json(); }).then(function (data) {
+      if (data.errcode) throw new Error(data.error);
+      toast("已上传 " + file.name);
+      openDetail(detailOemId); // 刷新附件列表
+    }).catch(function (err) { toast(err.message || "上传失败", true); });
+  });
+
+  // 备注保存
+  $("#dt-note-save").addEventListener("click", function () {
+    if (!detailOemId) return;
+    api("/nexus/admin/oem_note", { body: { oem_id: detailOemId, note: $("#dt-note").value } })
+      .then(function () { toast("备注已保存"); })
+      .catch(function (err) { toast(err.message, true); });
+  });
 
   // 定价保存：packs 文本每行 "元:token"，空行忽略；格式错就地报错不提交
   $("#form-pricing").addEventListener("submit", function (e) {
@@ -484,6 +562,32 @@
       if (reason === null) return; // 点了取消 = 中止，不是"空理由拒绝"
       api("/nexus/admin/request_decide", { body: { request_id: Number(t.dataset.reject), approve: false, decide_note: reason } })
         .then(function () { toast("已拒绝"); loadAdmin(); })
+        .catch(function (err) { toast(err.message, true); });
+    }
+    if (t.dataset && t.dataset.detail) {
+      openDetail(Number(t.dataset.detail));
+    }
+    if (t.dataset && t.dataset.dlfile) {
+      // 下载要带 Authorization 头,<a> 标签做不到 → fetch blob 转对象 URL
+      var authD = getAuth();
+      var fname = t.dataset.fname || "附件";
+      fetch(new URL("/nexus/admin/oem_file/" + t.dataset.dlfile, window.location.origin).href, {
+        headers: { "Authorization": "Bearer " + (authD ? authD.token : "") },
+      }).then(function (res) {
+        if (!res.ok) throw new Error("下载失败(" + res.status + ")");
+        return res.blob();
+      }).then(function (blob) {
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = fname;
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+      }).catch(function (err) { toast(err.message, true); });
+    }
+    if (t.dataset && t.dataset.delfile) {
+      if (!confirm("确认删除该附件？删除后不可恢复。")) return;
+      api("/nexus/admin/oem_file_delete", { body: { file_id: Number(t.dataset.delfile) } })
+        .then(function () { toast("已删除"); openDetail(detailOemId); })
         .catch(function (err) { toast(err.message, true); });
     }
     if (t.dataset && t.dataset.oemstatus) {

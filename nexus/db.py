@@ -18,6 +18,7 @@ from sqlalchemy import (
     Column,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     create_engine,
@@ -200,6 +201,40 @@ class NexusOrder(Base):
     provider_txn = Column(String(128), nullable=False, default="")
     created_ts = Column(BigInteger, nullable=False, default=_now_ms)
     paid_ts = Column(BigInteger, nullable=True, default=None)
+
+
+class NexusOemProfile(Base):
+    """OEM 客户档案（注册强制采集：企业/联系人/联系方式；超管详情页数据源）。
+
+    单开表而非给 nexus_oem 加列（无迁移框架，同 NexusKeyClaim 的理由）。
+    历史账号可能没有档案行——超管界面显示"未补录"。
+    """
+
+    __tablename__ = "nexus_oem_profile"
+
+    oem_id = Column(Integer, primary_key=True)  # = NexusOem.id
+    company = Column(String(160), nullable=False, default="")
+    contact_name = Column(String(80), nullable=False, default="")
+    # 联系方式：手机号/微信号/邮箱都接受，字符串不做强格式（跨国客户格式各异）
+    phone = Column(String(60), nullable=False, default="")
+    # 超管备注（谈判进展/特殊约定等，客户不可见）
+    admin_note = Column(Text, nullable=False, default="")
+    updated_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
+class NexusOemFile(Base):
+    """OEM 客户附件（合同等）。二进制直接进 DB——量级小（上百客户×几份 PDF），
+    换来单一 DB 备份即全量、零磁盘路径/权限运维。单文件上限见 service 层(20MB)。"""
+
+    __tablename__ = "nexus_oem_file"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    oem_id = Column(Integer, nullable=False, index=True)
+    filename = Column(String(255), nullable=False)
+    content_type = Column(String(120), nullable=False, default="application/octet-stream")
+    size = Column(BigInteger, nullable=False, default=0)
+    data = Column(LargeBinary, nullable=False)
+    uploaded_ts = Column(BigInteger, nullable=False, default=_now_ms)
 
 
 class NexusOemInvite(Base):

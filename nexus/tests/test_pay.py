@@ -21,7 +21,7 @@ class PayTest(unittest.TestCase):
         db.init_engine("sqlite:///" + self._tmp.name)
         self.s = db.session()
         os.environ["NEXUS_PAY_MOCK"] = "1"  # 打开模拟渠道
-        self.buyer = oem.register(self.s, "buyer@x.com", "abc12345", inviter="GUDUU")["id"]
+        self.buyer = oem.register(self.s, "buyer@x.com", "abc12345", inviter="GUDUU", company="测试公司", contact_name="张三", phone="13800000000")["id"]
 
     def tearDown(self):
         os.environ.pop("NEXUS_PAY_MOCK", None)

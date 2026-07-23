@@ -242,6 +242,46 @@ class NexusHandler(BaseHTTPRequestHandler):
                     )
                 )
             return
+        # 客户档案详情：/nexus/admin/oem_detail?oem_id=N
+        if path == "/nexus/admin/oem_detail":
+            if self._check_admin():
+                qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+                oem_id = 0
+                for kv in qs.split("&"):
+                    if kv.startswith("oem_id="):
+                        try:
+                            oem_id = int(kv.split("=", 1)[1])
+                        except ValueError:
+                            pass
+                self._with_session(
+                    lambda s: self._json(200, oem_svc.oem_detail(s, oem_id))
+                )
+            return
+        # 附件下载：/nexus/admin/oem_file/<file_id>
+        if path.startswith("/nexus/admin/oem_file/"):
+            if self._check_admin():
+                try:
+                    fid = int(path.rsplit("/", 1)[-1])
+                except ValueError:
+                    self._err(404, "NEXUS_FILE_NOT_FOUND", "附件不存在")
+                    return
+
+                def _dl(s):
+                    row = oem_svc.get_oem_file(s, fid)
+                    data = bytes(row.data)
+                    self.send_response(200)
+                    self.send_header("Content-Type", row.content_type)
+                    self.send_header("Content-Length", str(len(data)))
+                    # RFC 5987 filename*：中文文件名安全下载
+                    from urllib.parse import quote
+                    self.send_header(
+                        "Content-Disposition",
+                        "attachment; filename*=UTF-8''" + quote(row.filename),
+                    )
+                    self.end_headers()
+                    self.wfile.write(data)
+                self._with_session(_dl)
+            return
         # —— 其余 GET：当静态请求，托管数据大屏（console/dashboard）——
         if self._serve_dashboard(path):
             return
@@ -325,6 +365,31 @@ class NexusHandler(BaseHTTPRequestHandler):
             gateway.handle_post(self, provider, suffix)
             return
 
+        # —— 附件上传（原始字节直传，必须在 JSON body 读取之前处理）——
+        # POST /nexus/admin/oem_upload?oem_id=N&filename=合同.pdf  body=文件字节
+        if path == "/nexus/admin/oem_upload":
+            if self._check_admin():
+                from urllib.parse import parse_qs, unquote
+                qs = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+                oem_id = int((qs.get("oem_id") or ["0"])[0] or 0)
+                filename = unquote((qs.get("filename") or [""])[0])
+                try:
+                    n = int(self.headers.get("Content-Length") or 0)
+                except ValueError:
+                    n = 0
+                if n <= 0 or n > oem_svc.FILE_MAX_BYTES:
+                    self._err(413, "NEXUS_FILE_TOO_BIG", "文件为空或超过 20MB")
+                    return
+                data = self.rfile.read(n)
+                ctype = self.headers.get("Content-Type") or "application/octet-stream"
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {"file": oem_svc.add_oem_file(s, oem_id, filename, ctype, data)},
+                    )
+                )
+            return
+
         body = self._read_body()
 
         if path == "/nexus/redeem":
@@ -376,6 +441,9 @@ class NexusHandler(BaseHTTPRequestHandler):
                                 str(body.get("password", "")),
                                 str(body.get("name", "")),
                                 inviter=str(body.get("inviter", "")),
+                                company=str(body.get("company", "")),
+                                contact_name=str(body.get("contact_name", "")),
+                                phone=str(body.get("phone", "")),
                             )
                         },
                     )
@@ -522,6 +590,24 @@ class NexusHandler(BaseHTTPRequestHandler):
                     fleet.revoke_key(s, int(body.get("key_id") or 0))
                     self._json(200, {"ok": True})
                 self._with_session(_do)
+            return
+
+        if path == "/nexus/admin/oem_note":
+            if self._check_admin():
+                def _note(s):
+                    oem_svc.set_admin_note(
+                        s, int(body.get("oem_id") or 0), str(body.get("note", ""))
+                    )
+                    self._json(200, {"ok": True})
+                self._with_session(_note)
+            return
+
+        if path == "/nexus/admin/oem_file_delete":
+            if self._check_admin():
+                def _fdel(s):
+                    oem_svc.delete_oem_file(s, int(body.get("file_id") or 0))
+                    self._json(200, {"ok": True})
+                self._with_session(_fdel)
             return
 
         if path == "/nexus/admin/oem_status":

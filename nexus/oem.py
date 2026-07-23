@@ -27,7 +27,9 @@ from nexus.db import (
     NexusKeyClaim,
     NexusKeyRequest,
     NexusOem,
+    NexusOemFile,
     NexusOemInvite,
+    NexusOemProfile,
     NexusSession,
     NexusWallet,
 )
@@ -108,15 +110,34 @@ def _resolve_inviter(s, inviter: str) -> Optional[int]:
 
 
 def register(
-    s, email: str, password: str, name: str = "", inviter: str = ""
+    s,
+    email: str,
+    password: str,
+    name: str = "",
+    inviter: str = "",
+    company: str = "",
+    contact_name: str = "",
+    phone: str = "",
 ) -> Dict[str, Any]:
-    """OEM 自助注册。邮箱唯一、密码有强度要求、邀请人必填且必须有效。"""
+    """OEM 自助注册。邮箱唯一、密码有强度、邀请人必填有效、**企业档案三项强制**。
+
+    档案三项（负责人 2026-07-23 拍板强制采集）：企业名称 / 联系人姓名 / 联系方式。
+    """
     email = (email or "").strip().lower()
     if not _EMAIL_RE.match(email):
         raise FleetError("NEXUS_BAD_EMAIL", "邮箱格式不正确")
     problem = password_problem(password)
     if problem:
         raise FleetError("NEXUS_WEAK_PASSWORD", problem)
+    company = (company or "").strip()
+    contact_name = (contact_name or "").strip()
+    phone = (phone or "").strip()
+    if not (2 <= len(company) <= 160):
+        raise FleetError("NEXUS_PROFILE_REQUIRED", "请填写企业/团队名称（至少 2 个字）")
+    if not (2 <= len(contact_name) <= 80):
+        raise FleetError("NEXUS_PROFILE_REQUIRED", "请填写联系人姓名")
+    if not (5 <= len(phone) <= 60):
+        raise FleetError("NEXUS_PROFILE_REQUIRED", "请填写有效的联系方式（手机/微信）")
     # 邀请人先于"邮箱已注册"校验：填错邀请人时不泄露目标邮箱是否已注册
     inviter_id = _resolve_inviter(s, inviter)
     exists = s.execute(
@@ -127,12 +148,19 @@ def register(
     oem = NexusOem(
         email=email,
         password_hash=hash_password(password),
-        name=(name or "").strip()[:120],
+        # name 列沿用为"显示名"：优先取注册填的企业名（列表页直接可读）
+        name=((name or "").strip() or company)[:120],
     )
     s.add(oem)
     s.flush()  # 拿自增 id
     # 落邀请边：每个账号恰一条（层级树数据源；inviter_id=None = 平台直属）
     s.add(NexusOemInvite(oem_id=oem.id, inviter_id=inviter_id))
+    # 落客户档案（超管详情页数据源）
+    s.add(
+        NexusOemProfile(
+            oem_id=oem.id, company=company, contact_name=contact_name, phone=phone
+        )
+    )
     return public_oem(oem)
 
 
@@ -447,6 +475,112 @@ def clear_plain_by_key(s, raw_key: str) -> None:
     pay.clear_order_plain_by_key_id(s, key.id)
 
 
+# ---------- 客户档案详情 / 合同附件（超管专用）----------
+
+# 附件白名单（合同/资质常见格式）与单文件上限
+_FILE_EXT_OK = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".jpg", ".jpeg", ".png", ".zip"}
+FILE_MAX_BYTES = 20 * 1024 * 1024
+
+
+def oem_detail(s, oem_id: int) -> Dict[str, Any]:
+    """超管点开客户后的完整档案：账号+档案+邀请人+资产汇总+附件清单。"""
+    acc = s.get(NexusOem, int(oem_id))
+    if acc is None:
+        raise FleetError("NEXUS_OEM_NOT_FOUND", f"OEM id={oem_id} 不存在", 404)
+    prof = s.get(NexusOemProfile, acc.id)
+    edge = s.get(NexusOemInvite, acc.id)
+    inviter_email = "GuDuu"
+    if edge is not None and edge.inviter_id is not None:
+        up = s.get(NexusOem, edge.inviter_id)
+        inviter_email = up.email if up else f"#{edge.inviter_id}"
+    insts = my_instances(s, acc.id)
+    files = [
+        {
+            "id": f.id,
+            "filename": f.filename,
+            "size": int(f.size),
+            "uploaded_ts": f.uploaded_ts,
+        }
+        for f in s.execute(
+            select(NexusOemFile)
+            .where(NexusOemFile.oem_id == acc.id)
+            .order_by(NexusOemFile.id.desc())
+        ).scalars()
+    ]
+    return {
+        **public_oem(acc),
+        "company": prof.company if prof else "",
+        "contact_name": prof.contact_name if prof else "",
+        "phone": prof.phone if prof else "",
+        "admin_note": prof.admin_note if prof else "",
+        "profile_missing": prof is None,  # 历史账号未采集档案
+        "inviter": inviter_email,
+        "keys": my_keys(s, acc.id),
+        "instances": insts,
+        "balance_total": sum(i["balance_tokens"] for i in insts),
+        "files": files,
+    }
+
+
+def set_admin_note(s, oem_id: int, note: str) -> None:
+    """超管备注（谈判进展等，客户不可见）。历史账号无档案行则补建空档案。"""
+    prof = s.get(NexusOemProfile, int(oem_id))
+    if prof is None:
+        if s.get(NexusOem, int(oem_id)) is None:
+            raise FleetError("NEXUS_OEM_NOT_FOUND", f"OEM id={oem_id} 不存在", 404)
+        prof = NexusOemProfile(oem_id=int(oem_id))
+        s.add(prof)
+    prof.admin_note = (note or "").strip()[:2000]
+    prof.updated_ts = _now_ms()
+
+
+def add_oem_file(
+    s, oem_id: int, filename: str, content_type: str, data: bytes
+) -> Dict[str, Any]:
+    """上传客户附件（合同等）。扩展名白名单 + 20MB 上限；文件名仅取 basename。"""
+    if s.get(NexusOem, int(oem_id)) is None:
+        raise FleetError("NEXUS_OEM_NOT_FOUND", f"OEM id={oem_id} 不存在", 404)
+    # 掐掉路径分隔符，只留纯文件名（防奇怪的下载头/路径注入）
+    clean = (filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()[:255]
+    if not clean:
+        raise FleetError("NEXUS_BAD_FILE", "文件名不能为空")
+    ext = ("." + clean.rsplit(".", 1)[-1].lower()) if "." in clean else ""
+    if ext not in _FILE_EXT_OK:
+        raise FleetError(
+            "NEXUS_BAD_FILE", "只支持合同常用格式：pdf/doc(x)/xls(x)/jpg/png/zip"
+        )
+    if not data:
+        raise FleetError("NEXUS_BAD_FILE", "文件内容为空")
+    if len(data) > FILE_MAX_BYTES:
+        raise FleetError("NEXUS_FILE_TOO_BIG", "单个文件不能超过 20MB", 413)
+    row = NexusOemFile(
+        oem_id=int(oem_id),
+        filename=clean,
+        content_type=(content_type or "application/octet-stream")[:120],
+        size=len(data),
+        data=data,
+    )
+    s.add(row)
+    s.flush()
+    return {"id": row.id, "filename": row.filename, "size": row.size}
+
+
+def get_oem_file(s, file_id: int) -> NexusOemFile:
+    """按 id 取附件行（下载用）。"""
+    row = s.get(NexusOemFile, int(file_id))
+    if row is None:
+        raise FleetError("NEXUS_FILE_NOT_FOUND", "附件不存在", 404)
+    return row
+
+
+def delete_oem_file(s, file_id: int) -> None:
+    """删除附件（幂等）。"""
+    row = s.get(NexusOemFile, int(file_id))
+    if row is not None:
+        s.delete(row)
+        s.flush()
+
+
 def set_oem_status(s, oem_id: int, status: str) -> Dict[str, Any]:
     """超管停用/启用某个 OEM 账号（自助注册模式下的唯一管控抓手）。
 
@@ -487,6 +621,11 @@ __all__ = [
     "my_instances",
     "list_oems",
     "set_oem_status",
+    "oem_detail",
+    "set_admin_note",
+    "add_oem_file",
+    "get_oem_file",
+    "delete_oem_file",
     "request_key",
     "my_requests",
     "list_requests",
