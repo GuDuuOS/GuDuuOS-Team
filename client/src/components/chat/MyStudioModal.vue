@@ -120,8 +120,12 @@
              不占存储、不限个数,写同一句话会让人以为获取超限了。 -->
         <div v-if="tab !== 'acquired'" class="cam-help">自建内容计入你的存储空间（见「我的额度」）。每类上限 50 个。</div>
         <div v-else class="cam-help">
-          获取＝给平台资源打「优先派单」标记（★），不占存储空间、不限个数；
-          但获取太多会让 ★ 失去筛选意义，建议只留常用的。
+          获取＝给平台资源打「优先派单」标记（★），不占存储空间。
+          <template v-if="acquiredLimit !== null && acquiredLimit >= 0">
+            按会员等级限量：已用 <b>{{ acquired.length }}/{{ acquiredLimit }}</b> 个；
+            额度不够时移除不常用的，或升级会员扩容。
+          </template>
+          <template v-else-if="acquiredLimit === -1">你的会员等级不限获取数量。</template>
         </div>
       </div>
     </div>
@@ -134,7 +138,7 @@ import '@/styles/admin-modal.css'
 import {
   myAgentsList, myAgentSave, myAgentDelete,
   mySkillsList, mySkillSave, mySkillDelete,
-  fetchMarketAcquired, setMarketItemAcquired,
+  fetchMarketAcquired, setMarketItemAcquired, getMyUsage,
   type MyAgent, type MySkill, type AcquiredItem,
 } from '@/matrix/client'
 import { CAT_META } from '@/data/marketplace'
@@ -153,12 +157,18 @@ const errText = ref('')
 const agForm = reactive<MyAgent & { _edit: boolean }>({ slug: '', name: '', description: '', system_prompt: '', model: '', enabled: true, _edit: false })
 const skForm = reactive<MySkill & { _edit: boolean }>({ slug: '', name: '', description: '', instructions: '', enabled: true, _edit: false })
 
+// 「已获取」额度(按会员等级,服务端强制):-1=不限;null=还没拉到
+const acquiredLimit = ref<number | null>(null)
 async function load() {
   errText.value = ''
-  const [a, s, g] = await Promise.all([myAgentsList(), mySkillsList(), fetchMarketAcquired()])
+  const [a, s, g, usage] = await Promise.all([
+    myAgentsList(), mySkillsList(), fetchMarketAcquired(), getMyUsage(),
+  ])
   agents.value = a
   skills.value = s
   acquired.value = g || []
+  // 额度展示口径与服务端同源(都读 acquired_items 这项配额),避免前后端各写一份而跑偏
+  acquiredLimit.value = usage.find((u) => u.key === 'acquired_items')?.limit ?? null
 }
 
 /** 移除一条「已获取」——只是不再优先派单/收藏,不影响资源本身的使用权限。 */

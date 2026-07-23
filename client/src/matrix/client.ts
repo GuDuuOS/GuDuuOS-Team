@@ -1989,6 +1989,7 @@ export const QUOTA_CATALOG: { key: string; label: string; unit: string; group: s
   { key: 'kb_docs', label: '知识库文档数', unit: '篇', group: '知识库', defaults: { free: 5, paid: 200, creator: -1 } },
   { key: 'teams', label: '专班数（一键建专班）', unit: '个', group: '任务编排', defaults: { free: 1, paid: 20, creator: -1 } },
   { key: 'workflow_runs', label: '工作流运行（每月）', unit: '次/月', group: '自动化', defaults: { free: 0, paid: 200, creator: -1 } },
+  { key: 'acquired_items', label: '商城已获取资源数', unit: '个', group: '商城', defaults: { free: 5, paid: 50, creator: -1 } },
 ]
 
 /** 我的用量（前端「我的额度」展示）：各计量项的 已用/上限。失败/未登录返回 []。 */

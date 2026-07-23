@@ -5171,6 +5171,23 @@ class CosmacBot:
                 return 404, {"error": "商城里没有这个资源(可能已下架)"}
             if not match.get("unlocked"):
                 return 403, {"error": "该资源需要升级会员后才能获取"}
+            # 数量配额(负责人:获取数量按会员等级限)——已获取的再点(幂等重放指引)不占新额度,
+            # 故只在"这条还没获取过"时判。-1=不限;管理员永远不限(_quota_limit 内已处理)。
+            limit = self._quota_limit(user_id, "acquired_items")
+            if limit >= 0 and not match.get("acquired"):
+                try:
+                    from cosmac.db import session_scope as _sc
+                    from cosmac.db.market_repo import list_acquired as _la
+
+                    with _sc() as _s:
+                        cur = len(_la(_s, user_id=user_id))
+                except Exception:
+                    cur = 0  # 数不出来宁可放行,不因计数故障把人挡死
+                if cur >= limit:
+                    return 403, {
+                        "error": f"已获取资源已达上限（{cur}/{limit} 个）。"
+                                 "在「我的AI工坊 · 已获取」移除不用的，或升级会员扩容。"
+                    }
         try:
             from cosmac.db import session_scope
             from cosmac.db.market_repo import add_acquired, remove_acquired
@@ -5401,6 +5418,10 @@ class CosmacBot:
                         used = len(kb.list_docs(s, scope=SCOPE_USER, scope_id=user_id))
                     elif q.get("track") == "existing" and metric == "storage_mb":
                         used = round(self._storage_bytes(user_id) / 1048576, 1)
+                    elif q.get("track") == "existing" and metric == "acquired_items":
+                        from cosmac.db.market_repo import list_acquired
+
+                        used = len(list_acquired(s, user_id=user_id))
                     else:
                         used = get_count(
                             s, user_id, metric, period_key(str(q.get("period") or "day"))
