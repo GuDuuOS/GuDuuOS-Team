@@ -4759,7 +4759,13 @@ class CosmacBot:
                     "slug": a.slug, "name": a.name, "description": a.description,
                     "system_prompt": a.system_prompt, "model": a.model,
                     "enabled": a.enabled,
-                } for a in list_agents(s, scope=SCOPE_USER, scope_id=user_id)]
+                } for a in sorted(
+                    list_agents(s, scope=SCOPE_USER, scope_id=user_id),
+                    # 工坊按「新增时间倒序」展示(负责人建议:刚建的排最前,不用往下翻)。
+                    # 共用 repo 的默认 slug 排序不动——名册注入等处依赖它的稳定顺序。
+                    # created_at 相同(同秒批量建)时用 id 兜底,保证顺序确定。
+                    key=lambda x: (x.created_at, x.id), reverse=True,
+                )]
             return 200, {"agents": out}
         except Exception:
             logger.exception("列个人智能体失败")
@@ -4852,7 +4858,10 @@ class CosmacBot:
                 out = [{
                     "slug": k.slug, "name": k.name, "description": k.description,
                     "instructions": k.instructions, "enabled": k.enabled,
-                } for k in list_skills(s, scope=SCOPE_USER, scope_id=user_id)]
+                } for k in sorted(
+                    list_skills(s, scope=SCOPE_USER, scope_id=user_id),
+                    key=lambda x: (x.created_at, x.id), reverse=True,  # 同上:新增在最前
+                )]
             return 200, {"skills": out}
         except Exception:
             logger.exception("列个人技能失败")
