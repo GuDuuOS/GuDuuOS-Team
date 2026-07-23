@@ -138,6 +138,25 @@ export function myProfileInfo(): { userId: string; name: string; avatarUrl: stri
  * account data 为准来驱动 UI 指示灯；同时尽力把状态推给 Matrix presence（server 开了就多端/联邦可见）。
  */
 const PRESENCE_ACCOUNT_DATA = 'cosmac.presence'
+// 个人设置「我的权限 / 可调用数据」开关(负责人报:取消勾选刷新又恢复——此前是内存 mock)。
+// 每用户 account data:自动同步多端、刷新留存;内容 {perms: {label: bool}, share: {label: bool}}
+const USER_PREFS_ACCOUNT_DATA = 'cosmac.user_prefs'
+
+/** 读本人「权限/可调用数据」开关(按 label 存 boolean;缺省由调用方用默认值)。 */
+export function getMyPrefToggles(): { perms: Record<string, boolean>; share: Record<string, boolean> } {
+  try {
+    const c = (mx as any)?.getAccountData?.(USER_PREFS_ACCOUNT_DATA)?.getContent?.() || {}
+    return { perms: c.perms || {}, share: c.share || {} }
+  } catch { return { perms: {}, share: {} } }
+}
+
+/** 写本人「权限/可调用数据」开关(整体覆盖;best-effort,失败静默——下次改动再写)。 */
+export async function setMyPrefToggles(
+  perms: Record<string, boolean>, share: Record<string, boolean>,
+): Promise<void> {
+  if (!mx) return
+  try { await (mx as any).setAccountData(USER_PREFS_ACCOUNT_DATA, { perms, share }) } catch { /* 忽略 */ }
+}
 const PRESENCE_MAP: Record<string, 'online' | 'unavailable' | 'offline'> = {
   在线: 'online', 忙碌: 'unavailable', 离开: 'unavailable', 隐身: 'offline',
 }
