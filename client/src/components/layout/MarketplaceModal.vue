@@ -2,6 +2,8 @@
   <div v-if="visible" class="mkt-overlay" @click.self="close">
     <div class="mkt-modal" role="dialog" aria-modal="true">
       <div class="mkt-head">
+        <!-- 从工坊等入口带回调打开时显示返回(负责人报:跳过来后回不去) -->
+        <button v-if="hasBack" class="mkt-back" title="返回" @click="goBack">←</button>
         <div class="mkt-title-wrap">
           <span class="mkt-title">AI Agent 商城</span>
           <span class="mkt-sub">AI 同事 · 技能 · 工作流 · 知识库，平台真实资源、获取即用</span>
@@ -85,7 +87,7 @@ import {
 } from '@/matrix/client'
 
 const emit = defineEmits<{ (e: 'upgrade'): void }>()
-const { visible, close } = useMarketplace()
+const { visible, close, hasBack, goBack } = useMarketplace()
 
 type CatKey = MarketCat | 'all'
 const cats: { key: CatKey; label: string }[] = [
@@ -220,6 +222,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
 }
 .mkt-search input { flex: 1; border: none; background: transparent; outline: none; font-size: var(--fs-100); color: var(--text); }
 .mkt-search input::placeholder { color: var(--text-3); }
+.mkt-back { width: 30px; height: 30px; border: 1px solid var(--border); background: transparent; font-size: 16px; color: var(--text-2); cursor: pointer; border-radius: 8px; flex-shrink: 0; }
+.mkt-back:hover { background: var(--bg-hover); color: var(--text); }
 .mkt-close {
   width: 30px; height: 30px;
   border: none; background: transparent;

@@ -1799,6 +1799,12 @@ async function doLogout() {
   window.location.reload()
 }
 
+/** 工坊「去商城逛逛」:关工坊、带「返回工坊」回调打开商城(负责人报:跳过去回不来)。 */
+function onStudioMarket() {
+  myStudioOpen.value = false
+  openMarket({ onBack: () => { myStudioOpen.value = true } })
+}
+
 function openAiPanel() {
   aiOpen.value = true
 }
@@ -2975,7 +2981,7 @@ onBeforeUnmount(() => {
     <UserSettingsModal />
 
     <!-- 我的AI工坊:自建智能体/技能(归属本人,计入存储) -->
-    <MyStudioModal :visible="myStudioOpen" @close="myStudioOpen = false" />
+    <MyStudioModal :visible="myStudioOpen" @close="myStudioOpen = false" @market="onStudioMarket" />
     <ProfileHome />
     <CliConsole />
     <ChannelAdminModal />

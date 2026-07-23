@@ -131,10 +131,9 @@ import {
   type MyAgent, type MySkill, type AcquiredItem,
 } from '@/matrix/client'
 import { CAT_META } from '@/data/marketplace'
-import { useMarketplace } from '@/composables/useMarketplace'
 
 const props = defineProps<{ visible: boolean }>()
-const emit = defineEmits<{ (e: 'close'): void }>()
+const emit = defineEmits<{ (e: 'close'): void; (e: 'market'): void }>()
 function close() { emit('close') }
 
 const tab = ref<'agents' | 'skills' | 'acquired'>('agents')
@@ -163,9 +162,9 @@ async function removeAcquired(it: AcquiredItem) {
   acquired.value = acquired.value.filter((x) => !(x.kind === it.kind && x.slug === it.slug))
 }
 
-/** 「去商城逛逛」:关掉工坊、打开 AI Agent 商城(全局单例弹窗)。 */
-const { open: openMarketplace } = useMarketplace()
-function goMarket() { close(); openMarketplace() }
+/** 「去商城逛逛」:交给父级(LiveView)接线——关工坊、带「返回工坊」回调打开商城
+ *  (负责人报:跳过去后回不来;回调由父级闭包重开工坊)。 */
+function goMarket() { emit('market') }
 watch(() => props.visible, (v) => { if (v) { editing.value = false; load() } })
 
 function newAgent() { Object.assign(agForm, { slug: '', name: '', description: '', system_prompt: '', model: '', enabled: true, _edit: false }); editing.value = true; errText.value = '' }
