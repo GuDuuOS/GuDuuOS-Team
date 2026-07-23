@@ -1757,18 +1757,27 @@ async function pickChoice(text: string, room: string) {
 
 // bot 建专班 → 发 team_created 信号卡 → 客户端把新专班挂进当前工作区（bot 无权限写 m.space.child）。
 // linkedTeams 去重，避免每次 refresh 重复挂接。
+// ⚠️ 必须扫**所有 AI 会话房**(主 DM + Recents 列表里的每个会话)——专班在哪个会话里发起,
+// 信号卡就发在那个会话房;旧实现只扫主 DM 房 aiMsgs,在其它会话建的专班信号卡永远看不到,
+// 专班挂不进工作区、左侧频道树不出现(负责人实报:「建了几个专班左侧都看不到」的根因)。
 const linkedTeams = new Set<string>()
 async function processTeamCards() {
   if (!activeSpace.value) return
-  for (const m of aiMsgs.value) {
-    const c = (m as any).card
-    if (c?.kind !== 'team_created' || !c.team_room) continue
-    if (linkedTeams.has(c.team_room)) continue
-    linkedTeams.add(c.team_room)
-    // 已在工作区里就别重复挂
-    if (spaceChildIds.value.has(c.team_room)) continue
-    const ok = await linkRoomToSpace(activeSpace.value, c.team_room)
-    if (ok) setTimeout(refresh, 300)  // 挂上后刷新，频道树立刻出现新专班
+  const scanRooms = new Set<string>()
+  if (aiRoom.value) scanRooms.add(aiRoom.value)
+  for (const s of aiSessions.value) scanRooms.add(s.roomId)
+  for (const rid of scanRooms) {
+    const msgs = rid === aiRoom.value ? aiMsgs.value : listMessages(rid)
+    for (const m of msgs) {
+      const c = (m as any).card
+      if (c?.kind !== 'team_created' || !c.team_room) continue
+      if (linkedTeams.has(c.team_room)) continue
+      linkedTeams.add(c.team_room)
+      // 已在工作区里就别重复挂
+      if (spaceChildIds.value.has(c.team_room)) continue
+      const ok = await linkRoomToSpace(activeSpace.value, c.team_room)
+      if (ok) setTimeout(refresh, 300)  // 挂上后刷新，频道树立刻出现新专班
+    }
   }
 }
 // 点「进入专班」按钮：确保挂好并打开

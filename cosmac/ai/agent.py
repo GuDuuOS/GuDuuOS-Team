@@ -31,7 +31,9 @@ class Agent:
         llm: LLMProvider,
         toolbox: Toolbox,
         system_prompt: str = "",
-        max_steps: int = 5,
+        # 5→8(负责人实报连带):推理型模型(deepseek-v4-pro)习惯"做完再验证"——建专班后
+        # 还要 list 检查一轮,5 步常在收尾前耗尽 → 明明全做成了却回兜底话术吓用户。
+        max_steps: int = 8,
     ):
         self.llm = llm
         self.toolbox = toolbox
@@ -102,6 +104,19 @@ class Agent:
                 )
             # 进入下一轮，让模型根据工具结果继续
 
-        # 兜底：步数用尽仍没收敛
-        logger.warning("Agent 达到最大步数 %d 仍未结束", self.max_steps)
-        return "我尝试了多步操作但没能完成，请换种说法或稍后再试。"
+        # 兜底：步数用尽仍没收敛。⚠️ 不能全盘否定——此刻工具大多**已真实执行**(建房/派单
+        # 都生效了),旧文案"没能完成"让用户以为全失败(负责人实报:专班明明建好了却被吓到)。
+        # 让模型基于已有工具结果**只做总结、禁止再调工具**,把真实进展告诉用户。
+        logger.warning("Agent 达到最大步数 %d 仍未结束,转总结收尾", self.max_steps)
+        try:
+            messages.append(Message(
+                role="user",
+                content="(系统:操作轮数已达上限,请立即停止调用工具,"
+                        "根据上面各工具的真实执行结果,简明总结哪些已完成、哪些没做完)",
+            ))
+            turn = self.llm.complete_with_tools(messages, [])  # 不给工具,只许说话
+            if turn.text:
+                return turn.text
+        except Exception:
+            logger.debug("超步总结失败,退回固定文案", exc_info=True)
+        return "操作做了一部分(部分步骤可能已生效,请刷新查看),但没能全部收尾——请把没完成的部分再吩咐我一次。"
