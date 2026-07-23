@@ -9,6 +9,17 @@
   "use strict";
 
   var LS_KEY = "nexus_portal_auth"; // {mode:'admin'|'oem', token:'...'}
+  var THEME_KEY = "nexus_portal_theme"; // 'dark'(默认,与大屏一致) | 'light'(白色风格)
+
+  // ---------- 主题（白色/暗色双风格,同一设计语言,只换明暗;选择持久化） ----------
+  function applyTheme(theme) {
+    // 默认暗色时不落 data-theme 属性,保持与老页面行为一致
+    if (theme === "light") document.documentElement.dataset.theme = "light";
+    else delete document.documentElement.dataset.theme;
+    try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* 隐私模式忽略 */ }
+    var btn = document.querySelector("#btn-theme");
+    if (btn) btn.textContent = theme === "light" ? "🌙 暗色" : "☀️ 白色";
+  }
 
   // ---------- 小工具 ----------
   function $(sel) { return document.querySelector(sel); }
@@ -143,6 +154,16 @@
     if (auth && auth.mode === "oem") api("/nexus/oem/logout", { method: "POST", body: {}, noKick: true }).catch(function () {});
     clearAuth(); route();
   });
+
+  // 主题切换：点击在白色/暗色之间轮换（初始值取持久化偏好,默认暗色与大屏一致）
+  $("#btn-theme").addEventListener("click", function () {
+    var cur = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+    applyTheme(cur === "light" ? "dark" : "light");
+  });
+  applyTheme((function () {
+    try { return localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark"; }
+    catch (e) { return "dark"; }
+  })());
 
   // ---------- OEM 门户 ----------
   function loadOem() {

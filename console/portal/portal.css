@@ -1,35 +1,85 @@
-/* GuDuu Nexus 控制台样式——与大屏同一暗色科技风、品牌橙 #e88533 */
+/* GuDuu Nexus 控制台样式
+ * ------------------------------------------------
+ * 与大屏同一设计语言（面板/圆角/橙色品牌点缀），双主题：
+ *   默认暗色（:root，与大屏一致）；html[data-theme="light"] = 白色风格
+ *   （取色对齐官网浅段米白 #fbf5ed 系）。所有组件只允许用变量取色，
+ *   新增样式禁止硬编码颜色——否则 light 主题会漏。
+ */
 
 :root {
   --bg: #100f0e;
-  --panel: #18151300;
+  --bg-glow-a: rgba(232, 133, 51, .12);
+  --bg-glow-b: rgba(109, 91, 183, .1);
+  --topbar: rgba(16, 15, 14, .82);
+  --panel: rgba(24, 20, 17, .5);
+  --panel-strong: rgba(24, 20, 17, .72);
   --card: rgba(255, 252, 247, .04);
+  --input-bg: rgba(255, 252, 247, .05);
+  --hover-row: rgba(255, 252, 247, .03);
   --line: rgba(255, 239, 224, .12);
+  --line-strong: rgba(255, 239, 224, .3);
   --ink: #f4efe9;
   --muted: #9e9187;
   --orange: #e88533;
+  --orange-deep: #d96f1e;
   --green: #57e6a5;
   --red: #ff7a6b;
+  --badge-green-bg: rgba(87, 230, 165, .12);
+  --badge-orange-bg: rgba(232, 133, 51, .14);
+  --badge-red-bg: rgba(255, 122, 107, .12);
+  --badge-idle-bg: rgba(255, 252, 247, .07);
+  --issued-bg: rgba(232, 133, 51, .08);
+  --toast-bg: rgba(24, 20, 17, .95);
   --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 }
+
+/* —— 白色风格（与暗色同构，只换明暗；橙/语义色加深保对比度）—— */
+html[data-theme="light"] {
+  --bg: #f6f0e8;
+  --bg-glow-a: rgba(232, 133, 51, .1);
+  --bg-glow-b: rgba(109, 91, 183, .07);
+  --topbar: rgba(251, 245, 237, .88);
+  --panel: rgba(255, 253, 249, .8);
+  --panel-strong: rgba(255, 253, 249, .95);
+  --card: #fffdf9;
+  --input-bg: rgba(36, 33, 31, .04);
+  --hover-row: rgba(36, 33, 31, .03);
+  --line: rgba(36, 33, 31, .13);
+  --line-strong: rgba(36, 33, 31, .3);
+  --ink: #24211f;
+  --muted: #8a7e72;
+  --orange: #d96f1e;
+  --orange-deep: #c4620f;
+  --green: #1f9d63;
+  --red: #d5493a;
+  --badge-green-bg: rgba(31, 157, 99, .12);
+  --badge-orange-bg: rgba(217, 111, 30, .14);
+  --badge-red-bg: rgba(213, 73, 58, .12);
+  --badge-idle-bg: rgba(36, 33, 31, .07);
+  --issued-bg: rgba(232, 133, 51, .1);
+  --toast-bg: rgba(255, 253, 249, .97);
+}
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 /* hidden 属性必须压过任何 display 设定(否则 .login-wrap{display:grid} 会让 hidden 失效) */
 [hidden] { display: none !important; }
+
 body {
   min-height: 100vh;
   color: var(--ink);
   background:
-    radial-gradient(circle at 85% 8%, rgba(232, 133, 51, .12), transparent 32%),
-    radial-gradient(circle at 8% 90%, rgba(109, 91, 183, .1), transparent 34%),
+    radial-gradient(circle at 85% 8%, var(--bg-glow-a), transparent 32%),
+    radial-gradient(circle at 8% 90%, var(--bg-glow-b), transparent 34%),
     var(--bg);
   font: 14px/1.65 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  transition: background .25s ease, color .25s ease;
 }
 
 /* —— 顶栏 —— */
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 28px; border-bottom: 1px solid var(--line);
-  position: sticky; top: 0; backdrop-filter: blur(8px); background: rgba(16,15,14,.82); z-index: 5;
+  position: sticky; top: 0; backdrop-filter: blur(8px); background: var(--topbar); z-index: 5;
 }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 12px var(--orange); }
@@ -39,26 +89,27 @@ body {
 .topnav a { color: var(--muted); text-decoration: none; font-size: 13px; }
 .topnav a:hover { color: var(--orange); }
 .who { font-size: 12.5px; color: var(--muted); padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; }
-.who.admin { color: var(--orange); border-color: rgba(232,133,51,.5); }
+.who.admin { color: var(--orange); border-color: var(--orange); }
 
 /* —— 通用按钮/表单 —— */
 button { cursor: pointer; font: inherit; }
 .primary {
   padding: 9px 22px; border: 0; border-radius: 9px; color: #fff; font-weight: 600;
-  background: linear-gradient(135deg, #f09a4e, #d96f1e);
+  background: linear-gradient(135deg, #f09a4e, var(--orange-deep));
 }
 .primary:hover { box-shadow: 0 8px 22px rgba(232,133,51,.32); }
 .ghost {
   padding: 7px 16px; border-radius: 9px; background: transparent;
   border: 1px solid var(--line); color: var(--muted);
 }
-.ghost:hover { color: var(--ink); border-color: rgba(255,239,224,.3); }
+.ghost:hover { color: var(--ink); border-color: var(--line-strong); }
 .ghost.small { padding: 4px 12px; font-size: 12.5px; }
 input {
   width: 100%; padding: 9px 12px; border-radius: 9px; color: var(--ink);
-  background: rgba(255,252,247,.05); border: 1px solid var(--line); font: inherit;
+  background: var(--input-bg); border: 1px solid var(--line); font: inherit;
 }
-input:focus { outline: none; border-color: rgba(232,133,51,.6); }
+input::placeholder { color: var(--muted); opacity: .75; }
+input:focus { outline: none; border-color: var(--orange); }
 label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 12px; }
 label input { margin-top: 5px; }
 
@@ -67,7 +118,7 @@ label input { margin-top: 5px; }
 .login-card {
   width: 400px; max-width: 94vw; padding: 30px 30px 24px;
   border: 1px solid var(--line); border-radius: 16px;
-  background: rgba(24, 20, 17, .72); backdrop-filter: blur(10px);
+  background: var(--panel-strong); backdrop-filter: blur(10px);
 }
 .login-card h1 { font-size: 19px; margin-bottom: 18px; }
 .tabs { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
@@ -86,7 +137,7 @@ label input { margin-top: 5px; }
 .page-title { font-size: 21px; margin-bottom: 20px; letter-spacing: .02em; }
 .panel {
   border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px;
-  background: rgba(24, 20, 17, .5); margin-bottom: 20px;
+  background: var(--panel); margin-bottom: 20px;
 }
 .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .panel-head h2 { font-size: 15px; letter-spacing: .02em; }
@@ -97,7 +148,7 @@ label input { margin-top: 5px; }
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
 .stat {
   border: 1px solid var(--line); border-radius: 12px; padding: 13px 16px;
-  background: rgba(24,20,17,.5);
+  background: var(--panel);
 }
 .stat small { display: block; color: var(--muted); font-size: 12px; }
 .stat b { font-size: 21px; font-family: var(--mono); color: var(--orange); }
@@ -106,14 +157,14 @@ label input { margin-top: 5px; }
 /* —— 表格 —— */
 .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tbl th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-.tbl td { padding: 8px 10px; border-bottom: 1px solid rgba(255,239,224,.06); font-family: var(--mono); }
+.tbl td { padding: 8px 10px; border-bottom: 1px solid var(--line); font-family: var(--mono); }
 .tbl td.zh { font-family: inherit; }
-.tbl tr:hover td { background: rgba(255,252,247,.03); }
+.tbl tr:hover td { background: var(--hover-row); }
 .badge { padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-family: inherit; }
-.badge.active { color: var(--green); background: rgba(87,230,165,.12); }
-.badge.warning { color: var(--orange); background: rgba(232,133,51,.14); }
-.badge.offline, .badge.revoked, .badge.disabled { color: var(--red); background: rgba(255,122,107,.12); }
-.badge.idle { color: var(--muted); background: rgba(255,252,247,.07); }
+.badge.active { color: var(--green); background: var(--badge-green-bg); }
+.badge.warning { color: var(--orange); background: var(--badge-orange-bg); }
+.badge.offline, .badge.revoked, .badge.disabled { color: var(--red); background: var(--badge-red-bg); }
+.badge.idle { color: var(--muted); background: var(--badge-idle-bg); }
 
 /* —— OEM 实例卡 —— */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
@@ -125,13 +176,14 @@ label input { margin-top: 5px; }
 .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
 
 /* —— 签发结果 —— */
-.issued { border: 1px solid rgba(232,133,51,.5); background: rgba(232,133,51,.08); border-radius: 10px; padding: 12px 15px; margin: 10px 0; font-size: 13px; }
+.issued { border: 1px solid var(--orange); background: var(--issued-bg); border-radius: 10px; padding: 12px 15px; margin: 10px 0; font-size: 13px; }
 .issued pre { font-family: var(--mono); margin-top: 7px; user-select: all; line-height: 1.9; }
 
 /* —— toast —— */
 .toast {
   position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%);
-  padding: 10px 20px; border-radius: 10px; background: rgba(24,20,17,.95);
+  padding: 10px 20px; border-radius: 10px; background: var(--toast-bg);
   border: 1px solid var(--line); font-size: 13px; z-index: 9;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, .18);
 }
-.toast.bad { border-color: rgba(255,122,107,.5); color: var(--red); }
+.toast.bad { border-color: var(--red); color: var(--red); }

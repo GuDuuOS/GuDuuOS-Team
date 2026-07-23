@@ -4,7 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>GuDuu Nexus · 控制台</title>
-<link rel="stylesheet" href="/portal/portal.css" />
+<!-- 主题预置：在 CSS 生效前把持久化的主题写到 <html>，避免切过主题的用户刷新时闪一下暗色 -->
+<script>try{var t=localStorage.getItem("nexus_portal_theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}</script>
+<link rel="stylesheet" href="/portal/portal.css?v=2" />
 </head>
 <body>
 <!--
@@ -25,6 +27,7 @@
   </div>
   <nav class="topnav">
     <a id="nav-dash" href="/" target="_blank" rel="noopener">运营大屏 ↗</a>
+    <button id="btn-theme" class="ghost small" title="切换白色 / 暗色风格">☀️ 白色</button>
     <span id="who" class="who" hidden></span>
     <button id="btn-logout" class="ghost" hidden>退出</button>
   </nav>
@@ -139,6 +142,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=2"></script>
+<script src="/portal/portal.js?v=3"></script>
 </body>
 </html>
