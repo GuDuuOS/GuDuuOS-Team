@@ -154,6 +154,23 @@ class NexusSession(Base):
     expires_ts = Column(BigInteger, nullable=False)
 
 
+class NexusOemInvite(Base):
+    """OEM 邀请关系边（分销层级树，大屏"星球图"的数据源）。
+
+    一个 OEM 恰有一条入边（注册时强制填邀请人，填错不给注册）：
+      - inviter_id = 某 OEM 账号 id → 该 OEM 是其"下线"；
+      - inviter_id = NULL → 平台直属（注册时填官方邀请码 GUDUU），树根挂平台。
+    单开一张表而非在 nexus_oem 上加列：无迁移框架，新表 create_all 自动建，
+    旧表加列不会自动 ALTER（与 NexusKeyClaim 同理）。
+    """
+
+    __tablename__ = "nexus_oem_invite"
+
+    oem_id = Column(Integer, primary_key=True)  # = NexusOem.id
+    inviter_id = Column(Integer, nullable=True, default=None, index=True)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
 class NexusKeyRequest(Base):
     """OEM 的授权码申请单（P1 手动闭环：申请→超管签发→门户交付明文）。
 

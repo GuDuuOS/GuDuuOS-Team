@@ -350,6 +350,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                                 str(body.get("email", "")),
                                 str(body.get("password", "")),
                                 str(body.get("name", "")),
+                                inviter=str(body.get("inviter", "")),
                             )
                         },
                     )

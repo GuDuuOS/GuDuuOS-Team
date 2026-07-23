@@ -27,6 +27,7 @@ from nexus.db import (
     NexusKeyClaim,
     NexusKeyRequest,
     NexusOem,
+    NexusOemInvite,
     NexusSession,
     NexusWallet,
 )
@@ -80,14 +81,44 @@ def password_problem(password: str) -> Optional[str]:
 
 # ---------- 账号注册 / 登录 / 会话 ----------
 
-def register(s, email: str, password: str, name: str = "") -> Dict[str, Any]:
-    """OEM 自助注册。邮箱唯一、密码有强度要求。返回账号公开信息（不含密码）。"""
+# 平台官方邀请码：平台直属（一级）OEM 注册时填它，层级树挂在平台根节点下
+_ROOT_INVITE_CODE = "GUDUU"
+
+
+def _resolve_inviter(s, inviter: str) -> Optional[int]:
+    """把注册表单里的「邀请人」解析成 inviter_id。
+
+    规则（负责人 2026-07-23 拍板：必填、填错不能注册）：
+      - 空 → 拒绝（层级必须完整，大屏星球图不允许悬空节点）；
+      - 官方码 GUDUU（不分大小写）→ None（平台直属）；
+      - 其他 → 必须是已存在且状态正常的 OEM 邮箱，否则拒绝。
+    """
+    inviter = (inviter or "").strip()
+    if not inviter:
+        raise FleetError("NEXUS_INVITER_REQUIRED", "请填写邀请人邮箱（平台直接客户填 GUDUU）")
+    if inviter.upper() == _ROOT_INVITE_CODE:
+        return None
+    row = s.execute(
+        select(NexusOem).where(NexusOem.email == inviter.lower())
+    ).scalar_one_or_none()
+    if row is None or row.status != "active":
+        # 不存在与被停用同文案：不给探测账号存在性的口子
+        raise FleetError("NEXUS_INVITER_INVALID", "邀请人不存在或不可用，请与邀请你的人确认", 400)
+    return int(row.id)
+
+
+def register(
+    s, email: str, password: str, name: str = "", inviter: str = ""
+) -> Dict[str, Any]:
+    """OEM 自助注册。邮箱唯一、密码有强度要求、邀请人必填且必须有效。"""
     email = (email or "").strip().lower()
     if not _EMAIL_RE.match(email):
         raise FleetError("NEXUS_BAD_EMAIL", "邮箱格式不正确")
     problem = password_problem(password)
     if problem:
         raise FleetError("NEXUS_WEAK_PASSWORD", problem)
+    # 邀请人先于"邮箱已注册"校验：填错邀请人时不泄露目标邮箱是否已注册
+    inviter_id = _resolve_inviter(s, inviter)
     exists = s.execute(
         select(NexusOem).where(NexusOem.email == email)
     ).scalar_one_or_none()
@@ -100,6 +131,8 @@ def register(s, email: str, password: str, name: str = "") -> Dict[str, Any]:
     )
     s.add(oem)
     s.flush()  # 拿自增 id
+    # 落邀请边：每个账号恰一条（层级树数据源；inviter_id=None = 平台直属）
+    s.add(NexusOemInvite(oem_id=oem.id, inviter_id=inviter_id))
     return public_oem(oem)
 
 
@@ -273,9 +306,26 @@ def list_oems(s) -> List[Dict[str, Any]]:
     counts: Dict[int, int] = {}
     for (oid,) in s.execute(select(NexusKeyClaim.oem_id)).all():
         counts[int(oid)] = counts.get(int(oid), 0) + 1
-    return [
-        {**public_oem(r), "keys_claimed": counts.get(r.id, 0)} for r in rows
-    ]
+    # 邀请边一次拉全：oem_id → inviter_id（None=平台直属；无边=旧账号,视同直属）
+    invites: Dict[int, Optional[int]] = {}
+    for oid, iid in s.execute(
+        select(NexusOemInvite.oem_id, NexusOemInvite.inviter_id)
+    ).all():
+        invites[int(oid)] = int(iid) if iid is not None else None
+    emails = {r.id: r.email for r in rows}
+    out = []
+    for r in rows:
+        iid = invites.get(r.id)
+        out.append(
+            {
+                **public_oem(r),
+                "keys_claimed": counts.get(r.id, 0),
+                "inviter_id": iid,
+                # 展示名：上线邮箱 / GuDuu(平台直属或历史账号)
+                "inviter": emails.get(iid, f"#{iid}") if iid is not None else "GuDuu",
+            }
+        )
+    return out
 
 
 # ---------- 授权码申请闭环（OEM 申请 → 超管签发 → 门户交付明文）----------

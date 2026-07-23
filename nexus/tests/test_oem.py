@@ -50,7 +50,7 @@ class OemAccountTest(unittest.TestCase):
         os.unlink(self._tmp.name)
 
     def test_register_and_login(self):
-        pub = oem.register(self.s, "A@Example.com ", "abc12345", "张三")
+        pub = oem.register(self.s, "A@Example.com ", "abc12345", "张三", inviter="GUDUU")
         # 邮箱归一化为小写、去空白；返回不含密码
         self.assertEqual(pub["email"], "a@example.com")
         self.assertEqual(pub["name"], "张三")
@@ -65,16 +65,16 @@ class OemAccountTest(unittest.TestCase):
         self.assertEqual(who.id, pub["id"])
 
     def test_register_rejects_dup_and_bad_input(self):
-        oem.register(self.s, "dup@example.com", "abc12345")
+        oem.register(self.s, "dup@example.com", "abc12345", inviter="GUDUU")
         with self.assertRaises(FleetError):
-            oem.register(self.s, "dup@example.com", "abc12345")  # 邮箱重复
+            oem.register(self.s, "dup@example.com", "abc12345", inviter="GUDUU")  # 邮箱重复
         with self.assertRaises(FleetError):
-            oem.register(self.s, "not-an-email", "abc12345")      # 邮箱非法
+            oem.register(self.s, "not-an-email", "abc12345", inviter="GUDUU")      # 邮箱非法
         with self.assertRaises(FleetError):
-            oem.register(self.s, "b@example.com", "123")          # 弱密码
+            oem.register(self.s, "b@example.com", "123", inviter="GUDUU")          # 弱密码
 
     def test_login_wrong_password(self):
-        oem.register(self.s, "c@example.com", "abc12345")
+        oem.register(self.s, "c@example.com", "abc12345", inviter="GUDUU")
         with self.assertRaises(FleetError):
             oem.login(self.s, "c@example.com", "nope1234")
         # 不存在的邮箱与密码错误返回同一错误（不泄露账号是否存在）
@@ -82,14 +82,14 @@ class OemAccountTest(unittest.TestCase):
             oem.login(self.s, "ghost@example.com", "abc12345")
 
     def test_logout_invalidates_session(self):
-        oem.register(self.s, "d@example.com", "abc12345")
+        oem.register(self.s, "d@example.com", "abc12345", inviter="GUDUU")
         token = oem.login(self.s, "d@example.com", "abc12345")["token"]
         self.assertIsNotNone(oem.resolve_session(self.s, token))
         oem.logout(self.s, token)
         self.assertIsNone(oem.resolve_session(self.s, token))
 
     def test_set_oem_status(self):
-        pub = oem.register(self.s, "f@example.com", "abc12345")
+        pub = oem.register(self.s, "f@example.com", "abc12345", inviter="GUDUU")
         token = oem.login(self.s, "f@example.com", "abc12345")["token"]
         # 超管停用：会话立即失效、不能再登录
         out = oem.set_oem_status(self.s, pub["id"], "disabled")
@@ -107,7 +107,7 @@ class OemAccountTest(unittest.TestCase):
             oem.set_oem_status(self.s, 99999, "disabled")
 
     def test_disabled_account_cannot_login(self):
-        pub = oem.register(self.s, "e@example.com", "abc12345")
+        pub = oem.register(self.s, "e@example.com", "abc12345", inviter="GUDUU")
         token = oem.login(self.s, "e@example.com", "abc12345")["token"]
         # 平台停用账号后：已有会话失效 + 无法再登录
         row = self.s.get(db.NexusOem, pub["id"])
@@ -127,8 +127,8 @@ class OemScopingTest(unittest.TestCase):
         db.init_engine("sqlite:///" + self._tmp.name)
         self.s = db.session()
         # 两个 OEM
-        self.a = oem.register(self.s, "a@x.com", "abc12345")["id"]
-        self.b = oem.register(self.s, "b@x.com", "abc12345")["id"]
+        self.a = oem.register(self.s, "a@x.com", "abc12345", inviter="GUDUU")["id"]
+        self.b = oem.register(self.s, "b@x.com", "abc12345", inviter="GUDUU")["id"]
 
     def tearDown(self):
         self.s.close()
@@ -197,6 +197,50 @@ class OemScopingTest(unittest.TestCase):
         self.assertNotIn("password_hash", rows[0])
 
 
+class InviteTest(unittest.TestCase):
+    """邀请人层级：必填、填错拒注册、GUDUU=平台直属、层级边落库。"""
+
+    def setUp(self):
+        self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self._tmp.close()
+        db.init_engine("sqlite:///" + self._tmp.name)
+        self.s = db.session()
+
+    def tearDown(self):
+        self.s.close()
+        os.unlink(self._tmp.name)
+
+    def test_inviter_required_and_validated(self):
+        # 不填 → 拒
+        with self.assertRaises(FleetError):
+            oem.register(self.s, "a@x.com", "abc12345")
+        # 填了不存在的 → 拒(填错不能注册)
+        with self.assertRaises(FleetError):
+            oem.register(self.s, "a@x.com", "abc12345", inviter="ghost@x.com")
+        # 官方码不分大小写 → 平台直属
+        pub = oem.register(self.s, "a@x.com", "abc12345", inviter="guduu")
+        edge = self.s.get(db.NexusOemInvite, pub["id"])
+        self.assertIsNotNone(edge)
+        self.assertIsNone(edge.inviter_id)
+
+    def test_downline_chain_recorded(self):
+        top = oem.register(self.s, "top@x.com", "abc12345", inviter="GUDUU")
+        # 下线填上线邮箱(大小写/空白容错)
+        sub = oem.register(self.s, "sub@x.com", "abc12345", inviter=" Top@X.com ")
+        edge = self.s.get(db.NexusOemInvite, sub["id"])
+        self.assertEqual(edge.inviter_id, top["id"])
+        # 超管列表能看到层级展示名
+        rows = {o["email"]: o for o in oem.list_oems(self.s)}
+        self.assertEqual(rows["sub@x.com"]["inviter"], "top@x.com")
+        self.assertEqual(rows["top@x.com"]["inviter"], "GuDuu")
+
+    def test_disabled_inviter_cannot_recruit(self):
+        top = oem.register(self.s, "t2@x.com", "abc12345", inviter="GUDUU")
+        oem.set_oem_status(self.s, top["id"], "disabled")
+        with self.assertRaises(FleetError):
+            oem.register(self.s, "s2@x.com", "abc12345", inviter="t2@x.com")
+
+
 class KeyRequestTest(unittest.TestCase):
     """授权码申请闭环：申请→批准(签发+归属+明文交付)→装机兑换后明文销毁。"""
 
@@ -205,7 +249,7 @@ class KeyRequestTest(unittest.TestCase):
         self._tmp.close()
         db.init_engine("sqlite:///" + self._tmp.name)
         self.s = db.session()
-        self.a = oem.register(self.s, "a@x.com", "abc12345")["id"]
+        self.a = oem.register(self.s, "a@x.com", "abc12345", inviter="GUDUU")["id"]
 
     def tearDown(self):
         self.s.close()

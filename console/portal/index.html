@@ -53,8 +53,9 @@
       <label>公司 / 称呼<input name="name" type="text" placeholder="例：星辰传媒" /></label>
       <label>邮箱<input name="email" type="email" autocomplete="username" required placeholder="you@company.com" /></label>
       <label>密码<input name="password" type="password" autocomplete="new-password" required placeholder="至少 8 位，含字母和数字" /></label>
+      <label>邀请人邮箱<input name="inviter" type="text" required placeholder="邀请你的合作伙伴邮箱" /></label>
       <button class="primary">注册并登录</button>
-      <p class="hint">注册后可在门户认领授权码（KEY）、查看自己实例的余额与状态。</p>
+      <p class="hint">邀请人必须是已注册的合作伙伴（填错无法注册）；GuDuu 平台直接客户填 <b>GUDUU</b>。</p>
     </form>
 
     <form id="form-admin" class="pane" data-pane="admin" hidden>
@@ -156,7 +157,7 @@
   <section class="panel">
     <div class="panel-head"><h2>OEM 客户</h2></div>
     <table class="tbl" id="admin-oems">
-      <thead><tr><th>#</th><th>邮箱</th><th>称呼</th><th>状态</th><th>认领 KEY</th><th>注册时间</th><th>操作</th></tr></thead>
+      <thead><tr><th>#</th><th>邮箱</th><th>称呼</th><th>邀请人</th><th>状态</th><th>认领 KEY</th><th>注册时间</th><th>操作</th></tr></thead>
       <tbody></tbody>
     </table>
   </section>
@@ -164,6 +165,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=6"></script>
+<script src="/portal/portal.js?v=7"></script>
 </body>
 </html>

@@ -134,7 +134,7 @@
     e.preventDefault();
     var f = e.target;
     var email = f.email.value, pw = f.password.value;
-    api("/nexus/oem/register", { body: { email: email, password: pw, name: f.name.value }, noKick: true })
+    api("/nexus/oem/register", { body: { email: email, password: pw, name: f.name.value, inviter: f.inviter.value }, noKick: true })
       .then(function () { return api("/nexus/oem/login", { body: { email: email, password: pw }, noKick: true }); })
       .then(function (r) { setAuth({ mode: "oem", token: r.token, email: r.oem.email }); toast("注册成功，欢迎！"); route(); })
       .catch(function (err) { loginErr(err.message); });
@@ -274,11 +274,16 @@
       // OEM 客户表（自助注册模式：超管唯一管控 = 停用/启用；账号状态用"正常/停用"措辞）
       $("#admin-oems tbody").innerHTML = oems.map(function (o) {
         var on = o.status === "active";
+        // 邀请人列：平台直属显示 GuDuu(橙),下线显示上线邮箱——分销层级一眼可辨
+        var inviter = o.inviter === "GuDuu"
+          ? '<span style="color:var(--orange)">GuDuu</span>'
+          : esc(o.inviter || "—");
         return "<tr><td>#" + o.id + "</td><td>" + esc(o.email) + "</td><td class=\"zh\">" + esc(o.name || "—") + "</td>" +
+          "<td>" + inviter + "</td>" +
           '<td class="zh"><span class="badge ' + (on ? "active" : "disabled") + '">' + (on ? "正常" : "停用") + "</span></td>" +
           "<td>" + o.keys_claimed + "</td><td>" + fmtTime(o.created_ts) + "</td>" +
           '<td class="zh"><button class="ghost small" data-oemstatus="' + o.id + '" data-tostatus="' + (on ? "disabled" : "active") + '" data-email="' + esc(o.email) + '">' + (on ? "停用" : "启用") + "</button></td></tr>";
-      }).join("") || '<tr><td colspan="7" class="zh empty">暂无注册客户</td></tr>';
+      }).join("") || '<tr><td colspan="8" class="zh empty">暂无注册客户</td></tr>';
     }).catch(function (err) { toast(err.message, true); });
   }
 
