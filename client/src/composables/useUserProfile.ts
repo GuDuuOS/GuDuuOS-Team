@@ -1,7 +1,8 @@
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import {
   getMyProfile, saveMyProfile, myProfileInfo,
   getMyPresence, setMyPresence, type MyAiProfile,
+  getMyPrefToggles, setMyPrefToggles,
 } from '@/matrix/client'
 
 /** 我的权限（可开关）*/
@@ -26,7 +27,23 @@ function refreshIdentity() {
   if (info.userId && info.userId !== presenceLoadedFor) {
     presenceLoadedFor = info.userId
     status.value = getMyPresence() as typeof status.value
+    loadPrefToggles()  // 权限/可调用数据开关也按账号回填(刷新留存,负责人报的持久化缺失)
   }
+}
+
+/** 从 account data 回填「我的权限/可调用数据」开关(按 label 匹配;没存过的保持默认)。 */
+let suppressPrefSave = false
+function loadPrefToggles() {
+  const saved = getMyPrefToggles()
+  suppressPrefSave = true
+  for (const p of permissions) {
+    if (p.label in saved.perms) p.enabled = saved.perms[p.label]
+  }
+  for (const d of shareableData) {
+    if (d.label in saved.share) d.shared = saved.share[d.label]
+  }
+  // 下一轮微任务再放开(watch 是异步 flush,同步置回会漏掉本次回填触发的那批)
+  setTimeout(() => { suppressPrefSave = false }, 0)
 }
 
 /** 个人设置弹窗 */
@@ -70,6 +87,21 @@ const shareableData = reactive<ShareableDatum[]>([
   { label: '我的日程 / 在线状态', value: '在线', shared: false },
   { label: '我的偏好记录', value: '近期', shared: false }
 ])
+
+// 开关变动 → 防抖写 account data(负责人报:取消勾选刷新后又恢复——此前只有内存态)。
+// 回填期 suppress,防止把刚读到的值又写一遍。
+let prefSaveTimer: ReturnType<typeof setTimeout> | null = null
+watch([permissions, shareableData], () => {
+  if (suppressPrefSave) return
+  if (prefSaveTimer) clearTimeout(prefSaveTimer)
+  prefSaveTimer = setTimeout(() => {
+    const perms: Record<string, boolean> = {}
+    for (const p of permissions) perms[p.label] = p.enabled
+    const share: Record<string, boolean> = {}
+    for (const d of shareableData) share[d.label] = d.shared
+    void setMyPrefToggles(perms, share)
+  }, 500)
+}, { deep: true })
 
 /** 拉取本人 AI 偏好画像填进表单（失败静默，保持空白默认）。 */
 async function loadAiProfile() {
