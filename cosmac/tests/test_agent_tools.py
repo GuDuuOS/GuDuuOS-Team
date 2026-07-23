@@ -279,14 +279,28 @@ class TestAgentTools(unittest.TestCase):
         self.assertIn("等", out)  # "等 TA 点选后我再继续"
 
     def test_max_steps_guard(self) -> None:
-        # 模型一直要求调工具（不收敛），Agent 应在 max_steps 后兜底退出，不死循环
+        # 模型一直要求调工具（不收敛），Agent 应在 max_steps 后兜底退出，不死循环。
+        # 兜底文案不再全盘否定(负责人实报:工具其实都执行成功了,旧文案"没能完成"吓用户)
+        # ——总结轮若模型仍不给文本,退回"部分已生效"的固定文案。
         loop = TurnResult(
             tool_calls=[ToolCall(id="c", name="list_room_members", arguments={})]
         )
         client = FakeClient()
         agent = Agent(FakeLLM([loop] * 10), Toolbox(client), max_steps=3)
         reply = agent.run("看看谁在", ToolContext("!c:test", "@a:test"))
-        self.assertIn("没能完成", reply)
+        self.assertIn("没能全部收尾", reply)
+        self.assertIn("已生效", reply)  # 明确告知部分步骤可能已生效,别让用户以为全失败
+
+    def test_max_steps_summary_uses_llm_text(self) -> None:
+        # 超步后的总结轮:模型给出文本 → 用它(基于真实工具结果的总结),不用固定文案
+        loop = TurnResult(
+            tool_calls=[ToolCall(id="c", name="list_room_members", arguments={})]
+        )
+        summary = TurnResult(text="已建好频道并邀请成员;任务派单没来得及做。")
+        client = FakeClient()
+        agent = Agent(FakeLLM([loop, loop, loop, summary]), Toolbox(client), max_steps=3)
+        reply = agent.run("组个班", ToolContext("!c:test", "@a:test"))
+        self.assertEqual(reply, "已建好频道并邀请成员;任务派单没来得及做。")
 
 
 class AssembleTeamGapsTest(unittest.TestCase):
