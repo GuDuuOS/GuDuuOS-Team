@@ -115,7 +115,14 @@
           <div class="cam-add"><button class="cam-add-btn" @click="goMarket">🛒 去 AI Agent 商城逛逛</button></div>
         </template>
 
-        <div class="cam-help">自建内容计入你的存储空间（见「我的额度」）。每类上限 50 个。</div>
+        <!-- 底部提示按 tab 给准确口径(负责人报:已获取 57 个却写着"每类上限 50")——
+             50 是**自建**内容的上限(服务端强制);「已获取」只是给平台资源打优先派单标记,
+             不占存储、不限个数,写同一句话会让人以为获取超限了。 -->
+        <div v-if="tab !== 'acquired'" class="cam-help">自建内容计入你的存储空间（见「我的额度」）。每类上限 50 个。</div>
+        <div v-else class="cam-help">
+          获取＝给平台资源打「优先派单」标记（★），不占存储空间、不限个数；
+          但获取太多会让 ★ 失去筛选意义，建议只留常用的。
+        </div>
       </div>
     </div>
   </div>
