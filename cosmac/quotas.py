@@ -53,6 +53,14 @@ QUOTA_CATALOG: List[Dict[str, Any]] = [
         "track": "usage", "period": "month", "group": "自动化",
         "defaults": {"free": 0, "paid": 200, "creator": -1},
     },
+    {
+        # 商城「已获取」资源数(负责人定:获取数量应按会员等级限制)。track=existing:
+        # 直接数 cosmac_market_acquired 现有行,移除后额度立即释放,不走计数表。
+        # 获取=给平台资源打「优先派单★」标记,免费用户给少量额度体验,付费/创作者放宽。
+        "key": "acquired_items", "label": "商城已获取资源数", "unit": "个",
+        "track": "existing", "period": "total", "group": "商城",
+        "defaults": {"free": 5, "paid": 50, "creator": -1},
+    },
 ]
 
 _CATALOG_BY_KEY: Dict[str, Dict[str, Any]] = {q["key"]: q for q in QUOTA_CATALOG}
