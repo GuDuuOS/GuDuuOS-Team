@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
 <script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=3" />
+<link rel="stylesheet" href="/portal/portal.css?v=4" />
 </head>
 <body>
 <!--
@@ -89,15 +89,17 @@
       </div>
       <div class="shop-actions" id="shop-key-btns"></div>
     </div>
-    <div id="shop-topup" class="shop-row" hidden>
+    <div id="shop-topup" class="shop-col" hidden>
       <div class="shop-info">
         <b>Token 充值</b>
         <small>为你的实例补充 AI 用量（余额耗尽 AI 服务会暂停）</small>
       </div>
-      <div class="inline-form" id="shop-topup-form">
-        <select id="topup-inst"></select>
-        <select id="topup-pack"></select>
-        <span class="shop-actions" id="shop-topup-btns"></span>
+      <div class="topup-config">
+        <div class="pick-label">选择实例</div>
+        <div class="pick-group" id="topup-inst"></div>
+        <div class="pick-label">选择套餐</div>
+        <div class="pick-group" id="topup-pack"></div>
+        <div class="shop-actions" id="shop-topup-btns" style="margin-top:10px"></div>
       </div>
     </div>
     <p id="shop-none" class="empty" hidden>在线购买暂未开放——请使用下方「申请授权码」，或联系 GuDuu 商务。</p>
@@ -231,8 +233,10 @@
     <div class="kv" id="dt-kv"></div>
     <div class="modal-sec"><h3>合同 / 附件</h3>
       <div id="dt-files"></div>
-      <div class="inline-form" style="margin-top:8px">
-        <input id="dt-upload" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.zip" />
+      <div style="margin-top:10px">
+        <button id="dt-upload-btn" class="ghost small" type="button">⬆ 上传附件</button>
+        <!-- 原生 file input 隐藏，样式由上面的按钮承担 -->
+        <input id="dt-upload" type="file" hidden accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.zip" />
       </div>
       <p class="hint">支持 pdf / word / excel / 图片 / zip，单个 20MB 以内；文件存于母舰数据库，随库备份。</p>
     </div>
@@ -243,8 +247,20 @@
   </div>
 </div>
 
+<!-- 通用对话框（替代浏览器原生 confirm/prompt，风格与控制台一致） -->
+<div id="dlg-mask" class="mask" hidden>
+  <div class="dlg">
+    <p id="dlg-text"></p>
+    <input id="dlg-input" hidden autocomplete="off" />
+    <div class="dlg-actions">
+      <button id="dlg-cancel" class="ghost" type="button">取消</button>
+      <button id="dlg-ok" class="primary" type="button">确定</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=9"></script>
+<script src="/portal/portal.js?v=10"></script>
 </body>
 </html>

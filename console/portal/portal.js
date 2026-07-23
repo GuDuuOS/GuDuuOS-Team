@@ -62,6 +62,36 @@
     clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.hidden = true; }, 3200);
   }
 
+  // ---------- 自家对话框（替代浏览器原生 confirm/prompt，风格统一） ----------
+  var dlgResolve = null;
+  function uiDialog(opts) {
+    // opts: {text, input(布尔), placeholder, danger, okText}；返回 Promise：
+    // 确定 → input 模式给输入串、否则 true；取消/点遮罩 → null
+    return new Promise(function (resolve) {
+      dlgResolve = resolve;
+      $("#dlg-text").textContent = opts.text || "";
+      var inp = $("#dlg-input");
+      inp.hidden = !opts.input;
+      inp.value = ""; inp.placeholder = opts.placeholder || "";
+      var ok = $("#dlg-ok");
+      ok.textContent = opts.okText || "确定";
+      ok.classList.toggle("danger", !!opts.danger);
+      $("#dlg-mask").hidden = false;
+      if (opts.input) setTimeout(function () { inp.focus(); }, 60);
+    });
+  }
+  function dlgClose(val) {
+    $("#dlg-mask").hidden = true;
+    var r = dlgResolve; dlgResolve = null;
+    if (r) r(val);
+  }
+  function uiConfirm(text, danger, okText) {
+    return uiDialog({ text: text, danger: danger, okText: okText }).then(function (v) { return v !== null; });
+  }
+  function uiPrompt(text, placeholder) {
+    return uiDialog({ text: text, input: true, placeholder: placeholder });
+  }
+
   // ---------- 会话 ----------
   function getAuth() {
     try { return JSON.parse(localStorage.getItem(LS_KEY) || "null"); } catch (e) { return null; }
@@ -158,6 +188,15 @@
     clearAuth(); route();
   });
 
+  // 对话框按钮（组件级监听,一次绑定）
+  $("#dlg-ok").addEventListener("click", function () {
+    var inp = $("#dlg-input");
+    dlgClose(inp.hidden ? true : inp.value);
+  });
+  $("#dlg-cancel").addEventListener("click", function () { dlgClose(null); });
+  $("#dlg-mask").addEventListener("click", function (e) { if (e.target === this) dlgClose(null); });
+  $("#dlg-input").addEventListener("keydown", function (e) { if (e.key === "Enter") $("#dlg-ok").click(); });
+
   // 主题切换：点击在白色/暗色之间轮换（初始值取持久化偏好,默认暗色与大屏一致）
   $("#btn-theme").addEventListener("click", function () {
     var cur = document.documentElement.dataset.theme === "light" ? "light" : "dark";
@@ -197,11 +236,14 @@
     }
     $("#shop-topup").hidden = !topupOn;
     if (topupOn) {
-      $("#topup-inst").innerHTML = instances.map(function (i) {
-        return '<option value="' + i.id + '">' + esc(i.domain) + "（余额 " + fmtTokens(i.balance_tokens) + "）</option>";
+      // 卡片式选择（替代原生下拉）：默认选中第一项，点卡片切换
+      $("#topup-inst").innerHTML = instances.map(function (i, idx) {
+        return '<button type="button" class="pick' + (idx === 0 ? " on" : "") + '" data-pick="inst" data-val="' + i.id + '">' +
+          esc(i.domain) + "<small>余额 " + fmtTokens(i.balance_tokens) + "</small></button>";
       }).join("");
       $("#topup-pack").innerHTML = pricing.topup_packs.map(function (p, idx) {
-        return '<option value="' + idx + '">' + fmtTokens(p.tokens) + " token · " + fmtYuan(p.cents) + "</option>";
+        return '<button type="button" class="pick' + (idx === 0 ? " on" : "") + '" data-pick="pack" data-val="' + idx + '">' +
+          fmtTokens(p.tokens) + " token<small>" + fmtYuan(p.cents) + "</small></button>";
       }).join("");
       $("#shop-topup-btns").innerHTML = chButtons("buytopup");
     }
@@ -524,29 +566,42 @@
   document.addEventListener("click", function (e) {
     var t = e.target;
     if (t.dataset && t.dataset.revoke) {
-      if (!confirm("确认吊销 KEY #" + t.dataset.revoke + "？吊销后该码立即失效。")) return;
-      api("/nexus/admin/revoke", { body: { key_id: Number(t.dataset.revoke) } })
-        .then(function () { toast("已吊销"); loadAdmin(); })
-        .catch(function (err) { toast(err.message, true); });
+      uiConfirm("确认吊销 KEY #" + t.dataset.revoke + "？吊销后该码立即失效。", true, "确认吊销").then(function (ok) {
+        if (!ok) return;
+        api("/nexus/admin/revoke", { body: { key_id: Number(t.dataset.revoke) } })
+          .then(function () { toast("已吊销"); loadAdmin(); })
+          .catch(function (err) { toast(err.message, true); });
+      });
     }
     if (t.dataset && t.dataset.topup) {
-      var v = prompt("给 " + t.dataset.domain + " 充值多少 token？（如 100000000 = 1亿）");
-      if (!v) return;
-      var n = Number(v);
-      if (!(n > 0)) return toast("请输入正整数", true);
-      api("/nexus/admin/topup", { body: { instance_id: Number(t.dataset.topup), tokens: n, note: "控制台手动充值" } })
-        .then(function (r) { toast("充值成功，新余额 " + fmtTokens(r.balance_tokens)); loadAdmin(); })
-        .catch(function (err) { toast(err.message, true); });
+      var topupId = Number(t.dataset.topup);
+      uiPrompt("给 " + t.dataset.domain + " 充值多少 token？", "如 100000000 = 1亿").then(function (v) {
+        if (v === null || v === "") return;
+        var n = Number(v);
+        if (!(n > 0)) return toast("请输入正整数", true);
+        api("/nexus/admin/topup", { body: { instance_id: topupId, tokens: n, note: "控制台手动充值" } })
+          .then(function (r) { toast("充值成功，新余额 " + fmtTokens(r.balance_tokens)); loadAdmin(); })
+          .catch(function (err) { toast(err.message, true); });
+      });
     }
     if (t.dataset && t.dataset.buykey) {
       placeOrder({ kind: "key", channel: t.dataset.buykey });
     }
+    // 卡片选择切换（同组单选；点击可能落在卡片内部的 small 上,向上找到卡片本体）
+    var pickBtn = t.closest ? t.closest(".pick[data-pick]") : null;
+    if (pickBtn) {
+      $all('.pick[data-pick="' + pickBtn.dataset.pick + '"]').forEach(function (el) { el.classList.remove("on"); });
+      pickBtn.classList.add("on");
+    }
     if (t.dataset && t.dataset.buytopup) {
+      var pickInst = document.querySelector('.pick[data-pick="inst"].on');
+      var pickPack = document.querySelector('.pick[data-pick="pack"].on');
+      if (!pickInst || !pickPack) return toast("请先选择实例和套餐", true);
       placeOrder({
         kind: "topup",
         channel: t.dataset.buytopup,
-        instance_id: Number($("#topup-inst").value),
-        pack_index: Number($("#topup-pack").value),
+        instance_id: Number(pickInst.dataset.val),
+        pack_index: Number(pickPack.dataset.val),
       });
     }
     if (t.dataset && t.dataset.approve) {
@@ -558,11 +613,13 @@
         .catch(function (err) { toast(err.message, true); });
     }
     if (t.dataset && t.dataset.reject) {
-      var reason = prompt("拒绝理由（会展示给申请人，可留空）");
-      if (reason === null) return; // 点了取消 = 中止，不是"空理由拒绝"
-      api("/nexus/admin/request_decide", { body: { request_id: Number(t.dataset.reject), approve: false, decide_note: reason } })
-        .then(function () { toast("已拒绝"); loadAdmin(); })
-        .catch(function (err) { toast(err.message, true); });
+      var rejectId = Number(t.dataset.reject);
+      uiPrompt("拒绝理由（会展示给申请人，可留空）", "如：请先联系商务").then(function (reason) {
+        if (reason === null) return; // 点了取消 = 中止，不是"空理由拒绝"
+        api("/nexus/admin/request_decide", { body: { request_id: rejectId, approve: false, decide_note: reason } })
+          .then(function () { toast("已拒绝"); loadAdmin(); })
+          .catch(function (err) { toast(err.message, true); });
+      });
     }
     if (t.dataset && t.dataset.detail) {
       openDetail(Number(t.dataset.detail));
@@ -585,18 +642,27 @@
       }).catch(function (err) { toast(err.message, true); });
     }
     if (t.dataset && t.dataset.delfile) {
-      if (!confirm("确认删除该附件？删除后不可恢复。")) return;
-      api("/nexus/admin/oem_file_delete", { body: { file_id: Number(t.dataset.delfile) } })
-        .then(function () { toast("已删除"); openDetail(detailOemId); })
-        .catch(function (err) { toast(err.message, true); });
+      var delFileId = Number(t.dataset.delfile);
+      uiConfirm("确认删除该附件？删除后不可恢复。", true, "确认删除").then(function (ok) {
+        if (!ok) return;
+        api("/nexus/admin/oem_file_delete", { body: { file_id: delFileId } })
+          .then(function () { toast("已删除"); openDetail(detailOemId); })
+          .catch(function (err) { toast(err.message, true); });
+      });
     }
     if (t.dataset && t.dataset.oemstatus) {
       var to = t.dataset.tostatus;
+      var statusOemId = Number(t.dataset.oemstatus);
       // 停用是打断客户使用的动作，要确认；启用无副作用直接放行
-      if (to === "disabled" && !confirm("确认停用 " + t.dataset.email + "？停用后其登录与已有会话立即失效（数据保留，可随时启用恢复）。")) return;
-      api("/nexus/admin/oem_status", { body: { oem_id: Number(t.dataset.oemstatus), status: to } })
-        .then(function () { toast(to === "disabled" ? "已停用" : "已启用"); loadAdmin(); })
-        .catch(function (err) { toast(err.message, true); });
+      var gate = to === "disabled"
+        ? uiConfirm("确认停用 " + t.dataset.email + "？停用后其登录与已有会话立即失效（数据保留，可随时启用恢复）。", true, "确认停用")
+        : Promise.resolve(true);
+      gate.then(function (ok) {
+        if (!ok) return;
+        api("/nexus/admin/oem_status", { body: { oem_id: statusOemId, status: to } })
+          .then(function () { toast(to === "disabled" ? "已停用" : "已启用"); loadAdmin(); })
+          .catch(function (err) { toast(err.message, true); });
+      });
     }
   });
 
