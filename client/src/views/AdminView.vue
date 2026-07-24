@@ -1649,7 +1649,7 @@ import {
   ensureControlRoomMembership,
   currentUserId,
   serverName,
-  listAdminRooms,
+  listAdminRooms, fetchAdminRoomKinds,
   getRoomMembers,
   deleteRoom,
   getServerVersion,
@@ -2111,7 +2111,14 @@ function switchToRooms() {
 async function loadRooms() {
   roomsLoading.value = true
   try {
-    rooms.value = await listAdminRooms()
+    const all = await listAdminRooms()
+    // 频道管理只列**真频道**(负责人实报:中枢AI会话/私信被当频道统计)——
+    // 房型由 bot 经管理员通道批量判定(state 标记),ai/dm 剔除;
+    // 判定失败返回空映射时不过滤(fail-open,宁可多显示不静默藏房)。
+    const kinds = await fetchAdminRoomKinds(all.map((r) => r.id))
+    rooms.value = Object.keys(kinds).length
+      ? all.filter((r) => (kinds[r.id] || 'channel') === 'channel')
+      : all
     roomsLoaded.value = true
   } catch (e: any) {
     warn('加载失败', e?.message || '无法获取频道列表')

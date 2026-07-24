@@ -1,5 +1,13 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-24 — GuDuu OS 1.4.5 (patch)
+
+- 修复：后台「频道管理」把中枢 AI 会话房与用户私信都当频道统计/列出(负责人实报)——
+  Synapse admin /rooms 摘要判不出房型,真相在房间 state 标记里。bot 新增批量房型判定
+  端点(/cosmac/admin/room_kinds,仅管理员):经管理员通道读 m.space/cosmac.ai_session/
+  cosmac.dm 标记,并发 8 路+永久缓存(标记不变,二次刷新零网络);前端据此只列真频道,
+  判定失败 fail-open 不过滤(宁可多显示不藏房)。统计口径随之干净。
+
 ## 2026-07-24 — GuDuu OS 1.4.4 (patch)
 
 - 修复：后台频道管理顶部统计显示「公开 N · 加密 0」而列表类型是「公开/私有」——
