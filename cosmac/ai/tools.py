@@ -1848,6 +1848,15 @@ class Toolbox:
             logger.exception("销售业绩查询工具执行出错")
             return "查询销售业绩时出错了（数据库不可用？）。"
 
+    # 终止性工具:执行后 Agent 必须停下等用户输入,不得在同轮/后续轮继续调工具。
+    # ask_user_choice 发选择卡问用户——负责人实报:AI 发了「同名专班怎么处理」的选项卡
+    # 却没等点选,自顾自建了第二个同名专班。发问=交还控制权,循环到此为止。
+    _TERMINAL_TOOLS = frozenset({"ask_user_choice"})
+
+    def is_terminal(self, name: str) -> bool:
+        """该工具是否为终止性(执行后 Agent 立即结束本轮,等用户下一条消息)。"""
+        return name in self._TERMINAL_TOOLS
+
     def _tool_ask_user_choice(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         """发一张「选择卡」给用户点选（档·交互增强）。结束本轮，等用户点完发回再继续。"""
         question = (args.get("question") or "").strip()
