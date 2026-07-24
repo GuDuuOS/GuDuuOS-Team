@@ -659,6 +659,12 @@ function cancelAddAccount() {
 // 管理后台：isAdmin 决定菜单入口是否显示（仅服务器管理员可见）；adminOpen 控制覆盖层
 const isAdmin = ref(false)
 const adminOpen = ref(false)
+// 后台当前菜单(与 AdminView 双向绑):要有独立地址,刷新/后退留在原菜单
+// (负责人实报:在其他菜单刷新一律弹回「用户管理」)。合法值与 AdminView 的 AdminTab 一致。
+const ADMIN_TABS = ['users', 'rooms', 'ai', 'skills', 'agents', 'people', 'templates', 'rules',
+  'workflows', 'gating', 'quotas', 'plans', 'docs', 'platformKb', 'sitePages', 'archives', 'overview'] as const
+type AdminTabKey = typeof ADMIN_TABS[number]
+const adminTab = ref<AdminTabKey>('users')
 const focused = ref(false)
 const fav = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
@@ -2064,7 +2070,7 @@ let restoreDeadline = 0       // L7：首屏还原兜底期限——零房间账
 
 /** 由当前导航状态算出对应地址 */
 function computePath(): string {
-  if (adminOpen.value) return '/admin'
+  if (adminOpen.value) return `/admin/${adminTab.value}`
   if (profileVisible.value) return '/me'
   const s = activeSpace.value
   if (!s) return '/'
@@ -2091,6 +2097,11 @@ function applyFromRoute() {
     // 两个全屏覆盖层先按地址决定开关（互斥）
     adminOpen.value = p.startsWith('/admin')
     profileVisible.value = p.startsWith('/me')
+    if (adminOpen.value) {
+      // /admin/<菜单>:菜单合法才用,非法或缺省回落 users(防脏地址把后台打空)
+      const t = p.slice('/admin'.length).replace(/^\//, '')
+      adminTab.value = (ADMIN_TABS as readonly string[]).includes(t) ? (t as AdminTabKey) : 'users'
+    }
     if (adminOpen.value || profileVisible.value) return
     // 匹配 /s/:space、/s/:space/board、/s/:space/tasks、/s/:space/docs、/s/:space/c/:roomId
     const m = p.match(/^\/s\/([^/]+)(?:\/(board|tasks|docs|org)|\/c\/(.+))?$/)
@@ -2124,7 +2135,7 @@ function applyFromRoute() {
 }
 
 // 状态 → 地址：用 push 让浏览器后退可用
-watch([activeSpace, board, tasks, docs, org, currentRoom, adminOpen, profileVisible], () => {
+watch([activeSpace, board, tasks, docs, org, currentRoom, adminOpen, adminTab, profileVisible], () => {
   if (!syncReady || applyingFromRoute) return
   const path = computePath()
   if (route.path !== path) router.push(path).catch(() => {})
@@ -3013,7 +3024,7 @@ onBeforeUnmount(() => {
     <MyUsageModal />
 
     <!-- 平台管理后台（全屏覆盖层；仅管理员可从用户菜单进入）-->
-    <AdminView v-if="adminOpen" @close="adminOpen = false" />
+    <AdminView v-if="adminOpen" v-model:tab="adminTab" @close="adminOpen = false" />
 
     <!-- 升级会员弹窗（模块4 交易系统）-->
     <MembershipModal v-if="showMembership" @close="showMembership = false" />

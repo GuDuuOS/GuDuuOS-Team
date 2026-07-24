@@ -1722,7 +1722,10 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 const { success, warn } = useToast()
 
 // 当前管理模块：用户/频道/AI配置/技能库/智能体/规则/工作流/数据概览
-const tab = ref<'users' | 'rooms' | 'ai' | 'skills' | 'agents' | 'people' | 'templates' | 'rules' | 'workflows' | 'gating' | 'quotas' | 'plans' | 'docs' | 'platformKb' | 'sitePages' | 'archives' | 'overview'>('users')
+// 用 defineModel 双向绑给 LiveView——后台各菜单要有独立地址(刷新留在原菜单、可后退/深链,
+// 见 CLAUDE.md 客户端路由约定);负责人实报:此前刷新一律弹回「用户管理」。
+type AdminTab = 'users' | 'rooms' | 'ai' | 'skills' | 'agents' | 'people' | 'templates' | 'rules' | 'workflows' | 'gating' | 'quotas' | 'plans' | 'docs' | 'platformKb' | 'sitePages' | 'archives' | 'overview'
+const tab = defineModel<AdminTab>('tab', { default: 'users' })
 // 侧栏菜单分组折叠状态(负责人要求可收缩);localStorage 记住,默认全展开
 const menuFold = reactive<Record<string, boolean>>(
   (() => { try { return JSON.parse(localStorage.getItem('cosmac.adm.menufold') || '{}') } catch { return {} } })(),
