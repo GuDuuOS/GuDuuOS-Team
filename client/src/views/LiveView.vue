@@ -279,6 +279,16 @@ const scopedTasks = computed(() => {
   })
 })
 
+// 放大态右栏「进度」列表:按流程正序展示(负责人报:与左侧 AI 画的 ①→⑥ 流程图对不上)。
+// scopedTasks 沿用后端返回的 id 倒序(新任务在前),直接 slice 会让"最后一步/综合审核"排最前、
+// 与流程图方向相反。这里按**截止时间升序**(流程时间线 07-27→08-06 天然正序,与任务看板列内
+// tasksByStatus 同一排序键),无截止的按 id 升序沉底——顺序即与流程图一致。
+const progressTasks = computed(() =>
+  [...scopedTasks.value].sort(
+    (a, b) => ((a.due_ts || Infinity) - (b.due_ts || Infinity)) || (a.id - b.id),
+  ),
+)
+
 /** 这条任务是否派给当前登录用户本人(与后端 _is_task_assignee 是同一份口径,改一处必须同步另一处)。
  *  比对「localpart」(去掉 @、去掉 :服务器 后缀、小写)——兼容 executor_ref 存全 id / 纯 localpart /
  *  带不带 @ 的各种写法。executor 是 AI/workflow 或无 ref 时,从 assignee 提取词逐个比对——
@@ -2943,7 +2953,7 @@ onBeforeUnmount(() => {
             <div class="ai-cw-sec">
               <div class="ai-cw-sec-h with-meta"><span>进度</span><span class="ai-cw-meta">{{ doneCount }}/{{ scopedTasks.length }}</span></div>
               <ul v-if="scopedTasks.length" class="ai-cw-progress">
-                <li v-for="t in scopedTasks.slice(0, 9)" :key="t.id"
+                <li v-for="t in progressTasks.slice(0, 9)" :key="t.id"
                     :class="{ done: t.status === 'done', in: t.status === 'doing' }">
                   {{ t.title }}<template v-if="t.status === 'doing' && t.progress"> · {{ t.progress }}%</template>
                 </li>
