@@ -3790,6 +3790,20 @@ onBeforeUnmount(() => {
 .stream::-webkit-scrollbar-thumb:hover { background-color: rgba(0, 0, 0, 0.38); }
 .msg { display: flex; flex-direction: column; padding: 4px 10px; margin: 0 -10px; border-radius: 4px; position: relative; }
 .msg:not(.grouped) { margin-top: 18px; }
+/* 同一发送者的连续消息(折叠态):加间距 + 一条淡分隔线,否则中枢AI连发
+   「执行过程卡 → @提醒 → 长帖子」会连成一片,看不出上下是两条(负责人实报:
+   要鼠标移上去才分得清)。线从消息体起始处画起、不跨左侧头像槽,保持干净。 */
+.msg.grouped { margin-top: 8px; }
+.msg.grouped::before {
+  content: "";
+  position: absolute;
+  left: 62px; right: 10px; top: -4px; height: 1px;
+  background: var(--border);
+  opacity: .5;
+  pointer-events: none;
+}
+/* 悬停/未读态下线条弱化,避免和背景色打架 */
+.msg.grouped:hover::before, .msg.grouped.unread::before { opacity: .25; }
 /* 有回复的消息：上方再多留点空，给连接线腾出"空行" */
 .msg:not(.grouped):has(.msg-reply) { margin-top: 22px; }
 .msg:hover { background: var(--bg-soft); }
