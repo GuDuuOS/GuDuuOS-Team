@@ -991,6 +991,9 @@ class Toolbox:
         room_id = self.client.create_room(name, invitees=invitees, admins=[ctx.sender])
         if not room_id:
             return f"建群「{name}」失败了（创建房间接口返回错误）。"
+        # 真建成才消费 teams 配额(与 assemble_team 同一本账、同「失败不扣」口径)——
+        # 负责人实报的旁路:免费用户经 create_room 反复建专班绕开 teams 上限,现堵上。
+        self._consume_quota(ctx, "create_room")
         # 顺带绑资源(负责人需求:建频道时就把知识库/规则调进去,不必为此建专班)。
         # 写失败如实报告,不宣称"已绑"。
         kb_scopes, kb_labels = self._resolve_kb_scopes(ctx, args.get("knowledge"))

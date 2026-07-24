@@ -105,7 +105,7 @@ class TestBotQuotaEnforce(unittest.TestCase):
         bot._tool_quota_consume("@u:h", "assemble_team")                    # 专班真建成 → 扣 1
         over = bot._tool_quota_check("@u:h", "assemble_team")               # 1/1 → 拦
         self.assertIsNotNone(over)
-        self.assertIn("专班数", over)
+        self.assertIn("专班/频道数", over)  # 文案:teams 覆盖建群(create_room)后改名
         # 不在配额表里的工具不计量（check/consume 都无操作）
         self.assertIsNone(bot._tool_quota_check("@u:h", "send_message_to_room"))
         bot._tool_quota_consume("@u:h", "send_message_to_room")  # 应无操作不报错

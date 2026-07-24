@@ -44,7 +44,7 @@ QUOTA_CATALOG: List[Dict[str, Any]] = [
         "defaults": {"free": 5, "paid": 200, "creator": -1},
     },
     {
-        "key": "teams", "label": "专班数（一键建专班）", "unit": "个",
+        "key": "teams", "label": "专班/频道数（AI 建群）", "unit": "个",
         "track": "usage", "period": "total", "group": "任务编排",
         "defaults": {"free": 1, "paid": 20, "creator": -1},
     },

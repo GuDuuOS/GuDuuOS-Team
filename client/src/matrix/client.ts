@@ -1987,7 +1987,7 @@ export const QUOTA_CATALOG: { key: string; label: string; unit: string; group: s
   { key: 'ai_msg_daily', label: 'AI 对话（每天）', unit: '条/天', group: 'AI', defaults: { free: 30, paid: -1, creator: -1 } },
   { key: 'storage_mb', label: '存储空间', unit: 'MB', group: '存储', defaults: { free: 100, paid: 1024, creator: 5120 } },
   { key: 'kb_docs', label: '知识库文档数', unit: '篇', group: '知识库', defaults: { free: 5, paid: 200, creator: -1 } },
-  { key: 'teams', label: '专班数（一键建专班）', unit: '个', group: '任务编排', defaults: { free: 1, paid: 20, creator: -1 } },
+  { key: 'teams', label: '专班/频道数（AI 建群）', unit: '个', group: '任务编排', defaults: { free: 1, paid: 20, creator: -1 } },
   { key: 'workflow_runs', label: '工作流运行（每月）', unit: '次/月', group: '自动化', defaults: { free: 0, paid: 200, creator: -1 } },
   { key: 'acquired_items', label: '商城已获取资源数', unit: '个', group: '商城', defaults: { free: 5, paid: 50, creator: -1 } },
 ]
