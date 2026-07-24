@@ -398,7 +398,11 @@ class Toolbox:
                 "往指定的**群/频道**发一条文本消息(公告、通知、任务说明等)。"
                 "⚠️ 在与用户的私人会话里用它时**必须**指定目标群(room_id 或 room_name)"
                 "——不指定会被拒绝,因为发到私聊里其他成员根本看不到。"
-                "刚 create_room 建的群,其 room_id 就在建群结果里,直接用它。"
+                "刚 create_room 建的群,其 room_id 就在建群结果里,直接用它。\n"
+                "**as_agent**:当这条内容是你**代某个 AI 同事写的**(如让文案 Agent 写开营帖、"
+                "数据 Agent 写日报),填它的 slug——消息就以**该同事本人的名字和头像**发出去,"
+                "频道里看到的是「文案」在说话而不是你代发。多个 Agent 各写一段时,分多次调用、"
+                "各填各的 slug,别攒成一条以你自己的名义发。"
             ),
             parameters={
                 "type": "object",
@@ -411,6 +415,13 @@ class Toolbox:
                     "room_name": {
                         "type": "string",
                         "description": "目标群名;不知道 room_id 时用群名,我会解析。",
+                    },
+                    "as_agent": {
+                        "type": "string",
+                        "description": (
+                            "以哪个 AI 同事的身份发(填其 slug,如 copywriter/social/analyst)。"
+                            "代同事写的内容就填它,消息署名即为该同事;不填=以你自己(主AI)名义发。"
+                        ),
                     },
                 },
                 "required": ["text"],
@@ -1414,13 +1425,39 @@ class Toolbox:
         denial = self._check_room_access(room_id, ctx)
         if denial:
             return denial
-        event_id = self.client.send_text(room_id, text)
+        # 代 AI 同事发言(负责人实报:三个 Agent 写的内容全署名主AI,看不出谁写的)——
+        # 拉傀儡进房后以它身份发;傀儡建不了/进不去/发失败都**退回主AI身份**,绝不丢消息。
+        as_agent = str(args.get("as_agent") or "").strip()
+        event_id = None
+        sent_as = ""
+        if as_agent and self.ensure_worker_in_room:
+            try:
+                puppet = self.ensure_worker_in_room(room_id, as_agent)
+            except Exception:
+                puppet = ""
+            if puppet:
+                try:
+                    event_id = self.client.send_text_as(room_id, text, puppet)
+                    if event_id:
+                        sent_as = as_agent
+                except Exception:
+                    event_id = None
+        if not event_id:
+            event_id = self.client.send_text(room_id, text)
         if not event_id:
             return f"往房间 {room_id} 发消息失败。"
         nm = self._room_name(room_id)
         where = f"「{nm}」（{room_id}）" if nm else f"房间 {room_id}"
+        # 如实回报署名结果:代发成功就说以谁的名义发的;请求代发但退回了主AI身份也要讲清楚,
+        # 否则模型会对用户宣称"已用 XX 的身份发出",而频道里其实是主AI在说话。
+        if sent_as:
+            who = f"，以 AI 同事「{sent_as}」的身份署名发出"
+        elif as_agent:
+            who = f"（注意:未能以「{as_agent}」身份发送，已用你自己的名义发出，可如实告知用户）"
+        else:
+            who = ""
         return (
-            f"已往{where}发送消息（event_id={event_id}）。"
+            f"已往{where}发送消息（event_id={event_id}）{who}。"
             "转告用户时**必须用这里的真实频道名**，不要用你以为的名字。"
         )
 
