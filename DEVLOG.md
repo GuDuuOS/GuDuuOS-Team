@@ -1,5 +1,12 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-24 — 补丁:SDK 引擎容器内 root 放行(紧随 1.4.0)
+
+- 引擎首跑 CLI exit 1 静默回退:Claude Code CLI 拒绝 root+bypassPermissions
+  (安全限制,stderr 被吞难查——经 SDK stderr 回调抓到真因)。发行版容器即沙箱,
+  engine 恒注入 IS_SANDBOX=1(官方 devcontainer 同款);业务安全仍靠 Toolbox 门控层。
+  容器内最小复现已通(REPLY 正常)。
+
 ## 2026-07-24 — 补丁:SDK 引擎环境变量透传(紧随 1.4.0)
 
 - 1.4.0 部署后引擎未生效:compose 的 environment 是**白名单式**,.env 里新加的
