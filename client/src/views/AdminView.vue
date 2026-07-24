@@ -123,7 +123,8 @@
             <p class="adm-hint">
               共 {{ users.length }} 个账号 ·
               管理员 {{ users.filter(u => u.admin).length }} ·
-              已停用 {{ users.filter(u => u.deactivated || u.locked).length }}
+              已停用 {{ users.filter(u => u.locked && !u.deactivated).length }} ·
+              已注销 {{ users.filter(u => u.deactivated).length }}
             </p>
           </div>
           <div class="adm-actions">
@@ -152,7 +153,10 @@
             <select v-model="filterStatus" class="adm-fsel">
               <option value="all">全部状态</option>
               <option value="ok">正常</option>
-              <option value="off">已停用</option>
+              <!-- 与状态列三态一一对应(负责人实报:筛「已停用」却列出「已注销」的人)——
+                   停用=locked(数据保留、可无损恢复);注销=deactivated(旧版,已退出所有频道) -->
+              <option value="locked">已停用</option>
+              <option value="deact">已注销</option>
             </select>
             <span class="adm-filter-n">{{ filteredUsers.length }} / {{ users.length }}</span>
           </div>
@@ -1861,7 +1865,7 @@ function memberTier(userId: string): string {
 const userSearch = ref('')
 const filterRole = ref<'all' | 'admin' | 'member'>('all')
 const filterTier = ref('all')   // 'all' 或某会员等级 slug
-const filterStatus = ref<'all' | 'ok' | 'off'>('all')
+const filterStatus = ref<'all' | 'ok' | 'locked' | 'deact'>('all')
 const filteredUsers = computed(() => {
   const q = userSearch.value.toLowerCase()
   return users.value
@@ -1873,7 +1877,10 @@ const filteredUsers = computed(() => {
       // 否则按「付费会员」筛会把底层 tier=paid 的管理员也带进来(与展示不一致,QA 实测)。
       if (filterTier.value !== 'all' && (u.admin ? 'admin' : memberTier(u.id)) !== filterTier.value) return false
       if (filterStatus.value === 'ok' && (u.deactivated || u.locked)) return false
-      if (filterStatus.value === 'off' && !(u.deactivated || u.locked)) return false
+      // 「已停用」只筛 locked、「已注销」只筛 deactivated:两者恢复方式不同(无损恢复 vs
+      // 旧版恢复且需重新入群),混在一起筛出来管理员会点错按钮。
+      if (filterStatus.value === 'locked' && !(u.locked && !u.deactivated)) return false
+      if (filterStatus.value === 'deact' && !u.deactivated) return false
       return true
     })
     .sort((a, b) => Number(a.deactivated) - Number(b.deactivated))  // 在用在前、停用在后
