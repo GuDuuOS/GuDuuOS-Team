@@ -2704,14 +2704,16 @@ class CosmacBot:
         （也兼容 /专班、/技能，万一用户在 Element 里点了"作为消息发送"）
         """
         text = text.strip()
+        # 「建专班/专班 <名字>」**不再走演示派单卡**(负责人实报:AI 同事没进频道、少了
+        # RULE)——那张卡(_launch_campaign)是硬编码 mock:选题/文案/数据 Agent 全是假文本,
+        # 不拉真傀儡进群、不派真任务、不写 RULE。改为**门控通过后交回 AI**,由 assemble_team
+        # 工具真编排:拆任务、选真 Agent、把傀儡拉进专班、写任务 RULE。门控/配额工具层
+        # (execute 的 gate_check/quota_check)也有,这里只做被命令拦下时的快速前拦提示。
         for prefix in ("建专班", "/专班", "专班"):
             if text.startswith(prefix):
-                # 建群/开专班门控：低于门槛者拦下并提示升级（仍算"命中命令"，return True）
                 if not self._gate_allows(sender, "create_room"):
                     self.client.send_text(room_id, self._gate_denied_text("create_room"))
                     return True
-                # 「建专班」命令与自然语言 assemble_team 工具是**同一动作**，必须过同一道
-                # 付费门控 + teams 配额——否则命令成了付费墙旁路（审查 bug#11）。
                 if not self._gate_allows(sender, "assemble_team"):
                     self.client.send_text(room_id, self._gate_denied_text("assemble_team"))
                     return True
@@ -2719,9 +2721,7 @@ class CosmacBot:
                 if over:
                     self.client.send_text(room_id, over)
                     return True
-                name = text[len(prefix):].strip(" :：") or "新专班"
-                self._launch_campaign(room_id, sender, name)
-                return True
+                return False  # 交回 AI 对话,走 assemble_team 真编排(拉 Agent 进群+RULE)
         # 技能管理命令：先用不连 DB 的前缀闸判断，命中再执行（DB 不可用则提示未启用）。
         # 自定义技能是付费功能（custom_skill 门控）：低于门槛提示升级。
         if self._is_skill_command(text):
@@ -6273,53 +6273,8 @@ class CosmacBot:
         except Exception:
             logger.debug("配额消费失败（忽略）：metric=%s", metric, exc_info=True)
 
-    def _launch_campaign(self, origin_room: str, requester: str, name: str) -> None:
-        """建一个专班群、拉发起人进来，并在群里发一张"派单"富卡。
-
-        L12：与 assemble_team 工具对齐关键行为——① 建房时把发起人提成管理员(power=100)，否则
-        他改不了频道名/配置(403)；② 建成后给发起人所在房发 team_created 信号卡，客户端据此把
-        新专班自动挂进当前工作区（否则 FEATURES 宣称的"自动挂工作区"对本命令入口不成立）。
-        （派单富卡仍是演示卡：本命令是"一句话出富卡"的演示路径，真实任务编排走自然语言→工具。）
-        """
-        new_room = self.client.create_room(name, invitees=[requester], admins=[requester])
-        if not new_room:
-            self.client.send_text(origin_room, f"抱歉，建专班「{name}」失败了，请稍后再试。")
-            return
-        # 专班房真建成才消费 teams 配额（与 assemble_team 工具同一本账，失败不扣）
-        self._tool_quota_consume(requester, "assemble_team")
-
-        # 派单富卡：body 是纯文本兜底（Element 显示这个），card 是结构化数据（GuDuu OS 客户端渲染）
-        card = {
-            "kind": "dispatch",
-            "title": f"{name} · 专班已建立",
-            "subtitle": "由 GuDuu OS 中枢自动派单",
-            "rows": [
-                {"task": "选题锁定", "owner": "选题 Agent", "type": "ai"},
-                {"task": "脚本撰写", "owner": "文案 Agent", "type": "ai"},
-                {"task": "数据排期", "owner": "数据 Agent", "type": "ai"},
-                {"task": "拍板确认", "owner": requester, "type": "human"},
-            ],
-        }
-        body = (
-            f"【{name}】专班已建立，派单如下：\n"
-            "· 选题锁定 → 选题 Agent\n"
-            "· 脚本撰写 → 文案 Agent\n"
-            "· 数据排期 → 数据 Agent\n"
-            f"· 拍板确认 → {requester}"
-        )
-        self.client.send_card(new_room, body, card)
-        # 让客户端把这个专班自动挂进发起人当前工作区（与 assemble_team 工具一致，L12）
-        try:
-            self.client.send_card(
-                origin_room,
-                f"专班「{name}」已建好（room_id={new_room}）。",
-                {"kind": "team_created", "team_room": new_room, "project": name},
-            )
-        except Exception:
-            logger.debug("发送 team_created 信号卡失败（忽略）", exc_info=True)
-        self.client.send_text(
-            origin_room, f"已为你建立专班「{name}」并把你拉进群，派单已发到新群里。"
-        )
+    # 注:原 _launch_campaign(演示派单卡)已删除——「建专班」命令改为交回 AI 走
+    # assemble_team 真编排(拆任务/选真 Agent/拉傀儡进群/写 RULE),见 _try_handle_command。
 
 
 class _DeadlineSocket:
