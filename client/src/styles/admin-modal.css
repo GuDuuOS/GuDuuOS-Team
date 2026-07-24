@@ -39,7 +39,19 @@
   font-size: var(--fs-300);
   color: var(--text);
 }
-.cam-sub { font-size: var(--fs-75); color: var(--text-3); }
+/* 标题右侧信息块:第一行「频道名 · 群级 AI 隔离配置」,第二行 room_id。
+   min-width:0 让长名能在 flex 里正常收缩省略,不把关闭按钮挤出去。 */
+.cam-head-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.cam-sub { font-size: var(--fs-75); color: var(--text-3); display: flex; align-items: baseline; min-width: 0; }
+/* 频道名:占满可用宽后省略;悬浮 title 看全名 */
+.cam-sub-name { font-weight: var(--fw-bold); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cam-sub-tail { flex-shrink: 0; white-space: nowrap; }
+/* room_id:等宽小字、可选中复制;同样单行省略 */
+.cam-sub-id {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--fs-50, 11px); color: var(--text-3); opacity: .75;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: all;
+}
 .cam-close {
   margin-left: auto;
   width: 28px; height: 28px;

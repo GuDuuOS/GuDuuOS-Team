@@ -3,7 +3,15 @@
     <div class="cam-modal" role="dialog" aria-modal="true">
       <div class="cam-head">
         <span class="cam-title">频道管理</span>
-        <span class="cam-sub">{{ groupName }} · 群级 AI 隔离配置</span>
+        <!-- 频道名在前、room_id 次行(负责人建议:ID 前加频道名)。
+             长频道名单行省略号 + title 悬浮看全名,不折行撑破标题栏。 -->
+        <span class="cam-head-meta">
+          <span class="cam-sub">
+            <b class="cam-sub-name" :title="groupName">{{ groupName }}</b>
+            <span class="cam-sub-tail"> · 群级 AI 隔离配置</span>
+          </span>
+          <span v-if="groupRoomId && groupRoomId !== groupName" class="cam-sub-id" :title="groupRoomId">{{ groupRoomId }}</span>
+        </span>
         <button class="cam-close" title="关闭" @click="close">×</button>
       </div>
 
@@ -340,7 +348,7 @@ type TabKey = 'persona' | 'members' | 'skills' | 'knowledge' | 'dataScopes' | 'r
 type CountKey = 'members' | 'skills' | 'knowledge' | 'rules' | 'dataScopes'
 
 const {
-  visible, state, groupName, close, addMember, removeMember, addItem, removeItem, addScope, removeScope,
+  visible, state, groupName, groupRoomId, close, addMember, removeMember, addItem, removeItem, addScope, removeScope,
   // 真实成员 + 配置持久化（有真后端时走这套）
   roomId, isLive, saveState, liveMembers, refreshLiveMembers, inviteLiveMember, removeLiveMember,
   // 频道知识库真实文档:与右侧「关于此频道」共享同一份(负责人报的"维护后右侧未同步")
