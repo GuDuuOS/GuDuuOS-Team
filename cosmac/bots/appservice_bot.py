@@ -3318,6 +3318,56 @@ class CosmacBot:
             logger.exception("读频道知识库文档失败")
             return 500, {"error": "读取失败(数据库不可用?)"}
 
+    # 后台房型判定的进程内缓存(room_id → kind)。建房标记(ai_session/dm/space)终生不变,
+    # 永久缓存;第一次全量判定后,后续刷新只有新房走网络。
+    _admin_kind_cache: Dict[str, str] = {}
+
+    def handle_admin_room_kinds(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """后台「频道管理」批量判房型(仅平台管理员):{room_id: space|ai|dm|channel}。
+
+        负责人实报:后台把中枢 AI 会话房、用户间私信都当「频道」统计/列出了。
+        Synapse admin /rooms 摘要没有这些信息——真相在房间 state 标记里
+        (cosmac.ai_session / cosmac.dm / m.room.create.type),bot 用管理员通道
+        (admin_room_state,bot 不在的房也能读)批量判定。带永久缓存(标记不变);
+        单房读不出按 channel 兜底(宁可多显示,不静默藏房)。并发 8 路控制耗时。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(user_id):
+            return 403, {"error": "仅平台管理员可用"}
+        ids = [str(r).strip() for r in (body or {}).get("room_ids") or [] if str(r).strip().startswith("!")]
+        ids = ids[:2000]  # 防滥用上限
+        todo = [r for r in ids if r not in self._admin_kind_cache]
+
+        def _judge(rid: str) -> None:
+            kind = "channel"
+            try:
+                state = self.client.admin_room_state(rid) or []
+                for ev in state:
+                    et = ev.get("type")
+                    if et == "m.room.create" and (ev.get("content") or {}).get("type") == "m.space":
+                        kind = "space"
+                        break
+                    if et == "cosmac.ai_session":
+                        kind = "ai"
+                        break
+                    if et == "cosmac.dm":
+                        kind = "dm"
+                        break
+            except Exception:
+                pass  # 读不出按 channel(fail-open 展示,别把真频道藏了)
+            self._admin_kind_cache[rid] = kind
+
+        if todo:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=8, thread_name_prefix="kind") as pool:
+                list(pool.map(_judge, todo))
+        return 200, {"kinds": {r: self._admin_kind_cache.get(r, "channel") for r in ids}}
+
     def handle_admin_room_detail(
         self, access_token: str, room_id: str
     ) -> Tuple[int, Dict[str, Any]]:
@@ -6827,6 +6877,17 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
 
+        # 后台频道管理:批量判房型(space/ai/dm/channel,仅平台管理员)
+        if path == "/cosmac/admin/room_kinds":
+            auth = self.headers.get("Authorization", "")
+            token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_admin_room_kinds(token, body)
+            self._send_json(code, payload, cors=True)
+            return
         # 任务看板：改任务状态/进度（带本人 token）
         if path == "/cosmac/tasks/update":
             auth = self.headers.get("Authorization", "")

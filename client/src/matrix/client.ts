@@ -3912,6 +3912,26 @@ export async function fetchAdminKbDoc(id: number): Promise<{ title: string; sour
   return j
 }
 
+/** 后台频道管理:批量判房型(space/ai/dm/channel)。中枢AI会话与私信不是"频道",
+ *  Synapse admin /rooms 摘要判不出——由 bot 经管理员通道读房间 state 标记批量判定
+ *  (负责人实报:后台把中枢AI/私信都当频道统计了)。失败返回空映射(调用方不过滤,fail-open)。 */
+export async function fetchAdminRoomKinds(roomIds: string[]): Promise<Record<string, string>> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token || !roomIds.length) return {}
+  try {
+    const r = await fetch(`${payBase()}/cosmac/admin/room_kinds`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ room_ids: roomIds }),
+    })
+    if (!r.ok) return {}
+    const j = await r.json().catch(() => ({}))
+    return j.kinds || {}
+  } catch {
+    return {}
+  }
+}
+
 export async function fetchAdminRoomDetail(roomId: string): Promise<AdminRoomDetail> {
   const token = (mx as any)?.getAccessToken?.() || ''
   const r = await fetch(`${payBase()}/cosmac/admin/room_detail?room_id=${encodeURIComponent(roomId)}`, {
