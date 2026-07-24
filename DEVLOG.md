@@ -1,5 +1,11 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-24 — 补丁:SDK 引擎环境变量透传(紧随 1.4.0)
+
+- 1.4.0 部署后引擎未生效:compose 的 environment 是**白名单式**,.env 里新加的
+  COSMAC_AGENT_ENGINE/SDK_* 没在列表里,根本没传进容器(开关静默失效)。
+  compose 补 5 个变量透传;不发版(部署配置修正,随下次发版带 tag)。
+
 ## 2026-07-24 — GuDuu OS 1.4.0 (minor)
 
 - 新增(负责人问"底层 Claude Code 的 SDK 加了没"——查明:引擎桥接代码早已就位但生产
