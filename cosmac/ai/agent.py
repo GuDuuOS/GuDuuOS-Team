@@ -102,6 +102,13 @@ class Agent:
                 messages.append(
                     Message(role="tool", content=result, tool_call_id=call.id)
                 )
+                # 终止性工具(如 ask_user_choice 发选择卡):执行后**立即结束本轮**,
+                # 交还控制权给用户,绝不继续调后续工具/进入下一轮(负责人实报:AI 发了
+                # 「同名专班怎么处理」选项卡却没等点选,又建了第二个同名专班)。
+                # 已通过卡片与用户交互,返回模型调工具前说的引导语(可能空,bot 判空不发)。
+                if self.toolbox.is_terminal(call.name):
+                    logger.info("遇终止性工具 %s,结束本轮等用户输入", call.name)
+                    return turn.text or ""
             # 进入下一轮，让模型根据工具结果继续
 
         # 兜底：步数用尽仍没收敛。⚠️ 不能全盘否定——此刻工具大多**已真实执行**(建房/派单

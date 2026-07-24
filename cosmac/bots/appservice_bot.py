@@ -682,27 +682,30 @@ class CosmacBot:
             # 已成功的这条 AI 回复会被重新处理；固定 txn_id 保证群里不会冒出两条同样的回复。
             # 方案B:worker 路由若解析出傀儡账号(as_user),回复以该 AI 同事本人身份发——
             # 时间线上显示它的名字/头像;傀儡发送失败退回主 AI 身份,绝不丢回复。
-            as_user = str(gctx.get("as_user") or "")
-            if as_user:
-                # 发送前确保傀儡在本房(评审#7:普通频道 @ 已获取智能体/旧专班里
-                # 傀儡从未 join,不在房 send_text_as 必 403)。带在房缓存,平时零开销;
-                # 拉不进房(权限等)则清空 as_user,直接走主 AI 身份,省一次注定失败的请求。
-                _slug = self._worker_slug_of(as_user)
-                if _slug and not self._ensure_worker_in_room(room_id, _slug):
-                    as_user = ""
-            sent_ok = False
-            if as_user:
-                sent_ok = bool(self.client.send_text_as(
-                    room_id, reply, as_user,
-                    txn_id=f"cosmac-ai-{event_id}" if event_id else None,
-                ))
-            if not sent_ok:
-                # 兜底 txn 带 -fb 后缀:防"傀儡实际已发成功但响应丢失"时,主 AI 复用同
-                # txn 被 Synapse 去重成静默——宁可极端情况下重复一条,不可丢回复。
-                self.client.send_text(
-                    room_id, reply,
-                    txn_id=f"cosmac-ai-fb-{event_id}" if event_id else None,
-                )
+            # 空回复不发多余消息(终止性工具如 ask_user_choice 已把选择卡发进房,
+            # Agent 返回空串——此时再发一条空文本就是骚扰)。选择卡本身已是给用户的交互。
+            if reply.strip():
+                as_user = str(gctx.get("as_user") or "")
+                if as_user:
+                    # 发送前确保傀儡在本房(评审#7:普通频道 @ 已获取智能体/旧专班里
+                    # 傀儡从未 join,不在房 send_text_as 必 403)。带在房缓存,平时零开销;
+                    # 拉不进房(权限等)则清空 as_user,直接走主 AI 身份,省一次注定失败的请求。
+                    _slug = self._worker_slug_of(as_user)
+                    if _slug and not self._ensure_worker_in_room(room_id, _slug):
+                        as_user = ""
+                sent_ok = False
+                if as_user:
+                    sent_ok = bool(self.client.send_text_as(
+                        room_id, reply, as_user,
+                        txn_id=f"cosmac-ai-{event_id}" if event_id else None,
+                    ))
+                if not sent_ok:
+                    # 兜底 txn 带 -fb 后缀:防"傀儡实际已发成功但响应丢失"时,主 AI 复用同
+                    # txn 被 Synapse 去重成静默——宁可极端情况下重复一条,不可丢回复。
+                    self.client.send_text(
+                        room_id, reply,
+                        txn_id=f"cosmac-ai-fb-{event_id}" if event_id else None,
+                    )
             # L2：回复真正发出后才消费当日 AI 对话额度（失败走下面的 except 分支、不扣）。
             self._rate_quota_blocked(sender, "ai_msg_daily", consume=True)
         except Exception:
