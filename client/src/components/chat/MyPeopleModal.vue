@@ -54,6 +54,9 @@
               </div>
               <div class="mp-item-act">
                 <button class="mp-mini" :disabled="busy" @click="startEdit(r)">{{ r.hasProfile ? '编辑能力' : '设置能力' }}</button>
+                <!-- 方案B:管理员把个人标注提升为平台能力(全平台可见)。仅对「已设且非平台来源」的条目显示 -->
+                <button v-if="amAdmin && r.hasProfile && !r.isGlobal" class="mp-mini sync" :disabled="busy"
+                        title="把这条能力同步到平台名册，全平台可见（管理员）" @click="promote(r.id)">同步到平台</button>
                 <button v-if="r.hasProfile" class="mp-mini danger" :disabled="busy" @click="remove(r.id)">清除</button>
               </div>
             </li>
@@ -68,7 +71,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import { useMyPeople } from '@/composables/useMyPeople'
-const { visible, rows, loading, busy, editing, adding, errText, form, close, startEdit, startAdd, save, remove } = useMyPeople()
+const { visible, rows, loading, busy, editing, adding, errText, form, amAdmin, close, startEdit, startAdd, save, remove, promote } = useMyPeople()
 
 // 滚动位置保持(负责人报:列表滑到中间,进「编辑能力」再取消,滚回顶部还得重新找人)。
 // 列表与编辑视图在同一滚动容器 .mp-body 里 v-if 切换——进编辑时列表销毁、返回时重建,
@@ -124,5 +127,7 @@ watch(editing, (v) => {
 .mp-item-act { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
 .mp-mini { border: 1px solid var(--border); background: transparent; color: var(--text-2); padding: 3px 10px; border-radius: 6px; cursor: pointer; font-size: var(--fs-75); }
 .mp-mini.danger:hover { color: #c0392b; }
+.mp-mini.sync { color: var(--accent); border-color: var(--accent); }
+.mp-mini.sync:hover { background: var(--bg-soft); }
 .mp-empty { padding: 30px 12px; text-align: center; color: var(--text-3); font-size: var(--fs-75); line-height: 1.6; }
 </style>

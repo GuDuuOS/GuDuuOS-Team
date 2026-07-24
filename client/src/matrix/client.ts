@@ -3038,6 +3038,40 @@ export async function myPeopleList(): Promise<MyPerson[]> {
   }
 }
 
+/** 一条个人标注(后台只读展示用):谁给谁标了什么。 */
+export interface PersonNote { owner: string; name: string; role: string; expertise: string; enabled: boolean }
+
+/** 后台「人员能力」:拉全平台的个人标注(方案A,仅管理员)。失败返回空映射,页面按无标注展示。 */
+export async function fetchAdminPeopleNotes(): Promise<Record<string, PersonNote[]>> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return {}
+  try {
+    const r = await fetch(`${payBase()}/cosmac/admin/people_notes`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return {}
+    const j = await r.json().catch(() => ({}))
+    return j?.notes || {}
+  } catch {
+    return {}
+  }
+}
+
+/** 把我对某人的能力标注**提升为平台能力**(方案B,仅管理员)。失败抛出带文案的错误。 */
+export async function myPeoplePromote(personId: string): Promise<void> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) throw new Error('登录已失效，请重新登录')
+  const r = await fetch(`${payBase()}/cosmac/people/promote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ person_id: personId }),
+  })
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}))
+    throw new Error(j?.error || '同步到平台名册失败')
+  }
+}
+
 /** 新增/更新一个协作人的能力备注。失败抛出带文案的错误。 */
 export async function myPeopleAdd(p: {
   person_id: string; name?: string; role?: string; expertise?: string; note?: string; enabled?: boolean
