@@ -6135,7 +6135,11 @@ class CosmacBot:
 
     # 工具名 → 可计量配额 metric（超额拦 + 计数）。其余工具不计量。
     _TOOL_QUOTA_MAP = {
-        "assemble_team": "teams",       # 专班数（单调累计）
+        "assemble_team": "teams",       # 一键建专班（建频道+配资源+派单）
+        # create_room 也算 teams(负责人实报:免费用户 teams=1 却能反复建专班)——用户说
+        # 「建专班」时 AI 常调轻量的 create_room 而非 assemble_team,此前它不受任何配额,
+        # 成了免费墙的旁路。两工具各自直接建房、互不调用,不会双扣。
+        "create_room": "teams",
         "run_workflow": "workflow_runs",  # 工作流运行次数（每月）
     }
 
