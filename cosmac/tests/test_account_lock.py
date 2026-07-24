@@ -85,6 +85,25 @@ class TestRosterFilter(unittest.TestCase):
             out = registration.list_deactivated_user_ids("http://hs")
         self.assertEqual(out, {"@locked:h", "@gone:h"})
 
+    def test_query_carries_locked_param(self) -> None:
+        """请求必须带 locked=true(负责人实报:停用后账号从用户列表消失)。
+
+        Synapse 的 /admin/v2/users **默认排除 locked 用户**,而本产品的「停用」正是
+        用 lock 实现的(保数据可恢复)。少了这个参数:①后台列表看不到被停用的人、无法
+        恢复;②这份名册漏掉他们 → AI 把任务派给登不进来的账号。生产实测已复现。
+        """
+        captured = {}
+
+        def _fake_get(url, **kw):
+            captured["url"] = url
+            return _Resp(200, {"users": []})
+
+        with patch.object(registration, "_env", return_value="admtok"), \
+             patch.object(registration.requests, "get", side_effect=_fake_get):
+            registration.list_deactivated_user_ids("http://hs")
+        self.assertIn("locked=true", captured["url"])
+        self.assertIn("deactivated=true", captured["url"])  # 两者都要,别改丢一个
+
 
 if __name__ == "__main__":
     unittest.main()

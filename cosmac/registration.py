@@ -1101,8 +1101,11 @@ def list_deactivated_user_ids(
     try:
         for _ in range(max_pages):
             url = (
+                # locked=true 必带:Synapse 默认排除 locked 用户,而本产品「停用」=lock。
+                # 漏了它 → 锁定账号不在结果里 → 名册不过滤 → AI 把任务派给登不进来的人。
                 f"{base}/_synapse/admin/v2/users"
-                f"?from={frm}&limit={page_limit}&guests=false&deactivated=true"
+                f"?from={frm}&limit={page_limit}&guests=false"
+                f"&deactivated=true&locked=true"
             )
             rr = requests.get(
                 url, headers={"Authorization": f"Bearer {token}"}, timeout=_HS_TIMEOUT

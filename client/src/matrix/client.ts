@@ -1331,8 +1331,12 @@ export async function listUsers(): Promise<AdminUser[]> {
   const limit = 100
   // Synapse 用 next_token 分页；没有 next_token 表示取完了
   for (let guard = 0; guard < 100; guard++) {
+    // deactivated=true 表示"结果**包含**已停用者";locked=true 同理——Synapse 默认
+    // **排除 locked 用户**,而本产品的「停用」正是用 lock 实现的(保住频道成员关系,
+    // 见停用改锁定那次改动)。少了 locked=true,管理员一停用账号就从列表里**消失**,
+    // 既看不到状态也无法恢复(负责人实报)。两个参数都要带。
     const data = await adminFetch(
-      `/_synapse/admin/v2/users?from=${from}&limit=${limit}&guests=false&deactivated=true`,
+      `/_synapse/admin/v2/users?from=${from}&limit=${limit}&guests=false&deactivated=true&locked=true`,
     )
     for (const u of data.users || []) {
       // AI 同事傀儡账号(方案B,@guduu-ai-*)不进「用户管理」——它们不是真实用户,
