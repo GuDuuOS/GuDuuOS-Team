@@ -5452,6 +5452,99 @@ class CosmacBot:
             logger.debug("叠加全局能力名册失败（忽略）", exc_info=True)
         return 200, {"people": out}
 
+    def handle_admin_people_notes(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """后台「人员能力」：列出**全平台的个人标注**(仅平台管理员)。
+
+        负责人实报"设置后没同步":前台「我的协作人」是**个人级**名册(按 owner 隔离),
+        后台「人员能力」是**平台级**(控制室 cosmac.people),两套互不可见——管理员在后台
+        看不到用户私下标注了谁擅长什么(但 AI 派单其实已合并两份)。这里把个人标注聚合
+        出来给后台**只读**展示:{被标注人: [{标注者, 角色, 擅长}...]},不改任何数据归属。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(user_id):
+            return 403, {"error": "仅平台管理员可查看"}
+        notes: Dict[str, List[Dict[str, Any]]] = {}
+        try:
+            from sqlalchemy import select
+
+            from cosmac.db import session_scope
+            from cosmac.db.models import PersonProfile
+
+            with session_scope() as s:
+                rows = s.execute(
+                    select(PersonProfile).order_by(PersonProfile.id.desc()).limit(2000)
+                ).scalars().all()
+                for p in rows:
+                    notes.setdefault(str(p.person_id or ""), []).append({
+                        "owner": str(p.owner or ""),
+                        "name": str(p.name or ""),
+                        "role": str(p.role or ""),
+                        "expertise": str(p.expertise or ""),
+                        "enabled": bool(p.enabled),
+                    })
+        except Exception:
+            logger.debug("聚合个人标注失败（忽略，后台按无标注展示）", exc_info=True)
+        return 200, {"notes": notes}
+
+    def handle_people_promote(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """把某条**个人标注**提升为**平台能力**(写控制室 cosmac.people)。仅平台管理员。
+
+        负责人拍板的方案 B:管理员在「我的协作人」里给某人标了能力后,可一键让全平台可见,
+        免得同一份信息在前台后台各录一遍。幂等:平台已有同一 user_id 则**覆盖**其 role/
+        expertise/name;其余条目原样保留。bot 无控制室写权限时如实报错(不假装成功)。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(user_id):
+            return 403, {"error": "仅平台管理员可同步到平台能力名册"}
+        pid = str((body or {}).get("person_id") or "").strip()
+        if not pid.startswith("@"):
+            return 400, {"error": "无效的用户 id"}
+        # 取本人名册里的这条(以设置者自己的记录为准)
+        row: Optional[Dict[str, Any]] = None
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.person_repo import list_people, to_dict
+
+            with session_scope() as s:
+                for p in list_people(s, user_id):
+                    if str(p.person_id) == pid:
+                        row = to_dict(p)
+                        break
+        except Exception:
+            logger.exception("读取个人标注失败")
+            return 500, {"error": "读取失败"}
+        if row is None:
+            return 404, {"error": "你的名册里没有这个人的能力标注"}
+        try:
+            ctrl = self.client.resolve_alias(self.config.control_room_alias)
+            if not ctrl:
+                return 500, {"error": "找不到控制室，无法写入平台名册"}
+            ev = self.client.get_state_event(ctrl, PEOPLE_EVENT_TYPE) or {}
+            people = [p for p in (ev.get("people") or []) if isinstance(p, dict)]
+            merged = [p for p in people if str(p.get("user_id") or "") != pid]
+            merged.append({
+                "user_id": pid,
+                "name": str(row.get("name") or ""),
+                "role": str(row.get("role") or ""),
+                "expertise": str(row.get("expertise") or ""),
+                "note": str(row.get("note") or ""),
+                "enabled": True,
+            })
+            ok = self.client.set_state_event(ctrl, PEOPLE_EVENT_TYPE, {"people": merged})
+            if not ok:
+                return 500, {"error": "写入平台名册失败（可能没有控制室写权限）"}
+        except Exception:
+            logger.exception("同步平台能力名册失败")
+            return 500, {"error": "同步失败，请稍后重试"}
+        # _people_items 每次直读控制室(无缓存)，写完主 AI 下条消息即生效，无需失效动作
+        return 200, {"ok": True}
+
     def handle_people_add(
         self, access_token: str, body: Dict[str, Any]
     ) -> Tuple[int, Dict[str, Any]]:
@@ -6766,6 +6859,11 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(code, payload, cors=True)
             return
         # 个人协作人能力名册：列本人维护的协作人（带本人 token）
+        # 后台「人员能力」查看全平台个人标注(方案A,仅管理员只读)
+        if self.path.split("?", 1)[0] == "/cosmac/admin/people_notes":
+            code, payload = self.bot.handle_admin_people_notes(self._bearer())
+            self._send_json(code, payload, cors=True)
+            return
         if self.path.split("?", 1)[0] == "/cosmac/people/mine":
             auth = self.headers.get("Authorization", "")
             token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
@@ -7137,6 +7235,17 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         # 个人协作人能力名册：添加/更新一条（带本人 token、浏览器调，需 CORS）。
+        # 个人标注一键提升为平台能力(方案B,仅管理员)
+        if path == "/cosmac/people/promote":
+            auth = self.headers.get("Authorization", "")
+            token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_people_promote(token, body)
+            self._send_json(code, payload, cors=True)
+            return
         if path == "/cosmac/people/add":
             auth = self.headers.get("Authorization", "")
             token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""

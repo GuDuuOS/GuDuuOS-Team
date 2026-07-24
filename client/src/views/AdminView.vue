@@ -765,7 +765,7 @@
           <p v-if="!peopleRows.length" class="adm-hint">还没有用户。先去「用户管理」建账号，这里会自动同步。</p>
           <table v-else class="adm-table">
             <thead>
-              <tr><th>用户</th><th>角色</th><th>擅长</th><th>能力</th><th>操作</th></tr>
+              <tr><th>用户</th><th>角色</th><th>擅长</th><th>个人标注</th><th>能力</th><th>操作</th></tr>
             </thead>
             <tbody>
               <tr v-for="r in peopleFiltered" :key="r.id" :class="{ off: r.deactivated }">
@@ -776,6 +776,15 @@
                 </td>
                 <td>{{ r.role || '—' }}</td>
                 <td class="adm-skill-desc">{{ r.expertise || '—' }}</td>
+                <!-- 方案A:个人标注只读展示——用户在前台「我的协作人」给 TA 标的能力。
+                     与平台能力是两套数据(个人级按 owner 隔离),这里让管理员看得见,不改归属。 -->
+                <td class="adm-pnotes">
+                  <template v-if="(peopleNotes[r.id] || []).length">
+                    <span class="adm-badge on" :title="notesTip(r.id)">{{ (peopleNotes[r.id] || []).length }} 人标注</span>
+                    <div class="adm-pnote-line">{{ notesBrief(r.id) }}</div>
+                  </template>
+                  <template v-else>—</template>
+                </td>
                 <td>
                   <span class="adm-badge" :class="{ on: r.hasProfile && r.enabled }">
                     {{ r.hasProfile ? (r.enabled ? '已设' : '停用') : '未设' }}
@@ -1663,7 +1672,7 @@ import {
   setGlobalSkills,
   getGlobalAgents,
   setGlobalAgents,
-  getPeople,
+  getPeople, fetchAdminPeopleNotes, type PersonNote,
   setPeople,
   type Person,
   getGlobalRules,
@@ -2644,16 +2653,35 @@ function switchToPeople() {
 async function loadPeople() {
   plLoading.value = true
   try {
-    // 同时拉真实账号 + 能力名册，合并展示——账号是主体，能力是叠加上去的备注
-    const [reg, us] = await Promise.all([getPeople(), listUsers()])
+    // 同时拉真实账号 + 平台能力名册 + **个人标注**(方案A:用户在前台「我的协作人」标的,
+    // 与平台能力是两套数据;管理员在此只读可见,不改归属)。个人标注失败不阻断页面。
+    const [reg, us, notes] = await Promise.all([getPeople(), listUsers(), fetchAdminPeopleNotes()])
     people.value = reg
     peopleUsers.value = us.filter((u) => !u.isBot)  // 排除中枢 AI
+    peopleNotes.value = notes
     plLoaded.value = true
   } catch (e: any) {
     warn('加载失败', e?.message || '无法读取用户/能力')
   } finally {
     plLoading.value = false
   }
+}
+
+// 个人标注(方案A):{被标注人 user_id: [{owner,name,role,expertise}...]}——只读展示
+const peopleNotes = ref<Record<string, PersonNote[]>>({})
+/** 摘要:第一条标注的「角色｜擅长」,列表里一行放得下 */
+function notesBrief(uid: string): string {
+  const list = peopleNotes.value[uid] || []
+  if (!list.length) return ''
+  const n = list[0]
+  const txt = [n.role, n.expertise].filter(Boolean).join('｜')
+  return list.length > 1 ? `${txt}（等 ${list.length} 条）` : txt
+}
+/** 悬浮全文:逐条列出「谁标的 → 角色｜擅长」 */
+function notesTip(uid: string): string {
+  return (peopleNotes.value[uid] || [])
+    .map((n) => `${n.owner.split(':')[0]} 标注：${[n.role, n.expertise].filter(Boolean).join('｜') || '（空）'}`)
+    .join('\n')
 }
 
 // user_id → 能力备注
@@ -3490,6 +3518,9 @@ onMounted(check)
 .adm-rule-text { flex: 1; resize: vertical; }
 .adm-rule-row .adm-btn { flex-shrink: 0; margin-top: 4px; }
 .adm-skill-desc { color: var(--text-2); }
+/* 个人标注列(方案A):徽章 + 一行摘要;摘要过长省略,悬浮 title 看全部标注 */
+.adm-pnotes { max-width: 260px; }
+.adm-pnote-line { margin-top: 3px; font-size: var(--fs-75); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .adm-skill-desc, .adm-table { /* 说明列吃满剩余宽;表格强制满宽 */ }
 .adm-table { table-layout: auto; }
 /* —— 归档记录 —— */

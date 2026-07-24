@@ -1,5 +1,5 @@
 import { ref, reactive, computed } from 'vue'
-import { myPeopleList, myPeopleAdd, myPeopleDelete, listMyContacts, normalizeUserId, type MyPerson } from '@/matrix/client'
+import { myPeopleList, myPeopleAdd, myPeopleDelete, myPeoplePromote, listMyContacts, normalizeUserId, isServerAdmin, type MyPerson } from '@/matrix/client'
 import { useToast } from '@/composables/useToast'
 
 /**
@@ -19,6 +19,8 @@ const editing = ref(false)
 const adding = ref(false)   // true=手动添加新人(user_id 可编辑)；false=给已有联系人设能力(user_id 固定)
 const errText = ref('')     // 保存失败的内联提示(会员门槛这类要"去做别的事"的错误,toast 一闪即逝不够)
 const form = reactive<MyPerson>({ user_id: '', name: '', role: '', expertise: '', note: '', enabled: true })
+// 是否平台管理员——决定「同步到平台」按钮是否出现(方案B)。打开弹窗时探测一次,失败按否。
+const amAdmin = ref(false)
 
 export function useMyPeople() {
   const { success, warn } = useToast()
@@ -31,7 +33,12 @@ export function useMyPeople() {
     } finally { loading.value = false }
   }
 
-  function open() { visible.value = true; editing.value = false; load() }
+  function open() {
+    visible.value = true
+    editing.value = false
+    load()
+    isServerAdmin().then((ok) => { amAdmin.value = ok }).catch(() => { amAdmin.value = false })
+  }
   function close() { visible.value = false; editing.value = false }
 
   // user_id → 能力备注
@@ -108,6 +115,22 @@ export function useMyPeople() {
     } finally { busy.value = false }
   }
 
+  // 方案B:管理员可把「我的协作人」里的标注一键提升为**平台能力**(全平台可见)。
+  // 非管理员不显示该按钮(写控制室要管理员权限,提前藏比点了报错好)。
+  async function promote(personId: string) {
+    if (busy.value) return
+    busy.value = true
+    errText.value = ''
+    try {
+      await myPeoplePromote(personId)
+      await load()                       // 重新拉:该条会带上 overrides_global 标记
+      success('已同步到平台能力名册（全平台可见）')
+    } catch (e: any) {
+      errText.value = e?.message || '同步失败'
+      warn(e?.message || '同步失败')
+    } finally { busy.value = false }
+  }
+
   async function remove(personId: string) {
     if (busy.value) return
     if (!confirm('清除 TA 的能力备注？（不影响联系人关系）')) return
@@ -117,5 +140,5 @@ export function useMyPeople() {
     finally { busy.value = false }
   }
 
-  return { visible, rows, loading, busy, editing, adding, errText, form, open, close, load, startEdit, startAdd, save, remove }
+  return { visible, rows, loading, busy, editing, adding, errText, form, amAdmin, open, close, load, startEdit, startAdd, save, remove, promote }
 }
