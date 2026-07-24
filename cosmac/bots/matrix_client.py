@@ -514,6 +514,42 @@ class MatrixClient:
             logger.warning("查成员异常: %s", exc)
         return []
 
+    def get_members_with_state(self, room_id: str) -> List[Dict[str, str]]:
+        """查房间成员**含邀请状态**：已加入(join) + 待接受(invite)。
+
+        `get_members` 走 /joined_members，只有已加入的人——主 AI 因此看不到"已邀请但还没
+        点接受"的成员，回答"这个频道有谁"时会漏人(负责人实报:前端人员列表显示 5 人带
+        「待接受」标,AI 却只报 4 人还说自己拿不到邀请状态)。这里读 m.room.member state,
+        返回 [{"user_id","display_name","membership"}]，membership ∈ {join, invite}。
+        读不到/异常 → 回退 get_members 的已加入列表(标 join)，绝不因此答不出成员。
+        """
+        url = self._url(f"/_matrix/client/v3/rooms/{quote(room_id)}/members")
+        try:
+            resp = self._session.get(url, timeout=10)
+            if resp.status_code == 200:
+                out: List[Dict[str, str]] = []
+                for ev in resp.json().get("chunk", []) or []:
+                    if ev.get("type") != "m.room.member":
+                        continue
+                    ms = str((ev.get("content") or {}).get("membership") or "")
+                    if ms not in ("join", "invite"):
+                        continue  # leave/ban 不算本频道成员
+                    uid = str(ev.get("state_key") or "")
+                    if not uid:
+                        continue
+                    out.append({
+                        "user_id": uid,
+                        "display_name": str(
+                            (ev.get("content") or {}).get("displayname") or uid
+                        ),
+                        "membership": ms,
+                    })
+                return out
+            logger.warning("查成员(含状态)失败: %s", resp.status_code)
+        except requests.RequestException as exc:
+            logger.warning("查成员(含状态)异常: %s", exc)
+        return [dict(m, membership="join") for m in self.get_members(room_id)]
+
     def is_joined_member(self, room_id: str, user_id: str) -> bool:
         """判断某用户是否已加入某房间（给 AI 工具做跨房间授权）。
 
