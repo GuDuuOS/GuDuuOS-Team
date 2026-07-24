@@ -51,6 +51,13 @@ const router = useRouter()
 const user = ref('')
 const password = ref('')
 const password2 = ref('')          // 注册/找回的「确认密码」
+// 密码可见性切换(负责人建议:密码框右侧小眼睛,默认闭眼隐藏、点击睁眼明文)。
+// showPwd 管主密码框(登录/注册/重置共用 v-model=password),showPwd2 管确认框。
+const showPwd = ref(false)
+const showPwd2 = ref(false)
+// 眼睛图标:睁眼(明文态)/闭眼带斜杠(隐藏态)。内联 SVG,随主题 currentColor。
+const EYE_OPEN = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>'
+const EYE_OFF = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c6.5 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.5"/><path d="M6.6 6.6A13.1 13.1 0 0 0 2 11s3.5 7 10 7a9.1 9.1 0 0 0 3.4-.65"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="m2 2 20 20"/></svg>'
 const email = ref('')
 const emailCode = ref('')
 const codeCooldown = ref(0)        // 「发送验证码」倒计时（秒）
@@ -391,7 +398,10 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
           </div>
           <input v-if="loginBy === 'account'" v-model="user" name="login-username" autocomplete="username" placeholder="用户名" @keyup.enter="doLogin" />
           <input v-else v-model="email" type="email" name="login-email" autocomplete="email" placeholder="邮箱" @keyup.enter="doLogin" />
-          <input v-model="password" type="password" autocomplete="current-password" placeholder="密码" @keyup.enter="doLogin" />
+          <div class="pw-wrap">
+            <input v-model="password" :type="showPwd ? 'text' : 'password'" autocomplete="current-password" placeholder="密码" @keyup.enter="doLogin" />
+            <button type="button" class="pw-eye" :aria-label="showPwd ? '隐藏密码' : '显示密码'" :title="showPwd ? '隐藏密码' : '显示密码'" @click="showPwd = !showPwd" v-html="showPwd ? EYE_OPEN : EYE_OFF"></button>
+          </div>
           <!-- 异地登录二次验证(阶段2):密码对了但新地点,输邮箱码完成验证 -->
           <div v-if="stepUp" class="stepup-box">
             <div class="stepup-tip">🔒 检测到新设备/新地点登录，验证码已发送至 <b>{{ stepUpHint }}</b></div>
@@ -418,9 +428,12 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
                  placeholder="6 位验证码（填邮件里的数字）"
                  @keyup.enter="authMode === 'reset' ? doResetPassword() : doRegister()" />
           <input v-if="authMode === 'register'" v-model="user" name="reg-username" autocomplete="username" placeholder="用户名" />
-          <input v-model="password" type="password" autocomplete="new-password"
-                 :placeholder="authMode === 'reset' ? '新密码（至少 8 位）' : '密码（至少 8 位）'"
-                 @keyup.enter="authMode === 'reset' ? doResetPassword() : doRegister()" />
+          <div class="pw-wrap">
+            <input v-model="password" :type="showPwd ? 'text' : 'password'" autocomplete="new-password"
+                   :placeholder="authMode === 'reset' ? '新密码（至少 8 位）' : '密码（至少 8 位）'"
+                   @keyup.enter="authMode === 'reset' ? doResetPassword() : doRegister()" />
+            <button type="button" class="pw-eye" :aria-label="showPwd ? '隐藏密码' : '显示密码'" :title="showPwd ? '隐藏密码' : '显示密码'" @click="showPwd = !showPwd" v-html="showPwd ? EYE_OPEN : EYE_OFF"></button>
+          </div>
           <!-- 密码强度即时提示（与后端同规则;弱=提交会被拒,提前告知） -->
           <div v-if="password" class="pw-meter">
             <div class="pw-bars">
@@ -430,9 +443,12 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
               {{ pwStrength.warn || `密码强度：${pwStrength.label}` }}
             </span>
           </div>
-          <input v-model="password2" type="password" autocomplete="new-password"
-                 :placeholder="authMode === 'reset' ? '确认新密码' : '确认密码'"
-                 @keyup.enter="authMode === 'reset' ? doResetPassword() : doRegister()" />
+          <div class="pw-wrap">
+            <input v-model="password2" :type="showPwd2 ? 'text' : 'password'" autocomplete="new-password"
+                   :placeholder="authMode === 'reset' ? '确认新密码' : '确认密码'"
+                   @keyup.enter="authMode === 'reset' ? doResetPassword() : doRegister()" />
+            <button type="button" class="pw-eye" :aria-label="showPwd2 ? '隐藏密码' : '显示密码'" :title="showPwd2 ? '隐藏密码' : '显示密码'" @click="showPwd2 = !showPwd2" v-html="showPwd2 ? EYE_OPEN : EYE_OFF"></button>
+          </div>
         </template>
       </div>
 
@@ -485,6 +501,18 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
 .auth-subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .auth-code-row { display: flex; gap: 8px; }
 .auth-code-row input { flex: 1; min-width: 0; }
+/* 密码框 + 右侧小眼睛(负责人建议):相对定位包一层,眼睛绝对定位在右内侧;
+   输入框右内边距留出图标位,避免长密码文字压到图标下面。 */
+.pw-wrap { position: relative; display: flex; }
+.pw-wrap input { flex: 1; min-width: 0; padding-right: 44px; }
+.pw-eye {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+  border: 0; background: transparent; color: var(--text-3); cursor: pointer;
+  border-radius: 8px; padding: 0; transition: color .12s ease, background .12s ease;
+}
+.pw-eye:hover { color: var(--text); background: var(--bg, #f1efe9); }
+.pw-eye:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .auth-code-btn { flex-shrink: 0; padding: 0 12px; border: 1px solid var(--border); background: var(--bg-panel, #fff); color: var(--accent); font-size: 13px; font-weight: 600; border-radius: 10px; cursor: pointer; white-space: nowrap; }
 .auth-code-btn:disabled { opacity: .5; cursor: default; color: var(--text-3); }
 .auth-reset-title { font-size: 16px; font-weight: 700; color: var(--text); text-align: center; padding: 2px 0; }
