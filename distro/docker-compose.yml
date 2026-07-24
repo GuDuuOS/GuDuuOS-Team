@@ -98,6 +98,13 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       ARK_API_KEY: ${ARK_API_KEY:-}
       ARK_BASE_URL: ${ARK_BASE_URL:-}
+      # Claude Agent SDK 引擎(1.4.0):compose 的 environment 是白名单式,新变量必须
+      # 在此列出才会传进容器——.env 配了不列等于没配(线上踩过:引擎开关静默失效)。
+      COSMAC_AGENT_ENGINE: ${COSMAC_AGENT_ENGINE:-}
+      COSMAC_SDK_BASE_URL: ${COSMAC_SDK_BASE_URL:-}
+      COSMAC_SDK_API_KEY: ${COSMAC_SDK_API_KEY:-}
+      COSMAC_SDK_MODEL: ${COSMAC_SDK_MODEL:-}
+      COSMAC_SDK_MAX_TURNS: ${COSMAC_SDK_MAX_TURNS:-}
       # —— OEM 体系（模块6）：授权码 + 母舰地址（心跳/网关）——
       COSMAC_OEM_KEY: ${COSMAC_OEM_KEY:-}
       COSMAC_NEXUS_URL: ${COSMAC_NEXUS_URL:-}
