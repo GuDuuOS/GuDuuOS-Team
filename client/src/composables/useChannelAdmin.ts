@@ -152,6 +152,9 @@ function seedConfig(groupName: string): GroupConfig {
 const configs = reactive<Record<string, GroupConfig>>({ 本群: seedConfig('本群') })
 /** 当前正在查看/管理的群名 */
 const currentKey = ref('本群')
+// 频道**显示名**:currentKey 在真实频道下是 roomId(防同名串配置,见 setCurrent 注释),
+// 弹窗标题要给人看名字而非 id(负责人建议:ID 前加频道名)。demo 场景下二者相同。
+const currentDisplay = ref('本群')
 const current = computed(() => configs[currentKey.value] ?? configs['本群'])
 
 /* ===== 真实成员（「人员」标签用 Matrix 真后端）===== */
@@ -216,6 +219,7 @@ function setCurrent(name?: string, roomId?: string) {
   if (!k) return
   ensure(k, display)
   currentKey.value = k
+  currentDisplay.value = display || k   // 没传名字(极少数)才退回 key,标题不至于空
   currentRoomId.value = roomId || ''
   saveState.value = 'idle'
   if (roomId) loadConfigFromRoom(k, roomId)
@@ -349,7 +353,8 @@ export function useChannelAdmin() {
     visible,
     state,
     /** 当前群名（用于文案"被本群调取"）*/
-    groupName: currentKey,
+    groupName: currentDisplay,   // 给人看的频道名(标题/文案用)
+    groupRoomId: currentRoomId,  // 真实 room_id(标题副行显示,可复制核对)
     setCurrent,
     open: (name?: string, roomId?: string) => {
       setCurrent(name, roomId)
