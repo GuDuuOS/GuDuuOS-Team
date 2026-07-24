@@ -39,9 +39,11 @@ from cosmac.config import (
     AI_CONFIG_EVENT_TYPE,
     CHANNEL_CONFIG_EVENT_TYPE,
     CONTROL_ADMINS_EVENT_TYPE,
+    GATING_EVENT_TYPE,
     MEMBER_EVENT_TYPE,
     ONBOARDING_TEMPLATES_EVENT_TYPE,
     PEOPLE_EVENT_TYPE,
+    QUOTAS_EVENT_TYPE,
     RULES_EVENT_TYPE,
     SKILLS_EVENT_TYPE,
     WORKFLOWS_EVENT_TYPE,
@@ -6023,10 +6025,72 @@ class CosmacBot:
             logger.info("存量频道默认规则补写:本轮 %d 个频道", done)
         return done
 
+    def seed_default_control_config(self) -> int:
+        """把**代码内置的默认配置落地到控制室**,让发行版出厂即有可见、可改的完整基线
+        (负责人:人设/配额/门控/等作为系统默认基础)。
+
+        背景:人设(system_prompt)、门控门槛、配额上限都有代码兜底默认,功能上出厂即生效;
+        但控制室对应 state event 为空时,后台管理页(尤其 AI 配置的人设框)显示空白,让人
+        误以为"没配置"。这里首启时把默认写进控制室——**幂等,只补空缺,绝不覆盖已配的值**:
+        存量已配的实例重启重跑无害;新装实例后台打开即见完整默认。返回本轮补写的项数。
+
+        bot 无控制室写权限(权限不足)时静默跳过——功能不受影响(代码兜底仍在),仅后台仍空白。
+        技能/Agent 是代码预置库(122 Agent + 13 技能),商城/名册直接读,无需落地 state。
+        """
+        n = 0
+        try:
+            room = self.client.resolve_alias(self.config.control_room_alias)
+        except Exception:
+            room = None
+        if not room:
+            return 0
+        # 1) AI 配置:system_prompt 为空 → 补默认人设(保留已有 provider/model,不动模型选择)
+        try:
+            cfg = self.client.get_state_event(room, AI_CONFIG_EVENT_TYPE) or {}
+            if not str(cfg.get("system_prompt") or "").strip():
+                new = dict(cfg)
+                new["system_prompt"] = self.config.system_prompt
+                new.setdefault("provider", self.config.llm_provider)
+                new.setdefault("model", self.config.llm_model)
+                if self.client.set_state_event(room, AI_CONFIG_EVENT_TYPE, new):
+                    n += 1
+                    logger.info("已把默认人设落地到控制室(后台 AI 配置可见可改)")
+        except Exception:
+            logger.debug("落地默认人设失败(忽略)", exc_info=True)
+        # 2) 门控策略:gates 缺/空 → 写目录默认门槛(能力→最低等级)
+        try:
+            g = self.client.get_state_event(room, GATING_EVENT_TYPE) or {}
+            if not isinstance(g.get("gates"), dict) or not g.get("gates"):
+                from cosmac.members import GATE_CATALOG
+                gates = {gg["key"]: gg["default"] for gg in GATE_CATALOG}
+                if self.client.set_state_event(room, GATING_EVENT_TYPE, {"gates": gates}):
+                    n += 1
+                    logger.info("已把默认门控策略落地到控制室")
+        except Exception:
+            logger.debug("落地默认门控失败(忽略)", exc_info=True)
+        # 3) 用量配额:limits 缺/空 → 写目录默认(各计量项 free/paid/creator 上限)
+        try:
+            q = self.client.get_state_event(room, QUOTAS_EVENT_TYPE) or {}
+            if not isinstance(q.get("limits"), dict) or not q.get("limits"):
+                from cosmac.quotas import QUOTA_CATALOG
+                limits = {qq["key"]: dict(qq["defaults"]) for qq in QUOTA_CATALOG}
+                if self.client.set_state_event(room, QUOTAS_EVENT_TYPE, {"limits": limits}):
+                    n += 1
+                    logger.info("已把默认用量配额落地到控制室")
+        except Exception:
+            logger.debug("落地默认配额失败(忽略)", exc_info=True)
+        if n:
+            logger.info("控制室默认配置落地:本轮补写 %d 项(幂等,已配的不动)", n)
+        return n
+
     def start_rules_backfill(self) -> None:
-        """启动后台线程,延迟一次性补写存量频道的默认规则(幂等,重启重跑无害)。"""
+        """启动后台线程,延迟一次性补写存量频道的默认规则 + 落地默认配置(幂等,重启重跑无害)。"""
         def _once() -> None:
             time.sleep(90)  # 等服务/sync 稳定再扫
+            try:
+                self.seed_default_control_config()  # 默认人设/门控/配额落地控制室(出厂基线)
+            except Exception:
+                logger.debug("默认配置落地失败(忽略)", exc_info=True)
             try:
                 self.backfill_channel_rules()
             except Exception:
