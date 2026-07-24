@@ -450,7 +450,7 @@ class RoomAccessScopeTest(unittest.TestCase):
             ToolContext("!dm:test", "@alice:test", is_dm=True),
         )
         self.assertIn("!allowed:test", out)
-        self.assertIn("名成员", out)
+        self.assertIn("已加入", out)  # 文案改:成员列表区分「已加入/待接受」
 
     def test_channel_mode_members_defaults_to_current(self) -> None:
         """频道模式不带参数=本频道,语义不变(回归)。"""
@@ -458,7 +458,7 @@ class RoomAccessScopeTest(unittest.TestCase):
             ToolCall(id="x", name="list_room_members", arguments={}),
             ToolContext("!allowed:test", "@alice:test", is_dm=False),
         )
-        self.assertIn("名成员", out)
+        self.assertIn("已加入", out)  # 文案改:成员列表区分「已加入/待接受」
 
     def test_dm_get_messages_without_target_refused(self) -> None:
         """get_recent_messages 同病同修:私聊里不指定频道 → 拒绝,不读私聊房。"""

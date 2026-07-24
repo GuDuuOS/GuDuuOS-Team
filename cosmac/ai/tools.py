@@ -435,7 +435,10 @@ class Toolbox:
             description=(
                 "列出某个**频道**当前的成员。在频道里不填参数=本频道;"
                 "在私人会话里查某频道的成员**必须**给 room_id 或 room_name——"
-                "不给会被拒绝(私聊房只有你我俩,那不是用户想要的频道成员)。"
+                "不给会被拒绝(私聊房只有你我俩,那不是用户想要的频道成员)。\n"
+                "返回**区分两种状态**:已加入的人 + 已邀请但**尚未接受**的人。"
+                "回答'这个频道有谁/几个人'时要讲清楚谁还没接受邀请,别把待接受的人"
+                "当成在场成员派活或计入人数。"
             ),
             parameters={
                 "type": "object",
@@ -1493,11 +1496,26 @@ class Toolbox:
         denial = self._check_room_access(room_id, ctx)
         if denial:
             return denial
-        members = self.client.get_members(room_id)
+        # 含**邀请状态**:已加入 + 待接受(负责人实报:前端人员列表有「待接受」的人,
+        # AI 查成员却漏掉、还说自己拿不到邀请状态)。老客户端/异常时自动回退已加入列表。
+        try:
+            members = self.client.get_members_with_state(room_id)
+        except Exception:
+            members = [dict(m, membership="join") for m in self.client.get_members(room_id)]
         if not members:
             return f"房间 {room_id} 没查到成员（或查询失败）。"
-        lines = [f"- {m['display_name']}（{m['user_id']}）" for m in members]
-        return f"房间 {room_id} 共有 {len(members)} 名成员：\n" + "\n".join(lines)
+        joined = [m for m in members if m.get("membership") != "invite"]
+        invited = [m for m in members if m.get("membership") == "invite"]
+        lines = [f"- {m['display_name']}（{m['user_id']}）" for m in joined]
+        out = f"房间 {room_id} 已加入 {len(joined)} 人：\n" + "\n".join(lines)
+        if invited:
+            # 待接受的单独列,并明确告诉模型这些人**还没进来**,别当成可派活的在场成员
+            out += (
+                f"\n\n另有 {len(invited)} 人**已邀请但尚未接受**（还没真正进入频道，"
+                "派活/统计在场人数时要区分对待，可提醒用户催一下）：\n"
+                + "\n".join(f"- {m['display_name']}（{m['user_id']}）· 待接受" for m in invited)
+            )
+        return out
 
     def _tool_get_messages(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         room_id, err = self._resolve_target_room(args, ctx)
