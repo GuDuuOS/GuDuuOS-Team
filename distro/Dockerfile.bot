@@ -17,6 +17,16 @@ COPY cosmac/requirements.txt /app/cosmac/requirements.txt
 # 没写（生产 venv 因 Synapse 同环境自带；发行版容器里 bot 独立运行必须显式装）
 RUN pip install --no-cache-dir -r /app/cosmac/requirements.txt PyYAML
 
+# Claude Agent SDK 引擎（P1，负责人要求上）：SDK 要拉起 Claude Code CLI 子进程，
+# 需要 node + 全局 CLI。引擎开关在 .env（COSMAC_AGENT_ENGINE=claude_sdk，默认关），
+# 引擎任何失败自动回退 legacy 循环（cosmac/ai/engine.py），绝不影响基础问答。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nodejs npm \
+    && npm install -g @anthropic-ai/claude-code \
+    && npm cache clean --force \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir claude-agent-sdk
+
 # 业务代码 + 全新实例引导脚本（install.sh 会 docker compose exec 调它）
 COPY cosmac/ /app/cosmac/
 COPY distro/bootstrap.py /app/distro/bootstrap.py

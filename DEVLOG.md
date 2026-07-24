@@ -1,5 +1,14 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-24 — GuDuu OS 1.4.0 (minor)
+
+- 新增(负责人问"底层 Claude Code 的 SDK 加了没"——查明:引擎桥接代码早已就位但生产
+  未启用,容器缺依赖)：发行版 bot 镜像装齐 **Claude Agent SDK 依赖**(node + Claude Code
+  CLI + claude-agent-sdk),.env 模板补引擎配置段(默认注释关)。生产 dev-cs 已开启:
+  COSMAC_AGENT_ENGINE=claude_sdk,经 DeepSeek 官方 Anthropic 兼容端点(实测通)驱动
+  deepseek-v4-pro——主 AI 用 Claude Code 同款 harness 跑工具循环(更强多步执行/自动
+  重试),引擎任何失败自动回退内置循环,门控/配额/越权检查全复用(执行仍走 Toolbox)。
+
 ## 2026-07-23 — GuDuu OS 1.3.0 (minor)
 
 - 新增(负责人:人设/配额/门控/技能Agent 作为系统默认基础)：发行版**首启把代码内置默认
