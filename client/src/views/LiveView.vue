@@ -1723,11 +1723,20 @@ async function onAttachmentPicked(e: Event) {
   }
 }
 
+// 中枢 AI 多行输入框(textarea)的自适应高度:随内容增长,最多 ~6 行后内部滚动。
+const aiInputEl = ref<HTMLTextAreaElement>()
+function autoGrowAi() {
+  const el = aiInputEl.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = Math.min(el.scrollHeight, 140) + 'px'
+}
 async function aiSend() {
   const t = aiDraft.value.trim()
   if (!t || !aiRoom.value) return
   const room = aiRoom.value
   aiDraft.value = ''
+  nextTick(() => autoGrowAi())  // 清空后把 textarea 高度收回单行
   // 捎上当前工作区：中枢 AI 是全局 DM，带上它才能基于「当前工作区的文档」做 RAG 答疑。
   // 再捎「当前所在频道」(频道感知):全局会话横跨多频道话题,bot 据此在历史里分段标注
   // + 告诫模型别把上一频道的规则/约束带进当前频道(负责人报的串扰问题)。看板态不带。
@@ -2916,7 +2925,11 @@ onBeforeUnmount(() => {
                 <button class="ai-scope-tip-x" title="知道了，不再提示" @click="dismissAiScopeTip">×</button>
               </div>
               <div class="ai-input-box">
-                <input v-model="aiDraft" placeholder="一句话下达目标…" @keyup.enter="aiSend" />
+                <!-- textarea 支持多行(负责人报:input 无法换行);Enter 发送、Shift+Enter 折行 -->
+                <textarea v-model="aiDraft" class="ai-input-ta" rows="1" placeholder="一句话下达目标…（Shift+Enter 换行）"
+                  @keydown.enter.exact.prevent="aiSend"
+                  @keydown.shift.enter.stop
+                  @input="autoGrowAi" ref="aiInputEl" />
                 <div class="ai-toolbar">
                   <div class="ai-tb-left"></div>
                   <button class="ai-send-ic" :disabled="!aiDraft.trim()" @click="aiSend"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13" /><path d="M22 2 15 22l-4-9-9-4Z" /></svg></button>
@@ -3924,6 +3937,8 @@ onBeforeUnmount(() => {
 .ai-input-box { border: 1px solid var(--border); border-radius: 12px; background: var(--bg); padding: 8px 8px 4px 12px; transition: border-color .12s ease, box-shadow .12s ease; }
 .ai-input-box:focus-within { border-color: var(--ws-active); box-shadow: 0 0 0 3px var(--ws-active-soft); }
 .ai-input-box input { width: 100%; border: none; outline: none; background: transparent; font-family: var(--font-body); font-size: 14px; color: var(--text); padding: 2px 4px; }
+/* 中枢 AI 多行输入(负责人报:Enter 直发无法换行)——textarea 支持折行,Shift+Enter 换行 */
+.ai-input-ta { width: 100%; border: none; outline: none; background: transparent; font-family: var(--font-body); font-size: 14px; line-height: 1.5; color: var(--text); padding: 2px 4px; resize: none; overflow-y: auto; max-height: 140px; display: block; box-sizing: border-box; }
 .ai-input-box input::placeholder { color: var(--text-dim); }
 .ai-toolbar { display: flex; align-items: center; margin-top: 4px; padding-top: 4px; }
 .ai-tb-left { display: flex; align-items: center; gap: 1px; }
