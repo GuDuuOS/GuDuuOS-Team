@@ -1989,6 +1989,74 @@ class CosmacBot:
         name = getattr(name, "name", "") if name is not None else ""
         return func.octet_length if name == "postgresql" else func.length
 
+    def _room_creator(self, room_id: str) -> str:
+        """读频道创建者(m.room.create 的 sender)。创建者不变→永久缓存。读不到返回 ""。
+
+        配额口径「频道资源计入建者额度」(负责人拍板)用它:频道知识库文档算给建者。
+        """
+        cache = getattr(self, "_room_creator_cache", None)
+        if cache is None:
+            cache = self._room_creator_cache = {}
+        if room_id in cache:
+            return cache[room_id]
+        creator = ""
+        try:
+            for ev in (self.client.admin_room_state(room_id) or []):
+                if ev.get("type") == "m.room.create":
+                    creator = str(ev.get("sender") or "")
+                    break
+        except Exception:
+            logger.debug("读频道创建者失败 %s", room_id, exc_info=True)
+        cache[room_id] = creator
+        return creator
+
+    def _rooms_created_by(self, user_id: str) -> List[str]:
+        """列出某用户**创建的频道**(排除工作区/控制室)。带 60s 缓存(用户建群不频繁)。
+
+        「频道资源计入建者额度」的枚举基础:统计/拦截时把这些频道的知识库算进建者名下。
+        经管理员 API 拿用户加入的房→逐房看 create.sender==本人。没配 ADMIN_TOKEN→空。
+        """
+        now = time.time()
+        cache = getattr(self, "_created_rooms_cache", None)
+        if cache is None:
+            cache = self._created_rooms_cache = {}
+        hit = cache.get(user_id)
+        if hit and now - hit[0] < 60:
+            return hit[1]
+        out: List[str] = []
+        try:
+            rooms = self.client.admin_user_joined_rooms(user_id)
+            for rid in (rooms or []):
+                state = self.client.admin_room_state(rid)
+                if not state:
+                    continue
+                is_creator = is_space = is_ctrl = False
+                for ev in state:
+                    et = ev.get("type")
+                    if et == "m.room.create":
+                        is_creator = str(ev.get("sender") or "") == user_id
+                        if (ev.get("content") or {}).get("type") == "m.space":
+                            is_space = True
+                    elif et == "m.room.name":
+                        if "控制室" in str((ev.get("content") or {}).get("name") or ""):
+                            is_ctrl = True
+                if is_creator and not is_space and not is_ctrl:
+                    out.append(rid)
+        except Exception:
+            logger.debug("枚举用户建的频道失败 %s", user_id, exc_info=True)
+        cache[user_id] = (now, out)
+        return out
+
+    def _kb_docs_used(self, session: Any, user_id: str) -> int:
+        """本人 kb_docs 配额已用 = 个人库文档 + **本人建的频道库**文档(负责人口径)。"""
+        from cosmac.db import kb
+        from cosmac.db.models import SCOPE_ROOM, SCOPE_USER
+
+        used = len(kb.list_docs(session, scope=SCOPE_USER, scope_id=user_id))
+        for rid in self._rooms_created_by(user_id):
+            used += len(kb.list_docs(session, scope=SCOPE_ROOM, scope_id=rid))
+        return used
+
     def _storage_bytes(self, user_id: str) -> int:
         """本人已用存储字节 = Synapse 媒体(上传的附件/图片/视频) + 个人知识库文本。带 60s 缓存。
 
@@ -2022,6 +2090,16 @@ class CosmacBot:
                            KnowledgeChunk.scope_id == user_id)
                 ).scalar()
                 total += int(n or 0)
+                # 频道资源计入建者额度(负责人口径):本人建的频道库文本也算本人存储。
+                from cosmac.db.models import SCOPE_ROOM
+                created = self._rooms_created_by(user_id)
+                if created:
+                    n2 = s.execute(
+                        select(func.coalesce(func.sum(blen(KnowledgeChunk.text)), 0))
+                        .where(KnowledgeChunk.scope == SCOPE_ROOM,
+                               KnowledgeChunk.scope_id.in_(created))
+                    ).scalar()
+                    total += int(n2 or 0)
         except Exception:
             logger.debug("查知识库用量失败(按0)", exc_info=True)
         try:
@@ -4225,10 +4303,13 @@ class CosmacBot:
                 # 同名=覆盖更新(与频道库同口径,负责人实报重复上传不去重)
                 replaced = kb.delete_docs_by_title(
                     s, scope=SCOPE_USER, scope_id=user_id, title=title)
-                cur = len(kb.list_docs(s, scope=SCOPE_USER, scope_id=user_id))
-                if kb_limit >= 0 and cur >= kb_limit:
-                    return 400, {"error": f"知识库已满（{cur}/{kb_limit} 篇）。升级会员可扩容。"}
-                if cur >= MAX_DOCS_PER_SCOPE:  # 不限额(creator/admin)也别无限堆，留个硬上限兜底
+                # kb_docs 口径含本人建的频道库(负责人:频道资源计入建者额度)——
+                # 与「我的额度」展示同源。覆盖同名不算新增,故 replaced>0 时不判满。
+                cur = self._kb_docs_used(s, user_id)
+                if kb_limit >= 0 and replaced == 0 and cur >= kb_limit:
+                    return 400, {"error": f"知识库已满（{cur}/{kb_limit} 篇，含你建的各频道）。升级会员可扩容。"}
+                # 系统硬上限是「每作用域」的(防单库爆炸),数个人库本身、不含频道
+                if len(kb.list_docs(s, scope=SCOPE_USER, scope_id=user_id)) >= MAX_DOCS_PER_SCOPE:
                     return 400, {"error": f"知识库已达系统上限（{MAX_DOCS_PER_SCOPE} 篇），先删一些再加"}
                 doc = kb.ingest_document(
                     s, scope=SCOPE_USER, scope_id=user_id,
@@ -4351,10 +4432,23 @@ class CosmacBot:
                     return 400, {
                         "error": f"本频道知识库已达上限（{MAX_DOCS_PER_SCOPE} 篇），先删一些再传"
                     }
+                # 频道资源计入建者额度(负责人口径):频道库文档占**频道创建者**的 kb_docs +
+                # storage 额度。覆盖同名不新增净篇数,故仅在"这是新增篇"时判 kb_docs。
+                owner = self._room_creator(room_id) or user_id
+                kb_limit = self._quota_limit(owner, "kb_docs")
+                if kb_limit >= 0 and replaced == 0 and self._kb_docs_used(s, owner) >= kb_limit:
+                    return 400, {"error": f"知识库已满（{kb_limit} 篇上限，含创建者名下各频道）。"
+                                          "删一些文档或升级会员扩容。"}
+                st_limit = self._quota_limit(owner, "storage_mb")
+                if st_limit >= 0 and self._storage_bytes(owner) + self._blen(content) > st_limit * 1048576:
+                    return 400, {"error": f"存储空间不足（上限 {st_limit}MB，含创建者名下各频道）。"
+                                          "删除内容或升级会员扩容。"}
                 doc = kb.ingest_document(
                     s, scope=SCOPE_ROOM, scope_id=room_id,
                     title=title or "未命名文档", source="upload", text=content,
                 )
+                self._storage_cache = {}  # 存量变了,作废缓存
+                self._created_rooms_cache = {}
                 return 200, {"ok": True, "id": doc.id, "title": doc.title,
                              "chunks": len(doc.chunks), "replaced": replaced}
         except Exception:
@@ -5415,8 +5509,7 @@ class CosmacBot:
 
         out: List[Dict[str, Any]] = []
         try:
-            from cosmac.db import kb, session_scope
-            from cosmac.db.models import SCOPE_USER
+            from cosmac.db import session_scope
             from cosmac.db.quota_repo import get_count, period_key
 
             with session_scope() as s:
@@ -5424,7 +5517,8 @@ class CosmacBot:
                     metric = q["key"]
                     limit = self._quota_limit(user_id, metric)
                     if q.get("track") == "existing" and metric == "kb_docs":
-                        used = len(kb.list_docs(s, scope=SCOPE_USER, scope_id=user_id))
+                        # 个人库 + 本人建的频道库(负责人口径:频道资源计入建者额度)
+                        used = self._kb_docs_used(s, user_id)
                     elif q.get("track") == "existing" and metric == "storage_mb":
                         used = round(self._storage_bytes(user_id) / 1048576, 1)
                     elif q.get("track") == "existing" and metric == "acquired_items":

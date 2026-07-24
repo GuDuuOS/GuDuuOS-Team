@@ -15,10 +15,12 @@
             <div class="uq-item-top">
               <span class="uq-name">{{ u.label }}</span>
               <span class="uq-val" :class="{ over: u.limit >= 0 && u.used >= u.limit }">
-                {{ u.used }}<template v-if="u.limit >= 0"> / {{ u.limit }}</template>
+                {{ fmtUsed(u) }}<template v-if="u.limit >= 0"> / {{ u.limit }}{{ u.unit ? ' ' + u.unit : '' }}</template>
                 <span v-else class="uq-unlimited">不限</span>
               </span>
             </div>
+            <!-- 口径说明(负责人口径:频道资源计入建者额度)——避免用户以为"传了没统计" -->
+            <div v-if="scopeNote(u.key)" class="uq-note">{{ scopeNote(u.key) }}</div>
             <div v-if="u.limit >= 0" class="uq-bar">
               <div class="uq-bar-fill" :class="{ over: u.used >= u.limit }" :style="{ width: pct(u) + '%' }" />
             </div>
@@ -38,6 +40,18 @@ function pct(u: UsageItem): number {
   if (u.limit <= 0) return 0
   return Math.min(100, Math.round((u.used / u.limit) * 100))
 }
+// 存储空间小于 0.1MB 时显示 KB(负责人报:传了几 KB 却显示 0.0,像没统计)
+function fmtUsed(u: UsageItem): string {
+  if (u.key === 'storage_mb' && u.used > 0 && u.used < 0.1) return '< 0.1'
+  return String(u.used)
+}
+// 各配额项统计口径说明——频道资源计入建者额度(负责人拍板),避免"传了没反应"的误解
+function scopeNote(key: string): string {
+  if (key === 'kb_docs') return '含你的个人知识库 + 你创建的各频道知识库'
+  if (key === 'storage_mb') return '含个人库、上传的附件 + 你创建频道的知识库'
+  if (key === 'teams') return '累计的建群次数（自本次更新起统计）'
+  return ''
+}
 </script>
 
 <style scoped>
@@ -53,6 +67,7 @@ function pct(u: UsageItem): number {
 .uq-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 16px; }
 .uq-item-top { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
 .uq-name { font-size: var(--fs-100); color: var(--text); }
+.uq-note { font-size: var(--fs-75); color: var(--text-3); margin: 2px 0 4px; line-height: 1.4; }
 .uq-val { font-size: var(--fs-75); color: var(--text-2); font-weight: var(--fw-bold); }
 .uq-val.over { color: #c0392b; }
 .uq-unlimited { color: #2f7d4f; }
