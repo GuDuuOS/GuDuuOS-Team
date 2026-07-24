@@ -17,6 +17,8 @@ const routes = [
   { path: '/s/:space/org', component: LiveView },
   { path: '/s/:space/c/:roomId', component: LiveView },
   { path: '/admin', component: LiveView },
+  // 后台各菜单独立地址(刷新留在原菜单/可后退/深链);菜单名由 LiveView 的 applyFromRoute 校验
+  { path: '/admin/:tab', component: LiveView },
   { path: '/me', component: LiveView },
   { path: '/join/:space', component: LiveView },
   { path: '/:pathMatch(.*)*', component: LiveView },

@@ -1,5 +1,13 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-24 — GuDuu OS 1.4.8 (patch)
+
+- 修复：管理后台在任意菜单下刷新都弹回「用户管理」(负责人实报)——后台菜单是组件内部
+  状态、没接地址。按 CLAUDE.md 客户端路由约定接上:AdminView 的 tab 改 defineModel
+  双向绑给 LiveView,computePath 输出 `/admin/<菜单>`、applyFromRoute 解析还原(非法菜单
+  名回落 users),watch 加 adminTab,router 补 `/admin/:tab`。现在刷新留在原菜单、浏览器
+  前进后退可用、菜单地址可深链分享。
+
 ## 2026-07-24 — GuDuu OS 1.4.7 (patch)
 
 - 新增：登录/注册/重置密码页的密码框加「小眼睛」显示切换(负责人建议)——默认闭眼(带斜杠
