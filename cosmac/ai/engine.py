@@ -176,7 +176,10 @@ class ClaudeSdkEngine:
         # 轻松超 8 轮。太小会频繁"达上限"回退 legacy;太大则复杂任务跑更久更费 token。16 折中。
         max_turns = int(_env("SDK_MAX_TURNS", "16") or 16)
 
-        env = {"HOME": _SDK_HOME}
+        # IS_SANDBOX=1:发行版 bot 容器以 root 跑,Claude Code CLI 出于安全拒绝
+        # root + bypassPermissions(线上实测 exit 1 且 stderr 被吞,引擎静默回退 legacy)。
+        # 容器即沙箱,官方 devcontainer 同款放行方式。业务安全仍靠 Toolbox 门控/配额层。
+        env = {"HOME": _SDK_HOME, "IS_SANDBOX": "1"}
         if base_url:
             env["ANTHROPIC_BASE_URL"] = base_url
             # 非官方端点(如 DeepSeek)也把"快小模型"指到同一个模型,否则 CLI 内部
