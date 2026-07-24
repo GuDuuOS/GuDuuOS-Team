@@ -3343,7 +3343,13 @@ function switchToOverview() {
 async function loadOverview() {
   ovLoading.value = true
   try {
-    const [us, rs, ver] = await Promise.all([listUsers(), listAdminRooms(), getServerVersion()])
+    const [us, allRooms, ver] = await Promise.all([listUsers(), listAdminRooms(), getServerVersion()])
+    // 概览的频道统计只算**真频道**——与频道管理页同口径,剔除中枢AI会话房/私信
+    // (负责人实报:频道总数含私信、活跃Top显示了中枢AI)。判定失败 fail-open 不过滤。
+    const kinds = await fetchAdminRoomKinds(allRooms.map((r) => r.id))
+    const rs = Object.keys(kinds).length
+      ? allRooms.filter((r) => (kinds[r.id] || 'channel') === 'channel')
+      : allRooms
     ov.version = ver
     ov.userTotal = us.length
     ov.adminCount = us.filter((u) => u.admin).length
