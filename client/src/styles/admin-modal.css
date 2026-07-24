@@ -45,7 +45,8 @@
 .cam-sub { font-size: var(--fs-75); color: var(--text-3); display: flex; align-items: baseline; min-width: 0; }
 /* 频道名:占满可用宽后省略;悬浮 title 看全名 */
 .cam-sub-name { font-weight: var(--fw-bold); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cam-sub-tail { flex-shrink: 0; white-space: nowrap; }
+/* margin-left 而非文本空格:HTML 会折叠标签边界的前导空格,导致「频道名· 群级…」贴在一起 */
+.cam-sub-tail { flex-shrink: 0; white-space: nowrap; margin-left: 4px; }
 /* room_id:等宽小字、可选中复制;同样单行省略 */
 .cam-sub-id {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
