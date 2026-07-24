@@ -47,3 +47,12 @@ ANTHROPIC_BASE_URL={{ANTHROPIC_BASE_URL}}
 ANTHROPIC_API_KEY={{ANTHROPIC_API_KEY}}
 OPENAI_BASE_URL={{OPENAI_BASE_URL}}
 OPENAI_API_KEY={{OPENAI_API_KEY}}
+
+# —— Claude Agent SDK 执行引擎（可选，默认关）——
+# 开启后主 AI 用 Claude Code 同款 harness 跑工具循环（更强的多步执行/自动重试），
+# 模型可插拔：Anthropic 官方 或 任何 Anthropic 协议兼容端点（如 DeepSeek /anthropic）。
+# 引擎任何失败自动回退内置循环，不影响基础问答。镜像已带 CLI 依赖。
+#COSMAC_AGENT_ENGINE=claude_sdk
+#COSMAC_SDK_BASE_URL=https://api.deepseek.com/anthropic
+#COSMAC_SDK_API_KEY=
+#COSMAC_SDK_MODEL=deepseek-chat
