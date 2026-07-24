@@ -255,7 +255,7 @@
             <p class="adm-hint">
               全服共 {{ rooms.length }} 个频道 ·
               公开 {{ rooms.filter(r => r.isPublic).length }} ·
-              加密 {{ rooms.filter(r => r.encrypted).length }}
+              私有 {{ rooms.filter(r => !r.isPublic).length }}
             </p>
           </div>
           <div class="adm-actions">
@@ -1471,7 +1471,7 @@
             <div class="adm-kpi">
               <div class="adm-kpi-v">{{ ov.roomTotal }}</div>
               <div class="adm-kpi-l">频道总数</div>
-              <div class="adm-kpi-s">公开 {{ ov.publicRooms }} · 加密 {{ ov.encryptedRooms }}</div>
+              <div class="adm-kpi-s">公开 {{ ov.publicRooms }} · 私有 {{ ov.privateRooms }}</div>
             </div>
             <div class="adm-kpi">
               <div class="adm-kpi-v">{{ ov.memberSum }}</div>
@@ -3322,7 +3322,7 @@ const ovLoaded = ref(false)
 const ov = reactive({
   version: '',
   userTotal: 0, adminCount: 0, deactivated: 0,
-  roomTotal: 0, publicRooms: 0, encryptedRooms: 0,
+  roomTotal: 0, publicRooms: 0, privateRooms: 0,
   memberSum: 0, avgMembers: 0, activeRooms: 0,
   topRooms: [] as AdminRoom[],
 })
@@ -3343,7 +3343,8 @@ async function loadOverview() {
     ov.deactivated = us.filter((u) => u.deactivated || u.locked).length
     ov.roomTotal = rs.length
     ov.publicRooms = rs.filter((r) => r.isPublic).length
-    ov.encryptedRooms = rs.filter((r) => r.encrypted).length
+    // 私有=非公开(与频道管理列表「类型」同口径;原统计端到端加密房恒为0,与「公开/私有」并列展示误导——负责人实报)
+    ov.privateRooms = rs.filter((r) => !r.isPublic).length
     ov.memberSum = rs.reduce((sum, r) => sum + r.members, 0)
     ov.avgMembers = rs.length ? Math.round((ov.memberSum / rs.length) * 10) / 10 : 0
     ov.activeRooms = rs.filter((r) => r.members >= 2).length
