@@ -32,7 +32,7 @@
 	# 真实客户端 IP 经 X-Real-IP 传给 bot(登录限频/异地检测/审计用)。
 	handle /cosmac/* {
 		reverse_proxy bot:9000 {
-			header_up X-Real-IP {http.request.client_ip}
+			header_up X-Real-IP {client_ip}
 		}
 	}
 
