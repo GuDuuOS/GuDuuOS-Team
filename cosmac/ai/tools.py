@@ -808,7 +808,9 @@ class Toolbox:
                             "required": ["title"],
                         },
                         "description": (
-                            "派进专班的子任务卡（同 create_tasks 的结构，可空）。"
+                            "派进专班的子任务卡（同 create_tasks 的结构）。**必填、不可省**："
+                            "专班的价值就是把目标拆成子任务派下去；不给任务=建了个空壳、看板空白"
+                            "（只想建群绑资源、不派任务请改用 create_room）。请拆成 3~8 个子任务。"
                             "任务交 AI 执行(executor_kind=agent)但成员表里有对应角色的真人时，"
                             "把真人账号写进 assignee(如『社媒运营+duxiuzhen01』)——真人才能在"
                             "自己的任务看板看到这条任务。"
@@ -2203,6 +2205,24 @@ class Toolbox:
         project = (args.get("project") or "").strip()
         if not project:
             return "请给专班/项目起个名字。"
+        # 任务闸(负责人实报:建专班成功但看板没任务)：任务分解是专班的**核心价值**,没有任务=
+        # 建了个空壳频道、看板空白、AI 同事无从下手。较弱的模型常把 tasks 当"可空"漏传。
+        # 这里在**建房/扣配额之前**就拦下:让模型先把目标拆成子任务再调,从根上杜绝空专班。
+        # (只想建群绑资源、暂不派任务的场景请用 create_room,那才是"不带任务"的正确工具。)
+        _raw_tasks = args.get("tasks") or []
+        _has_task = isinstance(_raw_tasks, list) and any(
+            str((it or {}).get("title") if isinstance(it, dict) else it).strip()
+            for it in _raw_tasks
+        )
+        if not _has_task:
+            return (
+                f"建专班「{project}」需要先带上**任务分解**——不然建出来的专班看板是空的、"
+                "AI 同事也无从下手（负责人明确要求：建专班必须同步生成任务）。请把目标拆成 "
+                "3~8 个子任务（每条至少含 title，并尽量指定 executor_kind=human/agent 及 "
+                "executor_ref=具体的人或AI），连同 project/成员/协作Agent 一起**再调一次 "
+                "assemble_team**。若用户还没说清要做哪些事，先提问/用 ask_user_choice 问清楚，"
+                "**不要**先建一个空专班。"
+            )
         members = [str(m).strip() for m in (args.get("members") or []) if str(m).strip()]
         # 防重名:已有同名频道就给这个专班加「专班」后缀区分,别让左栏出现两个一模一样的频道。
         # project 仍作为项目目标/RULE 里的人读标签;channel_name 只是频道的显示名。

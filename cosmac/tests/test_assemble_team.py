@@ -89,6 +89,21 @@ class TestAssembleTeam(unittest.TestCase):
         self.assertEqual(len(tc), 1)
         self.assertEqual(tc[0]["team_room"], "!team:h")
 
+    def test_no_tasks_refuses_before_building(self) -> None:
+        """没带任务分解时:不建房、不发消息,返回让模型先拆任务的提示(负责人实报:建专班后看板空)。"""
+        out = self._run({"project": "空壳班", "worker_agents": ["copywriter"]})
+        self.assertEqual(self.client.created, [])   # 没建房
+        self.assertEqual(self.client.states, [])    # 没写频道配置
+        self.assertIn("任务", out)                  # 提示要先拆任务
+        with session_scope() as s:                  # 库里也没任何任务
+            self.assertEqual(list_tasks(s, room_ids=["!team:h"]), [])
+
+    def test_empty_task_titles_also_refused(self) -> None:
+        """tasks 给了但全是空标题(等于没拆)——同样拦下,不建空专班。"""
+        out = self._run({"project": "空标题班", "tasks": [{"title": "  "}, {"title": ""}]})
+        self.assertEqual(self.client.created, [])
+        self.assertIn("任务", out)
+
     def test_restricted_agent_not_bindable_by_unentitled_user(self) -> None:
         # M2 越权：发起人够不到的受限智能体，点名当 lead/worker 会被按 access 过滤后的可见集
         # 当成"缺口"剔除，绝不注入其付费人设。known_agents(for_user) 模拟按发起人过滤。
@@ -97,6 +112,7 @@ class TestAssembleTeam(unittest.TestCase):
         )
         out = self._run({
             "project": "越权班", "lead_agent": "vip", "worker_agents": ["vip", "open"],
+            "tasks": [{"title": "占位任务", "executor_kind": "agent", "executor_ref": "open"}],
         })
         _room, _etype, content = self.client.states[0]
         # vip 既没当上 lead（persona.agentSlug 不是 vip），也没进 worker 列表
@@ -146,7 +162,7 @@ class TestAssembleTeam(unittest.TestCase):
 
         self.tb.ensure_worker_in_room = _pull
         self.tb.known_agents = lambda for_user=None: {"copywriter", "broken"}
-        self._run({"project": "傀儡班", "worker_agents": ["copywriter", "broken"]})
+        self._run({"project": "傀儡班", "tasks": [{"title": "占位任务"}], "worker_agents": ["copywriter", "broken"]})
         self.assertEqual(pulled, [("!team:h", "copywriter")])
         # 开班消息:进了频道的标注"已进频道",失败的不标(退回人设应答)
         opening = "\n".join(t for _r, t in self.client.sent)
@@ -181,7 +197,7 @@ class TestAssembleTeam(unittest.TestCase):
         self.tb.known_agents = lambda for_user=None: {"planner": "选题策划"}
         self.tb.known_skills = lambda for_user=None: {"marketing-campaign": "营销活动策划"}
         out = self._run({
-            "project": "抓阄班",
+            "project": "抓阄班", "tasks": [{"title": "占位任务"}],
             "lead_agent": "Planner",                    # 大小写变体 → 认
             "skills": ["marketing_campaign", "营销活动策划"],  # 下划线变体+中文名 → 都认并去重
         })
@@ -190,7 +206,7 @@ class TestAssembleTeam(unittest.TestCase):
         self.assertEqual(content["persona"]["skill_slugs"], ["marketing-campaign"])
         self.assertNotIn("库里没有", out)  # 不再误报缺口
         # 真没有的仍要报缺口、不写进配置
-        out2 = self._run({"project": "抓阄班2", "skills": ["ghost-skill"]})
+        out2 = self._run({"project": "抓阄班2", "tasks": [{"title": "占位任务"}], "skills": ["ghost-skill"]})
         self.assertIn("ghost-skill", out2)
         _room2, _etype2, content2 = self.client.states[1]
         self.assertNotIn("skill_slugs", content2.get("persona", {}))
@@ -198,21 +214,21 @@ class TestAssembleTeam(unittest.TestCase):
     def test_knowledge_bound_into_channel(self) -> None:
         # 知识库"调进频道":owner→发起人个人库对全班开放;platform→平台共享库。
         # 写进 channel_config.kbScopes,频道分身检索时纳入(见 _group_context/_kb_retrieve)。
-        self._run({"project": "招生班", "knowledge": ["owner", "platform"]})
+        self._run({"project": "招生班", "tasks": [{"title": "占位任务"}], "knowledge": ["owner", "platform"]})
         _room, _etype, content = self.client.states[0]
         self.assertIn("user:@owner:h", content["kbScopes"])
         self.assertIn("platform", content["kbScopes"])
 
     def test_no_knowledge_no_kbscopes(self) -> None:
         # 不传 knowledge → 不写 kbScopes(不引入空字段)
-        self._run({"project": "空班"})
+        self._run({"project": "空班", "tasks": [{"title": "占位任务"}]})
         _room, _etype, content = self.client.states[0]
         self.assertNotIn("kbScopes", content)
 
     def test_failed_invite_does_not_break_team(self) -> None:
         # 健壮性：某成员邀请失败（如账号不存在）→ 专班照样建成、配置照写、如实告知未邀到
         self.client.invite_user = lambda room, uid: uid != "@ghost:h"  # @ghost 邀不到
-        out = self._run({"project": "测试班", "members": ["@a:h", "@ghost:h"]})
+        out = self._run({"project": "测试班", "tasks": [{"title": "占位任务"}], "members": ["@a:h", "@ghost:h"]})
         # 专班仍建成（频道配置写入成功）
         self.assertTrue(self.client.states)
         self.assertEqual(self.client.states[0][1], CHANNEL_CONFIG_EVENT_TYPE)
@@ -222,7 +238,7 @@ class TestAssembleTeam(unittest.TestCase):
         self.assertIn("没邀到", out)
 
     def test_builtin_persona_when_no_lead(self) -> None:
-        self._run({"project": "小项目"})
+        self._run({"project": "小项目", "tasks": [{"title": "占位任务"}]})
         _room, _etype, content = self.client.states[0]
         # 没给 lead_agent → 用内置编排人设
         self.assertIn("项目主AI", content["persona"]["prompt"])
@@ -238,14 +254,14 @@ class TestAssembleTeam(unittest.TestCase):
         self.client.joined_rooms = lambda: ["!exist:h"]                         # type: ignore
         self.client.get_state_event = lambda rid, et, sk="": (                  # type: ignore
             {"name": "税务自查"} if et == "m.room.name" else None)              # 无 create/ai/dm 标记 → channel
-        out = self._run({"project": "税务自查", "members": ["@a:h"]})
+        out = self._run({"project": "税务自查", "tasks": [{"title": "占位任务"}], "members": ["@a:h"]})
         self.assertEqual(self.client.created[0][0], "税务自查专班")             # 建房用去重名
         self.assertIn("税务自查专班", out)                                      # 回灌用去重名
 
     def test_no_dedup_when_no_collision(self) -> None:
         # 没有同名频道 → 名字原样,不加后缀
         self.client.joined_rooms = lambda: []                                   # type: ignore
-        self._run({"project": "全新项目"})
+        self._run({"project": "全新项目", "tasks": [{"title": "占位任务"}]})
         self.assertEqual(self.client.created[0][0], "全新项目")
 
 
