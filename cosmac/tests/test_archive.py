@@ -127,6 +127,33 @@ class TestArchiveProjectTool(unittest.TestCase):
         with session_scope() as s:
             self.assertEqual(list_archives(s, room_ids=["!empty:h"]), [])
 
+    def test_archive_targets_room_from_dm(self) -> None:
+        # 负责人实报:在私聊里归档某频道,却因 ctx.room_id=私聊房而归档不到真频道。
+        # 现在带 room 指明频道 → 归档落到那个频道(不是私聊房)。
+        self.client.get_members = lambda rid: [{"user_id": "@owner:h"}]  # type: ignore
+        out = self.tb.execute(
+            ToolCall(id="x", name="archive_project",
+                     arguments={"summary": "收尾", "room": "!team:h"}),
+            ToolContext("!dm:h", "@owner:h", is_dm=True),  # 当前是私聊
+        )
+        self.assertIn("已归档", out)
+        with session_scope() as s:
+            self.assertEqual(len(list_archives(s, room_ids=["!team:h"])), 1)  # 落到目标频道
+            self.assertEqual(list_archives(s, room_ids=["!dm:h"]), [])        # 没误档私聊房
+        # state 标记也写在目标频道
+        marks = [r for r, e, _c in self.client.states if e == "cosmac.project.archived"]
+        self.assertEqual(marks, ["!team:h"])
+
+    def test_dm_without_room_prompts_not_archives(self) -> None:
+        # 私聊里不指明频道 → 提示要哪个频道,绝不把私聊当频道归档(会归档不到真频道、还清私聊记忆)
+        out = self.tb.execute(
+            ToolCall(id="x", name="archive_project", arguments={"summary": "x"}),
+            ToolContext("!dm:h", "@owner:h", is_dm=True),
+        )
+        self.assertIn("哪个频道", out)
+        with session_scope() as s:
+            self.assertEqual(list_archives(s, room_ids=["!dm:h"]), [])
+
     def test_non_admin_cannot_archive(self) -> None:
         # L9：频道内普通成员(power<50)不能归档——不会清掉长期记忆，也不落归档记录。
         out = self.tb.execute(
