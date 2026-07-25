@@ -10,6 +10,11 @@
 {
 	# ACME 联系邮箱（证书到期提醒发这里）
 	email {{ADMIN_EMAIL}}
+	# 信任私网上游反代还原真实客户端 IP(与 -proxy 模板同因:防登录限频误伤)。
+	# 直出模式下客户端是公网直连、不落私网段,此项不影响、纯为共存部署兜底。
+	servers {
+		trusted_proxies static private_ranges
+	}
 }
 
 {{DOMAIN}} {
@@ -24,8 +29,11 @@
 	}
 
 	# —— GuDuu OS 自有 API（注册验码/入驻/商城/皮肤等，bot 提供）——
+	# 真实客户端 IP 经 X-Real-IP 传给 bot(登录限频/异地检测/审计用)。
 	handle /cosmac/* {
-		reverse_proxy bot:9000
+		reverse_proxy bot:9000 {
+			header_up X-Real-IP {http.request.client_ip}
+		}
 	}
 
 	# —— 联邦服务发现：联邦走 443（免开 8448 端口）——

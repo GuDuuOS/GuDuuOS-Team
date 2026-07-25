@@ -801,6 +801,12 @@ _kicked_lock = threading.Lock()
 _KICKED_TTL = 24 * 3600      # 记录保留 24h：被踢端通常几秒内就会来查，24h 绰绰有余
 
 
+def _single_session_enabled() -> bool:
+    """单端在线(后登录踢先登录)开关。**默认关 = 多设备可同时在线**(标准 Matrix 行为,
+    负责人 2026-07-25 拍板改回多设备)。置 COSMAC_SINGLE_SESSION=1 才启用"后踢前"互踢。"""
+    return (_env("SINGLE_SESSION", "") or "").lower() in ("1", "true", "yes")
+
+
 def _kick_other_devices(hs_url: str, username: str, password: str,
                         payload: Dict[str, Any]) -> None:
     """登录成功后踢掉该账号的**其它**设备（单端在线）。best-effort：任何一步失败都只记
@@ -923,9 +929,10 @@ def login_account(
                         token=str(payload.get("access_token") or ""))
     if gate is not None:
         return gate
-    # 单端在线（后踢前）：这次登录成功 → 踢掉该账号其它设备。放在 stepup 闸之后——
-    # 可疑登录还没过二次验证时绝不能把人家正常在用的会话踢下线。
-    _kick_other_devices(hs_url, username, password, payload)
+    # 单端在线（后踢前）：仅在显式开启时才踢——默认多设备同时在线(负责人拍板)。
+    # 放在 stepup 闸之后——可疑登录还没过二次验证时绝不能把人家正常在用的会话踢下线。
+    if _single_session_enabled():
+        _kick_other_devices(hs_url, username, password, payload)
     _audit("login", subject=username, ip=client_ip, ok=True,
            detail="ok_stepup" if code else "ok")
     return 200, payload
@@ -967,8 +974,9 @@ def login_email(
                             token=str(payload.get("access_token") or ""))
         if gate is not None:
             return gate
-        # 单端在线（后踢前）：与 login_account 同一道（见彼处注释）。
-        _kick_other_devices(hs_url, username, password, payload)
+        # 单端在线（后踢前）：仅显式开启才踢，默认多设备（与 login_account 同一道）。
+        if _single_session_enabled():
+            _kick_other_devices(hs_url, username, password, payload)
         _audit("login", subject=username, ip=client_ip, ok=True,
                detail="ok_email_stepup" if code else "ok_email")
         return 200, payload

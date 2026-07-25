@@ -11,6 +11,12 @@
 # 全局：关掉自动 HTTPS（证书是宿主反代的事）
 {
 	auto_https off
+	# 信任私网内的上游反代(宿主 Caddy/nginx):据其 X-Forwarded-For 还原**真实客户端 IP**。
+	# 否则双层反代下容器只看到网关 172.18.0.1,登录限频把全平台当同一 IP 一起限流→误报
+	# "尝试过于频繁"、正常用户登不上(负责人实报)。private_ranges 只信私网跳,公网直连不受影响。
+	servers {
+		trusted_proxies static private_ranges
+	}
 }
 
 :80 {
@@ -23,8 +29,12 @@
 	}
 
 	# —— GuDuu OS 自有 API ——
+	# 把还原出的真实客户端 IP 用 X-Real-IP 传给 bot(bot 优先认它):登录限频/异地检测/审计
+	# 才拿得到真实 IP。client_ip 已由上面的 trusted_proxies 从 XFF 正确还原。
 	handle /cosmac/* {
-		reverse_proxy bot:9000
+		reverse_proxy bot:9000 {
+			header_up X-Real-IP {http.request.client_ip}
+		}
 	}
 
 	# —— 联邦/客户端服务发现（域名在渲染时固定写入）——
