@@ -35,6 +35,13 @@ COSMAC_SMTP_PASSWORD={{SMTP_PASSWORD}}
 COSMAC_SMTP_FROM={{SMTP_FROM}}
 COSMAC_SMTP_FROM_NAME={{SMTP_FROM_NAME}}
 
+# —— Cloudflare Turnstile 人机验证（可选；防机器人恶意刷验证码/注册）——
+# 两个值都填才生效:去 Cloudflare 控制台 → Turnstile 新建一个小组件,
+# 「域名(Hostname)」里必须包含本实例域名(如 {{DOMAIN}}),拿到 Site Key + Secret Key。
+# 留空=不启用(注册/找回密码不弹人机验证,仅靠 IP 限频)。填好后 docker compose up -d 生效。
+COSMAC_TURNSTILE_SITE_KEY=
+COSMAC_TURNSTILE_SECRET=
+
 # —— AI 模型（OEM 模式：全部经 GuDuu Nexus 网关，API key 就是你的授权码）——
 # install.sh 已按是否有授权码自动填好；独立模式(无授权码)默认 echo 占位。
 # 可选 provider：echo(占位)/claude/openai/deepseek(方舟)/gemini

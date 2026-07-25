@@ -88,6 +88,12 @@ services:
       COSMAC_SMTP_PASSWORD: ${COSMAC_SMTP_PASSWORD:-}
       COSMAC_SMTP_FROM: ${COSMAC_SMTP_FROM:-}
       COSMAC_SMTP_FROM_NAME: ${COSMAC_SMTP_FROM_NAME:-}
+      # —— Cloudflare Turnstile 人机验证（可选，防恶意刷验证码/注册）——
+      # compose 的 environment 是白名单式:这两个不在此列出,.env 配了也传不进容器、
+      # 后端就当没启用、前端不渲染验证组件(线上实报:新域名下人机验证消失)。
+      # 站点密钥经 /cosmac/auth/config 下发给前端;secret 只在服务端做 siteverify。
+      COSMAC_TURNSTILE_SITE_KEY: ${COSMAC_TURNSTILE_SITE_KEY:-}
+      COSMAC_TURNSTILE_SECRET: ${COSMAC_TURNSTILE_SECRET:-}
       # —— AI 模型（OEM 模式：BASE_URL 指向母舰网关、API key=OEM 授权码；
       #    原厂 key 永不出现在实例侧，见 CLAUDE.md §4 模块6）——
       COSMAC_LLM_PROVIDER: ${COSMAC_LLM_PROVIDER:-echo}
