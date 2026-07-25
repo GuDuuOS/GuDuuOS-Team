@@ -397,8 +397,11 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
             <button class="auth-subtab" :class="{ active: loginBy === 'account' }" @click="switchLoginBy('account')">账号登录</button>
             <button class="auth-subtab" :class="{ active: loginBy === 'email' }" @click="switchLoginBy('email')">邮箱登录</button>
           </div>
-          <input v-if="loginBy === 'account'" v-model="user" name="login-username" autocomplete="username" placeholder="用户名" @keyup.enter="doLogin" />
-          <input v-else v-model="email" type="email" name="login-email" autocomplete="email" placeholder="邮箱" @keyup.enter="doLogin" />
+          <!-- key 必须不同:账号框/邮箱框是同位置 v-if/v-else,不给 key 时 Vue 会复用同一个 DOM
+               input,切 Tab 后上一个 Tab 的输入值残留在复用元素里刷不掉(负责人实报:切到账号登录
+               仍回显邮箱)。加不同 key 强制各建独立 input。 -->
+          <input v-if="loginBy === 'account'" key="login-account" v-model="user" name="login-username" autocomplete="username" placeholder="用户名" @keyup.enter="doLogin" />
+          <input v-else key="login-email" v-model="email" type="email" name="login-email" autocomplete="email" placeholder="邮箱" @keyup.enter="doLogin" />
           <div class="pw-wrap">
             <input v-model="password" :type="showPwd ? 'text' : 'password'" autocomplete="current-password" placeholder="密码" @keyup.enter="doLogin" />
             <button type="button" class="pw-eye" :aria-label="showPwd ? '隐藏密码' : '显示密码'" :title="showPwd ? '隐藏密码' : '显示密码'" @click="showPwd = !showPwd" v-html="showPwd ? EYE_OPEN : EYE_OFF"></button>
