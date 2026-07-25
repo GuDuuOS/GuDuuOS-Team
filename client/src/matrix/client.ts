@@ -1339,8 +1339,10 @@ export async function listUsers(): Promise<AdminUser[]> {
     // **排除 locked 用户**,而本产品的「停用」正是用 lock 实现的(保住频道成员关系,
     // 见停用改锁定那次改动)。少了 locked=true,管理员一停用账号就从列表里**消失**,
     // 既看不到状态也无法恢复(负责人实报)。两个参数都要带。
+    // order_by=creation_ts&dir=b:按注册时间倒序,新账号排最上(负责人要求)。
+    // Synapse admin /v2/users 原生支持该排序,分页顺序即最终顺序,无需前端再排。
     const data = await adminFetch(
-      `/_synapse/admin/v2/users?from=${from}&limit=${limit}&guests=false&deactivated=true&locked=true`,
+      `/_synapse/admin/v2/users?from=${from}&limit=${limit}&guests=false&deactivated=true&locked=true&order_by=creation_ts&dir=b`,
     )
     for (const u of data.users || []) {
       // AI 同事傀儡账号(方案B,@guduu-ai-*)不进「用户管理」——它们不是真实用户,
@@ -1495,6 +1497,7 @@ export interface AdminRoom {
   isPublic: boolean          // 是否公开可加入（join_rules=public）
   encrypted: boolean         // 是否端到端加密
   creator: string | null     // 创建者 user_id
+  createdTs: number          // 建房时间(毫秒;来自 room_kinds 端点,拿不到为 0)。后台按它倒序,新频道置顶
 }
 
 /**
@@ -1523,6 +1526,7 @@ export async function listAdminRooms(): Promise<AdminRoom[]> {
         isPublic: r.join_rules === 'public',
         encrypted: !!r.encryption,
         creator: r.creator || null,
+        createdTs: 0, // 由 room_kinds 端点回填(admin /rooms 摘要不含建房时间)
       })
     }
     // Admin rooms API 用 next_batch 翻页；没有就取完了
@@ -3954,23 +3958,26 @@ export async function fetchAdminKbDoc(id: number): Promise<{ title: string; sour
   return j
 }
 
-/** 后台频道管理:批量判房型(space/ai/dm/channel)。中枢AI会话与私信不是"频道",
- *  Synapse admin /rooms 摘要判不出——由 bot 经管理员通道读房间 state 标记批量判定
- *  (负责人实报:后台把中枢AI/私信都当频道统计了)。失败返回空映射(调用方不过滤,fail-open)。 */
-export async function fetchAdminRoomKinds(roomIds: string[]): Promise<Record<string, string>> {
+/** 后台频道管理:批量判房型(space/ai/dm/channel)+ 建房时间(创建时间倒序排用)。
+ *  中枢AI会话与私信不是"频道",Synapse admin /rooms 摘要判不出——由 bot 经管理员通道读
+ *  房间 state 标记批量判定(负责人实报:后台把中枢AI/私信都当频道统计了);同一趟顺手取
+ *  m.room.create 的 origin_server_ts 当建房时间。失败返回空映射(调用方不过滤,fail-open)。 */
+export async function fetchAdminRoomKinds(
+  roomIds: string[],
+): Promise<{ kinds: Record<string, string>; created: Record<string, number> }> {
   const token = (mx as any)?.getAccessToken?.() || ''
-  if (!token || !roomIds.length) return {}
+  if (!token || !roomIds.length) return { kinds: {}, created: {} }
   try {
     const r = await fetch(`${payBase()}/cosmac/admin/room_kinds`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ room_ids: roomIds }),
     })
-    if (!r.ok) return {}
+    if (!r.ok) return { kinds: {}, created: {} }
     const j = await r.json().catch(() => ({}))
-    return j.kinds || {}
+    return { kinds: j.kinds || {}, created: j.created || {} }
   } catch {
-    return {}
+    return { kinds: {}, created: {} }
   }
 }
 

@@ -2139,10 +2139,16 @@ async function loadRooms() {
     // 频道管理只列**真频道**(负责人实报:中枢AI会话/私信被当频道统计)——
     // 房型由 bot 经管理员通道批量判定(state 标记),ai/dm 剔除;
     // 判定失败返回空映射时不过滤(fail-open,宁可多显示不静默藏房)。
-    const kinds = await fetchAdminRoomKinds(all.map((r) => r.id))
-    rooms.value = Object.keys(kinds).length
+    // 同一趟还带回建房时间(created),回填到每条上、用于按创建时间倒序。
+    const { kinds, created } = await fetchAdminRoomKinds(all.map((r) => r.id))
+    const list = Object.keys(kinds).length
       ? all.filter((r) => (kinds[r.id] || 'channel') === 'channel')
       : all
+    for (const r of list) r.createdTs = created[r.id] || 0
+    // 按建房时间倒序:新建的频道排最上(负责人要求)。拿不到时间的(created=0)沉底;
+    // 时间相同/都为0时退回按成员数(listAdminRooms 已按成员倒序返回)保持稳定。
+    list.sort((a, b) => (b.createdTs - a.createdTs) || (b.members - a.members))
+    rooms.value = list
     roomsLoaded.value = true
   } catch (e: any) {
     warn('加载失败', e?.message || '无法获取频道列表')
@@ -3389,7 +3395,7 @@ async function loadOverview() {
     const [us, allRooms, ver] = await Promise.all([listUsers(), listAdminRooms(), getServerVersion()])
     // 概览的频道统计只算**真频道**——与频道管理页同口径,剔除中枢AI会话房/私信
     // (负责人实报:频道总数含私信、活跃Top显示了中枢AI)。判定失败 fail-open 不过滤。
-    const kinds = await fetchAdminRoomKinds(allRooms.map((r) => r.id))
+    const { kinds } = await fetchAdminRoomKinds(allRooms.map((r) => r.id))
     const rs = Object.keys(kinds).length
       ? allRooms.filter((r) => (kinds[r.id] || 'channel') === 'channel')
       : allRooms

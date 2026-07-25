@@ -21,13 +21,15 @@ from cosmac.db import init_engine
 class _C:
     def __init__(self) -> None:
         self.state_calls: List[str] = []
+        # m.room.create 带 origin_server_ts:既判 space 也顺手取建房时间(后台按它倒序)
         self.states: Dict[str, List[Dict[str, Any]]] = {
-            "!space:h": [{"type": "m.room.create", "content": {"type": "m.space"}}],
-            "!ai:h": [{"type": "m.room.create", "content": {}},
+            "!space:h": [{"type": "m.room.create", "origin_server_ts": 1000,
+                          "content": {"type": "m.space"}}],
+            "!ai:h": [{"type": "m.room.create", "origin_server_ts": 2000, "content": {}},
                       {"type": "cosmac.ai_session", "content": {"kind": "ai"}}],
-            "!dm:h": [{"type": "m.room.create", "content": {}},
+            "!dm:h": [{"type": "m.room.create", "origin_server_ts": 3000, "content": {}},
                       {"type": "cosmac.dm", "content": {"direct": True}}],
-            "!ch:h": [{"type": "m.room.create", "content": {}},
+            "!ch:h": [{"type": "m.room.create", "origin_server_ts": 4000, "content": {}},
                       {"type": "m.room.name", "content": {"name": "真频道"}}],
         }
 
@@ -53,6 +55,7 @@ def _bot(is_admin: bool = True) -> CosmacBot:
     bot.client = _C()  # type: ignore
     bot._is_platform_admin = lambda uid: is_admin  # type: ignore
     CosmacBot._admin_kind_cache = {}  # 类级缓存逐测重置
+    CosmacBot._admin_created_cache = {}
     return bot
 
 
@@ -71,6 +74,13 @@ class TestAdminRoomKinds(unittest.TestCase):
         self.assertEqual(k["!dm:h"], "dm")       # 私信——不是频道
         self.assertEqual(k["!ch:h"], "channel")
         self.assertEqual(k["!unknown:h"], "channel")  # 读不出 fail-open
+        # 同一趟带回建房时间(供后台按创建时间倒序):普通频道也能拿到(旧版判到标记就 break,
+        # 普通频道走不到 create 行——本测锁死这个回归)。
+        c = out["created"]
+        self.assertEqual(c["!ch:h"], 4000)
+        self.assertEqual(c["!ai:h"], 2000)
+        self.assertEqual(c["!space:h"], 1000)
+        self.assertEqual(c["!unknown:h"], 0)  # 读不出给 0(排序沉底)
 
     def test_cache_avoids_refetch(self) -> None:
         bot = _bot()
