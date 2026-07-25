@@ -112,5 +112,24 @@ class TestKickOtherDevices(unittest.TestCase):
         self.assertFalse(registration.was_kicked("", ""))
 
 
+class TestSingleSessionSwitch(unittest.TestCase):
+    """单端在线开关:默认关(多设备同时在线),置 COSMAC_SINGLE_SESSION=1 才启用互踢。"""
+
+    def test_default_off_multi_device(self) -> None:
+        import os
+        for k in ("COSMAC_SINGLE_SESSION", "GUDUU_SINGLE_SESSION"):
+            os.environ.pop(k, None)
+        self.assertFalse(registration._single_session_enabled())  # 默认多设备
+
+    def test_enabled_by_env(self) -> None:
+        import os
+        with mock.patch.dict(os.environ, {"COSMAC_SINGLE_SESSION": "1"}):
+            self.assertTrue(registration._single_session_enabled())
+        with mock.patch.dict(os.environ, {"COSMAC_SINGLE_SESSION": "true"}):
+            self.assertTrue(registration._single_session_enabled())
+        with mock.patch.dict(os.environ, {"COSMAC_SINGLE_SESSION": "0"}):
+            self.assertFalse(registration._single_session_enabled())
+
+
 if __name__ == "__main__":
     unittest.main()

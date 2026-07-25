@@ -42,6 +42,10 @@ COSMAC_SMTP_FROM_NAME={{SMTP_FROM_NAME}}
 COSMAC_TURNSTILE_SITE_KEY=
 COSMAC_TURNSTILE_SECRET=
 
+# —— 单端在线（可选）——
+# 留空=多设备可同时在线（标准 Matrix 行为，默认）。填 1=同一账号后登录的踢掉先登录的。
+COSMAC_SINGLE_SESSION=
+
 # —— AI 模型（OEM 模式：全部经 GuDuu Nexus 网关，API key 就是你的授权码）——
 # install.sh 已按是否有授权码自动填好；独立模式(无授权码)默认 echo 占位。
 # 可选 provider：echo(占位)/claude/openai/deepseek(方舟)/gemini
