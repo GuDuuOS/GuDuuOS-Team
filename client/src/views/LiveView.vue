@@ -1805,11 +1805,14 @@ async function aiSend() {
   }
 }
 
-// 选择卡点选：把用户选的内容作为普通消息发回该房间，主 AI 据此继续（同打字效果）
+// 选择卡点选：把用户选的内容发回该房间，主 AI 据此继续（同打字效果）。
+// ⚠️ 必须 @ 一下主 AI：**频道里 AI 只在被 @ 时才回**，点选择卡发出的选项若不带 @提及,
+// 频道 AI 收不到、就没有下一步(负责人实报:频道内 @AI 归档、点了「确认归档」AI 无响应)。
+// 私聊里本就每条都交给 AI,带上 mention 也无害。走 m.mentions 让 bot 的 mention 判定命中。
 async function pickChoice(text: string, room: string) {
   const t = (text || '').trim()
   if (!t || !room) return
-  await sendText(room, t)
+  await sendText(room, t, { 'm.mentions': { user_ids: [botId()] } })
   setTimeout(refresh, 400)
 }
 
