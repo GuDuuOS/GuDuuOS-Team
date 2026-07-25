@@ -7,7 +7,7 @@
     <div class="right-body">
       <!-- 当前数据源列表 -->
       <div class="pinned">
-        <div class="ph">🗄 数据源（{{ list.length }}）</div>
+        <div class="ph"><Icon name="archive" :size="13" /> 数据源（{{ list.length }}）</div>
         <div class="info-list">
           <div v-for="(s, i) in list" :key="rowKey(s)" class="bsp-row">
             <div class="info-main">
@@ -37,6 +37,7 @@
 </template>
 
 <script setup lang="ts">
+import Icon from '@/components/Icon.vue'
 import { computed, ref } from 'vue'
 import { rowKey } from '@/utils/rowKey'
 // 复用「关于此频道」右面板那套 .right / .pinned / .info-* 样式

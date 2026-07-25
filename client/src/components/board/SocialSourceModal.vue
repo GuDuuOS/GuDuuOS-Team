@@ -4,7 +4,7 @@
   <div v-if="modalOpen" class="ssm-mask" @click.self="closeModal">
     <div class="ssm">
       <div class="ssm-head">
-        <div class="ssm-title">🔌 接入社媒数据源</div>
+        <div class="ssm-title"><Icon name="plug" :size="16" /> 接入社媒数据源</div>
         <button class="ssm-x" title="关闭" @click="closeModal">×</button>
       </div>
 
@@ -76,7 +76,7 @@
               请把「取数模式」切到 <b>AI 爬取</b>。
             </div>
             <div v-else class="ssm-spec">
-              <div class="ssm-spec-h">🔑 {{ platformLabel(nPlatform) }} 官方 API · 接入要求</div>
+              <div class="ssm-spec-h"><Icon name="key" :size="14" /> {{ platformLabel(nPlatform) }} 官方 API · 接入要求</div>
               <div class="ssm-spec-diff">门槛：{{ spec.difficulty }}<span v-if="spec.note"> · {{ spec.note }}</span></div>
               <!-- 1) 服务端密钥：只提示该配哪个 env 名，前端不填值 -->
               <div class="ssm-spec-block">
@@ -93,7 +93,7 @@
                   <input v-model="nParams[f.key]" :placeholder="f.placeholder" @keyup.enter="doAdd" />
                 </label>
               </div>
-              <a v-if="spec.docUrl" class="ssm-doc" :href="spec.docUrl" target="_blank" rel="noopener">📖 官方文档</a>
+              <a v-if="spec.docUrl" class="ssm-doc" :href="spec.docUrl" target="_blank" rel="noopener"><Icon name="pages" :size="13" /> 官方文档</a>
             </div>
           </template>
 
@@ -126,6 +126,7 @@
 </template>
 
 <script setup lang="ts">
+import Icon from '@/components/Icon.vue'
 import { ref, reactive, computed, watch } from 'vue'
 import { rowKey } from '@/utils/rowKey'
 import {

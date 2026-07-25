@@ -9,7 +9,7 @@
     <!-- 顶部：公司名 + 概览统计条 -->
     <div class="org-head">
       <div class="org-title">
-        <span class="org-emoji">🏢</span>
+        <span class="org-emoji"><Icon name="building" :size="16" /></span>
         <div>
           <div class="org-company">{{ data?.company || '组织 / 人事' }}</div>
           <div class="org-caption">// 员工花名册 · 数据智能演示</div>
@@ -82,7 +82,7 @@
             <div class="org-dname">{{ picked.name }}</div>
             <div class="org-dsub">{{ picked.department }} · {{ picked.title }}（{{ picked.level }}）</div>
           </div>
-          <button class="org-x" @click="picked = null">✕</button>
+          <button class="org-x" @click="picked = null"><Icon name="close" :size="16" /></button>
         </div>
         <div class="org-kv"><span>工号</span><b>{{ picked.emp_no }}</b></div>
         <div class="org-kv"><span>在职状态</span><b>{{ statusLabel(picked.status) }}</b></div>
@@ -103,6 +103,7 @@
 </template>
 
 <script setup lang="ts">
+import Icon from '@/components/Icon.vue'
 import { computed, onMounted, ref } from 'vue'
 import { getHrEmployees, type Employee, type HrData } from '@/matrix/client'
 

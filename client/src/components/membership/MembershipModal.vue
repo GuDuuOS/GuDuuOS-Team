@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Icon from '@/components/Icon.vue'
 /**
  * 升级会员弹窗（模块4 交易系统 · 用户侧）。
  * 读 bot 公开的套餐 → 选套餐+货币 → 下单 → (测试通道)模拟支付 → 会员开通。
@@ -111,8 +112,8 @@ onMounted(load)
   <div class="mm-mask" @click.self="emit('close')">
     <div class="mm-card">
       <header class="mm-head">
-        <span class="mm-title">✦ 升级会员</span>
-        <button class="mm-x" @click="emit('close')">✕</button>
+        <span class="mm-title"><Icon name="sparkle" :size="15" /> 升级会员</span>
+        <button class="mm-x" @click="emit('close')"><Icon name="close" :size="16" /></button>
       </header>
 
       <div v-if="loading" class="mm-center">加载套餐…</div>

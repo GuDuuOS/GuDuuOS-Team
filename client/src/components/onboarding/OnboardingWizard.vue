@@ -4,7 +4,7 @@
   <div v-if="visible" class="onb-mask">
     <div class="onb">
       <header class="onb-head">
-        <span class="onb-logo">✦ GuDuu OS</span>
+        <span class="onb-logo"><Icon name="sparkle" :size="15" /> GuDuu OS</span>
         <span class="onb-sub">初次设置</span>
         <button v-if="step !== 'creating'" class="onb-skip" @click="onSkip">跳过，直接进入</button>
       </header>
@@ -83,7 +83,7 @@
           </div>
           <div class="onb-row">
             <button class="onb-back" @click="goStep('template')">重来</button>
-            <button class="onb-create" :disabled="busy" @click="onCreate">✦ 创建我的工作台</button>
+            <button class="onb-create" :disabled="busy" @click="onCreate"><Icon name="sparkle" :size="14" /> 创建我的工作台</button>
           </div>
         </div>
 
@@ -97,6 +97,7 @@
 </template>
 
 <script setup lang="ts">
+import Icon from '@/components/Icon.vue'
 import { ref, nextTick, watch, onBeforeUnmount } from 'vue'
 import { useOnboarding } from '@/composables/useOnboarding'
 

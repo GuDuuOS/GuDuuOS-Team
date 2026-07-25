@@ -3,7 +3,7 @@
     <!-- 左：页面树 -->
     <aside class="doc-side">
       <div class="doc-side-head">
-        <span class="doc-side-title">📄 图文教程</span>
+        <span class="doc-side-title"><Icon name="tutorial" :size="14" /> 图文教程</span>
         <button v-if="canWrite" class="doc-mini" title="新建顶级页面" @click="createPage(null)">＋</button>
       </div>
       <div v-if="!flatTree.length" class="doc-empty-tree">
@@ -19,7 +19,7 @@
             <span v-if="!n.published" class="doc-draft-tag">草稿</span>{{ n.title || '未命名页面' }}
           </span>
           <span v-if="canWrite" class="doc-node-ops">
-            <button class="doc-mini" title="置顶(移到最前)" @click.stop="pinTop(n)">📌</button>
+            <button class="doc-mini" title="置顶(移到最前)" @click.stop="pinTop(n)"><Icon name="pin" :size="14" /></button>
             <button class="doc-mini" title="上移" @click.stop="moveUp(n)">↑</button>
             <button class="doc-mini" title="下移" @click.stop="moveDown(n)">↓</button>
             <button class="doc-mini" title="新建子页" @click.stop="createPage(n.id)">＋</button>
@@ -43,7 +43,7 @@
           <h1 v-else class="doc-title">{{ current?.title || '未命名页面' }}</h1>
           <div class="doc-head-ops" v-if="canWrite">
             <template v-if="editing">
-              <button class="doc-btn ghost" :disabled="aiBusy || saving" @click="aiWrite">{{ aiBusy ? 'AI 写作中…' : '✨ AI 写' }}</button>
+              <button class="doc-btn ghost" :disabled="aiBusy || saving" @click="aiWrite"><Icon name="sparkle" :size="13" /> {{ aiBusy ? 'AI 写作中…' : 'AI 写' }}</button>
               <button class="doc-btn ghost" :class="{ pubon: editPublished }" :disabled="saving" @click="editPublished = !editPublished" :title="editPublished ? '点此改为草稿' : '点此设为发布'">{{ editPublished ? '已发布 ●' : '草稿 ○' }}</button>
               <button class="doc-btn" :disabled="saving || aiBusy" @click="save">{{ saving ? '保存中…' : '保存' }}</button>
               <button class="doc-btn ghost" :disabled="saving" @click="cancelEdit">取消</button>
@@ -85,6 +85,7 @@
 </template>
 
 <script setup lang="ts">
+import Icon from '@/components/Icon.vue'
 import { onMounted, ref } from 'vue'
 import {
   docTree, docGetPage, docCreatePage, docUpdatePage, docDeletePage, docMovePage,

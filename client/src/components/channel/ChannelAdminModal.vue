@@ -31,7 +31,7 @@
       <!-- AI 一键写:补充要求小弹窗(产品风格,替代原生 prompt) -->
       <div v-if="aiDlgOpen" class="cam-ai-mask" @click.self="aiDlgOpen = false">
         <div class="cam-ai-dlg">
-          <div class="cam-ai-t">✨ AI 一键写规则文档</div>
+          <div class="cam-ai-t"><Icon name="sparkle" :size="14" /> AI 一键写规则文档</div>
           <p class="cam-ai-d">AI 将按本频道的人设、规则、智能体与知识库现状生成工作规范草稿，生成后可继续修改。</p>
           <textarea v-model="aiNotes" class="cam-textarea" rows="3" maxlength="1000" placeholder="补充要求（可留空，直接按频道现状生成）&#10;例如：侧重内容审核流程；输出必须带数据依据" />
           <p v-if="state.ruleDoc.trim()" class="cam-ai-warn">⚠️ 编辑区已有内容：AI 会在其基础上改写并覆盖显示（原文已作为参考喂给 AI）。</p>
@@ -90,7 +90,7 @@
                   <span v-if="m.isBot" class="cam-tag">APP</span>
                   <!-- 频道管理员标识:群主(power=100)/管理员(≥50)给醒目徽章,一眼看清谁是管理员。
                        bot 是内置 AI、不算"人类管理员",只挂 APP 标不给这个徽章(修「群主都标给中枢AI」)。-->
-                  <span v-else-if="m.role === 'owner'" class="cam-tag cam-tag-owner">👑 群主</span>
+                  <span v-else-if="m.role === 'owner'" class="cam-tag cam-tag-owner"><Icon name="members" :size="12" /> 群主</span>
                   <span v-else-if="m.role === 'admin'" class="cam-tag cam-tag-admin">管理员</span>
                   <span v-if="m.pending" class="cam-tag" style="background:#e8dcc4;color:#8a6a3a">待接受</span>
                 </div>
@@ -186,14 +186,14 @@
             <div v-if="kbErr" class="cam-help cam-help-top" style="color:#b94a4a">{{ kbErr }}</div>
             <div v-for="d in kbDocs" :key="'kbd' + d.id" class="cam-row">
               <div class="cam-row-main">
-                <div class="cam-row-label">📄 {{ d.title }}</div>
+                <div class="cam-row-label"><Icon name="pages" :size="13" /> {{ d.title }}</div>
                 <div class="cam-row-desc">已切块入库 · 本频道 AI 可检索</div>
               </div>
               <button class="cam-del" title="从知识库删除" @click="deleteRoomDoc(d.id)">×</button>
             </div>
             <p v-if="!kbDocs.length" class="cam-row-desc" style="padding:8px 2px">还没有上传文档。点下方「上传文件」把资料喂给本频道 AI。</p>
             <div class="cam-add">
-              <button class="cam-add-btn" :disabled="kbUploading" @click="pickKbFile">{{ kbUploading ? '上传中…' : '⬆ 上传文件' }}</button>
+              <button class="cam-add-btn" :disabled="kbUploading" @click="pickKbFile"><Icon name="upload" :size="13" /> {{ kbUploading ? '上传中…' : '上传文件' }}</button>
               <input ref="kbFileInput" type="file" multiple accept=".txt,.md,.markdown,.csv,.tsv,.json,.log,.text,.rst,.yaml,.yml,.xml,.html,.htm,text/*" style="display:none" @change="onKbFilePicked" />
             </div>
             <div class="cam-help">支持文本文件（.txt / .md / .csv / .json 等），单篇上限 2 万字。需你在本频道有管理员权限。PDF / Word 解析稍后支持。</div>
@@ -254,10 +254,10 @@
                大量背景资料请放「知识库」(按需检索),别塞这里(全文注入,超长又贵又挤)。 -->
           <div class="cam-ruledoc">
             <div class="cam-ruledoc-h">
-              <span class="cam-field-label">📜 频道规则文档（Markdown）</span>
+              <span class="cam-field-label"><Icon name="pages" :size="13" /> 频道规则文档（Markdown）</span>
               <span class="cam-ruledoc-n" :class="{ over: state.ruleDoc.length >= RULEDOC_MAX }">{{ state.ruleDoc.length }} / {{ RULEDOC_MAX }}</span>
-              <button class="cam-add-btn" :disabled="ruleDocAi || !isLive" title="AI 按频道上下文(人设/规则/知识库)生成工作规范草稿,可再修改" @click="doAiRuleDoc">{{ ruleDocAi ? '✨ 生成中…' : '✨ AI 一键写' }}</button>
-              <button class="cam-add-btn" :disabled="ruleDocUploading" @click="pickRuleDocFile">{{ ruleDocUploading ? '读取中…' : '⬆ 上传 .md' }}</button>
+              <button class="cam-add-btn" :disabled="ruleDocAi || !isLive" title="AI 按频道上下文(人设/规则/知识库)生成工作规范草稿,可再修改" @click="doAiRuleDoc"><Icon name="sparkle" :size="13" /> {{ ruleDocAi ? '生成中…' : 'AI 一键写' }}</button>
+              <button class="cam-add-btn" :disabled="ruleDocUploading" @click="pickRuleDocFile"><Icon name="upload" :size="13" /> {{ ruleDocUploading ? '读取中…' : '上传 .md' }}</button>
               <input ref="ruleDocFileInput" type="file" accept=".md,.markdown,.txt" hidden @change="onRuleDocFilePicked" />
             </div>
             <p class="cam-row-desc" style="margin:2px 0 6px">
@@ -328,6 +328,7 @@
 </template>
 
 <script setup lang="ts">
+import Icon from '@/components/Icon.vue'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 // 弹窗样式（.cam-*）来自全局 admin-modal.css。真实客户端（main.ts）只加载 tokens/reset、
 // 不加载整包 styles/index.css，所以组件自带这份样式，保证在任何宿主里（DEMO / 真实端）都成型。
