@@ -3221,6 +3221,9 @@ export async function getTasks(): Promise<TaskItem[]> {
   if (!token) return []
   try {
     const r = await fetch(`${payBase()}/cosmac/tasks`, {
+      // 禁用 HTTP 缓存:URL 与 token 固定,浏览器会缓存这个 GET,点「刷新」拿回同一份旧数据、
+      // 看板毫无变化——用户以为刷新按钮坏了(负责人实报"点击无反应")。每次都走网络拿最新任务。
+      cache: 'no-store',
       headers: { Authorization: `Bearer ${token}` },
     })
     if (!r.ok) return []
