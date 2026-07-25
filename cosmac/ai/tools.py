@@ -188,6 +188,10 @@ class Toolbox:
         self._room_name_cache: Dict[str, tuple] = {}
         # 房间类型缓存(room_id → 'ai'/'dm'/'channel';建房标记不变,永久缓存,见 _room_kind)
         self._room_kind_cache: Dict[str, str] = {}
+        # 本进程刚建过的频道名(建专班/建频道防重名用)。Synapse 的 /joined_rooms 有最终一致性
+        # 延迟——刚建的频道还没进列表时又建一个,_existing_channel_names 就看不到、防重名失效
+        # (负责人实报:AI 建了两个完全同名的频道)。这份内存集补上"刚建的",dedup 立刻可见。
+        self._recent_channel_names: set = set()
         # 知识库检索回调：由 bot 注入 self._kb_search_for_tool。签名 (query, ctx) -> 结果文本。
         # 让 search_knowledge 工具的检索逻辑(embedder/DB/作用域)留在 bot 一侧，Toolbox 保持薄。
         # None（如单测/未注入）→ search_knowledge 工具返回"暂不可用"，绝不报错。
@@ -1000,13 +1004,28 @@ class Toolbox:
         return kb_scopes, kb_labels
 
     def _tool_create_room(self, args: Dict[str, Any], ctx: ToolContext) -> str:
-        name = (args.get("name") or "新群").strip()
+        raw_name = (args.get("name") or "新群").strip()
+        # 防重名(负责人实报:AI 能建两个完全同名的频道)。普通频道用中性数字后缀区分
+        # (不像专班那样加「专班」后缀,免得给普通频道安上误导性名字)。
+        name = raw_name
+        if raw_name:
+            existing = self._existing_channel_names()
+            if raw_name in existing:
+                for i in range(2, 50):
+                    cand = f"{raw_name}（{i}）"
+                    if cand not in existing:
+                        name = cand
+                        break
         # 默认把发起人拉进新群，再并上模型额外指定的邀请人（去重）
         invitees = list(dict.fromkeys([ctx.sender, *(args.get("invitees") or [])]))
         # 发起人 = 频道主人：建房时就提成 100 级管理员，否则他改不了房名/配置(403)。
         room_id = self.client.create_room(name, invitees=invitees, admins=[ctx.sender])
         if not room_id:
             return f"建群「{name}」失败了（创建房间接口返回错误）。"
+        # 记下刚建的频道名,防 /joined_rooms 一致性延迟导致下次漏检(见 _recent_channel_names)。
+        self._recent_channel_names.add(name)
+        if len(self._recent_channel_names) > 500:
+            self._recent_channel_names = set(list(self._recent_channel_names)[-250:])
         # 真建成才消费 teams 配额(与 assemble_team 同一本账、同「失败不扣」口径)——
         # 负责人实报的旁路:免费用户经 create_room 反复建专班绕开 teams 上限,现堵上。
         self._consume_quota(ctx, "create_room")
@@ -1299,6 +1318,8 @@ class Toolbox:
                     out.add(nm)
         except Exception:
             logger.debug("列现有频道名失败", exc_info=True)
+        # 并上本进程刚建过的频道名:防 /joined_rooms 最终一致性延迟导致刚建的漏检、防重名失效。
+        out |= self._recent_channel_names
         return out
 
     def _dedup_channel_name(self, name: str) -> str:
@@ -2235,6 +2256,11 @@ class Toolbox:
         )
         if not room_id:
             return f"建专班「{channel_name}」失败了（建房间接口出错）。"
+        # 记下刚建的频道名:下次建同名专班时,即便 /joined_rooms 还没刷新也能防重名(负责人实报
+        # AI 连建两个同名频道)。集合大了就清一半,避免无界增长。
+        self._recent_channel_names.add(channel_name)
+        if len(self._recent_channel_names) > 500:
+            self._recent_channel_names = set(list(self._recent_channel_names)[-250:])
         # 专班房**真建成**才消费 teams 配额（终身配额，失败绝不能扣——否则免费用户被一次
         # Synapse 抖动扣光就永久锁死，审查 bug#7）。
         self._consume_quota(ctx, "assemble_team")
