@@ -36,11 +36,9 @@
           <li v-for="d in docs" :key="d.id" class="km-doc">
             <span class="km-doc-ic"><Icon name="pages" :size="14" /></span>
             <span class="km-doc-title">{{ d.title || '(无标题)' }}</span>
-            <span class="km-doc-src">{{ d.source }}</span>
+            <span class="km-doc-src">{{ srcLabel(d.source) }}</span>
             <button class="km-del" title="删除" :disabled="busy" @click="remove(d.id)">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-              </svg>
+              <Icon name="trash" :size="14" />
             </button>
           </li>
         </ul>
@@ -56,6 +54,14 @@ import { useKnowledge } from '@/composables/useKnowledge'
 
 // 共用模块级单例：与 AI 侧栏「项目文件」面板同一份 docs，增删后两处同步
 const { visible, docs, loading, busy, title, content, close, load, add, remove } = useKnowledge()
+
+// 文档来源本地化(负责人报:文档行右侧显示英文原值 upload,和删除图标混在一起像两个操作按钮)。
+// 后端 source 取值:upload(手动/粘贴/上传)、onboarding(引导)、platform/global(平台)、docpage(文档页)。
+function srcLabel(src: string): string {
+  const s = String(src || '')
+  if (s.startsWith('docpage')) return '文档'
+  return ({ upload: '上传', onboarding: '引导', platform: '平台', global: '平台', manual: '手动' } as Record<string, string>)[s] || s
+}
 </script>
 
 <style scoped>
@@ -130,7 +136,8 @@ const { visible, docs, loading, busy, title, content, close, load, add, remove }
 }
 .km-doc-ic { flex-shrink: 0; }
 .km-doc-title { flex: 1; color: var(--text); font-size: var(--fs-100); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.km-doc-src { font-size: var(--fs-75); color: var(--text-3); flex-shrink: 0; }
+/* 来源做成低调的胶囊标签:明确它是"来源"元信息、不是操作按钮(负责人报的文字/图标混用观感) */
+.km-doc-src { flex-shrink: 0; font-size: var(--fs-75); color: var(--text-3); background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
 .km-del {
   flex-shrink: 0; width: 28px; height: 28px;
   border: none; background: transparent; color: var(--text-3);
