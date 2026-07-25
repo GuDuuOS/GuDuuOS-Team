@@ -121,10 +121,10 @@
           <div>
             <h1 class="adm-h1">用户管理</h1>
             <p class="adm-hint">
-              共 {{ users.length }} 个账号 ·
-              管理员 {{ users.filter(u => u.admin).length }} ·
-              已停用 {{ users.filter(u => u.locked && !u.deactivated).length }} ·
-              已注销 {{ users.filter(u => u.deactivated).length }}
+              共 {{ realUsers.length }} 个账号 ·
+              管理员 {{ realUsers.filter(u => u.admin).length }} ·
+              已停用 {{ realUsers.filter(u => u.locked && !u.deactivated).length }} ·
+              已注销 {{ realUsers.filter(u => u.deactivated).length }}
             </p>
           </div>
           <div class="adm-actions">
@@ -1851,6 +1851,9 @@ async function deletePlatformKb(id: number) {
 const state = ref<'checking' | 'denied' | 'ok'>('checking')
 const loading = ref(false)
 const users = ref<AdminUser[]>([])
+// 头部「账号总数」等统计用的真实用户集：剔除中枢AI(@guduu 系统机器人,负责人拍板不计入)。
+// 列表(filteredUsers)仍展示中枢AI(带标签、可管理),仅统计口径排除它,与数据概览一致。
+const realUsers = computed(() => users.value.filter((u) => !u.isBot))
 // busy 存"正在操作的用户 id"或 'create'，用于禁用对应按钮、防重复点击
 const busy = ref<string | null>(null)
 // 会员等级 map（userId→slug，只含非免费的）+ 正在调整的用户 id（禁用对应下拉防抖）
@@ -3393,7 +3396,9 @@ const ov = reactive({
 
 function switchToOverview() {
   tab.value = 'overview'
-  if (!ovLoaded.value) loadOverview()
+  // 每次进入都重新拉:概览是聚合快照,若只首次加载缓存,后来增删/停用账号后再回来会与用户管理
+  // 对不上(负责人实报:两处账号数不一致)。ovLoaded 仅用于区分"从没加载过"的空态。
+  loadOverview()
 }
 
 /** 聚合统计：复用 listUsers + listAdminRooms + getServerVersion，前端算汇总 */
@@ -3407,10 +3412,12 @@ async function loadOverview() {
     const rs = Object.keys(kinds).length
       ? allRooms.filter((r) => (kinds[r.id] || 'channel') === 'channel')
       : allRooms
+    // 账号统计剔除中枢AI(@guduu 系统机器人,非真实用户)——负责人拍板不计入,且与用户管理头部同口径。
+    const realUs = us.filter((u) => !u.isBot)
     ov.version = ver
-    ov.userTotal = us.length
-    ov.adminCount = us.filter((u) => u.admin).length
-    ov.deactivated = us.filter((u) => u.deactivated || u.locked).length
+    ov.userTotal = realUs.length
+    ov.adminCount = realUs.filter((u) => u.admin).length
+    ov.deactivated = realUs.filter((u) => u.deactivated || u.locked).length
     ov.roomTotal = rs.length
     ov.publicRooms = rs.filter((r) => r.isPublic).length
     // 私有=非公开(与频道管理列表「类型」同口径;原统计端到端加密房恒为0,与「公开/私有」并列展示误导——负责人实报)
