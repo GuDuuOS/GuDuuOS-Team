@@ -1908,6 +1908,9 @@ async function check() {
   if (!ok) { state.value = 'denied'; return }
   state.value = 'ok'
   await loadUsers()
+  // 若后台是直接从地址(/admin/rooms)或重开时正好停在频道页,check 只加载了用户列表,
+  // 频道 tab 不会被 switchToRooms 触发——这里补一次,保证一进来就看到当前频道(负责人报)。
+  if (tab.value === 'rooms') loadRooms()
 }
 
 async function loadUsers() {
@@ -2121,10 +2124,12 @@ const membersOf = ref<AdminRoom | null>(null)
 const memberList = ref<string[]>([])
 const membersLoading = ref(false)
 
-/** 切到频道 tab；首次进入时懒加载列表 */
+/** 切到频道 tab。每次进入都重新拉取:后台是查当前全服频道的地方,新建/删除频道后
+    再进来必须看到最新结果(负责人实报"新建频道后列表不刷新"),不能用首次缓存糊弄。
+    roomsLoaded 仍保留,仅用于区分"从没加载过"与"加载中"的空状态展示。 */
 function switchToRooms() {
   tab.value = 'rooms'
-  if (!roomsLoaded.value) loadRooms()
+  loadRooms()
 }
 
 async function loadRooms() {

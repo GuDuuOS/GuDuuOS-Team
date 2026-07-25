@@ -1281,6 +1281,10 @@ async function adminFetch(path: string, init: RequestInit = {}): Promise<any> {
   const token = (mx as any).getAccessToken?.() as string
   const res = await fetch(`${base}${path}`, {
     ...init,
+    // 后台数据必须实时:admin 接口的 GET(如频道/用户列表)URL 固定不变,浏览器会按
+    // 启发式缓存把旧响应直接还给页面——表现为"新建频道后列表不更新、点页面内刷新还是旧的、
+    // 只有硬刷新浏览器才更新"(负责人实报)。no-store 让每次都走网络、绝不读/写 HTTP 缓存。
+    cache: 'no-store',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
