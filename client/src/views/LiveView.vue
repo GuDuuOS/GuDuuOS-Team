@@ -2266,7 +2266,7 @@ onBeforeUnmount(() => {
             <!-- 管理后台入口：仅服务器管理员可见（isAdmin 探测为真）-->
             <template v-if="isAdmin">
               <div class="um-sep" />
-              <button class="um-item" @click="adminOpen = true; userMenuOpen = false"><span class="um-ic">⚙</span>管理后台</button>
+              <button class="um-item" @click="adminOpen = true; userMenuOpen = false"><span class="um-ic">⚙️</span>管理后台</button>
             </template>
             <!-- 切换账号（缓存的其它账号，免密切换）+ 添加账号 -->
             <div class="um-sep" />
@@ -2277,7 +2277,7 @@ onBeforeUnmount(() => {
             </button>
             <button class="um-item" @click="startAddAccount"><span class="um-ic">＋</span>添加账号</button>
             <div class="um-sep" />
-            <button class="um-item danger" @click="doLogout"><span class="um-ic">⎋</span>退出登录</button>
+            <button class="um-item danger" @click="doLogout"><span class="um-ic">🚪</span>退出登录</button>
           </div>
         </div>
       </div>
