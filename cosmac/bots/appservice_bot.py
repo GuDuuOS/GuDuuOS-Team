@@ -3321,6 +3321,9 @@ class CosmacBot:
     # 后台房型判定的进程内缓存(room_id → kind)。建房标记(ai_session/dm/space)终生不变,
     # 永久缓存;第一次全量判定后,后续刷新只有新房走网络。
     _admin_kind_cache: Dict[str, str] = {}
+    # 建房时间戳缓存(room_id → m.room.create 的 origin_server_ts,毫秒)。创建时间永不变,
+    # 与 kind 同一趟读 state 时顺手取出(零额外请求),供后台「频道管理」按创建时间倒序排。
+    _admin_created_cache: Dict[str, int] = {}
 
     def handle_admin_room_kinds(
         self, access_token: str, body: Dict[str, Any]
@@ -3344,29 +3347,37 @@ class CosmacBot:
 
         def _judge(rid: str) -> None:
             kind = "channel"
+            created = 0
             try:
                 state = self.client.admin_room_state(rid) or []
                 for ev in state:
                     et = ev.get("type")
-                    if et == "m.room.create" and (ev.get("content") or {}).get("type") == "m.space":
-                        kind = "space"
-                        break
-                    if et == "cosmac.ai_session":
+                    # m.room.create 一定存在:既用来判 space,也顺手取建房时间(origin_server_ts)。
+                    # 注意不能像旧版那样判到 space 就 break——否则普通频道走不到这行、拿不到时间;
+                    # 改为先记时间,再按标记归类。
+                    if et == "m.room.create":
+                        created = int(ev.get("origin_server_ts") or 0)
+                        if (ev.get("content") or {}).get("type") == "m.space":
+                            kind = "space"
+                    elif et == "cosmac.ai_session":
                         kind = "ai"
-                        break
-                    if et == "cosmac.dm":
+                    elif et == "cosmac.dm":
                         kind = "dm"
-                        break
             except Exception:
                 pass  # 读不出按 channel(fail-open 展示,别把真频道藏了)
             self._admin_kind_cache[rid] = kind
+            self._admin_created_cache[rid] = created
 
         if todo:
             from concurrent.futures import ThreadPoolExecutor
 
             with ThreadPoolExecutor(max_workers=8, thread_name_prefix="kind") as pool:
                 list(pool.map(_judge, todo))
-        return 200, {"kinds": {r: self._admin_kind_cache.get(r, "channel") for r in ids}}
+        return 200, {
+            "kinds": {r: self._admin_kind_cache.get(r, "channel") for r in ids},
+            # 建房时间(毫秒);拿不到的给 0,前端排序时视作最早。
+            "created": {r: self._admin_created_cache.get(r, 0) for r in ids},
+        }
 
     def handle_admin_room_detail(
         self, access_token: str, room_id: str
