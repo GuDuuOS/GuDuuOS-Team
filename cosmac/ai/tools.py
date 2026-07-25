@@ -206,6 +206,11 @@ class Toolbox:
         # 已停用账号集回调(bot 注入 _deactivated_user_ids)。签名 ()->set|None。
         # 邀请成员前用它拦掉停用账号(登不进来,邀了也白搭;负责人实报 AI 会邀停用账号)。
         self.inactive_users: Optional[Callable[[], Any]] = None
+        # 任务授权回调(bot 注入 _can_access_task)。签名 (user_id, task)->bool。
+        # update_task 用它判"能否改这条任务"——与看板"看得到=改得动"同口径(管理员/下达者/执行者/
+        # 任务所属房间成员任一即可),不再限"必须在本频道"(负责人实报:执行者本人让 AI 改自己在别的
+        # 频道的任务被拦,AI 还编造"补建新任务标 done"的假反馈)。
+        self.can_access_task: Optional[Callable[[str, Any], bool]] = None
         # 工具名 → (说明书, 执行函数)。执行函数签名: (arguments, ctx) -> 结果文本
         self._tools: Dict[str, Dict[str, Any]] = {}
         # 启用集合：None = 全部启用（默认）；否则只启用集合内的工具。
@@ -2070,7 +2075,8 @@ class Toolbox:
             return "读取任务失败（数据库不可用？）。"
 
     def _tool_update_task(self, args: Dict[str, Any], ctx: ToolContext) -> str:
-        """更新本频道某任务（档4：推进/审核回填）。越权防护：只能改 room_id==当前频道 的任务。"""
+        """更新某任务（档4：推进/审核回填）。授权：执行者本人/下达者/管理员/任务所属房间成员
+        任一即可(与看板同口径),不再死限"必须在本频道"。"""
         try:
             tid = int(args.get("task_id"))
         except (TypeError, ValueError):
@@ -2110,9 +2116,21 @@ class Toolbox:
 
             with session_scope() as s:
                 t = get_task(s, tid)
-                # 越权防护：只能改"本频道"的任务，碰不到别的项目/专班的看板
-                if t is None or (t.room_id or "") != ctx.room_id:
-                    return f"没找到属于本频道的任务 #{tid}。"
+                if t is None:
+                    return f"没找到任务 #{tid}。"
+                # 越权防护：与看板"看得到=改得动"同口径——**执行者本人/下达者/管理员/任务所属
+                # 房间成员**任一即可,不再死限"必须在本频道"。否则被指派者在别的频道/私聊里让 AI
+                # 改自己的任务会被拦,AI 还可能编造"补建一个新任务标 done"的假反馈(负责人实报:
+                # AI 谎报 #51 已 done、实际另建了 #58)。回调未注入时退回旧的本频道口径(兜底)。
+                allowed = (
+                    self.can_access_task(ctx.sender, t) if self.can_access_task
+                    else (t.room_id or "") == ctx.room_id
+                )
+                if not allowed:
+                    return (
+                        f"你无权更新任务 #{tid}（你不是它的执行者/下达者，也不在该任务的频道里）。"
+                        "**不要**另建一个新任务来假装完成它;如需推进,请让该任务的执行者或频道管理员来改。"
+                    )
                 title = t.title
                 ok = update_task(
                     s, tid,

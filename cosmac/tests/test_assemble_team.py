@@ -396,13 +396,24 @@ class TestTaskReviewTools(unittest.TestCase):
             self.assertEqual(get_task(s, self.tid).status, "doing")
 
     def test_update_task_cross_channel_blocked(self) -> None:
-        # 从别的频道改本任务 → 拒绝（越权防护：只能改本频道的任务）
+        # 未注入授权回调 → 退回本频道口径:从别的频道改、非本频道任务 → 拒绝(不越权)
         out = self._exec("update_task", {"task_id": self.tid, "status": "done"}, room="!other:h")
-        self.assertIn("没找到", out)
+        self.assertIn("无权更新", out)
+        self.assertIn("不要", out)  # 明确叫模型别另建新任务假装完成(负责人实报的假反馈)
         from cosmac.db.task_repo import get_task
         with session_scope() as s:
             t = get_task(s, self.tid)
         self.assertEqual(t.status, "todo")  # 未被改动
+
+    def test_update_task_assignee_can_edit_cross_channel(self) -> None:
+        # 注入授权(执行者本人)→ 即便在别的频道/私聊里,也能改自己的任务(与看板"看得到=改得动"
+        # 同口径)。修负责人实报:执行者让 AI 改自己在别频道的任务被拦、AI 谎报 done 还另建新任务。
+        self.tb.can_access_task = lambda uid, task: True  # type: ignore 模拟"是执行者本人"
+        out = self._exec("update_task", {"task_id": self.tid, "status": "done"}, room="!other:h")
+        self.assertIn("done", out)
+        from cosmac.db.task_repo import get_task
+        with session_scope() as s:
+            self.assertEqual(get_task(s, self.tid).status, "done")  # 真的改了
 
 
 def _bot_with_channel(channel_cfg, agents_state=None):
