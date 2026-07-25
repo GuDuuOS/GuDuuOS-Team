@@ -211,8 +211,21 @@ function openOrg() { org.value = true; board.value = false; tasks.value = false;
 // 任务看板（AI 任务编排 P1）：主 AI 拆解的真实任务，三列 Kanban + 手动改状态。
 import { getTasks, updateTask, currentUserId, type TaskItem } from '@/matrix/client'
 const taskList = ref<TaskItem[]>([])
-// AI 侧栏放大态右栏：进度=真实任务完成数，项目文件=真实个人知识库文档
-const doneCount = computed(() => scopedTasks.value.filter((t) => t.status === 'done').length)
+// 全屏中枢AI聊天「进度」面板**跟随对话正在推进的项目**(负责人拍板),不按当前工作区过滤——
+// 中枢AI 是全局助理、跨工作区,你在对话里拆解 A 项目时,进度面板若还显示当前工作区 B 项目,
+// 就与左侧 AI 画的流程图对不上(负责人实报)。「当前对话项目」= 最新创建任务所属的项目(goal):
+// AI 每次拆解都生成新任务,最新那批的 goal 即"正在聊的项目"。无任务时回退全部。
+const convoGoal = computed(() => {
+  let goal = '', bestId = -1
+  for (const t of taskList.value) {
+    if (t.id > bestId) { bestId = t.id; goal = t.goal || '' }
+  }
+  return goal
+})
+const convoTasks = computed(() =>
+  convoGoal.value ? taskList.value.filter((t) => (t.goal || '') === convoGoal.value) : taskList.value)
+// AI 侧栏放大态右栏：进度=对话项目的完成数（跟随 convoTasks，与流程图对应）
+const doneCount = computed(() => convoTasks.value.filter((t) => t.status === 'done').length)
 // 个人知识库文档：与「知识库管理」弹窗共用同一份单例（增删后两处同步刷新）
 const { docs: kbDocsMine, load: loadKb, open: openKnowledge } = useKnowledge()
 // 「我的协作人」弹窗（普通用户维护个人能力名册）
@@ -299,7 +312,7 @@ const scopedTasks = computed(() => {
 // 与流程图方向相反。这里按**截止时间升序**(流程时间线 07-27→08-06 天然正序,与任务看板列内
 // tasksByStatus 同一排序键),无截止的按 id 升序沉底——顺序即与流程图一致。
 const progressTasks = computed(() =>
-  [...scopedTasks.value].sort(
+  [...convoTasks.value].sort(
     (a, b) => ((a.due_ts || Infinity) - (b.due_ts || Infinity)) || (a.id - b.id),
   ),
 )
@@ -2982,8 +2995,10 @@ onBeforeUnmount(() => {
           <!-- 右栏（仅放大态）：进度=真实任务看板 / 项目文件=真实知识库文档 -->
           <div v-if="aiMax" class="ai-cw-right">
             <div class="ai-cw-sec">
-              <div class="ai-cw-sec-h with-meta"><span>进度</span><span class="ai-cw-meta">{{ doneCount }}/{{ scopedTasks.length }}</span></div>
-              <ul v-if="scopedTasks.length" class="ai-cw-progress">
+              <div class="ai-cw-sec-h with-meta"><span>进度</span><span class="ai-cw-meta">{{ doneCount }}/{{ convoTasks.length }}</span></div>
+              <!-- 显示当前对话项目名,让"进度是哪个项目的"一目了然(与左侧流程图对应) -->
+              <div v-if="convoGoal" class="ai-cw-proj" :title="convoGoal">{{ convoGoal }}</div>
+              <ul v-if="convoTasks.length" class="ai-cw-progress">
                 <li v-for="t in progressTasks.slice(0, 9)" :key="t.id"
                     :class="{ done: t.status === 'done', in: t.status === 'doing' }">
                   {{ t.title }}<template v-if="t.status === 'doing' && t.progress"> · {{ t.progress }}%</template>
@@ -4067,6 +4082,8 @@ onBeforeUnmount(() => {
 .ai-cw-sec-h { font-size: var(--fs-75); color: var(--text-3); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; padding: 0 4px; }
 .ai-cw-sec-h.with-meta { display: flex; justify-content: space-between; }
 .ai-cw-meta { color: var(--accent); font-weight: var(--fw-bold); }
+/* 进度面板上的「当前对话项目」名:小号、单行省略,标明这批进度属于哪个项目 */
+.ai-cw-proj { font-size: var(--fs-75); color: var(--text-2); font-weight: var(--fw-bold); margin: -2px 4px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ai-cw-progress, .ai-cw-files { list-style: none; margin: 0; padding: 0; }
 .ai-cw-empty { font-size: var(--fs-75, 12px); color: var(--text-3); line-height: 1.6; padding: 6px 4px; }
 .ai-cw-progress li { display: flex; align-items: center; gap: 8px; padding: 5px 4px; font-size: var(--fs-100); color: var(--text-2); position: relative; padding-left: 26px; }
