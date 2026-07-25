@@ -258,6 +258,9 @@ class CosmacBot:
         self.toolbox.is_admin = self._is_platform_admin
         # 邀请前校验停用账号用：AI 拉人时跳过登不进来的停用账号（负责人实报）。
         self.toolbox.inactive_users = self._deactivated_user_ids
+        # update_task 授权用：与看板「看得到=改得动」同口径，执行者本人可跨频道改自己的任务
+        # （负责人实报:执行者让 AI 改自己的任务被拦、AI 还谎报 done 却另建了新任务）。
+        self.toolbox.can_access_task = self._can_access_task
         # 资源存在性校验(组班链路完善):assemble_team 据此识别"库里没有的 Agent/Skill"并提醒缺口。
         # M2 越权修复:带 for_user 时按发起人 access 过滤——发起人**够不到**的受限智能体不进可见集,
         # assemble_team 里点名它当 lead/worker 会被当"缺口"剔除(不注入其付费人设),堵住"点名绕过
