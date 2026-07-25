@@ -105,9 +105,15 @@ export function useMyPeople() {
         person_id: pid, name: form.name.trim(), role: form.role.trim(),
         expertise: form.expertise.trim(), note: form.note.trim(), enabled: form.enabled,
       })
+      // 管理员设置即自动上平台(负责人拍板):管理员本就是管平台的,在「我的协作人」设/改能力时,
+      // 复用 promote 把这条同步进平台名册 cosmac.people,后台「人员能力」立刻一致。
+      // 普通用户不同步(保持个人私有)。平台同步失败不影响个人已保存(下面 load 会如实反映)。
+      if (amAdmin.value) {
+        try { await myPeoplePromote(pid) } catch { /* 平台同步失败:个人已存,不阻断 */ }
+      }
       editing.value = false
       await load()
-      success('已保存能力')
+      success(amAdmin.value ? '已保存并同步到平台名册（全平台可见）' : '已保存能力')
     } catch (e: any) {
       // 弹 toast + 表单内联双提示:403 会员门槛这类要引导用户去升级,内联的不会一闪而过
       errText.value = e?.message || '保存失败'
