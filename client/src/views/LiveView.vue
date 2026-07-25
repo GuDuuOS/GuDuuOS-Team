@@ -109,6 +109,7 @@ import ProfileHome from '@/components/layout/ProfileHome.vue'
 import CliConsole from '@/components/layout/CliConsole.vue'
 // 平台管理后台（覆盖层；仅服务器管理员可入）
 import AdminView from '@/views/AdminView.vue'
+import Icon from '@/components/Icon.vue'
 import MembershipModal from '@/components/membership/MembershipModal.vue'
 import ChannelAdminModal from '@/components/channel/ChannelAdminModal.vue'
 import KnowledgeModal from '@/components/layout/KnowledgeModal.vue'
@@ -2220,14 +2221,14 @@ onBeforeUnmount(() => {
           <span class="product-name">GuDuu OS<span class="product-x">X</span>{{ activeSpaceName }}</span>
         </button>
         <div v-if="appMenuOpen" class="tas-pop" @click.stop>
-          <button class="tas-item active"><span class="tas-ic">💬</span><span class="tas-label">频道</span><span class="tas-check">✓</span></button>
+          <button class="tas-item active"><span class="tas-ic"><Icon name="message" :size="16" /></span><span class="tas-label">频道</span><span class="tas-check"><Icon name="check" :size="13" /></span></button>
           <div class="tas-sep" />
-          <button class="tas-item" @click="onMarket"><span class="tas-ic">🛒</span><span class="tas-label">AI Agent 商城</span></button>
+          <button class="tas-item" @click="onMarket"><span class="tas-ic"><Icon name="marketplace" :size="16" /></span><span class="tas-label">AI Agent 商城</span></button>
           <button class="tas-item" @click="onCli"><span class="tas-ic">▸</span><span class="tas-label">CLI</span></button>
           <button class="tas-item" @click="appMenuOpen = false"><span class="tas-ic">▭</span><span class="tas-label">系统控制台</span></button>
-          <button class="tas-item" @click="appMenuOpen = false"><span class="tas-ic">🧩</span><span class="tas-label">集成</span></button>
+          <button class="tas-item" @click="appMenuOpen = false"><span class="tas-ic"><Icon name="puzzle" :size="16" /></span><span class="tas-label">集成</span></button>
           <div class="tas-sep" />
-          <button class="tas-item" @click="onProfile"><span class="tas-ic">🏠</span><span class="tas-label">个人主页</span></button>
+          <button class="tas-item" @click="onProfile"><span class="tas-ic"><Icon name="home" :size="16" /></span><span class="tas-label">个人主页</span></button>
         </div>
       </div>
 
@@ -2236,7 +2237,7 @@ onBeforeUnmount(() => {
 
       <!-- 右：升级 / 设置 / 中枢AI开关 / 用户菜单 -->
       <div class="top-right">
-        <button class="top-upgrade" @click="onUpgrade">✦ 升级会员 ✦</button>
+        <button class="top-upgrade" @click="onUpgrade"><Icon name="sparkle" :size="14" /> 升级会员</button>
         <button class="ic-btn" title="设置" @click="onSettings()">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
         </button>
@@ -2257,16 +2258,16 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div class="um-sep" />
-            <button class="um-item" @click="onSettings('profile')"><span class="um-ic">👤</span>个人资料</button>
-            <button class="um-item" @click="openMyPeople(); userMenuOpen = false"><span class="um-ic">🧑‍🤝‍🧑</span>我的协作人</button>
-            <button class="um-item" @click="myStudioOpen = true; userMenuOpen = false"><span class="um-ic">🎭</span>我的AI工坊</button>
-            <button class="um-item" @click="openMyUsage(); userMenuOpen = false"><span class="um-ic">📈</span>我的额度</button>
-            <button class="um-item" @click="onSettings('perms')"><span class="um-ic">🔒</span>我的权限</button>
-            <button class="um-item" @click="onSettings('share')"><span class="um-ic">🔔</span>数据调用授权</button>
+            <button class="um-item" @click="onSettings('profile')"><span class="um-ic"><Icon name="profile" /></span>个人资料</button>
+            <button class="um-item" @click="openMyPeople(); userMenuOpen = false"><span class="um-ic"><Icon name="people" /></span>我的协作人</button>
+            <button class="um-item" @click="myStudioOpen = true; userMenuOpen = false"><span class="um-ic"><Icon name="studio" /></span>我的AI工坊</button>
+            <button class="um-item" @click="openMyUsage(); userMenuOpen = false"><span class="um-ic"><Icon name="usage" /></span>我的额度</button>
+            <button class="um-item" @click="onSettings('perms')"><span class="um-ic"><Icon name="lock" /></span>我的权限</button>
+            <button class="um-item" @click="onSettings('share')"><span class="um-ic"><Icon name="bell" /></span>数据调用授权</button>
             <!-- 管理后台入口：仅服务器管理员可见（isAdmin 探测为真）-->
             <template v-if="isAdmin">
               <div class="um-sep" />
-              <button class="um-item" @click="adminOpen = true; userMenuOpen = false"><span class="um-ic">⚙️</span>管理后台</button>
+              <button class="um-item" @click="adminOpen = true; userMenuOpen = false"><span class="um-ic"><Icon name="settings" /></span>管理后台</button>
             </template>
             <!-- 切换账号（缓存的其它账号，免密切换）+ 添加账号 -->
             <div class="um-sep" />
@@ -2275,9 +2276,9 @@ onBeforeUnmount(() => {
               <span class="um-acct-ava">{{ initials(a.name) }}</span>
               <span class="um-acct-name">{{ a.name }}</span>
             </button>
-            <button class="um-item" @click="startAddAccount"><span class="um-ic">＋</span>添加账号</button>
+            <button class="um-item" @click="startAddAccount"><span class="um-ic"><Icon name="plus" /></span>添加账号</button>
             <div class="um-sep" />
-            <button class="um-item danger" @click="doLogout"><span class="um-ic">🚪</span>退出登录</button>
+            <button class="um-item danger" @click="doLogout"><span class="um-ic"><Icon name="logout" /></span>退出登录</button>
           </div>
         </div>
       </div>
@@ -2371,7 +2372,7 @@ onBeforeUnmount(() => {
           <div v-if="favRooms.length" class="cs-group">
             <button class="cs-group-head" @click="favOpen = !favOpen">
               <svg class="caret" :class="{ open: favOpen }" width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M9 6 15 12 9 18z" /></svg>
-              <span>⭐ 收藏</span>
+              <span><Icon name="star" :size="13" /> 收藏</span>
             </button>
             <template v-if="favOpen">
               <div
@@ -2458,7 +2459,7 @@ onBeforeUnmount(() => {
                 <span class="cs-dm-av">{{ initials(d.name) }}</span>
                 <span class="cs-label">{{ d.name }}</span>
                 <!-- 收藏的联系人:标 ⭐ 并置顶(此前收藏对私信无可见效果) -->
-                <span v-if="d.fav" class="cs-dm-fav" title="已收藏">★</span>
+                <span v-if="d.fav" class="cs-dm-fav" title="已收藏"><Icon name="star" :size="12" /></span>
                 <span v-if="d.pending" class="cs-dm-new">新</span>
                 <span v-else-if="(d.unread || 0) > 0" class="cs-dm-unread">{{ d.unread! > 99 ? '99+' : d.unread }}</span>
               </div>
@@ -2476,7 +2477,7 @@ onBeforeUnmount(() => {
         <!-- ===== 数据看板（影视公司制作驾驶舱）===== -->
         <template v-if="board">
           <div class="ch-header">
-            <div class="title">📊 数据看板</div>
+            <div class="title"><Icon name="data" :size="16" /> 数据看板</div>
             <div class="ch-actions">
               <!-- 数据源：点开右侧「数据源」面板（展示 + 增删）-->
               <button class="ch-ic-btn bs-srcbtn" :class="{ active: boardPanelOpen }" :title="`数据源（${sources.dashboard.length}）`" @click="toggleSourcePanel('dashboard')">
@@ -2491,7 +2492,7 @@ onBeforeUnmount(() => {
               <div class="csub">// 实时运营画布 · 由 GuDuu OS 自动维护</div>
               <!-- 一句话下达目标：真的发给中枢 AI（复用 aiSend），不再是 mock 卡片 -->
               <div class="board-ask">
-                <div class="board-ask-h">⚡ 一句话下达目标</div>
+                <div class="board-ask-h"><Icon name="zap" :size="14" /> 一句话下达目标</div>
                 <div class="board-ask-row">
                   <span class="board-ask-mark">&gt;</span>
                   <input
@@ -2507,17 +2508,17 @@ onBeforeUnmount(() => {
               <!-- 社媒数据：跟工作区「接入数据源」配置走（cosmac.social_sources）。
                    数值待社媒采集器(P2~P4)接上才有真数，现在显示「待接入」占位。 -->
               <div class="board-group-h">
-                📈 社媒数据
+                <Icon name="usage" :size="14" /> 社媒数据
                 <button class="board-src-btn" title="接入社媒数据源（账号 API / AI 爬取）" @click="openSocialModal">
-                  🔌 接入数据源
+                  <Icon name="plug" :size="14" /> 接入数据源
                 </button>
               </div>
               <!-- 没配数据源：引导去接入 -->
               <div v-if="!socialSources.length" class="board-empty">
-                <div class="board-empty-ic">📡</div>
+                <div class="board-empty-ic"><Icon name="plug" :size="30" /></div>
                 <div class="board-empty-t">还没接入社媒数据源</div>
                 <div class="board-empty-d">配置抖音 / Instagram / YouTube 等平台账号后，这里展示粉丝、播放、互动等数据。</div>
-                <button class="board-empty-btn" @click="openSocialModal">🔌 接入数据源</button>
+                <button class="board-empty-btn" @click="openSocialModal"><Icon name="plug" :size="14" /> 接入数据源</button>
               </div>
               <!-- 配了数据源：每个平台一张卡（指标待采集器接入）-->
               <div v-else class="src-grid">
@@ -2539,7 +2540,7 @@ onBeforeUnmount(() => {
               </div>
               <!-- 平台运营（真实）：会员 / 工作流 / 订单 / 知识库；拿不到数据时整组不渲染 -->
               <template v-if="opsKpis.length">
-                <div class="board-group-h">⚙️ 平台运营 <span class="board-group-tag real">真实</span></div>
+                <div class="board-group-h"><Icon name="settings" :size="14" /> 平台运营 <span class="board-group-tag real">真实</span></div>
                 <div class="kpis">
                   <KpiCard v-for="(k, i) in opsKpis" :key="k.label" :data="k" :delay="200 + i * 80" />
                 </div>
@@ -2551,7 +2552,7 @@ onBeforeUnmount(() => {
         <!-- ===== 任务看板（AI 拆解 → 待办/进行中/已完成 三列 · 真实数据）===== -->
         <template v-else-if="tasks">
           <div class="ch-header">
-            <div class="title">📋 任务看板</div>
+            <div class="title"><Icon name="tasks" :size="16" /> 任务看板</div>
             <div class="ch-actions">
               <span class="board-sub">{{ scopedTasks.length }} 个任务 · 主 AI 拆解</span>
               <button class="ch-ic-btn" title="刷新" :disabled="tasksRefreshing" @click="loadTasks">
@@ -2566,7 +2567,7 @@ onBeforeUnmount(() => {
             <!-- 项目/剧集进度：每个目标(goal)一张卡，点选过滤下面的看板 -->
             <div v-if="projects.length" class="proj-strip">
               <button class="proj-card all" :class="{ active: activeGoal === '' }" @click="activeGoal = ''">
-                <div class="proj-name">📁 全部项目</div>
+                <div class="proj-name"><Icon name="folder" :size="14" /> 全部项目</div>
                 <div class="proj-meta">{{ scopedTasks.length }} 个任务 · {{ projects.length }} 个项目</div>
               </button>
               <button
@@ -2575,7 +2576,7 @@ onBeforeUnmount(() => {
                 :title="p.goal"
                 @click="activeGoal = p.goal"
               >
-                <div class="proj-name">🎬 {{ p.goal }}</div>
+                <div class="proj-name"><Icon name="film" :size="14" /> {{ p.goal }}</div>
                 <div class="proj-bar"><div class="proj-bar-fill" :style="{ width: p.pct + '%' }" /></div>
                 <div class="proj-meta">{{ p.done }}/{{ p.total }} 完成 · {{ p.pct }}%</div>
               </button>
@@ -2595,7 +2596,7 @@ onBeforeUnmount(() => {
                   :title="p.goal"
                   @click="activeGoal = p.goal"
                 >
-                  <div class="proj-name">🎬 {{ p.goal }}</div>
+                  <div class="proj-name"><Icon name="film" :size="14" /> {{ p.goal }}</div>
                   <div class="proj-bar"><div class="proj-bar-fill" :style="{ width: p.pct + '%' }" /></div>
                   <div class="proj-meta">{{ p.done }}/{{ p.total }} 完成 · {{ p.pct }}%</div>
                 </button>
@@ -2614,7 +2615,7 @@ onBeforeUnmount(() => {
                     <!-- 任务 ID 前置:AI 在频道/对话里引用任务只说 #编号,看板不显示编号就对不上号(负责人报的) -->
                     <div class="kan-title"><span class="kan-id">#{{ t.id }}</span>{{ t.title }}</div>
                     <!-- 截止徽章可点改期(负责人报:逾期提醒让来看板改期,此前不支持) -->
-                    <div v-if="dueMeta(t)" class="kan-due kan-due-btn" :class="dueMeta(t)!.cls" title="点击改期" @click.stop="openReschedule(t)">🕒 {{ dueMeta(t)!.text }} ✎</div>
+                    <div v-if="dueMeta(t)" class="kan-due kan-due-btn" :class="dueMeta(t)!.cls" title="点击改期" @click.stop="openReschedule(t)"><Icon name="clock" :size="12" /> {{ dueMeta(t)!.text }} <Icon name="edit" :size="12" /></div>
                     <div v-if="t.assignee || execLabel(t) || t.progress > 0" class="kan-foot">
                       <span v-if="t.assignee" class="kan-who">
                         <span class="kan-who-ava">{{ t.assignee.slice(0, 1) }}</span>{{ t.assignee }}
@@ -2627,13 +2628,13 @@ onBeforeUnmount(() => {
                     </div>
                     <div class="kan-btns">
                       <button v-if="col.key !== 'todo'" class="kan-btn" title="退回" @click.stop="moveTask(t, prevStatus(col.key))">←</button>
-                      <button v-if="col.key !== 'done' && !t.due_ts" class="kan-btn" title="设置截止时间" @click.stop="openReschedule(t)">📅</button>
+                      <button v-if="col.key !== 'done' && !t.due_ts" class="kan-btn" title="设置截止时间" @click.stop="openReschedule(t)"><Icon name="calendar" :size="14" /></button>
                       <span class="kan-spacer" />
                       <button v-if="col.key !== 'done'" class="kan-btn primary" @click.stop="moveTask(t, nextStatus(col.key))">{{ col.key === 'todo' ? '开始 →' : '完成 ✓' }}</button>
                     </div>
                   </div>
                   <div v-if="!tasksByStatus(col.key).length" class="kan-empty">
-                    <span class="kan-empty-ic">{{ col.key === 'done' ? '🎉' : col.key === 'doing' ? '⚡' : '📥' }}</span>
+                    <span class="kan-empty-ic"><Icon :name="col.key === 'done' ? 'check' : col.key === 'doing' ? 'zap' : 'inbox'" :size="24" /></span>
                     暂无任务
                   </div>
                 </div>
@@ -2741,7 +2742,7 @@ onBeforeUnmount(() => {
                 <button class="team-enter" @click="enterTeam(m.card.team_room)">进入专班 →</button>
               </div>
               <div v-else class="rich info">
-                <div class="r-head"><span class="t">🗂 {{ m.card.title }}</span></div>
+                <div class="r-head"><span class="t"><Icon name="archive" :size="14" /> {{ m.card.title }}</span></div>
                 <p v-if="m.card.subtitle">{{ m.card.subtitle }}</p>
                 <div class="kv">
                   <template v-for="(rw, i) in (m.card.rows || [])" :key="i">
@@ -2808,7 +2809,7 @@ onBeforeUnmount(() => {
           </div>
           <!-- 编辑横幅 -->
           <div v-if="editingId" class="reply-bar">
-            <span class="reply-bar-txt">✏️ 正在<b>编辑</b>消息 · Enter 保存，Esc 取消</span>
+            <span class="reply-bar-txt"><Icon name="edit" :size="13" /> 正在<b>编辑</b>消息 · Enter 保存，Esc 取消</span>
             <button class="reply-bar-x" title="取消编辑" @click="cancelEdit">×</button>
           </div>
           <!-- @ 补全面板:成员 + 本频道/我的/已获取 AI Agent(↑↓选,Enter/Tab/点击确认) -->
@@ -2937,7 +2938,7 @@ onBeforeUnmount(() => {
                   <button class="team-enter" @click="enterTeam(m.card.team_room)">进入专班 →</button>
                 </div>
                 <div v-else class="rich info">
-                  <div class="r-head"><span class="t">🗂 {{ m.card.title }}</span></div>
+                  <div class="r-head"><span class="t"><Icon name="archive" :size="14" /> {{ m.card.title }}</span></div>
                   <p v-if="m.card.subtitle">{{ m.card.subtitle }}</p>
                   <div class="kv">
                     <template v-for="(rw, i) in (m.card.rows || [])" :key="i">
@@ -2991,7 +2992,7 @@ onBeforeUnmount(() => {
                 <button class="ai-cw-manage" title="管理知识库" @click="openKnowledge">管理</button>
               </div>
               <ul v-if="kbDocsMine.length" class="ai-cw-files">
-                <li v-for="d in kbDocsMine" :key="d.id"><span class="ic">📄</span>{{ d.title || '(无标题)' }}</li>
+                <li v-for="d in kbDocsMine" :key="d.id"><Icon name="pages" :size="14" class="ic" />{{ d.title || '(无标题)' }}</li>
               </ul>
               <div v-else class="ai-cw-empty">还没有知识库文档。点「管理」上传，或在频道里发「知识库 添加 标题|内容」。</div>
             </div>
@@ -3017,7 +3018,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="pr-divider" />
         <div class="pr-icon assets" title="资产 · 自定义配置" @click="onCustomAssets">◈</div>
-        <div class="pr-icon gear" title="插件商城" @click="onPluginStore">⚙</div>
+        <div class="pr-icon gear" title="插件商城" @click="onPluginStore"><Icon name="puzzle" :size="16" /></div>
       </nav>
     </div>
 
@@ -3189,7 +3190,7 @@ onBeforeUnmount(() => {
         <div class="ws-join">
           <div class="ws-join-row">
             <div>
-              <div class="ws-join-title">🌐 公开分享（社区服务器）</div>
+              <div class="ws-join-title"><Icon name="web" :size="14" /> 公开分享（社区服务器）</div>
               <div class="ws-join-sub">{{ wsOpenJoin ? '已公开：任何人凭下面的链接可加入本工作区的全部频道' : '当前私密：要生成分享链接，需先公开本工作区（精确控制请改用「成员与角色管理」逐个邀请）' }}</div>
             </div>
             <button class="ws-toggle" :class="{ on: wsOpenJoin }" :disabled="wsJoinBusy" @click="toggleWsOpenJoin">
@@ -3213,7 +3214,7 @@ onBeforeUnmount(() => {
             <input class="nw-input" :value="wsJoinLink" readonly @focus="($event.target as HTMLInputElement).select()" />
             <button class="nw-btn" @click="copyWsJoinLink">{{ wsLinkCopied ? '已复制 ✓' : '复制链接' }}</button>
           </div>
-          <button class="nw-btn ws-members-btn" @click="openServerMembers">👥 成员与角色管理</button>
+          <button class="nw-btn ws-members-btn" @click="openServerMembers"><Icon name="people" :size="14" /> 成员与角色管理</button>
         </div>
 
         <div class="nw-foot nw-foot-split">
