@@ -29,6 +29,12 @@
       </div>
 
       <div class="mkt-body">
+        <!-- 获取失败（如达上限）的醒目警告条：橙红底 + ⚠️，一眼看到「点了为何没获取」（负责人实报）-->
+        <div v-if="errMsg" class="mkt-err">
+          <span class="mkt-err-ic">⚠️</span>
+          <span class="mkt-err-t">{{ errMsg }}</span>
+          <button class="mkt-err-x" title="知道了" @click="errMsg = ''">×</button>
+        </div>
         <!-- 使用指引条：点「获取/已获取」后告诉用户这东西在聊天里怎么用 -->
         <div v-if="hint" class="mkt-hint">💡 {{ hint }}</div>
 
@@ -105,6 +111,7 @@ const items = ref<MarketCatalogItem[]>([])
 const loading = ref(false)
 const loadError = ref(false)
 const hint = ref('')
+const errMsg = ref('')   // 获取失败(如达上限)的醒目警告，与 💡 使用指引分开展示
 
 const itemId = (it: MarketCatalogItem) => `${it.kind}:${it.slug}`
 const isAcquired = (it: MarketCatalogItem) => it.acquired
@@ -126,6 +133,7 @@ watch(visible, (v) => {
   q.value = ''
   active.value = 'all'
   hint.value = ''
+  errMsg.value = ''
   load()
 })
 
@@ -134,9 +142,12 @@ watch(visible, (v) => {
 async function acquire(it: MarketCatalogItem) {
   if (!it.acquired) {
     const err = await setMarketItemAcquired(it.kind, it.slug, true)
-    if (err) { hint.value = err; return }
+    // 失败(如达上限)走**醒目警告条**而非不起眼的 💡 提示条——负责人实报:达上限时提醒不够明显,
+    // 用户以为点了没反应。errMsg 用橙红警告样式,并把 💡 提示清掉免得两条混淆。
+    if (err) { errMsg.value = err; hint.value = ''; return }
     it.acquired = true
   }
+  errMsg.value = ''
   hint.value = usageHint(it)
 }
 
@@ -309,6 +320,21 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
 .mkt-btn.on { background: transparent; color: var(--text-3); border-color: var(--border); }
 .mkt-btn.upgrade { background: #b58932; border-color: #b58932; }
 .mkt-btn.locked { background: transparent; color: var(--text-3); border-color: var(--border); cursor: default; }
+
+/* 获取失败的醒目警告条:橙红底、加粗、左侧竖条 + ⚠️,和普通 💡 提示明显区分(负责人实报不够醒目) */
+.mkt-err {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin-bottom: 14px; padding: 11px 14px;
+  border: 1px solid #e8b04b; border-left: 4px solid #d98a1e;
+  border-radius: 10px;
+  background: #fdf2df; color: #8a5a12;
+  font-size: var(--fs-100); font-weight: var(--fw-bold);
+}
+:root[data-theme="dark"] .mkt-err { background: #3a2c12; color: #f0c674; border-color: #6b5220; }
+.mkt-err-ic { flex-shrink: 0; line-height: 1.4; }
+.mkt-err-t { flex: 1; line-height: 1.5; }
+.mkt-err-x { flex-shrink: 0; border: none; background: transparent; color: inherit; font-size: 18px; line-height: 1; cursor: pointer; opacity: .6; padding: 0 2px; }
+.mkt-err-x:hover { opacity: 1; }
 
 .mkt-hint {
   margin-bottom: 14px;
