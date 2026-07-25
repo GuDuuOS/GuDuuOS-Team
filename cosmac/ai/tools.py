@@ -2063,6 +2063,27 @@ class Toolbox:
                 tail += f"（{due_label}）"
             if isinstance(assignee, str) and assignee.strip():
                 tail += f"（改派给 {assignee.strip()}）"
+            # 补派给 AI 同事 → 触发一次自动执行。闭合缺口(负责人实报"AI Agent 执行完任务没更新
+            # 看板、没发初稿到频道"):此前**只有 assemble_team 建任务时内联指定 agent 才自动执行**,
+            # 而中枢AI 事后用 update_task 把任务改派给 agent 的,没人去真正执行→任务永远卡在 doing、
+            # 频道无产出。这里在"本次把执行者设成 agent、任务未完成、尚无产出"时补触发,
+            # 条件苛刻以免对已交付/正在跑的任务重复执行。task_rule 传空(agent 人设仍生效)。
+            if str(exec_kind) == "agent" and self.auto_execute_agent_tasks:
+                try:
+                    from cosmac.db import session_scope
+                    from cosmac.db.task_repo import get_task
+
+                    with session_scope() as s2:
+                        t2 = get_task(s2, tid)
+                        fire = bool(
+                            t2 and t2.executor_kind == "agent" and (t2.executor_ref or "")
+                            and t2.status != "done" and not (t2.result or "")
+                        )
+                    if fire:
+                        self.auto_execute_agent_tasks(ctx.room_id, ctx.sender, [tid], "")
+                        tail += "，已交给 TA 自动执行"
+                except Exception:
+                    logger.debug("update_task 触发自动执行失败(不影响改派)", exc_info=True)
             return f"已更新任务 #{tid}「{title}」{tail}。"
         except Exception:
             logger.exception("更新任务失败")
