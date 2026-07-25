@@ -314,7 +314,9 @@ class AssembleTeamGapsTest(unittest.TestCase):
         self.tb.known_skills = lambda for_user=None: {"copywriter"}
 
     def _assemble(self, **kw):
-        args = {"project": "测试专班"}
+        # 默认带一条任务:assemble_team 现在强制要求任务分解(空任务会早退,见 tools 任务闸)。
+        # 只测资源/RULE 等其它方面的用例复用这个默认;要专门测"无任务"另行覆盖 tasks=[].
+        args = {"project": "测试专班", "tasks": [{"title": "占位任务"}]}
         args.update(kw)
         return self.tb.execute(
             ToolCall(id="x", name="assemble_team", arguments=args),
@@ -398,15 +400,17 @@ class RoomAccessScopeTest(unittest.TestCase):
         self.assertNotEqual(msg, "")
         self.assertIn("成员", msg)
 
-    def test_list_my_rooms_admin_sees_all_channels(self) -> None:
-        # 管理员/负责人:跨工作区看全部 bot 频道(含自己没加入的 !secret),便于统筹。
+    def test_list_my_rooms_admin_scoped_to_own_rooms(self) -> None:
+        # 作用域=发起人自己加入的频道,**管理员也不例外**(负责人实报:管理员问"当前账号下的
+        # 频道",被列出了别的管理员工作区的频道=跨账号越界)。alice 是 !allowed 成员、非 !secret 成员,
+        # 即便 bot 在 !secret 里、alice 是管理员,也**不列** !secret。
         self.tb.is_admin = lambda uid: uid == "@alice:test"  # type: ignore
         out = self.tb.execute(
             ToolCall(id="x", name="list_my_rooms", arguments={}),
             ToolContext("!cur:test", "@alice:test", is_dm=True),
         )
         self.assertIn("!allowed:test", out)
-        self.assertIn("!secret:test", out)  # 非成员房,管理员也能看到
+        self.assertNotIn("!secret:test", out)  # 非成员房,管理员也看不到(不再越界)
 
     def test_list_my_rooms_fallback_notes_incompleteness(self) -> None:
         """回退口径(无 ADMIN_TOKEN):清单要自报"可能不含 AI 未进驻的频道",别再笃定说没有。"""
