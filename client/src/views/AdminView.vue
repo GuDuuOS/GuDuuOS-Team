@@ -1909,15 +1909,47 @@ function avatarOf(u: AdminUser): string {
 }
 
 /** 进页面先校验管理员；是管理员才拉用户列表 */
+/** 首次进入某后台 tab 的数据加载分发(负责人实报:刷新浏览器停在某菜单,列表数据消失)。
+    根因:菜单点击走各自 switchToX 加载,但**从深链刷新直接落在某 tab** 时没人触发加载。
+    这里在管理员确认后按当前 tab 补加载一次;用各自 loaded 标记兜底,不与后续点击重复拉。
+    (users 由 check 本身加载;docs 无需加载。) */
+function loadActiveTab(t: AdminTab) {
+  switch (t) {
+    case 'rooms': if (!roomsLoaded.value) loadRooms(); break
+    case 'ai': if (!aiLoaded.value) loadAi(); break
+    case 'skills': if (!skLoaded.value) loadSkills(); break
+    case 'agents':
+      if (!agLoaded.value) loadAgents()
+      if (!skLoaded.value) loadSkills()   // 绑定技能的勾选列表
+      break
+    case 'people': if (!plLoaded.value) loadPeople(); break
+    case 'templates':
+      if (!tpLoaded.value) loadTemplates()
+      if (!skLoaded.value) loadSkills()
+      if (!wfLoaded.value) loadWorkflows()
+      break
+    case 'rules': if (!ruLoaded.value) loadRules(); break
+    case 'workflows': if (!wfLoaded.value) loadWorkflows(); break
+    case 'gating': if (!gateLoaded.value) loadGating(); break
+    case 'quotas': if (!quotaLoaded.value) loadQuotas(); break
+    case 'plans': if (!planLoaded.value) loadPlans(); break
+    case 'archives': if (!arcLoaded.value) loadArchives(); break
+    case 'overview': if (!ovLoaded.value) loadOverview(); break
+    case 'platformKb': loadPlatformKb(); break   // 无 loaded 标记;本函数仅挂载时跑一次,直接拉
+    case 'sitePages': loadSitePages(); break
+    default: break                                // users(check 已加载) / docs(无数据)
+  }
+}
+
 async function check() {
   state.value = 'checking'
   const ok = await isServerAdmin()
   if (!ok) { state.value = 'denied'; return }
   state.value = 'ok'
   await loadUsers()
-  // 若后台是直接从地址(/admin/rooms)或重开时正好停在频道页,check 只加载了用户列表,
-  // 频道 tab 不会被 switchToRooms 触发——这里补一次,保证一进来就看到当前频道(负责人报)。
-  if (tab.value === 'rooms') loadRooms()
+  // 刷新浏览器直接落在某 tab 时,菜单的 switchToX 不会被触发——按当前 tab 补加载一次,
+  // 否则列表数据为空(负责人实报:频道管理等菜单刷新后数据消失)。
+  loadActiveTab(tab.value || 'users')
 }
 
 async function loadUsers() {
