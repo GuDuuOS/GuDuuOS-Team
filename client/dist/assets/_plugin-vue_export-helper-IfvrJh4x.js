@@ -1,1 +1,0 @@
-const a=["app.cosmac.cc","localhost","127.0.0.1"];function r(){return a.includes(window.location.hostname)?"https://hs.cosmac.cc":window.location.origin}const l="/assets/cosmac-logo-Bgg8S7cg.png",e=(o,t)=>{const c=o.__vccOpts||o;for(const[s,n]of t)c[s]=n;return c};export{e as _,r as d,l};

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Icon from '@/components/Icon.vue'
 /**
  * 独立登录 / 注册 / 找回密码页（方案A：把认证从 199KB 的 LiveView 巨石里抽出来）。
  *
@@ -404,7 +405,7 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
           </div>
           <!-- 异地登录二次验证(阶段2):密码对了但新地点,输邮箱码完成验证 -->
           <div v-if="stepUp" class="stepup-box">
-            <div class="stepup-tip">🔒 检测到新设备/新地点登录，验证码已发送至 <b>{{ stepUpHint }}</b></div>
+            <div class="stepup-tip"><Icon name="lock" :size="13" /> 检测到新设备/新地点登录，验证码已发送至 <b>{{ stepUpHint }}</b></div>
             <input v-model="stepUpCode" name="login-otp" autocomplete="one-time-code" inputmode="numeric" maxlength="6"
                    placeholder="邮件里的 6 位验证码" @keyup.enter="doLogin" />
             <!-- L17：没收到码时可原地重发（不必退出重来），重发受后端冷却/每小时上限约束 -->

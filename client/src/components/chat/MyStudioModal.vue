@@ -112,7 +112,7 @@
             <button class="cam-del" title="移除（不影响使用权限，只是不再优先派单）" @click="removeAcquired(it)">×</button>
           </div>
           <p v-if="!acquired.length" class="cam-row-desc" style="padding:8px 2px">还没有获取过商城资源。</p>
-          <div class="cam-add"><button class="cam-add-btn" @click="goMarket">🛒 去 AI Agent 商城逛逛</button></div>
+          <div class="cam-add"><button class="cam-add-btn" @click="goMarket"><Icon name="marketplace" :size="14" /> 去 AI Agent 商城逛逛</button></div>
         </template>
 
         <!-- 底部提示按 tab 给准确口径(负责人报:已获取 57 个却写着"每类上限 50")——
@@ -133,6 +133,7 @@
 </template>
 
 <script setup lang="ts">
+import Icon from '@/components/Icon.vue'
 import { reactive, ref, watch } from 'vue'
 import '@/styles/admin-modal.css'
 import {

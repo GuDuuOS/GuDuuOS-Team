@@ -34,7 +34,7 @@
         </div>
         <ul v-if="docs.length" class="km-list">
           <li v-for="d in docs" :key="d.id" class="km-doc">
-            <span class="km-doc-ic">📄</span>
+            <span class="km-doc-ic"><Icon name="pages" :size="14" /></span>
             <span class="km-doc-title">{{ d.title || '(无标题)' }}</span>
             <span class="km-doc-src">{{ d.source }}</span>
             <button class="km-del" title="删除" :disabled="busy" @click="remove(d.id)">
@@ -51,6 +51,7 @@
 </template>
 
 <script setup lang="ts">
+import Icon from '@/components/Icon.vue'
 import { useKnowledge } from '@/composables/useKnowledge'
 
 // 共用模块级单例：与 AI 侧栏「项目文件」面板同一份 docs，增删后两处同步

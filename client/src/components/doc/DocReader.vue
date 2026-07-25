@@ -28,12 +28,12 @@
     <!-- 列表：文章卡片（类公众号）-->
     <template v-else>
       <div class="dr-head">
-        <span class="dr-h-title">📰 图文教程</span>
+        <span class="dr-h-title"><Icon name="tutorial" :size="15" /> 图文教程</span>
         <button class="dr-refresh" title="刷新" :disabled="loading" @click="load">{{ loading ? '加载中…' : '刷新' }}</button>
       </div>
       <div v-if="loading && !articles.length" class="dr-hint">加载中…</div>
       <div v-else-if="locked" class="dr-hint">
-        🔒 图文教程是<b>付费会员</b>专享内容。<br>
+        <Icon name="lock" :size="14" /> 图文教程是<b>付费会员</b>专享内容。<br>
         <span class="dr-hint-sub">升级会员后即可查看（在「升级会员」里开通）。</span>
       </div>
       <div v-else-if="!articles.length" class="dr-hint">
@@ -54,6 +54,7 @@
 </template>
 
 <script setup lang="ts">
+import Icon from '@/components/Icon.vue'
 import { onMounted, ref } from 'vue'
 import { docTree, docGetPage, docCoverUrl, type DocPage } from '@/matrix/client'
 import { renderMarkdown } from '@/utils/md'

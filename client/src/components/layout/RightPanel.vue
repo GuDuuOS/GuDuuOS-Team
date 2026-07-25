@@ -6,7 +6,7 @@
     </div>
     <div class="right-body">
       <div class="pinned">
-        <div class="ph">📌 关于</div>
+        <div class="ph"><Icon name="pin" :size="13" /> 关于</div>
         <div v-if="isLive" class="pc">
           <b>{{ groupName }}</b> · 频道成员、技能、知识库与规则的总览。配置在「频道管理」里维护，本面板实时同步。
         </div>
@@ -17,7 +17,7 @@
       </div>
 
       <div class="pinned">
-        <div class="ph">👥 人员 · 频道成员 ({{ members.length }})</div>
+        <div class="ph"><Icon name="people" :size="13" /> 人员 · 频道成员 ({{ members.length }})</div>
         <div class="members-list">
           <div v-for="m in members" :key="m.name" class="m">
             <div class="a" :class="{ bot: m.bot }" :style="m.color ? { background: m.color } : undefined">
@@ -31,7 +31,7 @@
       </div>
 
       <div class="pinned">
-        <div class="ph">⚡ SKILL · 技能</div>
+        <div class="ph"><Icon name="skills" :size="13" /> SKILL · 技能</div>
         <div class="info-list">
           <div v-for="s in skills" :key="s.label" class="info-item">
             <div class="info-main">
@@ -44,7 +44,7 @@
       </div>
 
       <div class="pinned">
-        <div class="ph">📚 知识库 · KNOWLEDGE</div>
+        <div class="ph"><Icon name="knowledge" :size="13" /> 知识库 · KNOWLEDGE</div>
         <div class="info-list">
           <div v-for="k in knowledge" :key="k.label" class="info-item" :class="{ clickable: k.docId != null }" @click="k.docId != null && toggleDoc(k.docId)">
             <div class="info-main">
@@ -58,7 +58,7 @@
       </div>
 
       <div class="pinned">
-        <div class="ph">📐 RULE · 规则</div>
+        <div class="ph"><Icon name="rules" :size="13" /> RULE · 规则</div>
         <div class="info-list">
           <div v-for="r in rules" :key="r.label" class="info-item">
             <div class="info-main">
@@ -73,6 +73,7 @@
 </template>
 
 <script setup lang="ts">
+import Icon from '@/components/Icon.vue'
 import { computed, ref } from 'vue'
 import { useRightPanel } from '@/composables/useRightPanel'
 import { fetchRoomKbDoc } from '@/matrix/client'
