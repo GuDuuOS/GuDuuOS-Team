@@ -2354,6 +2354,7 @@ class Toolbox:
 
         # 派任务卡进这个专班（作用域 = 新频道）
         n_tasks = 0
+        task_agent_slugs: List[str] = []  # 任务执行者里的 AI 同事 slug(要把它们也拉进频道)
         task_items = args.get("tasks") or []
         if isinstance(task_items, list) and task_items:
             # 解析每条截止时间 due → due_ts（同 create_tasks 路径）。
@@ -2377,11 +2378,30 @@ class Toolbox:
                         t.id for t in created
                         if t.executor_kind == "agent" and t.executor_ref
                     ]
+                    # 收集任务执行者里的 AI 同事 slug(去重、保序)——负责人实报:接了任务的 AI
+                    # 没进频道。根因是模型常只把 agent 写进任务 executor_ref、没列进 worker_agents,
+                    # 于是这些"接活的 AI"没被拉进群。下面据此把它们也拉进频道。
+                    task_agent_slugs = list(dict.fromkeys(
+                        str(t.executor_ref) for t in created
+                        if t.executor_kind == "agent" and t.executor_ref
+                    ))
             except Exception:
                 logger.exception("派任务进专班失败")
                 agent_task_ids = []
         else:
             agent_task_ids = []
+
+        # 把「接了任务的 AI 同事」也拉进频道(不只 worker_agents)——否则被派任务的 AI 不在
+        # 成员列表里(负责人实报)。与上面已拉的 worker 合并去重,已在房的走缓存零开销。
+        if task_agent_slugs and self.ensure_worker_in_room:
+            for w in task_agent_slugs:
+                if w in joined_workers:
+                    continue
+                try:
+                    if self.ensure_worker_in_room(room_id, w):
+                        joined_workers.append(w)
+                except Exception:
+                    logger.debug("拉任务执行者 AI %s 进专班失败", w, exc_info=True)
         # AI 任务自动执行(负责人需求:派了就干,不等人 @):后台线程执行、不阻塞本轮回复。
         # 回调未注入/触发失败只影响"自动",看板照常,可在频道 @该 AI 手动要产出。
         auto_started = False

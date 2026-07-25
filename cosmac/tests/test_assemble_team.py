@@ -169,6 +169,26 @@ class TestAssembleTeam(unittest.TestCase):
         self.assertIn("copywriter(已进频道)", opening)
         self.assertNotIn("broken(已进频道)", opening)
 
+    def test_task_executor_agents_pulled_into_room(self) -> None:
+        # 负责人实报:接了任务的 AI 没进频道。根因是模型只把 agent 写进任务 executor_ref、
+        # 没列进 worker_agents。现在任务执行者里的 AI 同事也要被拉进频道(即便没写 worker_agents)。
+        pulled: list = []
+        self.tb.ensure_worker_in_room = lambda room, slug: (
+            pulled.append((room, slug)) or f"@guduu-ai-{slug}:h"
+        )
+        self._run({
+            "project": "派单班",
+            # 注意:不给 worker_agents,只在任务里派给 agent
+            "tasks": [
+                {"title": "写脚本", "executor_kind": "agent", "executor_ref": "copywriter"},
+                {"title": "排数据", "executor_kind": "agent", "executor_ref": "data-analyst"},
+                {"title": "定稿", "executor_kind": "human", "executor_ref": "@a:h"},
+                {"title": "再写一段", "executor_kind": "agent", "executor_ref": "copywriter"},  # 重复→去重
+            ],
+        })
+        # 两个不同的任务执行者 AI 都被拉进频道;真人不拉;重复只拉一次
+        self.assertEqual(pulled, [("!team:h", "copywriter"), ("!team:h", "data-analyst")])
+
     def test_agent_tasks_trigger_auto_execute(self) -> None:
         # 派给 AI 同事的任务要触发自动执行回调(负责人需求:派了就干,不等人 @);
         # 人工任务不触发。回调收到的是这批任务里 agent 类的 task id。

@@ -1,5 +1,14 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-25 — GuDuu OS 1.5.28 (patch)
+
+- 修复：建专班后**接了任务的 AI 同事没进入频道**(负责人实报;DB 实证专班频道只有 bot+发起人 2 人、
+  傀儡未进)。根因是 `assemble_team` 只把 `worker_agents` 列表里的傀儡拉进群,而模型常常只把 agent
+  写进任务的 `executor_ref`、没列进 worker_agents,于是这些"接了活的 AI"没被拉进频道。**修**:建任务
+  时收集所有 `executor_kind=agent` 的执行者 slug,连同 worker_agents 一并把傀儡拉进频道(去重、
+  已在房走缓存)。新增回归测试(agent 只在任务执行者、不在 worker_agents,也要进群)。
+  (另:早期版本频道里那张"选题/文案/数据 Agent"派单卡是已删除的旧演示卡历史消息,当前版不再产生。)
+
 ## 2026-07-25 — GuDuu OS 1.5.27 (patch)
 
 - 修复：任务看板截止时间徽章把**明天到期**的任务误标成"今天到期"(负责人实报)。根因是用"距现在
