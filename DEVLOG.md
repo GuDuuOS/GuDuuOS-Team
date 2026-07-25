@@ -1,5 +1,16 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-25 — GuDuu OS 1.5.11 (patch)
+
+- 修复：**新域名下获取验证码的 Cloudflare 人机验证消失了**(负责人实报;防机器人恶意刷
+  验证码/注册)。根因:发行版 `docker-compose.yml` 的 bot `environment` 是**白名单式**,
+  却漏列了 `COSMAC_TURNSTILE_SITE_KEY` / `COSMAC_TURNSTILE_SECRET`——即便 `.env` 配了也
+  传不进容器,后端 `turnstile_enabled()` 恒为 false、`/cosmac/auth/config` 返回未启用、
+  前端就不渲染验证组件(与此前 SDK 引擎变量漏透传同一类坑)。现补上两个透传,并在 `.env`
+  模板 `dotenv.tpl` 记录用法(去 Cloudflare Turnstile 建组件、Hostname 含本实例域名、
+  填 Site Key + Secret;留空=不启用)。⚠️ 代码只修好"能传进去"这一半——**具体 key 需在
+  实例 `.env` 配置**(域名绑定,老站 cosmac.cc 的 key 在新域名不可用)。
+
 ## 2026-07-25 — GuDuu OS 1.5.10 (patch)
 
 - 修复：**任务看板右上角「刷新」点击无反应**(负责人实报)。根因两处:① 取任务列表的
