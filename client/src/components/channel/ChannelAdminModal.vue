@@ -538,6 +538,9 @@ const KB_MAX_CHARS = 50000  // 与后端 MAX_DOC_CHARS 对齐(2万→5万,产品
  *  修「空 CSV 报太长」:Excel 把空表另存 CSV 会导出上万行纯逗号,视觉空文件按原文
  *  计数就误报超限。CSV/TSV 剔除纯分隔符行;所有文件去行尾空白、压缩连续空行。 */
 function cleanUploadText(text: string, filename: string): string {
+  // 先去掉 NUL 及非文本控制字符(Excel/记事本导出的 CSV 常带,会让字数虚高、后端入库被 Postgres 拒)。保留 \t\n\r。
+  // eslint-disable-next-line no-control-regex
+  text = text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
   let lines = text.split(/\r?\n/).map((ln) => ln.replace(/\s+$/, ''))
   if (/\.(csv|tsv)$/i.test(filename)) {
     lines = lines.filter((ln) => ln.replace(/[,;\t"' ]/g, '').trim() !== '')

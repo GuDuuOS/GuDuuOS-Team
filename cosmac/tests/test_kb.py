@@ -12,7 +12,14 @@ from unittest import mock
 
 from cosmac.ai.embeddings import HashingEmbedder, cosine, get_embedder
 from cosmac.db import init_engine, session_scope
-from cosmac.db.kb import chunk_text, delete_doc, ingest_document, list_docs, search
+from cosmac.db.kb import (
+    chunk_text,
+    delete_doc,
+    ingest_document,
+    list_docs,
+    sanitize_text,
+    search,
+)
 from cosmac.db.models import SCOPE_ROOM
 
 ROOM_A = "!a:host"
@@ -29,6 +36,27 @@ class TestChunking(unittest.TestCase):
         chunks = chunk_text(text, size=300, overlap=50)
         self.assertGreater(len(chunks), 1)
         self.assertTrue(all(len(c) <= 320 for c in chunks))  # 容断点附近的少量超出
+
+
+class TestSanitize(unittest.TestCase):
+    """入库前清洗 NUL/控制字符(负责人实报:上传含 NUL 的 CSV 报"数据库不可用")。"""
+
+    def test_strips_nul_and_controls(self) -> None:
+        # NUL + 其它 C0 控制码去掉;\t\n\r 与正文保留
+        self.assertEqual(sanitize_text("价格\x00表\x01\n白金\t4520\r\n"), "价格表\n白金\t4520\r\n")
+
+    def test_ingest_csv_with_nul_succeeds(self) -> None:
+        """含 NUL 的 CSV 文本能正常入库(以前会因 Postgres 拒 NUL 而抛错被兜底成"数据库不可用")。"""
+        init_engine("sqlite://", create_all=True)
+        with session_scope() as s:
+            doc = ingest_document(
+                s, scope=SCOPE_ROOM, scope_id=ROOM_A,
+                title="价格\x00表", source="upload",
+                text="名称,价格\x00\n白金系列,4520\n晶钻系列,8900", embedder=EMB,
+            )
+            self.assertNotIn("\x00", doc.title)
+            self.assertTrue(all("\x00" not in c.text for c in doc.chunks))
+            self.assertTrue(doc.chunks)  # 清洗后仍有内容、正常切块入库
 
 
 class TestEmbedder(unittest.TestCase):

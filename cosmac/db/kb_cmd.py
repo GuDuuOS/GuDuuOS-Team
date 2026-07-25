@@ -44,7 +44,10 @@ def clean_upload_text(text: str, filename: str = "") -> str:
     - 所有文件:每行去尾部空白,3 个以上连续空行压成 1 个。
     清洗结果同时用于**计数与入库**——不清洗就入库会把分隔符噪音灌进检索。
     """
-    lines = [ln.rstrip() for ln in (text or "").splitlines()]
+    # 先去掉 NUL 及非文本控制字符:Excel/记事本导出的 CSV 常带 NUL/二进制残渣,既让字数
+    # 虚高、也会让入库时 Postgres 拒 NUL(负责人实报"入库失败·数据库不可用")。保留 \t\n\r。
+    text = kb.sanitize_text(text or "")
+    lines = [ln.rstrip() for ln in text.splitlines()]
     if filename.lower().rsplit(".", 1)[-1] in ("csv", "tsv"):
         # 纯分隔符行:去掉分隔符与引号后为空 → 是 Excel 导出的空单元格行,丢弃
         lines = [
