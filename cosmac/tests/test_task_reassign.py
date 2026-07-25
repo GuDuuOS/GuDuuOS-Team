@@ -127,6 +127,32 @@ class TestUpdateTaskTool(unittest.TestCase):
         with session_scope() as s:
             self.assertEqual(get_task(s, self.tid).executor_kind, "human")  # 没被动
 
+    def test_reassign_to_agent_triggers_autorun(self) -> None:
+        """负责人实报根因回归:把任务改派给 AI 同事(executor_kind=agent)→ 触发一次自动执行。
+        此前只有 assemble_team 内联建 agent 任务才自动跑,事后 update_task 改派的永远不执行。"""
+        fired = []
+        self.box.auto_execute_agent_tasks = (  # type: ignore
+            lambda room, sender, ids, rule: fired.append((room, sender, tuple(ids)))
+        )
+        out = self.box._tool_update_task({
+            "task_id": self.tid, "status": "doing",
+            "executor_kind": "agent", "executor_ref": "ui-designer",
+        }, self.ctx)
+        self.assertIn("已交给 TA 自动执行", out)
+        self.assertEqual(fired, [(ROOM, "@boss:h", (self.tid,))])
+
+    def test_mark_done_does_not_trigger_autorun(self) -> None:
+        """已完成/已交付的任务不因改派再被自动执行(避免重复产出)。"""
+        fired = []
+        self.box.auto_execute_agent_tasks = (  # type: ignore
+            lambda *a: fired.append(a))
+        # 直接标 done(seed 任务本就 done)+ 指定 agent:status=done → 不触发
+        self.box._tool_update_task({
+            "task_id": self.tid, "status": "done",
+            "executor_kind": "agent", "executor_ref": "ui-designer",
+        }, self.ctx)
+        self.assertEqual(fired, [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1738,14 +1738,18 @@ class CosmacBot:
     def _auto_execute_agent_tasks(
         self, room_id: str, sender: str, task_ids: List[int], task_rule: str = ""
     ) -> None:
-        """assemble_team 注入的自动执行入口:起后台 daemon 线程逐个执行,不阻塞建班回复。"""
-        th = threading.Thread(
-            target=self._run_agent_tasks,
-            args=(room_id, sender, list(task_ids), task_rule),
-            daemon=True,
-            name="agent-task-runner",
-        )
-        th.start()
+        """assemble_team / update_task 注入的自动执行入口:起后台 daemon 线程逐个执行,不阻塞回复。"""
+        def _guarded() -> None:
+            # daemon 线程里未捕获的异常只会打到 stderr、且随容器重建丢失——包一层如实记 exception,
+            # 否则"执行器一起就崩"这种问题事后完全查不到(负责人实报的正是这类静默失败)。
+            try:
+                self._run_agent_tasks(room_id, sender, list(task_ids), task_rule)
+            except Exception:
+                logger.exception("自动执行:后台线程异常终止 room=%s 任务=%s", room_id, task_ids)
+
+        threading.Thread(
+            target=_guarded, daemon=True, name="agent-task-runner",
+        ).start()
 
     def _run_agent_tasks(
         self, room_id: str, sender: str, task_ids: List[int], task_rule: str
@@ -1760,6 +1764,9 @@ class CosmacBot:
           按拆解顺序天然满足常见依赖;失败的跳过、不阻断后面的任务。
         - **失败兜底**:单个任务 LLM 失败 → 看板留 todo + result 记原因 + 频道提示可 @ 重试。
         """
+        # 可观测性(负责人实报"AI Agent 执行完任务没更新看板/没发频道",而线上日志随容器重建丢失、
+        # 成功路径又多是 debug 级 → 事后无从查):这里起一条 INFO,后台线程崩在开头也留痕。
+        logger.info("自动执行:线程启动 room=%s 任务=%s", room_id, task_ids[: self._AUTO_EXEC_MAX])
         done_n = 0
         quota_stopped = False
         prior: List[str] = []  # 已完成任务的产出摘要(喂给后续任务当上下文)
