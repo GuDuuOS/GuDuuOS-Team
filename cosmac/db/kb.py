@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import List, Optional, Tuple
 
 from sqlalchemy import select
@@ -21,6 +22,17 @@ from cosmac.db.models import SCOPE_ROOM, KnowledgeChunk, KnowledgeDoc
 # 切块参数：按字符长度切，带重叠避免把一句话拦腰截断丢了上下文。
 DEFAULT_CHUNK_SIZE = 500
 DEFAULT_CHUNK_OVERLAP = 80
+
+# 非文本控制字符：C0 控制码里除常见空白(\t \n \r)外全清掉。**核心是 NUL(\x00)**——
+# Postgres 的 text 字段存不了 NUL,含它的 INSERT 直接抛错;而 Excel/记事本导出的 CSV 常带
+# NUL 或二进制残渣(尤其 UTF-16 另存),入库就报"数据库不可用"(负责人实报:上传 csv 入库失败)。
+# 在入库前统一清洗,任何来源(csv/上传/粘贴)都安全。
+_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def sanitize_text(s: str) -> str:
+    """清掉 Postgres text 存不了的 NUL 及其它非文本控制字符(保留 \\t\\n\\r)。"""
+    return _CTRL_RE.sub("", s or "")
 
 
 def chunk_text(
@@ -66,6 +78,10 @@ def ingest_document(
 ) -> KnowledgeDoc:
     """把一篇文档切块 + 嵌入 + 落库，返回建好的 KnowledgeDoc（含 chunks）。"""
     emb = embedder or get_embedder()
+    # 入库前清洗 NUL/控制字符:否则含 NUL 的 CSV 会让 Postgres INSERT 抛错(见 sanitize_text)。
+    # 标题也清:标题同样进 Postgres text 列。
+    text = sanitize_text(text)
+    title = sanitize_text(title)
     pieces = chunk_text(text)
     vectors = emb.embed(pieces) if pieces else []
     doc = KnowledgeDoc(scope=scope, scope_id=scope_id, title=title, source=source)
