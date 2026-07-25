@@ -772,10 +772,12 @@
               <tr><th>用户</th><th>角色</th><th>擅长</th><th>个人标注</th><th>能力</th><th>操作</th></tr>
             </thead>
             <tbody>
-              <tr v-for="r in peopleFiltered" :key="r.id" :class="{ off: r.deactivated }">
+              <tr v-for="r in peopleFiltered" :key="r.id" :class="{ off: r.deactivated || r.locked }">
                 <td>
                   <code>{{ r.id }}</code><template v-if="r.name"> · {{ r.name }}</template>
-                  <span v-if="r.deactivated" class="adm-tag off">已停用</span>
+                  <!-- 状态文案与用户管理三态一致(负责人实报两处对不上):注销=deactivated、停用=locked -->
+                  <span v-if="r.deactivated" class="adm-tag off">已注销</span>
+                  <span v-else-if="r.locked" class="adm-tag off">已停用</span>
                   <span v-else-if="r.unavailable" class="adm-tag off">休假中</span>
                 </td>
                 <td>{{ r.role || '—' }}</td>
@@ -795,8 +797,8 @@
                   </span>
                 </td>
                 <td class="adm-row-actions">
-                  <!-- 停用账号灰显且不可设置能力（账号都停了，没必要再给它配派单能力）-->
-                  <button class="adm-btn ghost sm" :disabled="plSaving || r.deactivated" @click="startEditPersonForUser(r)">
+                  <!-- 停用/注销账号灰显且不可设置能力（账号都停了，没必要再给它配派单能力）-->
+                  <button class="adm-btn ghost sm" :disabled="plSaving || r.deactivated || r.locked" @click="startEditPersonForUser(r)">
                     {{ r.hasProfile ? '编辑能力' : '设置能力' }}
                   </button>
                   <button v-if="r.hasProfile" class="adm-btn ghost sm danger" :disabled="plSaving" @click="removePersonById(r.id)">清除</button>
@@ -2709,7 +2711,9 @@ const peopleMap = computed(() => {
   return m
 })
 // 表格行 = 真实账号 + 叠加其能力（没设的 hasProfile=false）。
-// 与用户管理对齐：带 deactivated（停用账号灰显、不可设置）；排序「在用在前、停用在后」。
+// 与用户管理对齐：带 locked/deactivated 两态（灰显、不可设置）；排序「在用在前、停用/注销在后」。
+// 必须两个都带:此前只带 deactivated 且把它显示成「已停用」,而用户管理(1.5.6)已把
+// 停用=locked/注销=deactivated 分开——同一账号两处状态文案对不上(负责人实报)。
 const peopleRows = computed(() =>
   peopleUsers.value
     .map((u) => {
@@ -2722,10 +2726,12 @@ const peopleRows = computed(() =>
         enabled: p ? p.enabled : true,
         unavailable: !!p?.unavailable,
         hasProfile: !!p,
+        locked: u.locked,
         deactivated: u.deactivated,
       }
     })
-    .sort((a, b) => Number(a.deactivated) - Number(b.deactivated)),  // 停用排后
+    // 停用(locked)或注销(deactivated)都算"不在用",一起沉底
+    .sort((a, b) => Number(a.deactivated || a.locked) - Number(b.deactivated || b.locked)),
 )
 const peopleSearch = ref('')
 const peopleCap = ref<'all' | 'set' | 'unset'>('all')  // 按是否已设能力筛
@@ -2739,8 +2745,8 @@ const peopleFiltered = computed(() => {
   })
 })
 
-function startEditPersonForUser(r: { id: string; name: string; deactivated?: boolean }) {
-  if (r.deactivated) return  // 停用账号不可设置能力（防御：按钮已禁用）
+function startEditPersonForUser(r: { id: string; name: string; deactivated?: boolean; locked?: boolean }) {
+  if (r.deactivated || r.locked) return  // 停用/注销账号不可设置能力（防御：按钮已禁用）
   const ex = peopleMap.value[r.id]
   Object.assign(plForm, {
     user_id: r.id,
