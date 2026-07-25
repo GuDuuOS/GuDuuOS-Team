@@ -1,5 +1,12 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-25 — GuDuu OS 1.5.18 (patch)
+
+- 修复：1.5.17 里容器 Caddy 传 `X-Real-IP` 用的占位符 `{http.request.client_ip}` **Caddy 不展开、
+  被当字面量原样发出**(生产实测:审计 IP 记成了字符串 `{http.request.client_ip}`)。改用受信代理
+  感知的正确简写 `{client_ip}`。生产已验证:登录审计 IP 现为真实公网 IP、按客户端区分,登录限频
+  不再把全平台当同一 IP。(生产 Caddyfile 已同步修好。)
+
 ## 2026-07-25 — GuDuu OS 1.5.17 (patch)
 
 - 修复：**换设备登录后，先前设备被登出、新设备却也登不上**(负责人实报)。查明两点：

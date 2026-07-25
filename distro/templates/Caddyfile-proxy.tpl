@@ -33,7 +33,7 @@
 	# 才拿得到真实 IP。client_ip 已由上面的 trusted_proxies 从 XFF 正确还原。
 	handle /cosmac/* {
 		reverse_proxy bot:9000 {
-			header_up X-Real-IP {http.request.client_ip}
+			header_up X-Real-IP {client_ip}
 		}
 	}
 
