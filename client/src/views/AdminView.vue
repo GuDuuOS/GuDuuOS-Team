@@ -97,7 +97,7 @@
     </aside>
 
     <!-- 右侧内容区 -->
-    <section class="adm-main">
+    <section ref="mainEl" class="adm-main">
       <!-- 1) 权限校验中 -->
       <div v-if="state === 'checking'" class="adm-center">
         <div class="adm-spin" /> 正在校验管理员权限…
@@ -1647,7 +1647,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { rowKey } from '@/utils/rowKey'
 import {
   isServerAdmin,
@@ -3409,7 +3409,38 @@ async function loadOverview() {
   }
 }
 
-onMounted(check)
+/* —— 吸顶页头的高度同步 ——
+   页头(.adm-head)与筛选栏(.adm-filters)都是 sticky:页头贴 top:0,筛选栏要紧贴页头下方。
+   但页头高度并不固定——窗口一窄、统计文案一长就换行变高,CSS 里写死数值会让筛选栏盖住
+   统计行。所以这里实测页头高度写进 --adm-head-h,由筛选栏的 top 引用。 */
+const mainEl = ref<HTMLElement | null>(null)
+let headRO: ResizeObserver | null = null
+
+/** 把当前页页头的实际高度写进 CSS 变量(没有页头的页面写 0)。 */
+function measureHead() {
+  const box = mainEl.value
+  if (!box) return
+  const head = box.querySelector<HTMLElement>('.adm-head')
+  box.style.setProperty('--adm-head-h', head ? `${Math.round(head.offsetHeight)}px` : '0px')
+}
+
+/** 换页(tab)后页头是新的 DOM 节点,要把观察器改挂到新节点上。
+    observe() 之外仍显式量一次:个别浏览器的首次回调不可靠,量两遍是幂等的。 */
+function rewireHead() {
+  headRO?.disconnect()
+  const head = mainEl.value?.querySelector<HTMLElement>('.adm-head')
+  if (head && headRO) headRO.observe(head)
+  measureHead()
+}
+
+onMounted(() => {
+  check()
+  // 回调只做量测,不重新 observe——否则 disconnect/observe 会自触发成死循环
+  headRO = new ResizeObserver(measureHead)
+  nextTick(rewireHead)
+})
+onUnmounted(() => { headRO?.disconnect(); headRO = null })
+watch([tab, state], () => nextTick(rewireHead))
 </script>
 
 <style scoped>
@@ -3486,8 +3517,39 @@ onMounted(check)
 }
 
 /* —— 右侧内容 —— */
-.adm-main { flex: 1; min-width: 0; overflow-y: auto; padding: 22px 26px; }
-.adm-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; padding-right: 44px; }
+/* 内容区自身滚动 + 常显滚动条(负责人报:长列表滚动时不知道自己在哪、滚动条也看不见)。
+   scrollbar-gutter 预留槽位,避免出现/消失时内容左右跳动。 */
+.adm-main {
+  flex: 1; min-width: 0; overflow-y: auto; padding: 0 26px 22px;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}
+.adm-main::-webkit-scrollbar { width: 10px; }
+.adm-main::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.22);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.adm-main::-webkit-scrollbar-thumb:hover { background-color: rgba(0, 0, 0, 0.36); }
+
+/* 页头(标题+统计+操作)与筛选栏**吸顶**:长列表往下滚时仍看得见"这是哪一页、共多少条、
+   搜索框在哪"(负责人要求)。两者贴在一起构成一个整体头部,故用相邻的 top 值堆叠;
+   背景要不透明,否则滚动内容会从底下透出来。 */
+.adm-head, .adm-filters {
+  position: sticky;
+  background: var(--bg, #fffdf8);
+  z-index: 5;
+}
+.adm-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 18px; padding-right: 44px;
+  top: 0;
+  /* 抵消 .adm-main 的左右内边距,让吸顶时背景铺满整行、两侧不露内容。
+     顶部内边距挪到这里(.adm-main 已去掉 padding-top),这样 sticky 的外边距盒正好
+     贴在 top:0,不会留缝让下面的列表透出来。 */
+  margin-left: -26px; margin-right: -26px; padding: 22px 44px 0 26px;
+}
 .adm-h1 { font-size: 20px; font-weight: var(--fw-bold); }
 .adm-hint { font-size: var(--fs-75); color: var(--text-3); margin-top: 4px; }
 .adm-err-line { font-size: var(--fs-75); color: #c0392b; margin: 4px 0 0; }
@@ -3567,7 +3629,14 @@ onMounted(check)
 }
 
 /* 表格 */
-.adm-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; }
+.adm-filters {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px;
+  /* 紧贴页头下方吸顶。页头高度会随窗口宽度/统计文案换行而变,写死数值窄屏就会盖住
+     统计行,所以由脚本实测后写进 --adm-head-h(见 syncHeadHeight),这里只兜个底。 */
+  top: var(--adm-head-h, 62px);
+  margin-left: -26px; margin-right: -26px; padding: 6px 26px 10px;
+  border-bottom: 1px solid var(--border);
+}
 .adm-search { flex: 1; min-width: 200px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-soft); color: var(--text); font-size: var(--fs-100); }
 .adm-search:focus { outline: none; border-color: var(--accent); }
 .adm-fsel { padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-soft); color: var(--text); font-size: var(--fs-75); cursor: pointer; }
