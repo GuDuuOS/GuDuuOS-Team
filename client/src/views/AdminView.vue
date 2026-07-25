@@ -1,11 +1,11 @@
 <template>
   <div class="admin-view channel-view">
     <!-- 关闭管理后台，回到工作台 -->
-    <button class="adm-close" title="关闭" @click="emit('close')">✕</button>
+    <button class="adm-close" title="关闭" @click="emit('close')"><Icon name="close" /></button>
     <!-- 左侧管理菜单（用户管理已就绪，其余占位，后续逐块填） -->
     <aside class="adm-nav">
       <div class="adm-brand">
-        <span class="adm-logo">⚙</span>
+        <span class="adm-logo"><Icon name="settings" /></span>
         <div>
           <div class="adm-title">管理后台</div>
           <div class="adm-sub">GuDuu OS 运营控制台</div>
@@ -18,7 +18,7 @@
         </button>
         <template v-if="!menuFold.ov">
         <button class="adm-mi" :class="{ active: tab === 'overview' }" @click="switchToOverview">
-          <span class="adm-mi-ic">📊</span> 数据概览
+          <span class="adm-mi-ic"><Icon name="data" /></span> 数据概览
         </button>
         </template>
 
@@ -27,13 +27,13 @@
         </button>
         <template v-if="!menuFold.uc">
         <button class="adm-mi" :class="{ active: tab === 'users' }" @click="tab = 'users'">
-          <span class="adm-mi-ic">👤</span> 用户管理
+          <span class="adm-mi-ic"><Icon name="org" /></span> 用户管理
         </button>
         <button class="adm-mi" :class="{ active: tab === 'rooms' }" @click="switchToRooms">
-          <span class="adm-mi-ic">＃</span> 频道管理
+          <span class="adm-mi-ic"><Icon name="hash" /></span> 频道管理
         </button>
         <button class="adm-mi" :class="{ active: tab === 'archives' }" @click="switchToArchives">
-          <span class="adm-mi-ic">🗂️</span> 归档记录
+          <span class="adm-mi-ic"><Icon name="archive" /></span> 归档记录
         </button>
         </template>
 
@@ -42,22 +42,22 @@
         </button>
         <template v-if="!menuFold.ai">
         <button class="adm-mi" :class="{ active: tab === 'ai' }" @click="switchToAi">
-          <span class="adm-mi-ic">🤖</span> AI 配置
+          <span class="adm-mi-ic"><Icon name="bot" /></span> AI 配置
         </button>
         <button class="adm-mi" :class="{ active: tab === 'skills' }" @click="switchToSkills">
-          <span class="adm-mi-ic">🛠</span> 技能库
+          <span class="adm-mi-ic"><Icon name="skills" /></span> 技能库
         </button>
         <button class="adm-mi" :class="{ active: tab === 'agents' }" @click="switchToAgents">
-          <span class="adm-mi-ic">🎭</span> 智能体
+          <span class="adm-mi-ic"><Icon name="studio" /></span> 智能体
         </button>
         <button class="adm-mi" :class="{ active: tab === 'people' }" @click="switchToPeople">
-          <span class="adm-mi-ic">👥</span> 人员能力
+          <span class="adm-mi-ic"><Icon name="people" /></span> 人员能力
         </button>
         <button class="adm-mi" :class="{ active: tab === 'rules' }" @click="switchToRules">
-          <span class="adm-mi-ic">⚖️</span> 规则
+          <span class="adm-mi-ic"><Icon name="rules" /></span> 规则
         </button>
         <button class="adm-mi" :class="{ active: tab === 'workflows' }" @click="switchToWorkflows">
-          <span class="adm-mi-ic">🔗</span> 工作流
+          <span class="adm-mi-ic"><Icon name="workflow" /></span> 工作流
         </button>
         </template>
 
@@ -66,13 +66,13 @@
         </button>
         <template v-if="!menuFold.biz">
         <button class="adm-mi" :class="{ active: tab === 'gating' }" @click="switchToGating">
-          <span class="adm-mi-ic">🔐</span> 会员权限
+          <span class="adm-mi-ic"><Icon name="gating" /></span> 会员权限
         </button>
         <button class="adm-mi" :class="{ active: tab === 'quotas' }" @click="switchToQuotas">
-          <span class="adm-mi-ic">📈</span> 用量配额
+          <span class="adm-mi-ic"><Icon name="usage" /></span> 用量配额
         </button>
         <button class="adm-mi" :class="{ active: tab === 'plans' }" @click="switchToPlans">
-          <span class="adm-mi-ic">💳</span> 会员套餐
+          <span class="adm-mi-ic"><Icon name="plan" /></span> 会员套餐
         </button>
         </template>
 
@@ -81,16 +81,16 @@
         </button>
         <template v-if="!menuFold.ops">
         <button class="adm-mi" :class="{ active: tab === 'templates' }" @click="switchToTemplates">
-          <span class="adm-mi-ic">🧰</span> 入驻模板
+          <span class="adm-mi-ic"><Icon name="templates" /></span> 入驻模板
         </button>
         <button class="adm-mi" :class="{ active: tab === 'docs' }" @click="switchToDocs">
-          <span class="adm-mi-ic">📰</span> 图文教程
+          <span class="adm-mi-ic"><Icon name="tutorial" /></span> 图文教程
         </button>
         <button class="adm-mi" :class="{ active: tab === 'platformKb' }" @click="switchToPlatformKb">
-          <span class="adm-mi-ic">📚</span> 平台知识库
+          <span class="adm-mi-ic"><Icon name="knowledge" /></span> 平台知识库
         </button>
         <button class="adm-mi" :class="{ active: tab === 'sitePages' }" @click="switchToSitePages">
-          <span class="adm-mi-ic">📄</span> 页面内容
+          <span class="adm-mi-ic"><Icon name="pages" /></span> 页面内容
         </button>
         </template>
       </nav>
@@ -105,7 +105,7 @@
 
       <!-- 2) 无权限 -->
       <div v-else-if="state === 'denied'" class="adm-center adm-denied">
-        <div class="adm-denied-ic">🔒</div>
+        <div class="adm-denied-ic"><Icon name="lock" :size="28" /></div>
         <div class="adm-denied-t">无法进入管理后台</div>
         <div class="adm-denied-d">
           可能原因：① 当前账号不是服务器管理员（请用 <code>@admin</code> 登录）；
@@ -140,7 +140,7 @@
         <template v-else>
           <!-- 搜索 + 筛选（用户多了能快速定位）-->
           <div class="adm-filters">
-            <input v-model.trim="userSearch" class="adm-search" placeholder="🔍 搜索用户名 / ID…" />
+            <input v-model.trim="userSearch" class="adm-search" placeholder="搜索用户名 / ID…" />
             <select v-model="filterRole" class="adm-fsel">
               <option value="all">全部角色</option>
               <option value="admin">管理员</option>
@@ -273,7 +273,7 @@
         </header>
 
         <div class="adm-filters">
-          <input v-model.trim="chSearch" class="adm-search" placeholder="🔍 搜索频道名 / ID…" />
+          <input v-model.trim="chSearch" class="adm-search" placeholder="搜索频道名 / ID…" />
           <select v-model="chType" class="adm-fsel"><option value="all">全部类型</option><option value="public">公开</option><option value="private">私有</option></select>
           <label class="adm-check"><input type="checkbox" v-model="chGroupByCreator" /> 按账号分组</label>
           <span class="adm-filter-n">{{ chFiltered.length }} / {{ rooms.length }}</span>
@@ -299,7 +299,7 @@
               <!-- colspan 必须=真实列数:fixed 布局把最大跨列数当总列数,写 99 会生成 99 列 -->
               <td colspan="4">
                 <svg class="adm-cap-caret" :class="{ open: chOpenOwners[row.creator] }" width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M9 6 15 12 9 18z" /></svg>
-                👤 {{ displayCreator(row.creator) }} <span class="adm-dim">· {{ row.count }} 个频道 · {{ chOpenOwners[row.creator] ? '点击收起' : '点击展开' }}</span>
+                <Icon name="profile" :size="14" /> {{ displayCreator(row.creator) }} <span class="adm-dim">· {{ row.count }} 个频道 · {{ chOpenOwners[row.creator] ? '点击收起' : '点击展开' }}</span>
               </td>
             </tr>
             <tr v-else>
@@ -317,7 +317,7 @@
                 <span class="adm-tag" :class="row.r.isPublic ? 'admin' : 'member'">
                   {{ row.r.isPublic ? '公开' : '私有' }}
                 </span>
-                <span v-if="row.r.encrypted" class="adm-tag bot" title="端到端加密">🔒 加密</span>
+                <span v-if="row.r.encrypted" class="adm-tag bot" title="端到端加密"><Icon name="lock" :size="12" /> 加密</span>
               </td>
               <td class="adm-ops">
                 <button class="adm-op" :disabled="roomBusy === row.r.id" @click="viewRoomDetail(row.r)">
@@ -332,7 +332,7 @@
                 >
                   删除
                 </button>
-                <span v-else class="adm-tag" title="控制室承载全部平台配置，不可删除">🔒 系统</span>
+                <span v-else class="adm-tag" title="控制室承载全部平台配置，不可删除"><Icon name="lock" :size="12" /> 系统</span>
               </td>
             </tr>
             </template>
@@ -419,7 +419,7 @@
         </header>
 
         <div class="adm-filters">
-          <input v-model.trim="skSearch" class="adm-search" placeholder="🔍 搜索技能名 / slug / 说明…" />
+          <input v-model.trim="skSearch" class="adm-search" placeholder="搜索技能名 / slug / 说明…" />
           <select v-model="skEn.mode.value" class="adm-fsel"><option value="all">全部状态</option><option value="on">启用</option><option value="off">停用</option></select>
           <span class="adm-filter-n">{{ skFiltered.length }} / {{ skills.length }}</span>
         </div>
@@ -485,7 +485,7 @@
           <!-- 预置技能库（平台内置，随对应 AI 同事激活；可覆盖为自定义）-->
           <div v-if="presetSkillsFiltered.length" class="adm-preset-block">
             <div class="adm-preset-h">
-              <span>🧩 预置技能库{{ skSearch ? `（匹配 ${presetSkillsFiltered.length}/${presetSkills.length}）` : '' }}</span>
+              <span><Icon name="puzzle" :size="15" /> 预置技能库{{ skSearch ? `（匹配 ${presetSkillsFiltered.length}/${presetSkills.length}）` : '' }}</span>
               <span class="adm-preset-sub">平台内置、<b>改不动</b> · 已绑给对应 AI 同事，@ 或指派它时自动激活，不占每轮上下文。想改某个 → 点「覆盖为自定义」复制成<b>可编辑副本</b>（同标识），你改完保存后<b>用你这份</b>。</span>
             </div>
             <table class="adm-table">
@@ -520,7 +520,7 @@
 
           <!-- 自定义技能列表（控制室 state event，可编辑/删除）-->
           <div class="adm-preset-h" style="margin-top:16px">
-            <span>✏️ 自定义技能</span>
+            <span><Icon name="edit" :size="15" /> 自定义技能</span>
             <span class="adm-preset-sub">你在后台建的技能（覆盖预置或全新）</span>
           </div>
           <p v-if="!skills.length" class="adm-hint">还没有自定义技能。点右上「新建技能」加一个，或从上方预置技能「覆盖为自定义」。</p>
@@ -567,7 +567,7 @@
         </header>
 
         <div class="adm-filters">
-          <input v-model.trim="agSearch" class="adm-search" placeholder="🔍 搜索智能体名 / slug / 说明…" />
+          <input v-model.trim="agSearch" class="adm-search" placeholder="搜索智能体名 / slug / 说明…" />
           <select v-model="agEn.mode.value" class="adm-fsel"><option value="all">全部状态</option><option value="on">启用</option><option value="off">停用</option></select>
           <span class="adm-filter-n">{{ agFiltered.length }} / {{ agents.length }}</span>
         </div>
@@ -673,7 +673,7 @@
           <!-- 预置智能体库（平台内置：原生班底 + agency 引入·已中文化；同标识新建即覆盖）-->
           <div v-if="presetAgentsFiltered.length" class="adm-preset-block">
             <div class="adm-preset-h">
-              <span>🎭 预置智能体库（{{ agSearch ? `匹配 ${presetAgentsFiltered.length}/${presetAgents.length}` : presetAgents.length }}）</span>
+              <span><Icon name="studio" :size="15" /> 预置智能体库（{{ agSearch ? `匹配 ${presetAgentsFiltered.length}/${presetAgents.length}` : presetAgents.length }}）</span>
               <span class="adm-preset-sub">平台内置、写死在代码里<b>改不动</b> · 主 AI 拆任务时名册可见、可直接 @/指派。想改某个 → 点「覆盖为自定义」把它复制成一份<b>可编辑副本</b>（同标识），你改完保存后平台就<b>用你这份</b>（不再用内置那份）。</span>
             </div>
             <table class="adm-table">
@@ -725,7 +725,7 @@
         </header>
 
         <div class="adm-filters">
-          <input v-model.trim="peopleSearch" class="adm-search" placeholder="🔍 搜索用户名 / ID / 角色 / 擅长…" />
+          <input v-model.trim="peopleSearch" class="adm-search" placeholder="搜索用户名 / ID / 角色 / 擅长…" />
           <select v-model="peopleCap" class="adm-fsel"><option value="all">全部</option><option value="set">已设能力</option><option value="unset">未设能力</option></select>
           <span class="adm-filter-n">{{ peopleFiltered.length }} / {{ peopleRows.length }}</span>
         </div>
@@ -827,7 +827,7 @@
         </header>
 
         <div class="adm-filters">
-          <input v-model.trim="tpSearch" class="adm-search" placeholder="🔍 搜索模板名 / key / 描述…" />
+          <input v-model.trim="tpSearch" class="adm-search" placeholder="搜索模板名 / key / 描述…" />
           <select v-model="tpEn.mode.value" class="adm-fsel"><option value="all">全部状态</option><option value="on">启用</option><option value="off">停用</option></select>
           <span class="adm-filter-n">{{ tpFiltered.length }} / {{ templates.length }}</span>
         </div>
@@ -994,7 +994,7 @@
         </header>
 
         <div class="adm-filters">
-          <input v-model.trim="wfSearch" class="adm-search" placeholder="🔍 搜索工作流名 / slug / 平台…" />
+          <input v-model.trim="wfSearch" class="adm-search" placeholder="搜索工作流名 / slug / 平台…" />
           <select v-model="wfEn.mode.value" class="adm-fsel"><option value="all">全部状态</option><option value="on">启用</option><option value="off">停用</option></select>
           <span class="adm-filter-n">{{ wfFiltered.length }} / {{ workflows.length }}</span>
         </div>
@@ -1225,7 +1225,7 @@
         </header>
 
         <div class="adm-filters">
-          <input v-model.trim="plSearch" class="adm-search" placeholder="🔍 搜索套餐名 / slug…" />
+          <input v-model.trim="plSearch" class="adm-search" placeholder="搜索套餐名 / slug…" />
           <select v-model="plEn.mode.value" class="adm-fsel"><option value="all">全部状态</option><option value="on">启用</option><option value="off">停用</option></select>
           <span class="adm-filter-n">{{ plFiltered.length }} / {{ plans.length }}</span>
         </div>
@@ -1411,7 +1411,7 @@
         </header>
 
         <div class="adm-filters">
-          <input v-model.trim="arcSearch" class="adm-search" placeholder="🔍 搜索项目目标 / 归档人 / 频道 ID…" />
+          <input v-model.trim="arcSearch" class="adm-search" placeholder="搜索项目目标 / 归档人 / 频道 ID…" />
           <span class="adm-filter-n">{{ arcFiltered.length }} / {{ archives.length }}</span>
         </div>
 
@@ -1437,7 +1437,7 @@
         <!-- 归档详情弹窗:收尾摘要 + 任务快照 -->
         <div v-if="arcOpen" class="adm-mask" @click.self="arcOpen = null">
           <div class="adm-modal">
-            <div class="adm-modal-h">🗂️ {{ arcOpen.goal || '归档详情' }}</div>
+            <div class="adm-modal-h"><Icon name="archive" :size="16" /> {{ arcOpen.goal || '归档详情' }}</div>
             <div class="adm-mlist">
               <p class="adm-hint">{{ arcOpen.room_id }} · {{ arcOpen.done_count }}/{{ arcOpen.total_count }} 完成 · {{ arcOpen.archived_by }} 于 {{ arcOpen.archived_at }} 归档</p>
               <h3 class="adm-arc-h">收尾摘要</h3>
@@ -1564,7 +1564,7 @@
         <template v-else-if="rdData">
           <div class="rd-body">
             <div class="rd-sec">
-              <div class="rd-cap">🤖 AI 人设</div>
+              <div class="rd-cap"><Icon name="bot" :size="14" /> AI 人设</div>
               <p v-if="rdData.persona.aiName || rdData.persona.prompt" class="rd-text">
                 <b v-if="rdData.persona.aiName">{{ rdData.persona.aiName }}</b>
                 <span v-if="rdData.persona.prompt"> — {{ rdData.persona.prompt }}</span>
@@ -1572,21 +1572,21 @@
               <p v-else class="rd-empty">未配置(用平台默认人设)</p>
             </div>
             <div class="rd-sec">
-              <div class="rd-cap">🎭 智能体(Agent)</div>
+              <div class="rd-cap"><Icon name="studio" :size="14" /> 智能体(Agent)</div>
               <p v-if="rdData.agents.length" class="rd-text">
                 <span v-for="a in rdData.agents" :key="a.slug" class="adm-tag member rd-chip">{{ a.name }}</span>
               </p>
               <p v-else class="rd-empty">未绑定</p>
             </div>
             <div class="rd-sec">
-              <div class="rd-cap">🛠 技能(Skill)</div>
+              <div class="rd-cap"><Icon name="skills" :size="14" /> 技能(Skill)</div>
               <p v-if="rdData.skills.length" class="rd-text">
                 <span v-for="k in rdData.skills" :key="k.slug" class="adm-tag rd-chip" :class="k.enabled ? 'member' : 'off'">{{ k.name }}{{ k.enabled ? '' : '(停用)' }}</span>
               </p>
               <p v-else class="rd-empty">本频道无自建技能</p>
             </div>
             <div class="rd-sec">
-              <div class="rd-cap">⚖️ RULE(规则)</div>
+              <div class="rd-cap"><Icon name="rules" :size="14" /> RULE(规则)</div>
               <template v-if="rdData.rules.length || rdData.task_rule">
                 <p v-for="(ru, i) in rdData.rules" :key="i" class="rd-text">· <b>{{ ru.label }}</b><span v-if="ru.desc">:{{ ru.desc }}</span></p>
                 <p v-if="rdData.task_rule" class="rd-text">· <b>专班任务约束</b>:{{ rdData.task_rule }}</p>
@@ -1594,7 +1594,7 @@
               <p v-else class="rd-empty">未配置规则</p>
             </div>
             <div class="rd-sec">
-              <div class="rd-cap">📚 知识库</div>
+              <div class="rd-cap"><Icon name="knowledge" :size="14" /> 知识库</div>
               <p v-if="rdData.kb_sources.length" class="rd-text">绑定来源:{{ rdData.kb_sources.join('、') }}</p>
               <template v-if="rdData.kb_docs.length">
                 <template v-for="d in rdData.kb_docs" :key="d.id">
@@ -1607,7 +1607,7 @@
               <p v-if="!rdData.kb_sources.length && !rdData.kb_docs.length" class="rd-empty">无绑定来源、无已上传文档</p>
             </div>
             <div class="rd-sec">
-              <div class="rd-cap">🧠 长期记忆</div>
+              <div class="rd-cap"><Icon name="memory" :size="14" /> 长期记忆</div>
               <p v-if="rdData.memory" class="rd-text rd-mem">{{ rdData.memory }}</p>
               <p v-else class="rd-empty">暂无长期记忆摘要</p>
             </div>
@@ -1728,6 +1728,7 @@ import {
   type WorkflowDef,
 } from '@/matrix/client'
 import DocChannelView from '@/components/doc/DocChannelView.vue'
+import Icon from '@/components/Icon.vue'
 import { useToast } from '@/composables/useToast'
 import { useListSearch, useEnabledFilter } from '@/composables/useListSearch'
 
@@ -3669,7 +3670,9 @@ watch([tab, state], () => nextTick(rewireHead))
   margin-left: -26px; margin-right: -26px; padding: 6px 26px 10px;
   border-bottom: 1px solid var(--border);
 }
-.adm-search { flex: 1; min-width: 200px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-soft); color: var(--text); font-size: var(--fs-100); }
+/* 搜索框左侧的线性放大镜(Lucide search),用背景图代替此前 placeholder 里的 🔍 emoji,
+   一条规则覆盖所有 .adm-search;深色模式换更亮的描边色(见下方 @media)。 */
+.adm-search { flex: 1; min-width: 200px; padding: 8px 12px 8px 34px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-soft) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239a8f80' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E") no-repeat 11px center; color: var(--text); font-size: var(--fs-100); }
 .adm-search:focus { outline: none; border-color: var(--accent); }
 .adm-fsel { padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-soft); color: var(--text); font-size: var(--fs-75); cursor: pointer; }
 .adm-filter-n { font-size: var(--fs-75); color: var(--text-3); margin-left: auto; }
