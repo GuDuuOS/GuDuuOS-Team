@@ -284,6 +284,30 @@ class TestAssembleTeam(unittest.TestCase):
         self._run({"project": "全新项目", "tasks": [{"title": "占位任务"}]})
         self.assertEqual(self.client.created[0][0], "全新项目")
 
+    def test_dedup_via_recent_names_across_calls(self) -> None:
+        # 负责人实报:AI 连建两个完全同名的专班。根因是 Synapse /joined_rooms 有一致性延迟——
+        # 刚建的第一个还没进列表,建第二个时防重名看不到它。本进程记名补上,第二个必被改名。
+        self.client.joined_rooms = lambda: []                                   # type: ignore 服务端列表看不到刚建的
+        self.client.get_state_event = lambda rid, et, sk="": None               # type: ignore
+        self._run({"project": "卡卡形象设计", "tasks": [{"title": "占位任务"}]})
+        self._run({"project": "卡卡形象设计", "tasks": [{"title": "占位任务"}]})
+        names = [n for (n, _i, _a) in self.client.created]
+        self.assertEqual(names[0], "卡卡形象设计")
+        self.assertEqual(names[1], "卡卡形象设计专班")  # 第二个被改名,不再完全同名
+
+    def test_create_room_dedup_neutral_suffix(self) -> None:
+        # 普通建频道也防重名,用中性数字后缀(不加「专班」)。连建两个「综合」→ 第二个「综合（2）」。
+        self.client.joined_rooms = lambda: []                                   # type: ignore
+        self.client.get_state_event = lambda rid, et, sk="": None               # type: ignore
+        for _ in range(2):
+            self.tb.execute(
+                ToolCall(id="x", name="create_room", arguments={"name": "综合"}),
+                ToolContext("!cur:h", "@owner:h"),
+            )
+        names = [n for (n, _i, _a) in self.client.created]
+        self.assertEqual(names[0], "综合")
+        self.assertEqual(names[1], "综合（2）")
+
 
 class TestTaskReviewTools(unittest.TestCase):
     """档4 派单+审核回填：list_room_tasks / update_task（含跨频道越权防护）。"""
