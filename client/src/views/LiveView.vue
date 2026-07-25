@@ -380,11 +380,16 @@ function dueMeta(t: TaskItem): { text: string; cls: string } | null {
   if (!t.due_ts || t.status === 'done') return null
   const d = new Date(t.due_ts * 1000)
   const when = `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-  const diff = t.due_ts - Date.now() / 1000  // 距截止秒数（负=已逾期）
-  if (diff < 0) return { text: `已逾期 · ${when}`, cls: 'overdue' }
-  if (diff < 86400) return { text: `今天到期 · ${when}`, cls: 'soon' }
-  const days = Math.floor(diff / 86400)
-  if (days <= 2) return { text: `还剩 ${days} 天 · ${when}`, cls: 'soon' }
+  const now = new Date()
+  if (t.due_ts < now.getTime() / 1000) return { text: `已逾期 · ${when}`, cls: 'overdue' }
+  // 「今天/明天」必须按**自然日(日历天)**判,不能用"距现在不足24h"——否则今晚 22:00 看
+  // 明早 09:00 的任务(才隔 11h)会误报"今天到期",其实是明天(负责人实报)。按午夜对齐算天数差。
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const startOfDue = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const dayDiff = Math.round((startOfDue - startOfToday) / 86400000)
+  if (dayDiff <= 0) return { text: `今天到期 · ${when}`, cls: 'soon' }
+  if (dayDiff === 1) return { text: `明天到期 · ${when}`, cls: 'soon' }
+  if (dayDiff <= 2) return { text: `还剩 ${dayDiff} 天 · ${when}`, cls: 'soon' }
   return { text: `${when} 截止`, cls: '' }
 }
 function nextStatus(s: string) { return s === 'todo' ? 'doing' : 'done' }
