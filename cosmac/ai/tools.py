@@ -1146,11 +1146,13 @@ class Toolbox:
             user_rooms = self.client.admin_user_joined_rooms(ctx.sender)
         except Exception:
             user_rooms = None
-        is_admin = bool(self.is_admin and self.is_admin(ctx.sender))
+        # 作用域=**发起人自己真实加入的房间**(与其侧栏工作区完全一致)。
+        # 负责人实报:管理员问"当前账号下的频道",却被列出了别的管理员工作区(咕嘟)的频道——
+        # 根因是此前给管理员额外并上了 bot 服务的**全部**频道(跨所有账号/工作区)。那不是
+        # "当前账号下"该有的范围,是跨账号越界。故不再为管理员做全集并入;要平台级频道审计,
+        # 走后台「频道管理」页(那里本就是全服视角、且是管理界面)。
         if user_rooms is not None:
-            # 全集=发起人真实房间;平台管理员额外并上 bot 服务的全部频道(跨工作区统筹)
-            candidates = list(dict.fromkeys(
-                list(user_rooms) + (sorted(bot_rooms) if is_admin else [])))
+            candidates = list(user_rooms)
         else:
             candidates = sorted(bot_rooms)
         if not candidates:
@@ -1174,8 +1176,9 @@ class Toolbox:
                 if in_bot:
                     if self._room_kind(rid) != "channel":
                         continue  # AI 会话房/私信不算频道
-                    # 旧口径回退时仍要按发起人过滤(隐私边界);admin 全集本就是发起人的房
-                    if user_rooms is None and not is_admin \
+                    # 回退口径(无 admin token)仍要按发起人过滤(隐私/作用域边界)——
+                    # 管理员也不例外:列的是"当前账号下"的频道,不是全服(负责人实报越界)。
+                    if user_rooms is None \
                             and not self.client.is_joined_member(rid, ctx.sender):
                         continue
                 cached = self._room_name_cache.get(rid)
@@ -1201,7 +1204,8 @@ class Toolbox:
         if not entries:
             return "没有找到你所在的频道。"
         total = len(entries)
-        head = f"全部频道({total} 个,跨工作区)" if is_admin else f"你所在的频道({total} 个)"
+        # 作用域统一为"发起人所在的频道"(管理员亦然,不再全服),标题据实描述,别再写"全部/跨工作区"
+        head = f"你所在的频道({total} 个)"
         # 按工作区分组渲染:有归属的按工作区名列;孤儿归「未归类」;完全没读到 Space → 平铺
         lines: List[str] = []
         if spaces:

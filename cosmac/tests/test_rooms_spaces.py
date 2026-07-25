@@ -116,6 +116,37 @@ class TestRoomsGroupedBySpace(unittest.TestCase):
         self.assertIn("工作区归属信息暂不可用", out)
         self.assertNotIn("工作区「", out)
 
+    def test_admin_does_not_see_other_admin_channels(self) -> None:
+        """负责人实报:平台管理员问"当前账号下的频道",被列出了别的管理员工作区的频道。
+        作用域应=发起人自己加入的房间,bot 服务的别人频道即便 bot 在里面也**不列**。"""
+
+        class CrossTenantClient(SpacedClient):
+            OTHER = "!ch-other-admin:h"  # 另一个管理员的频道(bot 在,但当前用户没加入)
+
+            def joined_rooms(self):
+                return super().joined_rooms() + [self.OTHER]  # bot 也进驻了别人的频道
+
+            def admin_room_name(self, room_id):
+                if room_id == self.OTHER:
+                    return "咕嘟宣传推广"
+                return super().admin_room_name(room_id)
+
+            def get_state_event(self, room_id, etype, state_key=""):
+                if room_id == self.OTHER and etype == "m.room.name":
+                    return {"name": "咕嘟宣传推广"}
+                return super().get_state_event(room_id, etype, state_key)
+            # 注意:admin_user_joined_rooms 继承父类,**不含** OTHER —— 当前用户没加入它
+
+        tb = Toolbox(CrossTenantClient())
+        tb.is_admin = lambda uid: True  # 发起人是平台管理员
+        out = tb.execute(
+            ToolCall(id="x", name="list_my_rooms", arguments={}),
+            ToolContext("!cur:h", "@alice:h", is_dm=True),
+        )
+        self.assertIn("车位抽取", out)              # 自己工作区的频道照列
+        self.assertNotIn("咕嘟宣传推广", out)       # 别的管理员的频道不列(此前会越界列出)
+        self.assertNotIn("跨工作区", out)           # 标题也不再自称"全部/跨工作区"
+
 
 if __name__ == "__main__":
     unittest.main()
