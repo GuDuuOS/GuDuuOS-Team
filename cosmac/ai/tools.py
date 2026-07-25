@@ -203,6 +203,9 @@ class Toolbox:
         # 用于 list_my_rooms 的可见范围：普通用户只看自己在的频道(隐私边界)；管理员/负责人看
         # 全部 bot 频道(跨工作区统筹——否则他查不到自己没加入、但组织里存在的频道)。None=当作非管理员。
         self.is_admin: Optional[Callable[[str], bool]] = None
+        # 已停用账号集回调(bot 注入 _deactivated_user_ids)。签名 ()->set|None。
+        # 邀请成员前用它拦掉停用账号(登不进来,邀了也白搭;负责人实报 AI 会邀停用账号)。
+        self.inactive_users: Optional[Callable[[], Any]] = None
         # 工具名 → (说明书, 执行函数)。执行函数签名: (arguments, ctx) -> 结果文本
         self._tools: Dict[str, Dict[str, Any]] = {}
         # 启用集合：None = 全部启用（默认）；否则只启用集合内的工具。
@@ -1362,6 +1365,31 @@ class Toolbox:
         self._room_name_cache[room_id] = (nm, now)
         return nm
 
+    def _invite_precheck(self, room_id: str, user_id: str, ctx: ToolContext) -> Optional[str]:
+        """邀请前校验成员状态与群内关系(负责人实报:AI 邀了停用账号、还邀了群主本人)。
+        返回不可邀的原因文本;None=可邀。三种拦截:
+          ① 就是发起人自己(群主本人)——已经在群里,邀请自己无意义;
+          ② 已是群成员——重复邀请;
+          ③ 已停用账号——登不进来,邀了也白搭。
+        """
+        # ① 自己/发起人(建群者=群主):无需邀请
+        if user_id == ctx.sender:
+            return f"{user_id} 就是你自己（群主/发起人），已经在群里了，无需邀请。"
+        # ② 已在群里(群主、已加入成员都算)
+        try:
+            if room_id and self.client.is_joined_member(room_id, user_id):
+                return f"{user_id} 已经在这个群里了，无需重复邀请。"
+        except Exception:
+            pass  # 查不到成员关系不阻断,继续后面的邀请(fail-open)
+        # ③ 停用账号:登不进来
+        try:
+            inactive = self.inactive_users() if self.inactive_users else None
+        except Exception:
+            inactive = None
+        if inactive and user_id in inactive:
+            return f"{user_id} 是已停用账号，登不进来，邀请也没用。请先让管理员恢复该账号，或改邀其他人。"
+        return None
+
     def _tool_invite_to_room(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         """邀请用户进已有房间。默认当前房间；指定别的房间要过 _check_room_access 防越权。"""
         user_id = str(args.get("user_id") or "").strip()
@@ -1388,6 +1416,10 @@ class Toolbox:
         denial = self._check_room_access(room_id, ctx)
         if denial:
             return denial
+        # 邀请前校验:群主本人/已在群/停用账号一律拦下(负责人实报 AI 未校验就邀)
+        blocked = self._invite_precheck(room_id, user_id, ctx)
+        if blocked:
+            return blocked
         # 带状态邀请:拿到真实失败原因,别让模型对用户瞎猜"可能未注册/可能没权限"
         if hasattr(self.client, "invite_user_status"):
             ok, status, err = self.client.invite_user_status(room_id, user_id)
@@ -2264,10 +2296,19 @@ class Toolbox:
         # 专班房**真建成**才消费 teams 配额（终身配额，失败绝不能扣——否则免费用户被一次
         # Synapse 抖动扣光就永久锁死，审查 bug#7）。
         self._consume_quota(ctx, "assemble_team")
-        invited, failed = [], []
+        invited, failed, skipped = [], [], []
+        # 先取一次停用账号集(整批共用,避免每人翻一遍)
+        try:
+            _inactive = self.inactive_users() if self.inactive_users else None
+        except Exception:
+            _inactive = None
         for m in members:
             if m == ctx.sender:
-                continue  # 发起人建房时已邀
+                continue  # 发起人建房时已邀(群主本人)
+            # 校验:停用账号登不进来,跳过并如实说明(负责人实报 AI 邀了停用账号)
+            if _inactive and m in _inactive:
+                skipped.append(m)
+                continue
             try:
                 ok = self.client.invite_user(room_id, m)
             except Exception:
@@ -2448,6 +2489,8 @@ class Toolbox:
             parts.append("已邀请：" + "、".join(invited))
         if failed:
             parts.append("未邀到（账号可能不存在）：" + "、".join(failed))
+        if skipped:
+            parts.append("已跳过（账号已停用、登不进来）：" + "、".join(skipped))
         if config_ok:
             # 只有频道配置真写进去了，才宣称人设/协作/知识库/RULE 已生效（M7）
             parts.append(f"项目主AI：{lead}" if lead else "项目主AI：内置编排人设")
@@ -2504,6 +2547,11 @@ class Toolbox:
         summary = [f"已建好专班「{channel_name}」{rename_note}(room_id={room_id})，邀到 {len(invited)} 人"]
         if failed:
             summary.append(f"{len(failed)} 人没邀到（{('、'.join(failed))}，账号可能不存在）")
+        if skipped:
+            summary.append(
+                f"{len(skipped)} 人已跳过（{('、'.join(skipped))}，账号已停用登不进来）——"
+                "如实告诉用户这些人被跳过的原因,别假装邀了"
+            )
         if not config_ok:
             # M7：配置写失败——如实告知模型，避免它转述"已绑好人设/RULE/技能"误导用户；且明确
             # 房间已建、别再调 assemble_team 重建（会重复建房/重复派单/配额二次扣）。

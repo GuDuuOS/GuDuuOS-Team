@@ -256,6 +256,8 @@ class CosmacBot:
         self.toolbox.list_capabilities = self._list_capabilities_for_tool
         # 频道清单可见范围：管理员/负责人可跨工作区看全部频道，普通用户只看自己在的（隐私边界）。
         self.toolbox.is_admin = self._is_platform_admin
+        # 邀请前校验停用账号用：AI 拉人时跳过登不进来的停用账号（负责人实报）。
+        self.toolbox.inactive_users = self._deactivated_user_ids
         # 资源存在性校验(组班链路完善):assemble_team 据此识别"库里没有的 Agent/Skill"并提醒缺口。
         # M2 越权修复:带 for_user 时按发起人 access 过滤——发起人**够不到**的受限智能体不进可见集,
         # assemble_team 里点名它当 lead/worker 会被当"缺口"剔除(不注入其付费人设),堵住"点名绕过
