@@ -482,48 +482,12 @@
             </div>
           </div>
 
-          <!-- 预置技能库（平台内置，随对应 AI 同事激活；可覆盖为自定义）-->
-          <div v-if="presetSkillsFiltered.length" class="adm-preset-block">
-            <div class="adm-preset-h">
-              <span><Icon name="puzzle" :size="15" /> 预置技能库{{ skSearch ? `（匹配 ${presetSkillsFiltered.length}/${presetSkills.length}）` : '' }}</span>
-              <span class="adm-preset-sub">平台内置、<b>改不动</b> · 已绑给对应 AI 同事，@ 或指派它时自动激活，不占每轮上下文。想改某个 → 点「覆盖为自定义」复制成<b>可编辑副本</b>（同标识），你改完保存后<b>用你这份</b>。</span>
-            </div>
-            <table class="adm-table">
-              <thead>
-                <tr><th>标识</th><th>名称</th><th>说明</th><th>随谁激活</th><th>操作</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="s in presetSkillsFiltered" :key="'p-' + s.slug">
-                  <td class="adm-nowrap"><code>{{ s.slug }}</code></td>
-                  <td class="adm-nowrap">
-                    {{ s.name || '—' }}
-                    <span v-if="overriddenSlugs.has(s.slug)" class="adm-badge" title="已在下方自定义覆盖">已自定义</span>
-                  </td>
-                  <td class="adm-skill-desc">{{ s.description || '—' }}</td>
-                  <td class="adm-nowrap">{{ (s.agents && s.agents.length) ? s.agents.join('、') : '—' }}</td>
-                  <td class="adm-row-actions">
-                    <button
-                      class="adm-btn ghost sm"
-                      :disabled="skSaving || overriddenSlugs.has(s.slug)"
-                      :title="overriddenSlugs.has(s.slug)
-                        ? '已经有一份同标识的自定义版在生效，覆盖内置的'
-                        : '内置技能改不动。点它把这条复制成一份可编辑的自定义副本（同标识 slug），你改完保存后就用你这份、盖掉内置的。'"
-                      @click="overridePreset(s)"
-                    >
-                      {{ overriddenSlugs.has(s.slug) ? '已覆盖' : '覆盖为自定义' }}
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
           <!-- 自定义技能列表（控制室 state event，可编辑/删除）-->
-          <div class="adm-preset-h" style="margin-top:16px">
+          <div class="adm-preset-h">
             <span><Icon name="edit" :size="15" /> 自定义技能</span>
             <span class="adm-preset-sub">你在后台建的技能（覆盖预置或全新）</span>
           </div>
-          <p v-if="!skills.length" class="adm-hint">还没有自定义技能。点右上「新建技能」加一个，或从上方预置技能「覆盖为自定义」。</p>
+          <p v-if="!skills.length" class="adm-hint">还没有自定义技能。点右上「新建技能」加一个，或从下方预置技能「覆盖为自定义」。</p>
           <table v-else class="adm-table">
             <thead>
               <tr><th>标识</th><th>名称</th><th>说明</th><th>可用范围</th><th>生效</th><th>状态</th><th>操作</th></tr>
@@ -546,6 +510,43 @@
               </tr>
             </tbody>
           </table>
+
+          <!-- 预置技能库（平台内置，随对应 AI 同事激活；可覆盖为自定义）-->
+          <div v-if="presetSkillsFiltered.length" class="adm-preset-block" style="margin-top:18px">
+            <div class="adm-preset-h">
+              <span><Icon name="puzzle" :size="15" /> 预置技能库{{ skSearch ? `（匹配 ${presetSkillsFiltered.length}/${presetSkills.length}）` : '' }}</span>
+              <span class="adm-preset-sub">平台内置、<b>改不动</b> · 已绑给对应 AI 同事，@ 或指派它时自动激活，不占每轮上下文。想改某个 → 点「覆盖为自定义」复制成<b>可编辑副本</b>（同标识），你改完保存后<b>用你这份</b>。</span>
+            </div>
+            <table class="adm-table">
+              <thead>
+                <tr><th>标识</th><th>名称</th><th>说明</th><th>随谁激活</th><th>操作</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="s in presetSkillsFiltered" :key="'p-' + s.slug">
+                  <td class="adm-nowrap"><code>{{ s.slug }}</code></td>
+                  <td class="adm-nowrap">
+                    {{ s.name || '—' }}
+                    <span v-if="overriddenSlugs.has(s.slug)" class="adm-badge" title="已在上方自定义覆盖">已自定义</span>
+                  </td>
+                  <td class="adm-skill-desc">{{ s.description || '—' }}</td>
+                  <td class="adm-nowrap">{{ (s.agents && s.agents.length) ? s.agents.join('、') : '—' }}</td>
+                  <td class="adm-row-actions">
+                    <button
+                      class="adm-btn ghost sm"
+                      :disabled="skSaving || overriddenSlugs.has(s.slug)"
+                      :title="overriddenSlugs.has(s.slug)
+                        ? '已经有一份同标识的自定义版在生效，覆盖内置的'
+                        : '内置技能改不动。点它把这条复制成一份可编辑的自定义副本（同标识 slug），你改完保存后就用你这份、盖掉内置的。'"
+                      @click="overridePreset(s)"
+                    >
+                      {{ overriddenSlugs.has(s.slug) ? '已覆盖' : '覆盖为自定义' }}
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
         </div>
       </template>
 
