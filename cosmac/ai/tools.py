@@ -949,9 +949,11 @@ class Toolbox:
         self._register(
             name="archive_project",
             description=(
-                "**收尾归档当前专班频道**：当本频道所有任务节点都已完成并审核通过后，"
+                "**收尾归档一个专班频道**：当该频道所有任务节点都已完成并审核通过后，"
                 "把整盘项目（总目标 + 各任务快照 + 你写的收尾摘要）存成一条归档记录，"
-                "并**清掉本频道的 AI 长期记忆**（项目已结，不再占用记忆），最后在群里贴一条收尾通知、提示可关闭频道。\n"
+                "并**清掉该频道的 AI 长期记忆**（项目已结，不再占用记忆），最后在群里贴一条收尾通知、提示可关闭频道。\n"
+                "⚠️ **在私人会话里归档某个频道时，必须用 room 指明是哪个频道**（说频道名即可）——"
+                "否则会错把当前私聊当成要归档的频道，导致归档不到真正的频道。\n"
                 "调用前务必：① 用 list_room_tasks 确认确实全部 done；② 先用 ask_user_choice 征得用户同意归档关闭，得到确认再调。\n"
                 "summary 用一两句话总结这个项目交付了什么、关键结论。"
             ),
@@ -961,6 +963,13 @@ class Toolbox:
                     "summary": {
                         "type": "string",
                         "description": "项目收尾摘要：交付了什么、关键结论（必填，给归档记录用）。",
+                    },
+                    "room": {
+                        "type": "string",
+                        "description": (
+                            "要归档的频道：频道名（如『心理健康科普』）或 room_id。"
+                            "**私人会话里归档别的频道时必填**；在频道内直接归档本频道可省略。"
+                        ),
                     },
                 },
                 "required": ["summary"],
@@ -2148,12 +2157,13 @@ class Toolbox:
             logger.exception("更新任务失败")
             return "更新任务失败（数据库不可用？）。"
 
-    def _can_archive(self, ctx: ToolContext) -> bool:
-        """能否归档本频道（L9）：平台管理员 或 本频道管理员(power≥50)。读不到权限→False(拒绝)。"""
+    def _can_archive(self, ctx: ToolContext, room_id: str = "") -> bool:
+        """能否归档目标频道（L9）：平台管理员 或 该频道管理员(power≥50)。读不到权限→False(拒绝)。"""
+        room_id = room_id or ctx.room_id
         try:
             if self.is_admin and self.is_admin(ctx.sender):
                 return True
-            pl = self.client.get_state_event(ctx.room_id, "m.room.power_levels") or {}
+            pl = self.client.get_state_event(room_id, "m.room.power_levels") or {}
             users = pl.get("users") if isinstance(pl, dict) else None
             users = users if isinstance(users, dict) else {}
             default = int(pl.get("users_default", 0) or 0) if isinstance(pl, dict) else 0
@@ -2172,10 +2182,38 @@ class Toolbox:
         L9 授权：清长期记忆是**不可逆**的破坏性收尾，绝不能让频道内任意普通成员一句话触发。
         只有频道管理员（power≥50；assemble_team 已把发起人设为 100）或平台管理员能做。
         """
-        # L9：破坏性动作前置授权，读不到权限一律拒绝（fail-closed）
-        if not self._can_archive(ctx):
+        # 目标频道解析（负责人实报:在私聊里归档某频道,却因 room_id=私聊房而归档不到）。
+        # 私聊里归档必须指明频道；在频道内不带 room 则归档本频道。
+        target = str(args.get("room") or "").strip()
+        room_id = ctx.room_id
+        if target and target != ctx.room_id:
+            if target.startswith("!"):
+                room_id = target
+            else:
+                rid, err = self._resolve_room_by_name(target)
+                if not rid:
+                    return err or f"没找到叫「{target}」的频道。"
+                room_id = rid
+            # 越权防护:归档非当前频道要求发起人是该频道成员
+            try:
+                member_ids = {
+                    str(m.get("user_id") or "")
+                    for m in (self.client.get_members(room_id) or [])
+                }
+                if ctx.sender not in member_ids:
+                    return f"你不在频道「{target}」里,不能归档它。"
+            except Exception:
+                return "确认频道成员失败(服务波动?),请稍后再试。"
+        elif ctx.is_dm:
+            # 私聊里没指明频道:绝不能把私聊本身当频道归档(会归档不到真频道,还清私聊记忆)
             return (
-                "归档会清空本频道的长期记忆（不可逆），属项目收尾动作，只有频道管理员/项目负责人"
+                "当前是你与我的私聊会话——请告诉我要归档**哪个频道**（说频道名即可，"
+                "比如『归档 心理健康科普』），我才能把那个专班收尾归档。"
+            )
+        # L9：破坏性动作前置授权，读不到权限一律拒绝（fail-closed）——按**目标频道**校验
+        if not self._can_archive(ctx, room_id):
+            return (
+                "归档会清空该频道的长期记忆（不可逆），属项目收尾动作，只有频道管理员/项目负责人"
                 "能操作。如确需归档，请让频道管理员来做。"
             )
         summary = (args.get("summary") or "").strip()
@@ -2187,7 +2225,7 @@ class Toolbox:
             from cosmac.db.task_repo import list_tasks
 
             with session_scope() as s:
-                rows = list_tasks(s, room_ids=[ctx.room_id])
+                rows = list_tasks(s, room_ids=[room_id])
                 if not rows:
                     return "本频道没有任务，无需归档。"
                 # 任务快照 + 完成度统计
@@ -2211,7 +2249,7 @@ class Toolbox:
                 total = len(rows)
                 create_archive(
                     s,
-                    room_id=ctx.room_id,
+                    room_id=room_id,
                     goal=goal,
                     summary=summary,
                     tasks=snapshot,
@@ -2220,7 +2258,7 @@ class Toolbox:
                     archived_by=ctx.sender,
                 )
                 # 项目已结：清掉本频道的滚动长期记忆，不浪费 Agent 记忆（成果已进归档）
-                cleared = clear_summary(s, SCOPE_ROOM, ctx.room_id)
+                cleared = clear_summary(s, SCOPE_ROOM, room_id)
         except Exception:
             logger.exception("归档专班失败")
             return "归档失败（数据库不可用？），频道先别关，稍后再试。"
@@ -2228,7 +2266,7 @@ class Toolbox:
         # 写一个『已归档』state 标记（best-effort：失败不影响归档已落库）
         try:
             self.client.set_state_event(
-                ctx.room_id, "cosmac.project.archived",
+                room_id, "cosmac.project.archived",
                 {"archived": True, "summary": summary[:500], "by": ctx.sender,
                  "done": done, "total": total},
             )
@@ -2243,12 +2281,12 @@ class Toolbox:
             "如不再需要，可以关闭/退出本频道了。"
         )
         try:
-            self.client.send_text(ctx.room_id, note)
+            self.client.send_text(room_id, note)
         except Exception:
             logger.warning("贴归档通知失败（已忽略）")
 
         mem = "，已清理频道长期记忆" if cleared else ""
-        return f"已归档专班「{goal or ctx.room_id}」（{done}/{total} 完成）{mem}。已在群里贴出收尾通知并提示可关闭频道。"
+        return f"已归档专班「{goal or room_id}」（{done}/{total} 完成）{mem}。已在群里贴出收尾通知并提示可关闭频道。"
 
     def _tool_assemble_team(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         """一键建专班（模块3.5 档3）：建频道→拉人→绑AI→写任务RULE/技能→派单。
