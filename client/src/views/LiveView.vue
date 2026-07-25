@@ -223,7 +223,21 @@ const TASK_COLS = [
   { key: 'doing', label: '进行中' },
   { key: 'done', label: '已完成' },
 ]
-async function loadTasks() { taskList.value = await getTasks() }
+// 刷新态:给看板右上「刷新」按钮做视觉反馈(转圈+禁用)——否则点下去看板不变化,
+// 用户以为按钮坏了(负责人实报"点击无反应")。至少转一小会儿,让点击有明确回应。
+const tasksRefreshing = ref(false)
+async function loadTasks() {
+  tasksRefreshing.value = true
+  const started = Date.now()
+  try {
+    taskList.value = await getTasks()
+  } finally {
+    // 请求太快时也让转圈至少可见 ~400ms,避免"闪一下等于没反应"
+    const wait = 400 - (Date.now() - started)
+    if (wait > 0) await new Promise((res) => setTimeout(res, wait))
+    tasksRefreshing.value = false
+  }
+}
 // ── 系统级逾期提醒(负责人需求):不依赖 AI 聊天消息的平台自身提醒 ──
 // 「我的逾期任务」= 派给我 + 未完成 + 截止时间已过。角标常驻侧栏,登录时每天弹一次提示。
 const myOverdueTasks = computed(() =>
@@ -2540,8 +2554,8 @@ onBeforeUnmount(() => {
             <div class="title">📋 任务看板</div>
             <div class="ch-actions">
               <span class="board-sub">{{ scopedTasks.length }} 个任务 · 主 AI 拆解</span>
-              <button class="ch-ic-btn" title="刷新" @click="loadTasks">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" /></svg>
+              <button class="ch-ic-btn" title="刷新" :disabled="tasksRefreshing" @click="loadTasks">
+                <svg class="tb-refresh-ic" :class="{ spinning: tasksRefreshing }" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" /></svg>
               </button>
             </div>
           </div>
@@ -3842,6 +3856,9 @@ onBeforeUnmount(() => {
 /* 工具条上传中的小转圈 */
 .tb-spin { width: 13px; height: 13px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: tb-spin .7s linear infinite; }
 @keyframes tb-spin { to { transform: rotate(360deg); } }
+/* 任务看板「刷新」按钮:点击时图标转圈,给出明确视觉反馈(数据不变时也知道刷新在跑) */
+.tb-refresh-ic.spinning { animation: tb-spin .7s linear infinite; transform-origin: 50% 50%; }
+.ch-ic-btn:disabled { cursor: default; opacity: .7; }
 /* @提及高亮 */
 .text :deep(.mention), .ai-bubble :deep(.mention) { background: var(--accent-soft); color: var(--warn); border-radius: 4px; padding: 0 3px; font-weight: 600; }
 /* 回复预览（整行浮在头像上方 · 弯角连接线 + ↩ + 名字上色 + 正文淡色）*/
