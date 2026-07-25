@@ -1,4 +1,4 @@
-import{bb as l,ah as g,a4 as m,cx as v,a0 as x,ce as w}from"./index-D0BScSSz.js";const f=["app.cosmac.cc","localhost","127.0.0.1"];function R1(){return f.includes(window.location.hostname)?"https://hs.cosmac.cc":window.location.origin}const $1="/assets/cosmac-logo-Bgg8S7cg.png",b=(a,t)=>{const h=a.__vccOpts||a;for(const[c,r]of t)h[c]=r;return h};/**
+import{bb as l,ah as g,a4 as m,cx as v,a0 as x,ce as w}from"./index-DgCsF_KZ.js";const f=["app.cosmac.cc","localhost","127.0.0.1"];function R1(){return f.includes(window.location.hostname)?"https://hs.cosmac.cc":window.location.origin}const $1="/assets/cosmac-logo-Bgg8S7cg.png",b=(a,t)=>{const h=a.__vccOpts||a;for(const[c,r]of t)h[c]=r;return h};/**
  * @license lucide-vue-next v0.577.0 - ISC
  *
  * This source code is licensed under the ISC license.
