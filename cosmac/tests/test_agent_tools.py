@@ -666,5 +666,53 @@ class ProgressVisibilityTest(unittest.TestCase):
         self.assertEqual(cli.sent, [])
 
 
+class InvitePrecheckTest(unittest.TestCase):
+    """邀请前校验成员状态与群内关系(负责人实报:AI 邀了停用账号、还邀了群主本人)。"""
+
+    def _tb(self, *, joined=(), inactive=()):
+        joined_set, inactive_set = set(joined), set(inactive)
+
+        class C:
+            def is_joined_member(self, room, uid):
+                return uid in joined_set
+
+            def invite_user_status(self, room, uid):
+                return (True, 0, "")
+
+            def get_state_event(self, *a, **k):
+                return None
+
+        tb = Toolbox(C())
+        tb.inactive_users = lambda: inactive_set
+        tb._check_room_access = lambda room, ctx: None  # 放行访问校验,聚焦邀请前校验
+        return tb
+
+    def _invite(self, tb, uid, sender="@owner:test"):
+        return tb.execute(
+            ToolCall(id="x", name="invite_to_room",
+                     arguments={"user_id": uid, "room_id": "!r:test"}),
+            ToolContext("!r:test", sender, is_dm=False),
+        )
+
+    def test_self_invite_blocked(self):
+        out = self._invite(self._tb(), "@owner:test")  # 邀请自己=群主本人
+        self.assertIn("群主", out)
+        self.assertNotIn("已邀请", out)
+
+    def test_already_member_blocked(self):
+        out = self._invite(self._tb(joined={"@bob:test"}), "@bob:test")
+        self.assertIn("已经在", out)
+        self.assertNotIn("已邀请", out)
+
+    def test_inactive_account_blocked(self):
+        out = self._invite(self._tb(inactive={"@gone:test"}), "@gone:test")
+        self.assertIn("停用", out)
+        self.assertNotIn("已邀请", out)
+
+    def test_normal_invite_ok(self):
+        out = self._invite(self._tb(), "@new:test")
+        self.assertIn("已邀请", out)
+
+
 if __name__ == "__main__":
     unittest.main()
