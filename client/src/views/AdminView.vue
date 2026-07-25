@@ -3427,6 +3427,21 @@ async function loadOverview() {
 const mainEl = ref<HTMLElement | null>(null)
 let headRO: ResizeObserver | null = null
 
+/** 打开"编辑/新建"表单时把内容区滚回顶部。
+    后台各页(技能/智能体/模板/套餐/工作流)的编辑表单都渲染在内容区**顶部**,而列表里的
+    「编辑/新建/覆盖」按钮往往在滚动后的下方——不滚回去,表单在视口上方打开、当前屏毫无变化,
+    用户以为按钮没反应(负责人实报:技能库自定义技能「编辑」点击无反应)。滚到顶即让表单入眼。 */
+function scrollEditFormIntoView() {
+  nextTick(() => mainEl.value?.scrollTo({ top: 0, behavior: 'smooth' }))
+}
+// 任一"编辑/新建"表单打开(开关 false→true)时滚回顶部让表单入眼。集中在此监听,免得在
+// 十几个 startAdd/startEdit/覆盖 opener 里逐个漏加。六页(技能/智能体/人员/模板/套餐/工作流)
+// 的编辑表单都渲染在内容区顶部、都用 .adm-skill-edit,滚到顶即可见。
+watch(
+  [skEditing, agEditing, plEditing, tpEditing, planEditing, wfEditing],
+  (now, old) => { if (now.some((v, i) => v && !old[i])) scrollEditFormIntoView() },
+)
+
 /** 把当前页页头的实际高度写进 CSS 变量(没有页头的页面写 0)。 */
 function measureHead() {
   const box = mainEl.value
