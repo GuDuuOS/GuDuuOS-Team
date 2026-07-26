@@ -134,5 +134,58 @@ class InstanceGeoTest(unittest.TestCase):
         self.assertIsNone(rows["j.example.com"]["lat"])
 
 
+
+class RequestStatTest(unittest.TestCase):
+    """网关请求分钟桶：成功率 / 平均延迟 / 峰值（大屏质量指标的数据源）。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self._tmp.close()
+        db.init_engine("sqlite:///" + self._tmp.name)
+        self.s = db.session()
+        k = fleet.issue_keys(self.s, note="t", token_grant=100)[0]["key"]
+        self.iid = fleet.redeem(self.s, k, "q.example.com")["instance_id"]
+
+    def tearDown(self) -> None:
+        self.s.close()
+        os.unlink(self._tmp.name)
+
+    def test_success_rate_counts_failures(self) -> None:
+        """失败必须计入分母——只记成功的话成功率永远 100%。"""
+        for _ in range(3):
+            fleet.record_request(self.s, self.iid, ok=True, latency_ms=200)
+        fleet.record_request(self.s, self.iid, ok=False)
+        st = fleet.request_stats(self.s)[self.iid]
+        self.assertEqual((st["ok"], st["fail"]), (3, 1))
+        self.assertEqual(st["success_pct"], 75.0)
+
+    def test_latency_only_from_success(self) -> None:
+        """失败多是秒回的 4xx，混进均值会把延迟拉得虚低。"""
+        fleet.record_request(self.s, self.iid, ok=True, latency_ms=1000)
+        fleet.record_request(self.s, self.iid, ok=True, latency_ms=3000)
+        fleet.record_request(self.s, self.iid, ok=False, latency_ms=5)
+        self.assertEqual(fleet.request_stats(self.s)[self.iid]["avg_ms"], 2000)
+
+    def test_no_requests_yields_none_not_zero(self) -> None:
+        """没有请求时成功率必须是 None（前端显示「—」）——绝不能落成 0%。"""
+        self.assertEqual(fleet.request_stats(self.s), {})
+        summary = fleet.dash_summary(self.s)
+        self.assertIsNone(summary["oems"][0]["success_pct"])
+        self.assertIsNone(summary["totals"]["success_pct"])
+
+    def test_peak_per_min_and_summary(self) -> None:
+        for _ in range(5):
+            fleet.record_request(self.s, self.iid, ok=True, latency_ms=100)
+        self.s.commit()
+        summary = fleet.dash_summary(self.s)
+        self.assertEqual(summary["oems"][0]["peak_per_min"], 5)
+        self.assertEqual(summary["oems"][0]["success_pct"], 100.0)
+        self.assertEqual(summary["totals"]["peak_per_min"], 5)
+
+    def test_regions_only_counts_located_instances(self) -> None:
+        fleet.set_geo(self.s, self.iid, "CN-ZJ")
+        self.s.commit()
+        self.assertIn("浙江", fleet.dash_summary(self.s)["totals"]["regions"])
+
 if __name__ == "__main__":
     unittest.main()
