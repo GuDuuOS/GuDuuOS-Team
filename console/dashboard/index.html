@@ -138,28 +138,28 @@
                         <svg viewBox="0 0 12 12" aria-hidden="true">
                           <path d="m2 8 3-3 2 2 3-4"></path>
                         </svg>
-                        <span>14.6%</span>
+                        <span id="revenue-delta">14.6%</span>
                       </div>
                     </div>
                     <p class="metric-caption">累计收入金额 <span>·</span> 较上周期</p>
 
                     <div class="metric-pairs metric-pairs--revenue">
                       <article>
-                        <span>今日收入</span>
-                        <strong>$ 12,846</strong>
-                        <small class="positive">+15.3%</small>
+                        <span id="revenue-today-label">今日收入</span>
+                        <strong id="revenue-today">$ 12,846</strong>
+                        <small class="positive" id="revenue-today-delta">+15.3%</small>
                       </article>
                       <article>
-                        <span>本月预估</span>
-                        <strong>$ 386.2K</strong>
-                        <small class="neutral">目标达成 81%</small>
+                        <span id="revenue-month-label">本月预估</span>
+                        <strong id="revenue-month">$ 386.2K</strong>
+                        <small class="neutral" id="revenue-month-meta">目标达成 81%</small>
                       </article>
                     </div>
 
                     <div class="trend-chart-wrap">
                       <div class="chart-labels chart-labels--revenue">
                         <span>近 24 小时收入</span>
-                        <strong>峰值 $ 1,184 / h</strong>
+                        <strong id="revenue-peak">峰值 $ 1,184 / h</strong>
                       </div>
                       <svg
                         class="revenue-trend-chart"
@@ -709,7 +709,7 @@
               <span><i class="legend__line"></i>实时数据链路</span>
             </div>
             <div class="universe-scale">
-              <span>网络同步</span>
+              <span id="net-sync-label">网络同步</span>
               <div><i></i></div>
               <strong>100%</strong>
             </div>
@@ -858,9 +858,9 @@
         <div class="statusbar__ticker">
           <span>数据更新时间 <strong id="updated-time">00:00:00</strong></span>
           <i></i>
-          <span>API Gateway <strong>Normal</strong></span>
+          <span>API Gateway <strong id="footer-gateway">Normal</strong></span>
           <i></i>
-          <span>Region <strong>CN-East-01</strong></span>
+          <span>Region <strong id="footer-region">CN-East-01</strong></span>
         </div>
         <div>VERSION 2.6.0</div>
       </footer>

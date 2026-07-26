@@ -678,12 +678,37 @@
     if (scoreEl) scoreEl.textContent = onlinePct.toFixed(1);
     const gradeEl = $("#health-grade");
     if (gradeEl) gradeEl.textContent = onlinePct >= 99 ? "A+" : onlinePct >= 90 ? "A" : onlinePct >= 75 ? "B" : "C";
+    // ⑪ 还没有数据源的指标:一律落成"诚实的零/占位",绝不留演示数字(负责人 2026-07-26 定)
+    neutralizeUnsourcedMetrics(tt);
     // ⑩ 无真实数据源的演示件：整体隐藏（调用效率/并发/存储/区域延迟/模拟接入按钮）
     for (const sel of ["#efficiency-panel", "#capacity-row-rps", "#capacity-row-storage", "#health-regions", "#add-oem"]) {
       const el = $(sel);
       if (el) el.style.display = "none";
     }
   }
+  /** 把"还没有数据源"的指标落成诚实值,别让编出来的数字看着像真的。
+   *
+   *  口径(负责人 2026-07-26 定):**没有真实数据源的就显示 0 这类**。但有一个例外——
+   *  **比率型指标不能显示 0%**(成功率写 0% 等于告诉运维"全部请求都失败了",比不显示更糟),
+   *  这类一律用「—」并标注"未采集"。
+   *  收入类目前恒为 0:真钱还没接(支付宝/微信 adapter 明天做),接通后这里换成真实订单金额。 */
+  function neutralizeUnsourcedMetrics(tt) {
+    const setText = (sel, text) => { const el = $(sel); if (el) el.textContent = text; };
+
+    // —— 营收轮播页:平台还没有任何真实收入(支付未接) ——
+    setText("#revenue-today", "¥ 0");
+    setText("#revenue-today-delta", "—");
+    setText("#revenue-month", "¥ 0");
+    setText("#revenue-month-meta", "支付未接入");
+    setText("#revenue-peak", "峰值 ¥ 0 / h");
+    setText("#revenue-delta", "—");
+
+    // —— 底部状态栏:没有探活/区域数据源,别写死"Normal / CN-East-01" ——
+    setText("#footer-gateway", (tt.online || 0) > 0 ? "Normal" : "—");
+    setText("#footer-region", "—");
+    setText("#net-sync-label", "网络同步");
+  }
+
   // ══════════ 真实数据适配层结束 ══════════
 
   function visualModeConfig(mode = state.visualMode) {
@@ -1214,12 +1239,27 @@
 
     const traffic = $("#map-traffic-bars");
     if (traffic) {
-      traffic.innerHTML = Array.from({ length: 72 }, (_, index) => {
-        const wave = Math.sin(index * 0.43) * 8 + Math.sin(index * 0.11 + 1.4) * 11;
-        const height = clamp(23 + wave + (index > 28 && index < 48 ? 13 : 0), 8, 53);
-        const tone = index > 28 && index < 48 ? "hot" : index > 56 ? "cyan" : "base";
-        return `<i class="map-traffic__bar map-traffic__bar--${tone}" style="height:${height}px"></i>`;
-      }).join("");
+      // 真实模式:用**真实的 24 小时逐时消耗**画柱子(这份数据本来就有,之前没接上,
+      // 柱形是 sin 波生成的装饰——数字真、波形假,容易被当成真实流量形态)。
+      // 没有真实数据(演示模式)时才回落到原来的装饰波形。
+      const real = REAL_TREND && REAL_TREND.length ? REAL_TREND : null;
+      if (real) {
+        const peak = Math.max(1, ...real);
+        traffic.innerHTML = real
+          .map((value) => {
+            const height = clamp(Math.round((value / peak) * 53), 2, 53);
+            const tone = value >= peak * 0.66 ? "hot" : value >= peak * 0.33 ? "cyan" : "base";
+            return `<i class="map-traffic__bar map-traffic__bar--${tone}" style="height:${height}px"></i>`;
+          })
+          .join("");
+      } else {
+        traffic.innerHTML = Array.from({ length: 72 }, (_, index) => {
+          const wave = Math.sin(index * 0.43) * 8 + Math.sin(index * 0.11 + 1.4) * 11;
+          const height = clamp(23 + wave + (index > 28 && index < 48 ? 13 : 0), 8, 53);
+          const tone = index > 28 && index < 48 ? "hot" : index > 56 ? "cyan" : "base";
+          return `<i class="map-traffic__bar map-traffic__bar--${tone}" style="height:${height}px"></i>`;
+        }).join("");
+      }
     }
   }
 
@@ -1659,7 +1699,8 @@
       $("#selected-avatar").style.setProperty("--avatar", node.color);
       $("#selected-code").textContent = `OEM · ${node.code}`;
       $("#selected-name").textContent = node.name;
-      $("#selected-token").textContent = `${node.token.toFixed(2)}B`;
+      // 单位跟全局自适应单位走;此前写死 "B" 会把 100M 显示成 100.00B(差 1000 倍)
+      $("#selected-token").textContent = `${node.token.toFixed(2)}${TOKEN_UNIT.label}`;
       $("#selected-requests").textContent = node.requests;
       $("#selected-latency").textContent = node.latency;
       $("#selected-models").textContent = `${node.models} 个模型在线`;
@@ -1708,10 +1749,13 @@
     $("#drawer-token").textContent = `${node.token.toFixed(2)}B`;
     $("#drawer-requests-label").textContent = "今日请求";
     $("#drawer-requests").textContent = node.requests;
-    $("#drawer-requests-meta").textContent = `峰值 ${Math.round(node.today * 1260).toLocaleString("en-US")} req/s`;
+    // 峰值 req/s 原先是 `今日用量 × 1260` 凭空乘出来的,网关没有分钟级采样 → 不编
+    $("#drawer-requests-meta").textContent = "峰值未采集";
     $("#drawer-success-label").textContent = "成功率";
-    $("#drawer-success").textContent = node.status === "offline" ? "97.82%" : node.status === "warning" ? "99.82%" : "99.97%";
-    $("#drawer-success-meta").textContent = node.status === "offline" ? "维护窗口内" : "高于目标 0.07%";
+    // ⚠️ 成功率**不能落 0%**——那等于宣称"全部请求都失败",比不显示更误导。
+    // 网关目前不记录成败,如实显示「—」。等网关加上成败计数再接真值。
+    $("#drawer-success").textContent = "—";
+    $("#drawer-success-meta").textContent = "网关未采集成功率";
     $("#drawer-latency-label").textContent = "平均延迟";
     $("#drawer-latency").textContent = node.latency;
     // 真实模式下延迟暂未采集（latency="—"），P95 跟着显示占位而不是 NaN
