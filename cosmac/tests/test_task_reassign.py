@@ -141,6 +141,36 @@ class TestUpdateTaskTool(unittest.TestCase):
         self.assertIn("已交给 TA 自动执行", out)
         self.assertEqual(fired, [(ROOM, "@boss:h", (self.tid,))])
 
+    def test_mark_agent_task_doing_triggers_autorun(self) -> None:
+        """负责人实报根因回归:把**已是 agent、尚无产出**的任务只标 status=doing(不重传
+        executor_kind)也要触发执行。此前外层闸只认本次传了 executor_kind=agent,于是这种
+        "只标 doing"的任务永远不执行→卡在 doing/进度0、频道无产出、AI 却谎报已交付。"""
+        from cosmac.db.task_repo import create_tasks
+        with session_scope() as s:
+            tid = create_tasks(s, goal="摆摊专班", items=[{
+                "title": "摊位文案", "executor_kind": "agent", "executor_ref": "copywriter",
+            }], room_id=ROOM, sender="@boss:h")[0].id
+        fired = []
+        self.box.auto_execute_agent_tasks = (  # type: ignore
+            lambda room, sender, ids, rule: fired.append((room, sender, tuple(ids))))
+        # 只标 doing,不传 executor_kind → 也应触发(任务本就是 agent、未完成、无产出)
+        out = self.box._tool_update_task({"task_id": tid, "status": "doing"}, self.ctx)
+        self.assertIn("已交给 TA 自动执行", out)
+        self.assertEqual(fired, [(ROOM, "@boss:h", (tid,))])
+
+    def test_doing_agent_task_in_flight_not_retriggered(self) -> None:
+        """已在执行中(进度≥10)的 agent 任务,再标 doing 不重复触发(防重复产出)。"""
+        from cosmac.db.task_repo import create_tasks
+        with session_scope() as s:
+            tid = create_tasks(s, goal="摆摊专班", items=[{
+                "title": "排班", "executor_kind": "agent", "executor_ref": "project-shepherd",
+            }], room_id=ROOM, sender="@boss:h")[0].id
+            update_task(s, tid, status="doing", progress=10)  # 模拟执行器已开跑
+        fired = []
+        self.box.auto_execute_agent_tasks = lambda *a: fired.append(a)  # type: ignore
+        self.box._tool_update_task({"task_id": tid, "status": "doing"}, self.ctx)
+        self.assertEqual(fired, [])  # 进度≥10 → 不重复触发
+
     def test_mark_done_does_not_trigger_autorun(self) -> None:
         """已完成/已交付的任务不因改派再被自动执行(避免重复产出)。"""
         fired = []
