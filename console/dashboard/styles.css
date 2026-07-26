@@ -13,6 +13,9 @@
   --purple-bright: #b7adff;
   --cyan: #35d9ff;
   --green: #57e6a5;
+  /* 文字专用:深色背景上浅绿本身对比度就够,与 --green 同值 */
+  --green-text: #57e6a5;
+  --purple-text: #8b7cff;
   --amber: #ffb65c;
   --red: #ff6b7e;
   --radius: 16px;
@@ -207,13 +210,18 @@ a:focus-visible {
   padding: 7px 16px;
   border: 1px solid rgba(255, 176, 106, 0.45);
   border-radius: 999px;
-  color: #ffb06a;
+  /* 原为 #ffb06a,在浅色顶栏上只有 1.8:1、远低于 AA。改用同色相的深橙:
+     保住"橙色强调"的语义,同时达标(4.6:1)。不用按比例压暗的 #9d6c41——
+     那样连饱和度一起掉,看着是褐灰不是橙。 */
+  color: #b35f00;
   text-decoration: none;
   font-size: 13px;
   letter-spacing: 0.04em;
   transition: background 0.2s ease, color 0.2s ease;
 }
-.portal-link:hover { background: rgba(255, 176, 106, 0.14); color: #ffd0a0; }
+/* hover 原本把字**调亮**(#ffd0a0)——那是深色主题下的正确方向,搬到浅底上
+   就成了「悬停反而更看不清」。浅底上改为加深文字 + 加重底色。 */
+.portal-link:hover { background: rgba(179, 95, 0, 0.12); color: #8a4800; }
 
 .system-live {
   display: flex;
@@ -256,7 +264,7 @@ a:focus-visible {
 
 .system-live strong {
   margin-top: 2px;
-  color: var(--green);
+  color: var(--green-text);
   font-size: 11px;
   font-weight: 600;
 }
@@ -544,7 +552,7 @@ a:focus-visible {
 }
 
 .trend-pill--revenue {
-  color: #d36f54;
+  color: #b45f48;
   background: rgba(243, 154, 73, 0.1);
 }
 
@@ -610,14 +618,14 @@ a:focus-visible {
 }
 
 .hero-metric__value.hero-metric__value--oem span {
-  color: #45aeca;
+  color: #338095;
   font-size: 10px;
   letter-spacing: 0.08em;
 }
 
 .trend-pill.trend-pill--oem {
   padding: 3px 4px;
-  color: #378fa9;
+  color: #318097;
   background: rgba(69, 190, 220, 0.1);
   font-size: 8px;
   white-space: nowrap;
@@ -706,7 +714,7 @@ a:focus-visible {
 }
 
 .trend-pill--up {
-  color: var(--green);
+  color: var(--green-text);
   background: rgba(87, 230, 165, 0.08);
 }
 
@@ -769,7 +777,7 @@ a:focus-visible {
 }
 
 .positive {
-  color: var(--green);
+  color: var(--green-text);
 }
 
 .neutral {
@@ -1023,7 +1031,7 @@ a:focus-visible {
 
 .ranking-item__value small {
   margin-top: 3px;
-  color: var(--green);
+  color: var(--green-text);
   font-size: 8px;
 }
 
@@ -1040,7 +1048,7 @@ a:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--green);
+  color: var(--green-text);
   font-size: 9px;
 }
 
@@ -1382,7 +1390,7 @@ a:focus-visible {
   padding: 3px 6px;
   border-radius: 4px;
   background: rgba(87, 230, 165, 0.07);
-  color: var(--green) !important;
+  color: var(--green-text) !important;
 }
 
 .node-state::before {
@@ -1520,7 +1528,7 @@ a:focus-visible {
 }
 
 .birth-toast small {
-  color: var(--green);
+  color: var(--green-text);
   font-size: 7px;
   letter-spacing: 0.14em;
 }
@@ -1715,7 +1723,7 @@ a:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--green);
+  color: var(--green-text);
   font-size: 8px;
   letter-spacing: 0.08em;
 }
@@ -1910,7 +1918,7 @@ a:focus-visible {
 }
 
 .health-card__summary em {
-  color: var(--green);
+  color: var(--green-text);
   font-size: 17px;
   font-style: normal;
   font-weight: 680;
@@ -2141,7 +2149,7 @@ a:focus-visible {
   padding: 4px 8px;
   border-radius: 5px;
   background: rgba(87, 230, 165, 0.08);
-  color: var(--green);
+  color: var(--green-text);
   font-size: 9px;
   font-weight: 550;
 }
@@ -2199,7 +2207,7 @@ a:focus-visible {
 }
 
 .drawer-grid-meta span {
-  color: #8d90a8;
+  color: #686a7c;
   font-size: 8px;
 }
 
@@ -2265,7 +2273,7 @@ a:focus-visible {
 }
 
 .drawer-section__head span {
-  color: var(--green);
+  color: var(--green-text);
   font-size: 9px;
 }
 
@@ -2353,7 +2361,7 @@ a:focus-visible {
 }
 
 .model-instances strong {
-  color: var(--green);
+  color: var(--green-text);
   font-size: 8px;
   font-weight: 540;
 }
@@ -2579,12 +2587,15 @@ body.motion-paused *::after {
   --border: rgba(92, 85, 151, 0.1);
   --border-bright: rgba(107, 94, 192, 0.2);
   --text: #292a47;
-  --muted: #7d809d;
+  --muted: #61637a;
   --muted-light: #60647f;
   --purple: #7565e7;
   --purple-bright: #6958d8;
   --cyan: #45bedc;
   --green: #27bd78;
+  /* 文字专用:浅底上 #27bd78 仅 2.43:1,远低于 AA(4.5);色块背景仍用 --green */
+  --green-text: #1c8756;
+  --purple-text: #7364e4;
   --amber: #f39a50;
   --red: #eb6079;
 }
@@ -2625,7 +2636,7 @@ body {
 .brand__copy small,
 .system-live small,
 .clock small {
-  color: #8f92aa;
+  color: #696b7d;
 }
 
 .topbar__title i,
@@ -2663,13 +2674,13 @@ body {
 }
 
 .eyebrow {
-  color: #9489d0;
+  color: #6d659a;
 }
 
 .panel-heading__tag {
   border-color: rgba(117, 101, 231, 0.12);
   background: rgba(245, 243, 255, 0.78);
-  color: #8e88ac;
+  color: #6a6681;
 }
 
 .hero-metric__value strong,
@@ -2688,7 +2699,7 @@ body {
 .efficiency-grid span,
 .distribution-legend span,
 .capacity-label span {
-  color: #8588a2;
+  color: #64677a;
 }
 
 .metric-caption span {
@@ -2696,7 +2707,7 @@ body {
 }
 
 .chart-labels span {
-  color: #757995;
+  color: #5c5f75;
 }
 
 .chart-labels strong,
@@ -2705,15 +2716,15 @@ body {
 }
 
 .chart-axis {
-  color: #a8aabd;
+  color: #747582;
 }
 
 .text-button {
-  color: #83869f;
+  color: #636679;
 }
 
 .text-button:hover {
-  color: var(--purple);
+  color: var(--purple-text);
 }
 
 .ranking-item:hover,
@@ -2723,15 +2734,15 @@ body {
 }
 
 .ranking-item__index {
-  color: #aaacc0;
+  color: #757684;
 }
 
 .ranking-item:nth-child(-n + 3) .ranking-item__index {
-  color: var(--purple);
+  color: var(--purple-text);
 }
 
 .ranking-item__info small {
-  color: #8e91aa;
+  color: #696b7d;
 }
 
 .efficiency-grid article {
@@ -2776,12 +2787,12 @@ body {
 }
 
 .activity-list p {
-  color: #757993;
+  color: #5c5f73;
 }
 
 .activity-list small,
 .capacity-list small {
-  color: #a0a2b7;
+  color: #717281;
 }
 
 .progress {
@@ -2794,7 +2805,7 @@ body {
 
 .health-card__summary span,
 .health-nodes span {
-  color: #8589a3;
+  color: #64677b;
 }
 
 .health-nodes {
@@ -2803,11 +2814,11 @@ body {
 
 .statusbar {
   border-color: rgba(92, 85, 151, 0.08);
-  color: #9a9caf;
+  color: #6e707d;
 }
 
 .statusbar strong {
-  color: #777b95;
+  color: #5d6074;
 }
 
 .statusbar__ticker > i {
@@ -2830,7 +2841,7 @@ body {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #888ba3;
+  color: #66687a;
   font-size: 9px;
   cursor: pointer;
   transition: 180ms ease;
@@ -2905,7 +2916,7 @@ body {
 }
 
 .map-heading span {
-  color: #9a8ed2;
+  color: #706799;
   font-size: 7px;
   font-weight: 720;
   letter-spacing: 0.18em;
@@ -2973,7 +2984,7 @@ body {
 }
 
 .map-kpis article > span {
-  color: #989bb0;
+  color: #6d6f7e;
   font-size: 8px;
 }
 
@@ -3100,14 +3111,14 @@ body {
 }
 
 .hex-hover-card small {
-  color: #9b92cb;
+  color: #706a93;
   font-size: 6px;
   font-weight: 720;
   letter-spacing: 0.14em;
 }
 
 .hex-hover-card em {
-  color: #7565e7;
+  color: #7364e4;
   font-size: 6px;
   font-style: normal;
 }
@@ -3122,7 +3133,7 @@ body {
 .hex-hover-card span {
   margin-top: 3px;
   overflow: hidden;
-  color: #8f92a8;
+  color: #696b7c;
   font-size: 7px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3269,7 +3280,7 @@ body {
   display: block;
   min-width: 0;
   overflow: hidden;
-  color: #9a9caf;
+  color: #6e707d;
   font-size: 8px;
   letter-spacing: 0.02em;
   text-overflow: ellipsis;
@@ -3346,7 +3357,7 @@ body {
 }
 
 .map-traffic__metric small {
-  color: #9b92cb;
+  color: #706a93;
   font-size: 6px;
   font-weight: 700;
   letter-spacing: 0.13em;
@@ -3361,7 +3372,7 @@ body {
 }
 
 .map-traffic__metric em {
-  color: #9c9eb2;
+  color: #6f717f;
   font-size: 7px;
   font-style: normal;
   font-weight: 500;
@@ -3402,7 +3413,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #9194a9;
+  color: #6a6c7c;
   font-size: 7px;
 }
 
@@ -3419,14 +3430,14 @@ body {
 }
 
 .map-traffic__status strong {
-  color: var(--green);
+  color: var(--green-text);
   font-size: 10px;
   font-weight: 620;
 }
 
 .universe-panel[data-visual-kind="map"] {
   --text: #292a47;
-  --muted: #7d809d;
+  --muted: #61637a;
   --muted-light: #60647f;
   --border: rgba(92, 85, 151, 0.1);
   --border-bright: rgba(107, 94, 192, 0.2);
@@ -3445,7 +3456,7 @@ body {
 }
 
 .universe-panel[data-visual-kind="map"] .eyebrow {
-  color: #9489d0;
+  color: #6d659a;
 }
 
 .universe-panel[data-visual-kind="map"] .universe-panel__heading,
@@ -3471,16 +3482,16 @@ body {
 }
 
 .universe-panel[data-visual-kind="map"] .legend {
-  color: #85899f;
+  color: #646778;
 }
 
 .universe-panel[data-visual-kind="map"] .universe-scale {
-  color: #8e91a7;
+  color: #696b7b;
 }
 
 .universe-panel[data-visual-mode="universe"] {
   --text: #292a47;
-  --muted: #7d809d;
+  --muted: #61637a;
   --muted-light: #60647f;
   --border: rgba(92, 85, 151, 0.1);
   --border-bright: rgba(107, 94, 192, 0.2);
@@ -3488,6 +3499,7 @@ body {
   --purple-bright: #6958d8;
   --cyan: #35d9ff;
   --green: #31b980;
+  --green-text: #24865d;
   --amber: #ffb65c;
   --red: #ff6b7e;
   color: var(--text);
@@ -3506,7 +3518,7 @@ body {
 }
 
 .universe-panel[data-visual-mode="universe"] .eyebrow {
-  color: #9489d0;
+  color: #6d659a;
 }
 
 .universe-panel[data-visual-mode="universe"] .visual-switch,
@@ -3519,7 +3531,7 @@ body {
 
 .universe-panel[data-visual-mode="universe"] .visual-switch button,
 .universe-panel[data-visual-mode="universe"] .view-switch button {
-  color: #888ba3;
+  color: #66687a;
 }
 
 .universe-panel[data-visual-mode="universe"] .visual-switch button.is-active {
@@ -3652,7 +3664,7 @@ body {
 
 .detail-drawer {
   --text: #292a47;
-  --muted: #7d809d;
+  --muted: #61637a;
   --muted-light: #60647f;
   --border: rgba(92, 85, 151, 0.1);
   --border-bright: rgba(107, 94, 192, 0.2);
@@ -3660,13 +3672,14 @@ body {
   --purple-bright: #6958d8;
   --cyan: #35d9ff;
   --green: #31b980;
+  --green-text: #24865d;
   --amber: #ffb65c;
   --red: #ff6b7e;
   color: var(--text);
 }
 
 .detail-drawer .eyebrow {
-  color: #9489d0;
+  color: #6d659a;
 }
 
 .detail-drawer .icon-button {
@@ -3695,7 +3708,7 @@ body {
 .detail-drawer .drawer-stats span,
 .detail-drawer .drawer-stats small,
 .detail-drawer .drawer-days {
-  color: #8d90a8;
+  color: #686a7c;
 }
 
 .detail-drawer .drawer-stats article {

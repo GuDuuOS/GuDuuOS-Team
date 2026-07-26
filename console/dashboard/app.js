@@ -752,6 +752,43 @@
     return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
   }
 
+  // ══════════ 大屏显示密度自适应 ══════════
+  // 背景：本页按 ~1600px 宽的设计稿排版，字号普遍只有 7~10px。在物理尺寸更大、
+  // 但像素密度更低的大显示器上（27 吋 2K 约 109 PPI，不到笔记本高清屏的一半），
+  // 这些小字能分到的像素骤减、边缘锯齿显现，观感就是「发虚、不清晰」——
+  // 负责人反馈的「换大显示器后模糊」正是这个，而非渲染管线出了问题。
+  // 解法：视口比设计基准宽多少，就把整个界面等比放大多少。
+  //
+  // 为什么用 zoom 而不是 transform: scale —— 这是本方案的关键：
+  //   zoom 是**布局级**缩放，浏览器按放大后的尺寸重新排版、重新栅格化文字，
+  //   字在任何倍率下都是清晰的；
+  //   transform: scale 是把已经画好的位图整体拉伸，反而会糊——正是要避免的。
+  const DESIGN_WIDTH = 1600;   // 设计基准宽度：布局在此宽度下比例最协调
+  const DISPLAY_SCALE_MAX = 2; // 封顶：再宽就该重排布局（多列/加密度），而不是无限放大
+
+  function applyDisplayScale() {
+    const shell = document.querySelector(".app-shell");
+    if (!shell) return;
+    // 只放大不缩小：窄于基准时维持原样，交给既有的 min-width 与 @media 断点处理
+    const scale = clamp(window.innerWidth / DESIGN_WIDTH, 1, DISPLAY_SCALE_MAX);
+
+    if (scale <= 1) {
+      // 清空而不是写死 1，免得留下残值盖住样式表里的原始声明
+      shell.style.zoom = "";
+      shell.style.width = "";
+      shell.style.height = "";
+      return;
+    }
+
+    shell.style.zoom = scale.toFixed(3);
+    // ⚠️ 必须同时按同比例**缩小布局尺寸**。shell 原本是 100vw × 100vh，
+    // zoom 发生在布局之后，只加 zoom 会让它放大到 视口×scale 而右侧和底部被裁掉
+    // （实测 1920 视口下 1.2 倍会撑到 2304px 宽，右边一整列看不见）。
+    // 先除以 scale 再被 zoom 乘回来，最终视觉尺寸正好等于视口。
+    shell.style.width = `${window.innerWidth / scale}px`;
+    shell.style.height = `${window.innerHeight / scale}px`;
+  }
+
   function mulberry32(seed) {
     return function seededRandom() {
       let value = (seed += 0x6d2b79f5);
@@ -1849,7 +1886,11 @@
     const rect = canvas.getBoundingClientRect();
     state.width = Math.max(1, rect.width);
     state.height = Math.max(1, rect.height);
-    state.dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    // 上限取 2 而不是原来的 1.5：高清屏的像素比正是 2，卡在 1.5 等于
+    // 用 1.5 倍画完再拉到 2 倍显示——既少了 25% 的像素，又因为不是整数倍
+    // 而像素网格错位，额外糊一层。星系里的 OEM 名称/代号是 canvas 画的
+    // 6~11px 小字，对这个最敏感。超过 2 的超高倍率屏仍封在 2，控制填充率。
+    state.dpr = Math.min(window.devicePixelRatio || 1, 2);
     canvas.width = Math.round(state.width * state.dpr);
     canvas.height = Math.round(state.height * state.dpr);
     ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
@@ -2879,6 +2920,8 @@
     });
 
     window.addEventListener("resize", () => {
+      // 必须排在最前：它改变整体缩放，下面这些重算都依赖缩放后的最终尺寸
+      applyDisplayScale();
       if (state.visualMode === "universe") {
         resizeUniverse();
         requestUniverseFrame();
@@ -2919,6 +2962,9 @@
   }
 
   async function init() {
+    // 排在最前：后续所有按元素尺寸计算的渲染（地图投影、canvas 缓冲区、
+    // 标注定位）都要基于缩放后的最终尺寸，否则首屏会按未缩放尺寸算错一次
+    applyDisplayScale();
     initClock();
     // 先尝试接入真实舰队数据（GuDuu Nexus）；成功则本页进入真实模式并定时刷新
     const usingRealData = await loadFleetData();
