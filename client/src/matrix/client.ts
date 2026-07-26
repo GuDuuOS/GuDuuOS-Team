@@ -2295,7 +2295,7 @@ export async function getPresetAgents(): Promise<GlobalAgent[]> {
 
 /** 商城里的一条资源（后端只下发橱窗字段，人设/技能正文/工作流 url 等敏感内容拿不到）。 */
 export interface MarketCatalogItem {
-  kind: 'agent' | 'skill' | 'workflow' | 'knowledge'
+  kind: 'agent' | 'skill' | 'workflow' | 'knowledge' | 'cagent'
   slug: string
   name: string
   description: string
@@ -2314,6 +2314,10 @@ export interface MarketCatalogItem {
   inject?: string
   platform?: string
   input_hint?: string
+  /** cagent 专用（创作者商城）：每次使用价（token，0=免费）/ 创作者账号 / 累计使用次数 */
+  price_tokens?: number
+  creator?: string
+  uses?: number
 }
 
 export interface MarketCatalog {
@@ -2350,6 +2354,11 @@ export async function fetchMarketCatalog(): Promise<MarketCatalog | null> {
         inject: String(i?.inject || ''),
         platform: String(i?.platform || ''),
         input_hint: String(i?.input_hint || ''),
+        // cagent(创作者商城 P2)：按次价/创作者/使用次数——白名单映射漏了新字段会让
+        // 卡片永远显示「免费用」（本地实测踩到）
+        price_tokens: Number(i?.price_tokens || 0),
+        creator: String(i?.creator || ''),
+        uses: Number(i?.uses || 0),
       })).filter((i: MarketCatalogItem) => i.slug && i.kind),
       tier: String(j?.tier || 'free'),
       tierLabel: String(j?.tier_label || '免费会员'),
@@ -3595,6 +3604,82 @@ export async function walletAdminAdjust(
   const j = await r.json().catch(() => ({}))
   if (!r.ok) throw new Error(j?.error || '调整失败')
   return Number(j?.balance || 0)
+}
+
+/* —— 创作者商城（Token 经济 P2）：上架自建 Agent、按次收费、收益账本 —— */
+
+/** 我的一条上架记录。 */
+export interface CreatorListing {
+  id: number; agent_slug: string; name: string; description: string
+  price_tokens: number; status: string; uses: number; earned: number
+}
+
+/** 我的上架列表 + 收益汇总。 */
+export interface CreatorListingsResp {
+  is_creator: boolean; fee_pct: number; wallet_enabled: boolean
+  summary: { total_net: number; total_gross: number; count: number }
+  items: CreatorListing[]
+}
+
+export async function creatorListings(): Promise<CreatorListingsResp | null> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return null
+  try {
+    const r = await fetch(`${payBase()}/cosmac/creator/listings`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return null
+    return await r.json()
+  } catch { return null }
+}
+
+/** 上架/更新自建 Agent（创作者会员）。返回 listing id。 */
+export async function creatorPublish(
+  agentSlug: string, priceTokens: number, name = '', description = '',
+): Promise<number> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  const r = await fetch(`${payBase()}/cosmac/creator/publish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ agent_slug: agentSlug, price_tokens: priceTokens, name, description }),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || '上架失败')
+  return Number(j?.id || 0)
+}
+
+/** 创作者上/下架自己的 listing（on/off）；管理员可传 banned。 */
+export async function creatorSetStatus(id: number, status: 'on' | 'off' | 'banned'): Promise<void> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  const r = await fetch(`${payBase()}/cosmac/creator/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ id, status }),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || '操作失败')
+}
+
+/** 一条分成流水（创作者收益明细）。 */
+export interface CreatorEarningItem {
+  id: number; agent_slug: string; buyer: string
+  gross: number; fee: number; net: number; created_at: string
+}
+
+export async function creatorEarnings(limit = 50, offset = 0): Promise<{
+  summary: { total_net: number; total_gross: number; count: number }
+  items: CreatorEarningItem[]
+} | null> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return null
+  try {
+    const r = await fetch(
+      `${payBase()}/cosmac/creator/earnings?limit=${limit}&offset=${offset}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    )
+    if (!r.ok) return null
+    return await r.json()
+  } catch { return null }
 }
 
 /** 管理员查某用户余额 + 最近流水。 */

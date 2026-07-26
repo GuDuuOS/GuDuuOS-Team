@@ -20,6 +20,7 @@
         <button class="cam-tab" :class="{ active: tab === 'agents' }" @click="tab = 'agents'">我的智能体 <i>{{ agents.length }}</i></button>
         <button class="cam-tab" :class="{ active: tab === 'skills' }" @click="tab = 'skills'">我的技能 <i>{{ skills.length }}</i></button>
         <button class="cam-tab" :class="{ active: tab === 'acquired' }" @click="tab = 'acquired'">已获取 <i>{{ acquired.length }}</i></button>
+        <button v-if="pubData?.wallet_enabled" class="cam-tab" :class="{ active: tab === 'publish' }" @click="switchPublish">上架·收益 <i>{{ pubData?.items?.length || 0 }}</i></button>
       </div>
 
       <div class="cam-body">
@@ -93,6 +94,58 @@
           <div v-else class="cam-add"><button class="cam-add-btn" @click="newSkill">＋ 新建技能</button></div>
         </template>
 
+        <!-- ═══ 上架·收益（创作者商城 P2）═══ -->
+        <template v-else-if="tab === 'publish'">
+          <template v-if="!pubData?.is_creator">
+            <div class="cam-help cam-help-top">把你的自建智能体上架到商城、按次收 token，需要<b>创作者会员</b>资格。升级后即可上架赚 token。</div>
+          </template>
+          <template v-else>
+            <!-- 收益汇总 -->
+            <div class="ms-earn-sum">
+              <div class="ms-earn-num">{{ (pubData?.summary?.total_net || 0).toLocaleString() }}<span>token 累计收益</span></div>
+              <div class="ms-earn-sub">被使用 {{ pubData?.summary?.count || 0 }} 次 · 平台抽成 {{ pubData?.fee_pct ?? 10 }}%（你得 {{ 100 - (pubData?.fee_pct ?? 10) }}%）· 收益已充入你的 token 钱包</div>
+            </div>
+
+            <!-- 我的上架列表 -->
+            <div v-for="li in (pubData?.items || [])" :key="li.id" class="cam-row">
+              <div class="cam-row-main">
+                <div class="cam-row-label">{{ li.name }} <code class="ms-slug">{{ li.agent_slug }}</code>
+                  <span v-if="li.status === 'banned'" class="cam-tag" style="background:#f6e3e3;color:#b94a4a">平台下架</span>
+                  <span v-else-if="li.status === 'off'" class="cam-tag" style="background:#eee;color:#888">已下架</span>
+                  <span v-else class="cam-tag" style="background:#e5efe0;color:#4a7b42">在售</span>
+                </div>
+                <div class="cam-row-desc">{{ li.price_tokens > 0 ? `${li.price_tokens.toLocaleString()} token/次` : '免费用' }} · 被使用 {{ li.uses }} 次 · 已赚 {{ li.earned.toLocaleString() }} token</div>
+              </div>
+              <button v-if="li.status === 'on'" class="cam-mini" :disabled="busy" @click="setListing(li.id, 'off')">下架</button>
+              <button v-else-if="li.status === 'off'" class="cam-mini" :disabled="busy" @click="setListing(li.id, 'on')">重新上架</button>
+            </div>
+            <p v-if="!(pubData?.items || []).length" class="cam-row-desc" style="padding:8px 2px">还没有上架。选一个你的智能体、定个价，让全站用户用起来。</p>
+
+            <!-- 上架表单 -->
+            <div class="ms-form">
+              <select v-model="pubForm.agent_slug" class="cam-input">
+                <option value="" disabled>选择要上架的智能体…</option>
+                <option v-for="a in agents.filter((x) => x.enabled)" :key="a.slug" :value="a.slug">{{ a.name }}（{{ a.slug }}）</option>
+              </select>
+              <input v-model.number="pubForm.price" class="cam-input" type="number" min="0" placeholder="每次使用价（token，0=免费）" />
+              <span class="ms-hint">上架是「引用」：人设仍归你、不会公开；用户获取免费，<b>使用时</b>按你定的价扣 token，平台抽成后其余实时充进你的钱包。改人设即全网生效；重复上架同一个智能体=更新价格。</span>
+              <div class="ms-actions">
+                <button class="cam-add-btn" :disabled="busy || !pubForm.agent_slug" @click="publish">{{ busy ? '上架中…' : '上架 / 更新价格' }}</button>
+              </div>
+            </div>
+
+            <!-- 收益明细（最近） -->
+            <template v-if="earnItems.length">
+              <div class="cam-help" style="margin-top:10px">最近收益明细</div>
+              <div v-for="e in earnItems" :key="e.id" class="ms-earn-row">
+                <span class="ms-earn-what">{{ e.agent_slug }} · {{ shortUser(e.buyer) }} 使用</span>
+                <span class="ms-earn-net">+{{ e.net.toLocaleString() }}</span>
+                <span class="ms-earn-time">{{ new Date(e.created_at).toLocaleString() }}</span>
+              </div>
+            </template>
+          </template>
+        </template>
+
         <!-- ═══ 已获取（AI Agent 商城）═══ -->
         <template v-else>
           <div class="cam-help cam-help-top">你从「AI Agent 商城」获取的资源。主 AI 派单时会优先考虑你获取的 AI 同事（名册里标 ★）。</div>
@@ -118,8 +171,8 @@
         <!-- 底部提示按 tab 给准确口径(负责人报:已获取 57 个却写着"每类上限 50")——
              50 是**自建**内容的上限(服务端强制);「已获取」只是给平台资源打优先派单标记,
              不占存储、不限个数,写同一句话会让人以为获取超限了。 -->
-        <div v-if="tab !== 'acquired'" class="cam-help">自建内容计入你的存储空间（见「我的额度」）。每类上限 50 个。</div>
-        <div v-else class="cam-help">
+        <div v-if="tab === 'agents' || tab === 'skills'" class="cam-help">自建内容计入你的存储空间（见「我的额度」）。每类上限 50 个。</div>
+        <div v-else-if="tab === 'acquired'" class="cam-help">
           获取＝给平台资源打「优先派单」标记（★），不占存储空间。
           <template v-if="acquiredLimit !== null && acquiredLimit >= 0">
             按会员等级限量：已用 <b>{{ acquired.length }}/{{ acquiredLimit }}</b> 个；
@@ -140,7 +193,9 @@ import {
   myAgentsList, myAgentSave, myAgentDelete,
   mySkillsList, mySkillSave, mySkillDelete,
   fetchMarketAcquired, setMarketItemAcquired, getMyUsage,
+  creatorListings, creatorPublish, creatorSetStatus, creatorEarnings,
   type MyAgent, type MySkill, type AcquiredItem,
+  type CreatorListingsResp, type CreatorEarningItem,
 } from '@/matrix/client'
 import { CAT_META } from '@/data/marketplace'
 
@@ -148,7 +203,7 @@ const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void; (e: 'market'): void }>()
 function close() { emit('close') }
 
-const tab = ref<'agents' | 'skills' | 'acquired'>('agents')
+const tab = ref<'agents' | 'skills' | 'acquired' | 'publish'>('agents')
 const agents = ref<MyAgent[]>([])
 const skills = ref<MySkill[]>([])
 const acquired = ref<AcquiredItem[]>([])
@@ -160,16 +215,58 @@ const skForm = reactive<MySkill & { _edit: boolean }>({ slug: '', name: '', desc
 
 // 「已获取」额度(按会员等级,服务端强制):-1=不限;null=还没拉到
 const acquiredLimit = ref<number | null>(null)
+// 上架·收益（创作者商城 P2）：钱包总开关关着时后端回 wallet_enabled=false → 页签隐藏
+const pubData = ref<CreatorListingsResp | null>(null)
+const pubForm = reactive<{ agent_slug: string; price: number | '' }>({ agent_slug: '', price: '' })
+const earnItems = ref<CreatorEarningItem[]>([])
+
 async function load() {
   errText.value = ''
-  const [a, s, g, usage] = await Promise.all([
+  const [a, s, g, usage, pub] = await Promise.all([
     myAgentsList(), mySkillsList(), fetchMarketAcquired(), getMyUsage(),
+    creatorListings(),
   ])
   agents.value = a
   skills.value = s
   acquired.value = g || []
   // 额度展示口径与服务端同源(都读 acquired_items 这项配额),避免前后端各写一份而跑偏
   acquiredLimit.value = usage.find((u) => u.key === 'acquired_items')?.limit ?? null
+  pubData.value = pub
+}
+
+/** 切到「上架·收益」时顺带拉最近收益明细（懒加载，别的页签不掏这个钱）。 */
+async function switchPublish() {
+  tab.value = 'publish'
+  const e = await creatorEarnings(20)
+  earnItems.value = e?.items || []
+}
+
+/** 上架/更新价格。 */
+async function publish() {
+  if (!pubForm.agent_slug) return
+  busy.value = true; errText.value = ''
+  try {
+    await creatorPublish(pubForm.agent_slug, Math.max(0, Math.trunc(Number(pubForm.price) || 0)))
+    pubForm.agent_slug = ''; pubForm.price = ''
+    pubData.value = await creatorListings()
+  } catch (e: any) { errText.value = e?.message || String(e) }
+  finally { busy.value = false }
+}
+
+/** 上/下架自己的 listing。 */
+async function setListing(id: number, status: 'on' | 'off') {
+  busy.value = true; errText.value = ''
+  try {
+    await creatorSetStatus(id, status)
+    pubData.value = await creatorListings()
+  } catch (e: any) { errText.value = e?.message || String(e) }
+  finally { busy.value = false }
+}
+
+/** @carol:xx → carol（收益明细里买家短显示）。 */
+function shortUser(uid: string): string {
+  const m = /^@([^:]+):/.exec(uid || '')
+  return m ? m[1] : (uid || '')
 }
 
 /** 移除一条「已获取」——只是不再优先派单/收藏,不影响资源本身的使用权限。 */
@@ -241,4 +338,13 @@ async function delSkill(slug: string) {
 .ms-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .cam-mini { border: 1px solid var(--border); background: var(--bg-panel); border-radius: 7px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
 .cam-mini:hover { background: var(--bg-hover); }
+/* —— 上架·收益（创作者商城）—— */
+.ms-earn-sum { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+.ms-earn-num { font-size: 24px; font-weight: 800; color: var(--accent, #c96442); }
+.ms-earn-num span { font-size: 12px; font-weight: 400; color: var(--text-3); margin-left: 6px; }
+.ms-earn-sub { font-size: 12px; color: var(--text-2); margin-top: 4px; }
+.ms-earn-row { display: flex; align-items: baseline; gap: 8px; padding: 6px 2px; border-bottom: 1px dashed var(--border); font-size: 12.5px; }
+.ms-earn-what { flex: 1; color: var(--text); }
+.ms-earn-net { font-weight: 700; color: #2c9a5b; }
+.ms-earn-time { color: var(--text-3); font-size: 11px; }
 </style>

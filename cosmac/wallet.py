@@ -43,6 +43,7 @@ _DEFAULTS: Dict[str, Any] = {
     "free_daily": 0,        # 每天赠送的免费 token（每天清零、不累积；负责人定的免费层模型）
     "free_grant": 0,        # 新钱包一次性欢迎赠送，默认 0（与每日免费额度是两回事）
     "min_balance": 1,       # 钱包余额低于此且无免费额度时，拦截并提示充值
+    "platform_fee_pct": 10,  # 创作者商城平台抽成百分比（负责人定稿 10%；其余归创作者）
 }
 
 
@@ -112,6 +113,9 @@ def parse_token_config(ev: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "free_daily": max(0, _as_int(raw.get("free_daily"), _DEFAULTS["free_daily"])),
         "free_grant": max(0, _as_int(raw.get("free_grant"), _DEFAULTS["free_grant"])),
         "min_balance": max(0, _as_int(raw.get("min_balance"), _DEFAULTS["min_balance"])),
+        # 平台抽成百分比（P2 创作者商城）：0~100，脏值回默认 10
+        "platform_fee_pct": min(100, max(0, _as_int(
+            raw.get("platform_fee_pct"), _DEFAULTS["platform_fee_pct"]))),
         # 充值包（1c）：管理员在后台配的"多少钱买多少 token"套餐，下单时按 slug 取快照。
         "packages": _parse_packages(raw.get("packages")),
     }
@@ -290,6 +294,90 @@ class WalletStore:
         return {"charged": from_free + from_wallet, "from_free": from_free,
                 "from_wallet": from_wallet, "real_tokens": rt, "markup": markup,
                 "balance": new_bal, "capped": capped}
+
+    # —— 创作者商城按次扣费 + 分成（P2）——
+
+    def agent_use_precheck(self, buyer: str, price_tokens: int) -> Optional[str]:
+        """使用创作者 Agent 前的**硬前拦**：余额 < 固定价则拦（返回提示串），够则放行 None。
+
+        与平台 AI 的"后付扣到 0 为止"不同：固定价/次是**先看得起再用**的预付语义——
+        用户对"这一条要花多少"有明确预期，余额不够就明确拒绝，不产生欠账。
+        总开关关 / 价格 0 恒放行。免费日额度**不抵扣**创作者 Agent（那是平台送的
+        平台用量；创作者的钱得真金白银从钱包出，否则分成没有来源）。
+        """
+        price = max(0, int(price_tokens or 0))
+        if price <= 0 or not self.config().get("enabled"):
+            return None
+        self.ensure_wallet(buyer)
+        bal = self.balance(buyer)
+        if bal < price:
+            return (
+                f"使用该创作者 Agent 每次需 {price} token，你的余额不足（当前 {bal}）。"
+                "请先充值～"
+            )
+        return None
+
+    def charge_agent_use(
+        self,
+        buyer: str,
+        listing_id: int,
+        *,
+        room_id: str = "",
+    ) -> Dict[str, Any]:
+        """按次扣创作者 Agent 使用费并分账：扣用户 gross → 平台抽成 fee →
+        创作者净得 net 充进其钱包 → 记 CreatorEarning 流水（同一事务）。
+
+        返回 {charged, fee, net, creator, balance}；不该扣/扣不动时 charged=0（调用方
+        无须区分原因，回复照发——前拦已把"余额不足"挡在生成之前，这里失败只可能是
+        竞态或配置变化，不值得为它失败一条已生成的回复）。
+        买家=创作者本人时不扣（自己用自己的免费，也不产生自我分成刷量）。
+        """
+        from cosmac.db import listing_repo
+
+        cfg = self.config()
+        out: Dict[str, Any] = {"charged": 0, "fee": 0, "net": 0, "creator": "", "balance": None}
+        if not cfg.get("enabled"):
+            return out
+        try:
+            with session_scope() as s:
+                listing = listing_repo.get_listing(s, listing_id)
+                if listing is None or listing.status != "on":
+                    return out
+                price = max(0, int(listing.price_tokens or 0))
+                out["creator"] = listing.creator
+                if price <= 0 or buyer == listing.creator:
+                    return out
+                # 1) 扣用户（原子守卫；不足=不扣不分成，回复不受影响）
+                new_bal = wallet_repo.try_debit(
+                    s, buyer, price, reason="agent_use",
+                    ref=f"listing:{listing.id}", note=f"使用创作者 Agent「{listing.name}」",
+                    meta={"listing_id": listing.id, "creator": listing.creator,
+                          "agent_slug": listing.agent_slug},
+                )
+                if new_bal is None:
+                    logger.info("按次扣费余额不足未扣：buyer=%s listing=%s", buyer, listing_id)
+                    return out
+                # 2) 分账：平台抽成向上取整（保护平台），创作者得其余
+                fee_pct = int(cfg.get("platform_fee_pct") or 10)
+                fee = int(math.ceil(price * fee_pct / 100.0))
+                net = max(0, price - fee)
+                if net > 0:
+                    wallet_repo.credit(
+                        s, listing.creator, net, reason="earning",
+                        ref=f"listing:{listing.id}",
+                        note=f"创作收益：{listing.name}",
+                        meta={"listing_id": listing.id, "buyer": buyer,
+                              "gross": price, "fee": fee},
+                    )
+                # 3) 收益账本 + listing 累计
+                listing_repo.record_earning(
+                    s, listing=listing, buyer=buyer, gross=price, fee=fee,
+                    net=net, room_id=room_id,
+                )
+                out.update({"charged": price, "fee": fee, "net": net, "balance": new_bal})
+        except Exception:
+            logger.exception("按次扣费失败（不影响回复）：buyer=%s listing=%s", buyer, listing_id)
+        return out
 
     # —— 充值入账（trading 支付成功后调）——
 

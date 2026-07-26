@@ -738,3 +738,74 @@ class TokenLedger(Base):
 
     def __repr__(self) -> str:
         return f"<TokenLedger {self.user_id} {self.reason} {self.delta:+d} bal={self.balance_after}>"
+
+
+class MarketListing(Base, TimestampMixin):
+    """创作者商城的一条「上架」记录（模块4 Token 经济 P2 创作者商城）。
+
+    创作者（会员等级 creator）把自己「我的AI工坊」的自建 Agent（scope=user）上架到商城：
+    普通用户在商城**免费获取**，**使用时按次扣**创作者定的固定价（price_tokens，0=免费用）；
+    平台抽成 10%、创作者得 90%（见 wallet.charge_agent_use 与 CreatorEarning）。
+
+    设计要点：
+    - 上架是**引用**而非拷贝：人设/模型仍读创作者的 user-scope Agent（创作者改人设即全网生效）；
+      name/description 在此存**橱窗快照**（上架时定，避免商城文案被随意改来改去绕过审视）。
+    - (creator, agent_slug) 唯一——同一个 Agent 只能上架一次；重复上架=更新价格/文案。
+    - status: on（在售）/ off（创作者下架）/ banned（管理员强制下架，创作者不可自行恢复）。
+    - uses/earned 是**冗余累计**（橱窗展示"多少人用过"与创作者收益总览用），逐笔明细在
+      CreatorEarning；两者由同一事务一起更新。
+    """
+
+    __tablename__ = "cosmac_market_listing"
+    __table_args__ = (
+        UniqueConstraint("creator", "agent_slug", name="uq_listing_creator_agent"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # 创作者账号（@user:domain）
+    creator: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    # 创作者自己的 user-scope Agent slug（cosmac_agent 里 scope=user, scope_id=creator）
+    agent_slug: Mapped[str] = mapped_column(String(128), nullable=False)
+    # 橱窗快照（上架时的名称/说明；人设永不进商城——是创作者的资产）
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 每次使用价（token）；0=免费用
+    price_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # on / off / banned
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="on", index=True)
+    # 冗余累计：总使用次数 / 创作者累计净收益（token）
+    uses: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    earned: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+    def __repr__(self) -> str:
+        return f"<MarketListing #{self.id} {self.creator}/{self.agent_slug} {self.price_tokens}t {self.status}>"
+
+
+class CreatorEarning(Base):
+    """创作者分成流水（模块4 Token 经济 P2）：每次付费使用记一行——**创作者收益账本**的底层。
+
+    分账口径（负责人定稿）：用户支付 gross（=listing.price_tokens）→ 平台抽成 fee（10%，
+    向上取整保护平台）→ 创作者净得 net（=gross-fee，直接充进创作者 token 钱包）。
+    本期只做账本可见、不做真实出金（合规见 CLAUDE.md §4 模块4）。只增不改。
+    """
+
+    __tablename__ = "cosmac_creator_earning"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    listing_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    # 创作者 / 付费使用者
+    creator: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    buyer: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    agent_slug: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    # 分账三段（token，整数）：用户支付 / 平台抽成 / 创作者净得
+    gross: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    fee: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    net: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # 使用发生的房间（追溯用）
+    room_id: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False, index=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<CreatorEarning #{self.id} {self.creator} +{self.net} (gross {self.gross})>"

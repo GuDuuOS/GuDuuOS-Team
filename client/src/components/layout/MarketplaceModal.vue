@@ -69,7 +69,8 @@
               <button v-else class="mkt-btn locked" disabled>专属资源</button>
             </div>
             <div class="mkt-meta">
-              {{ it.official ? 'GuDuu OS 官方' : '平台运营' }}
+              <template v-if="it.kind === 'cagent'">创作者 {{ shortUser(it.creator || '') }}<template v-if="it.uses">· 已被使用 {{ it.uses }} 次</template></template>
+              <template v-else>{{ it.official ? 'GuDuu OS 官方' : '平台运营' }}</template>
               <template v-if="it.kind === 'agent' && it.skill_count">· 内置 {{ it.skill_count }} 项技能</template>
               <template v-if="it.kind === 'skill' && it.agents?.length">· 随【{{ it.agents.join('/') }}】激活</template>
             </div>
@@ -99,6 +100,7 @@ type CatKey = MarketCat | 'all'
 const cats: { key: CatKey; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'agent', label: 'AI 同事' },
+  { key: 'cagent', label: '创作者 Agent' },
   { key: 'skill', label: '技能' },
   { key: 'workflow', label: '工作流' },
   { key: 'knowledge', label: '知识库' }
@@ -115,7 +117,16 @@ const errMsg = ref('')   // 获取失败(如达上限)的醒目警告，与 💡
 
 const itemId = (it: MarketCatalogItem) => `${it.kind}:${it.slug}`
 const isAcquired = (it: MarketCatalogItem) => it.acquired
-const badgeOf = (it: MarketCatalogItem) => accessBadge(it.access)
+/** 徽标：创作者 Agent 标**按次价**（获取免费、用的时候扣 token）；其余按 access 等级标。 */
+const badgeOf = (it: MarketCatalogItem) => {
+  if (it.kind === 'cagent') {
+    const p = Number(it.price_tokens || 0)
+    return p > 0
+      ? { label: `${p.toLocaleString()} token/次`, cls: 'tier' as const }
+      : { label: '免费用', cls: 'free' as const }
+  }
+  return accessBadge(it.access)
+}
 
 async function load() {
   loading.value = true
@@ -153,6 +164,11 @@ async function acquire(it: MarketCatalogItem) {
 
 /** 各类资源的使用指引（获取后展示；这些资源都在聊天里用，无需额外安装）。 */
 function usageHint(it: MarketCatalogItem): string {
+  if (it.kind === 'cagent') {
+    const p = Number(it.price_tokens || 0)
+    const cost = p > 0 ? `每次使用扣 ${p.toLocaleString()} token（余额不足会提示充值）` : '免费使用'
+    return `已获取「${it.name}」：在频道里 @${it.name} 即由它应答；${cost}。可在「我的AI工坊 · 已获取」管理。`
+  }
   if (it.kind === 'agent') return `已获取「${it.name}」：在频道里 @${it.name}；主 AI 派单会优先考虑你获取的同事。可在「我的AI工坊 · 已获取」管理。`
   if (it.kind === 'skill') {
     if (it.agents?.length) return `已获取「${it.name}」：随 AI 同事【${it.agents.join('/')}】自动激活，@ 它们即可。`
@@ -162,6 +178,12 @@ function usageHint(it: MarketCatalogItem): string {
   }
   if (it.kind === 'workflow') return `已获取「${it.name}」：对主 AI 说「工作流 跑 ${it.slug}」，或直接描述需求让它自动调用。${it.input_hint ? `输入提示：${it.input_hint}` : ''}`
   return `已获取「${it.name}」：向 AI 提问相关内容时会自动检索这篇知识。`
+}
+
+/** 创作者账号展示：@carol:xx.com → carol（卡片上短一点，完整 ID 无需暴露域名噪音）。 */
+function shortUser(uid: string): string {
+  const m = /^@([^:]+):/.exec(uid || '')
+  return m ? m[1] : (uid || '')
 }
 
 /** 后端没填描述时的兜底文案（知识库文档只有标题）。 */

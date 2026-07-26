@@ -52,6 +52,7 @@ from cosmac.config import (
 from cosmac.members import (
     GATE_ADMIN,
     MEMBER_TIERS,
+    TIER_CREATOR,
     TIER_FREE,
     GatingStore,
     MembersStore,
@@ -322,6 +323,8 @@ class CosmacBot:
         self._user_template_cache: Dict[str, Tuple[str, float]] = {}
         # 用户→商城「已获取」智能体 slug 缓存(能力名册每条消息都查;获取端点写入时主动失效)
         self._acquired_cache: Dict[str, Tuple[Set[str], float]] = {}
+        # 用户→已获取的**创作者 Agent**(cagent listing)缓存(P2 创作者商城;同上口径)
+        self._acquired_cagent_cache: Dict[str, Tuple[List[Dict[str, Any]], float]] = {}
         # AI 同事傀儡账号缓存(slug → MXID;空串=注册失败,重启前不重试)
         self._worker_account_cache: Dict[str, str] = {}
         # 傀儡「已在房」缓存((room_id, slug)):免每次发送前重复 邀请+join 两个 HTTP
@@ -665,6 +668,23 @@ class CosmacBot:
             gctx = self._apply_worker_routing(
                 user_text, gctx, sender=sender, mentioned_ids=mentioned_ids,
             )
+            # 创作者 Agent 按次付费前拦（P2）：固定价/次是预付语义——余额不够这一次就
+            # 明确拒绝，不产生欠账。管理员与创作者本人免（自己用自己的不收）。
+            cag_listing = int(gctx.get("cagent_listing") or 0)
+            cag_price = int(gctx.get("cagent_price") or 0)
+            cag_payer = bool(
+                cag_listing and cag_price > 0
+                and sender != str(gctx.get("cagent_creator") or "")
+                and not self._is_platform_admin(sender)
+            )
+            if cag_payer:
+                try:
+                    blocked = self.wallet.agent_use_precheck(sender, cag_price)
+                except Exception:
+                    blocked = None  # 计费层故障 fail-open，绝不挡人
+                if blocked:
+                    self.client.send_text(room_id, blocked)
+                    return
             # 按 (本群, 发起人) 算出本轮 system addendum：人设 + 技能 + 知识库检索片段(RAG)。
             # 任何失败（DB 没装/没数据/出错）都返回空串、绝不阻断回复（见 _skill_addendum）。
             # 图文教程答疑：全局图文(付费可读)会在 _kb_context 里按 doc_read 门控自动纳入 RAG，
@@ -737,9 +757,22 @@ class CosmacBot:
                     )
             # L2：回复真正发出后才消费当日 AI 对话额度（失败走下面的 except 分支、不扣）。
             self._rate_quota_blocked(sender, "ai_msg_daily", consume=True)
-            # Token 经济（模块4）：回复成功后按真实 LLM 用量扣 token（先今日免费额度、再钱包余额）。
-            # 总开关关/管理员/取不到用量时不扣；扣费失败不影响这条已发出的回复。
-            self._wallet_charge(sender, usage_tokens, room_id)
+            # Token 经济（模块4）：回复成功后结算。**二选一**（负责人定稿）：
+            # 用创作者 Agent = 按固定价/次扣并分账（90% 创作者 / 10% 平台），不再叠加
+            # 平台真实用量扣；否则按真实 LLM 用量扣（先今日免费额度、再钱包余额）。
+            # 扣费失败都不影响这条已发出的回复。
+            if cag_payer:
+                try:
+                    r = self.wallet.charge_agent_use(sender, cag_listing, room_id=room_id)
+                    if r.get("charged"):
+                        logger.info(
+                            "创作者Agent按次扣费：buyer=%s listing=%s 价=%s 抽成=%s 创作者得=%s",
+                            sender, cag_listing, r.get("charged"), r.get("fee"), r.get("net"),
+                        )
+                except Exception:
+                    logger.debug("按次扣费失败（忽略）", exc_info=True)
+            else:
+                self._wallet_charge(sender, usage_tokens, room_id)
         except Exception:
             # 引擎/LLM 本体调用失败（网络错、模型不存在、后端 4xx/5xx 等）：绝不让异常穿透到
             # handle_transaction —— 那会使其返回 False、Synapse 重发**整批**、整条 Agent run
@@ -1412,6 +1445,11 @@ class CosmacBot:
                     continue
                 if _hit(slug, str(agent.get("name") or ""), "acquired"):
                     return slug, agent, "global"
+            # ④ 发起人商城已获取的**创作者 Agent**（P2 创作者商城）——同"已获取"口径只认
+            # @点名；在售/定义有效性已在 _acquired_cagent_items 内实时校验（下架即失效）。
+            for it in self._acquired_cagent_items(sender):
+                if _hit(str(it.get("slug") or ""), str(it.get("name") or ""), "acquired"):
+                    return str(it.get("slug") or ""), it, "cagent"
         except Exception:
             logger.debug("可路由智能体匹配失败(忽略)", exc_info=True)
         return None
@@ -1435,7 +1473,11 @@ class CosmacBot:
         slug, agent, kind = match
         name = str(agent.get("name") or "").strip()
         out = dict(gctx)
-        label = "用户自建智能体" if kind == "mine" else "协作智能体"
+        label = (
+            "用户自建智能体" if kind == "mine"
+            else "创作者智能体" if kind == "cagent"
+            else "协作智能体"
+        )
         out["persona"] = (
             f"本条由你以{label}「{name or slug}」的身份回应，"
             f"请按下述人设履职：\n{(agent.get('system_prompt') or '').strip()}"
@@ -1446,6 +1488,12 @@ class CosmacBot:
             # 方案B:回复以该 AI 同事的傀儡账号身份发(账号建不了则留空=主 AI 兜底);
             # 自建智能体是用户私有的,不建全局傀儡(评审 #10:同名 slug 会跨用户共享)。
             out["as_user"] = self._ensure_worker_account(slug)
+        elif kind == "cagent":
+            # 创作者商城 Agent（P2）：把按次计费三要素带给回复路径（前拦 + 成功后分账）。
+            # 不建傀儡（listing 是跨用户共享的引用，建全局傀儡会与全局 slug 空间打架）。
+            out["cagent_listing"] = int(agent.get("_listing_id") or 0)
+            out["cagent_price"] = int(agent.get("_price") or 0)
+            out["cagent_creator"] = str(agent.get("_creator") or "")
         return out
 
     def _agent_for_model(self, model: str) -> Agent:
@@ -1694,6 +1742,60 @@ class CosmacBot:
         if len(self._acquired_cache) > 5000:
             self._acquired_cache.clear()
         return slugs
+
+    def _acquired_cagent_items(self, user_id: str) -> List[Dict[str, Any]]:
+        """某用户从商城「已获取」的**创作者 Agent**（P2 创作者商城），点名路由用。
+
+        已获取记录 kind='cagent'、slug=listing id。每条：listing 必须仍在售(on)、
+        创作者的 user-scope Agent 定义仍存在且启用——否则跳过(下架/删除即失效)。
+        返回项与 _my_agent_items 同构(name/system_prompt/model/skill_slugs)，另带
+        路由计费用的 _listing_id/_price/_creator；slug 用 ``c<listing_id>``(全网唯一、
+        不与全局/自建 slug 冲突)。5 分钟缓存，获取端点写入时主动失效。
+        """
+        if not user_id:
+            return []
+        cached = self._acquired_cagent_cache.get(user_id)
+        if cached and time.monotonic() - cached[1] < 300:
+            return cached[0]
+        items: List[Dict[str, Any]] = []
+        try:
+            from cosmac.db import listing_repo, session_scope
+            from cosmac.db.market_repo import list_acquired
+            from cosmac.db.models import SCOPE_USER
+            from cosmac.db.repo import get_agent
+
+            with session_scope() as s:
+                ids = [
+                    slug for kind, slug in list_acquired(s, user_id) if kind == "cagent"
+                ]
+                for sid in ids:
+                    try:
+                        listing = listing_repo.get_listing(s, int(sid))
+                    except (TypeError, ValueError):
+                        continue
+                    if listing is None or listing.status != "on":
+                        continue
+                    # 人设实时读创作者的 user-scope Agent（创作者改人设即全网生效）
+                    src = get_agent(s, SCOPE_USER, listing.creator, listing.agent_slug)
+                    if src is None or not src.enabled:
+                        continue
+                    items.append({
+                        "slug": f"c{listing.id}",
+                        "name": listing.name or src.name,
+                        "description": listing.description or src.description,
+                        "system_prompt": src.system_prompt,
+                        "model": src.model,
+                        "skill_slugs": [],  # 创作者的个人技能不跨用户注入（权属隔离）
+                        "_listing_id": int(listing.id),
+                        "_price": int(listing.price_tokens or 0),
+                        "_creator": listing.creator,
+                    })
+        except Exception:
+            logger.debug("读取已获取创作者 Agent 失败（忽略）", exc_info=True)
+        self._acquired_cagent_cache[user_id] = (items, time.monotonic())
+        if len(self._acquired_cagent_cache) > 5000:
+            self._acquired_cagent_cache.clear()
+        return items
 
     # ═══ 方案B:AI 同事傀儡账号(每个协作 Agent 一个独立 Matrix 账号) ═══
     # 命名 @guduu-ai-<slug>:<域>——落在 appservice namespace(@guduu.*)内,注册文件无需改。
@@ -5440,6 +5542,25 @@ class CosmacBot:
                                   kb_unlocked, kb_access, {"official": True})
                 except Exception:
                     logger.debug("商城列平台知识库失败(跳过该分类)", exc_info=True)
+
+        # —— 创作者 Agent（P2 创作者商城）：在售 listing。人人可免费获取（unlocked 恒 True），
+        #    钱在**使用时**按次收（price_tokens/次，0=免费用）。人设绝不下发（创作者资产）。——
+        if not only_kind or only_kind == "cagent":
+            try:
+                from cosmac.db import listing_repo, session_scope
+
+                with session_scope() as s:
+                    rows = listing_repo.list_on_sale(s)
+                for li in rows:
+                    _push("cagent", {"slug": str(li.id), "name": li.name}, True, "", {
+                        "description": str(li.description or ""),
+                        "price_tokens": int(li.price_tokens or 0),
+                        "creator": str(li.creator or ""),
+                        "uses": int(li.uses or 0),
+                        "official": False,
+                    })
+            except Exception:
+                logger.debug("商城列创作者 Agent 失败(跳过该分类)", exc_info=True)
         return items
 
     def handle_market_catalog(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
@@ -5472,8 +5593,8 @@ class CosmacBot:
             "is_admin": is_admin,
         }
 
-    # 商城资源类型全集(acquire 端点校验用)
-    _MARKET_KINDS = ("agent", "skill", "workflow", "knowledge")
+    # 商城资源类型全集(acquire 端点校验用)。cagent=创作者上架的 Agent(P2 创作者商城)
+    _MARKET_KINDS = ("agent", "skill", "workflow", "knowledge", "cagent")
 
     def handle_market_acquire(
         self, access_token: str, body: Dict[str, Any]
@@ -5538,6 +5659,7 @@ class CosmacBot:
                 else:
                     remove_acquired(s, user_id=user_id, kind=kind, slug=slug)
             self._acquired_cache.pop(user_id, None)  # 名册缓存立刻失效,主 AI 下条消息就能感知
+            self._acquired_cagent_cache.pop(user_id, None)  # 创作者 Agent 路由同样立即生效
             return 200, {"ok": True, "acquired": want}
         except Exception:
             logger.exception("写入已获取记录失败")
@@ -5583,6 +5705,157 @@ class CosmacBot:
                     "agents": [],
                 })
         return 200, {"items": out}
+
+    # ═══ 创作者商城（模块4 Token 经济 P2）：上架 / 收益账本 ═══
+
+    def _is_creator(self, user_id: str) -> bool:
+        """是否具备「创作者」资格：会员等级 ≥ creator，或平台管理员（运营自己也能上架）。"""
+        if self._is_platform_admin(user_id):
+            return True
+        try:
+            return tier_level(self.members.get_tier(user_id)) >= tier_level(TIER_CREATOR)
+        except Exception:
+            return False
+
+    def handle_creator_listings(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """列本人全部上架（含已下架/被封）+ 收益汇总——工坊「我的上架」区回显。需登录。
+
+        非创作者也能查（返回空列表 + is_creator=False），前端据此渲染引导文案。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        try:
+            from cosmac.db import listing_repo, session_scope
+
+            with session_scope() as s:
+                rows = listing_repo.list_by_creator(s, user_id)
+                summary = listing_repo.earnings_summary(s, user_id)
+            return 200, {
+                "is_creator": self._is_creator(user_id),
+                "fee_pct": int(self.wallet.config().get("platform_fee_pct") or 10),
+                "wallet_enabled": self.wallet.enabled(),
+                "summary": summary,
+                "items": [{
+                    "id": li.id, "agent_slug": li.agent_slug, "name": li.name,
+                    "description": li.description,
+                    "price_tokens": int(li.price_tokens or 0),
+                    "status": li.status, "uses": int(li.uses or 0),
+                    "earned": int(li.earned or 0),
+                } for li in rows],
+            }
+        except Exception:
+            logger.exception("列创作者上架失败")
+            return 500, {"error": "读取失败"}
+
+    def handle_creator_publish(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """上架/更新：把本人自建 Agent 上架到商城（定价 token/次，0=免费）。
+
+        服务端强制：① 创作者资格（会员等级 ≥ creator）；② Agent 必须是本人自建且启用
+        （上架是引用，人设仍在创作者名下、绝不进商城橱窗）。同 Agent 重复上架=更新价格/文案。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_creator(user_id):
+            return 403, {"error": "上架需要「创作者会员」资格——升级后即可把你的 Agent 上架赚 token"}
+        agent_slug = str((body or {}).get("agent_slug") or "").strip().lower()
+        try:
+            price = int((body or {}).get("price_tokens") or 0)
+        except (TypeError, ValueError):
+            return 400, {"error": "价格必须是整数（token/次，0=免费）"}
+        if price < 0 or price > 1_000_000:
+            return 400, {"error": "价格超出范围（0 ~ 100万 token/次）"}
+        # 橱窗文案：默认取 Agent 的名称/说明，允许单独传（不改 Agent 本体）
+        mine = next(
+            (m for m in self._my_agent_items(user_id) if m.get("slug") == agent_slug),
+            None,
+        )
+        if mine is None:
+            return 404, {"error": "没有这个自建智能体（或未启用）——先在工坊建好再上架"}
+        name = str((body or {}).get("name") or mine.get("name") or agent_slug).strip()[:80]
+        description = str(
+            (body or {}).get("description") or mine.get("description") or ""
+        ).strip()[:300]
+        try:
+            from cosmac.db import listing_repo, session_scope
+
+            with session_scope() as s:
+                row = listing_repo.upsert_listing(
+                    s, creator=user_id, agent_slug=agent_slug,
+                    name=name, description=description, price_tokens=price,
+                )
+                if row is None:
+                    return 403, {"error": "该 Agent 已被平台下架，不可重新上架（如有疑问联系管理员）"}
+                lid = row.id
+            # 已获取者的路由缓存不失效也没关系（5 分钟内价格/文案渐次生效）；
+            # 但保险起见清本人（创作者常自测）。
+            self._acquired_cagent_cache.pop(user_id, None)
+            return 200, {"ok": True, "id": lid}
+        except Exception:
+            logger.exception("上架失败 user=%s agent=%s", user_id, agent_slug)
+            return 500, {"error": "上架失败，请稍后再试"}
+
+    def handle_creator_listing_status(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """创作者上/下架自己的 listing（on/off）；管理员可传 banned/on 强制处置任意条目。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        try:
+            lid = int((body or {}).get("id"))
+        except (TypeError, ValueError):
+            return 400, {"error": "参数不合法"}
+        status = str((body or {}).get("status") or "").strip()
+        is_admin = self._is_platform_admin(user_id)
+        allowed = ("on", "off", "banned") if is_admin else ("on", "off")
+        if status not in allowed:
+            return 400, {"error": "状态不合法"}
+        try:
+            from cosmac.db import listing_repo, session_scope
+
+            with session_scope() as s:
+                ok = listing_repo.set_status(
+                    s, lid, status, creator="" if is_admin else user_id,
+                )
+            if not ok:
+                return 404, {"error": "找不到该上架记录（或无权操作）"}
+            # 下架要立刻生效：清全部路由缓存（谁获取过无从得知，全清最稳；量小无碍）
+            self._acquired_cagent_cache.clear()
+            return 200, {"ok": True}
+        except Exception:
+            logger.exception("改上架状态失败 id=%s", lid)
+            return 500, {"error": "操作失败，请稍后再试"}
+
+    def handle_creator_earnings(
+        self, access_token: str, limit: int = 50, offset: int = 0
+    ) -> Tuple[int, Dict[str, Any]]:
+        """本人分成明细（新→旧分页）+ 汇总——创作者收益账本（本期只可见、不出金）。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        try:
+            from cosmac.db import listing_repo, session_scope
+
+            with session_scope() as s:
+                rows = listing_repo.list_earnings(
+                    s, user_id, limit=limit, offset=offset
+                )
+                summary = listing_repo.earnings_summary(s, user_id)
+            return 200, {
+                "summary": summary,
+                "items": [{
+                    "id": e.id, "agent_slug": e.agent_slug, "buyer": e.buyer,
+                    "gross": int(e.gross), "fee": int(e.fee), "net": int(e.net),
+                    "created_at": e.created_at.isoformat() if e.created_at else "",
+                } for e in rows],
+            }
+        except Exception:
+            logger.exception("读收益明细失败 user=%s", user_id)
+            return 500, {"error": "读取失败"}
 
     def handle_people_list_mine(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """列本人维护的协作人能力名册。需登录。
@@ -6841,6 +7114,7 @@ class _Handler(BaseHTTPRequestHandler):
                 or p.startswith("/cosmac/profile/")
                 or p.startswith("/cosmac/usage/")
                 or p.startswith("/cosmac/wallet/")   # Token 钱包（余额/流水/充值，带 Authorization）
+                or p.startswith("/cosmac/creator/")  # 创作者商城（上架/收益，带 Authorization）
                 or p.startswith("/cosmac/admin/")
                 or p.startswith("/cosmac/channel/")   # 频道规则文档 AI 一键写      # 后台用户列表拉邮箱（GET 带 Authorization 也要预检）
                 or p.startswith("/cosmac/channel/")     # 平台管理员接管频道（bug14）
@@ -6951,6 +7225,25 @@ class _Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 limit, offset = 50, 0
             code, payload = self.bot.handle_wallet_ledger(
+                self._bearer(), limit=limit, offset=offset
+            )
+            self._send_json(code, payload, cors=True)
+            return
+        # 创作者商城：我的上架列表 + 收益汇总（P2）
+        if self.path.split("?", 1)[0] == "/cosmac/creator/listings":
+            code, payload = self.bot.handle_creator_listings(self._bearer())
+            self._send_json(code, payload, cors=True)
+            return
+        # 创作者商城：收益明细（?limit=&offset=）
+        if self.path.split("?", 1)[0] == "/cosmac/creator/earnings":
+            from urllib.parse import parse_qs, urlparse
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                limit = int((qs.get("limit") or ["50"])[0])
+                offset = int((qs.get("offset") or ["0"])[0])
+            except (TypeError, ValueError):
+                limit, offset = 50, 0
+            code, payload = self.bot.handle_creator_earnings(
                 self._bearer(), limit=limit, offset=offset
             )
             self._send_json(code, payload, cors=True)
@@ -7548,6 +7841,24 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "请求无效"}, cors=True)
                 return
             code, payload = self.bot.handle_wallet_checkout(self._bearer(), body)
+            self._send_json(code, payload, cors=True)
+            return
+        # 创作者商城：上架/更新（P2）
+        if path == "/cosmac/creator/publish":
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_creator_publish(self._bearer(), body)
+            self._send_json(code, payload, cors=True)
+            return
+        # 创作者商城：上/下架（创作者 on/off；管理员可 banned）
+        if path == "/cosmac/creator/status":
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_creator_listing_status(self._bearer(), body)
             self._send_json(code, payload, cors=True)
             return
         # Token 钱包：管理员手动加/减 token（后台「Token 经济」页）
