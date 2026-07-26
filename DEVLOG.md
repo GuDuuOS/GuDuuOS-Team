@@ -1,5 +1,15 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-25 — GuDuu OS 1.5.42 (patch)
+
+- 修复：**中枢AI 私聊里"推进 AI 执行"卡死很久没响应，「正在执行」一直转圈**(负责人实报)。根因是
+  AI 执行的两条 LLM 路径都**没有整体超时**:① SDK 引擎的 `async for query(...)` 循环无超时,某次
+  模型/工具调用挂住就无限等;② OpenAI 兼容后端(DeepSeek/方舟,auto-executor 用)建客户端时没设
+  `timeout`,SDK 默认 600s×重试2次,一次卡住能拖十几分钟。**修**:① SDK 引擎用 `asyncio.wait_for`
+  包整轮(默认 240s,超时抛错→走 bot 兜底:已执行过工具就返回"遇到故障停在这里",否则回退 legacy),
+  把无限转圈变成明确回复;② OpenAI 客户端显式设 `timeout`(默认 120s,可配 `COSMAC_LLM_TIMEOUT`)
+  并把重试压到 1 次。两个超时都可经 env 调。
+
 ## 2026-07-25 — GuDuu OS 1.5.41 (patch)
 
 - 修复：**AI Agent 任务"全部交付"是假的——任务没进看板、Agent 产出没发频道**(负责人实报;AI 自己

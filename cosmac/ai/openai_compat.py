@@ -39,6 +39,17 @@ class OpenAICompatProvider(LLMProvider):
         kwargs: Dict[str, Any] = {"api_key": api_key or ""}
         if base_url:
             kwargs["base_url"] = base_url  # 指向方舟 / Gemini 等；不传则用 OpenAI 官方
+        # 显式超时 + 限重试(负责人实报:推进 AI 执行卡死很久没响应)。OpenAI SDK 默认超时长达
+        # 600s、且默认重试 2 次——一次卡住的模型调用能拖十几分钟,表现为"正在执行"转圈不动。
+        # 用 COSMAC_LLM_TIMEOUT 配置(默认 120s、最低 20s),重试压到 1 次,让卡住的调用尽快失败、
+        # 走上层兜底(auto-executor 会把任务退回并提示),而不是无限等。
+        from cosmac.config import _env
+        try:
+            _to = float(_env("LLM_TIMEOUT", "") or 120)
+        except (TypeError, ValueError):
+            _to = 120.0
+        kwargs["timeout"] = max(20.0, _to)
+        kwargs["max_retries"] = 1
         self._client = OpenAI(**kwargs)
 
     # —— 内部：中立结构 → OpenAI 兼容格式 ——
