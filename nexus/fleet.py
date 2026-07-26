@@ -14,7 +14,7 @@ import json
 import time
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select, update
 
 from nexus import geo
 from nexus.db import (
@@ -23,6 +23,7 @@ from nexus.db import (
     NexusInstanceGeo,
     NexusKey,
     NexusLedger,
+    NexusRequestStat,
     NexusWallet,
 )
 from nexus.keys import generate_key, hash_key, looks_like_key
@@ -205,6 +206,88 @@ def heartbeat(
         "status": inst.status,
         "balance_tokens": int(wallet.balance_tokens) if wallet else 0,
     }
+
+
+# ---------- 网关请求统计（成功率 / 延迟 / 峰值）----------
+
+def record_request(
+    s, instance_id: int, *, ok: bool, latency_ms: int = 0
+) -> None:
+    """记一次网关请求到**分钟桶**。成败都要记——只记成功的话成功率永远是 100%。
+
+    并发收敛：先原子 UPDATE 累加,rowcount=0 说明本分钟还没有行,再 INSERT;
+    INSERT 撞唯一键(另一并发线程刚建)就重试一次 UPDATE。
+    延迟只累计成功请求(失败多是秒回的 4xx,混进来会把均值拉得虚低)。
+    **best-effort**:统计失败绝不能影响网关转发,调用方吞异常。
+    """
+    minute = (int(time.time() * 1000) // 60000) * 60000
+    ms = max(0, int(latency_ms))
+    inc_ok, inc_fail = (1, 0) if ok else (0, 1)
+    lat_sum = ms if ok else 0
+
+    def _update() -> int:
+        res = s.execute(
+            update(NexusRequestStat)
+            .where(
+                NexusRequestStat.instance_id == int(instance_id),
+                NexusRequestStat.minute_ts == minute,
+            )
+            .values(
+                ok_count=NexusRequestStat.ok_count + inc_ok,
+                fail_count=NexusRequestStat.fail_count + inc_fail,
+                latency_sum_ms=NexusRequestStat.latency_sum_ms + lat_sum,
+                latency_max_ms=case(
+                    (NexusRequestStat.latency_max_ms < ms, ms),
+                    else_=NexusRequestStat.latency_max_ms,
+                ),
+            )
+        )
+        return res.rowcount or 0
+
+    if _update():
+        return
+    try:
+        s.add(NexusRequestStat(
+            instance_id=int(instance_id), minute_ts=minute,
+            ok_count=inc_ok, fail_count=inc_fail,
+            latency_sum_ms=lat_sum, latency_max_ms=ms if ok else 0,
+        ))
+        s.flush()
+    except Exception:
+        s.rollback()
+        _update()   # 撞并发插入:回到累加路径
+
+
+def request_stats(s, since_ms: int = 0) -> Dict[int, Dict[str, Any]]:
+    """按实例聚合请求统计：{instance_id: {ok, fail, success_pct, avg_ms, peak_per_min}}。
+
+    success_pct 为 None 表示**这段时间内一次请求都没有**——大屏必须显示「—」而不是 0%
+    （0% 成功率读起来像"全线故障",比不显示更误导）。
+    """
+    q = select(
+        NexusRequestStat.instance_id,
+        func.sum(NexusRequestStat.ok_count),
+        func.sum(NexusRequestStat.fail_count),
+        func.sum(NexusRequestStat.latency_sum_ms),
+        func.max(NexusRequestStat.ok_count + NexusRequestStat.fail_count),
+    )
+    if since_ms:
+        q = q.where(NexusRequestStat.minute_ts >= since_ms)
+    out: Dict[int, Dict[str, Any]] = {}
+    for iid, ok, fail, lat_sum, peak in s.execute(
+        q.group_by(NexusRequestStat.instance_id)
+    ).all():
+        ok = int(ok or 0)
+        fail = int(fail or 0)
+        total = ok + fail
+        out[int(iid)] = {
+            "ok": ok,
+            "fail": fail,
+            "success_pct": round(ok / total * 100, 2) if total else None,
+            "avg_ms": int((lat_sum or 0) / ok) if ok else None,
+            "peak_per_min": int(peak or 0),
+        }
+    return out
 
 
 # ---------- 实例地域（大屏地图）----------
@@ -456,6 +539,9 @@ def dash_summary(s) -> Dict[str, Any]:
         or 0
     )
 
+    # 今日请求质量（成功率/延迟/峰值）——分钟桶聚合，一次查完供所有实例用
+    req_stats = request_stats(s, since_ms=today0)
+
     oems: List[Dict[str, Any]] = []
     online = 0
     for inst in s.execute(select(NexusInstance).order_by(NexusInstance.id)).scalars():
@@ -484,6 +570,11 @@ def dash_summary(s) -> Dict[str, Any]:
                 "requests_today": today_usage.get(inst.id, {}).get("requests", 0),
                 "models_today": len(models_by_inst.get(inst.id, ())),
                 "delta_pct": delta,
+                # 请求质量（网关分钟桶聚合）：无请求时 success_pct/avg_ms 为 None,
+                # 前端必须显示「—」而不是 0%——0% 成功率读起来像"全线故障"。
+                "success_pct": (req_stats.get(inst.id) or {}).get("success_pct"),
+                "avg_latency_ms": (req_stats.get(inst.id) or {}).get("avg_ms"),
+                "peak_per_min": (req_stats.get(inst.id) or {}).get("peak_per_min", 0),
                 # 地域（大屏地图按真实经纬度打点；未填时 lat/lon=None，前端跳过不画）
                 **_geo_of(s, inst.id),
                 "users": int(stats.get("users") or 0),
@@ -520,6 +611,24 @@ def dash_summary(s) -> Dict[str, Any]:
             "requests_today": sum(o["requests_today"] for o in oems),
             "balance_total": sum(o["balance_tokens"] for o in oems),
             "granted_total": granted_total,
+            # 全舰队今日请求质量：成功率(无请求=None,前端显示「—」)/峰值 req/min
+            "success_pct": (
+                round(
+                    sum(v["ok"] for v in req_stats.values())
+                    / max(1, sum(v["ok"] + v["fail"] for v in req_stats.values()))
+                    * 100,
+                    2,
+                )
+                if any(v["ok"] + v["fail"] for v in req_stats.values())
+                else None
+            ),
+            "peak_per_min": max([v["peak_per_min"] for v in req_stats.values()] or [0]),
+            # 舰队覆盖的地域（底部 Region 用；多地域显示"N 个地域"）。
+            # 统计**所有已定位实例**而非仅在线——否则单实例偶发掉线时底栏会闪成「—」，
+            # 而"部署在哪"这件事并不随在线状态变化。
+            "regions": sorted({
+                o["region_label"] for o in oems if o.get("region_label")
+            }),
         },
         "oems": oems,
         "models": models_top,

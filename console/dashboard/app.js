@@ -455,13 +455,19 @@
       token: Number(((o.tokens_total || 0) / TOKEN_UNIT.div).toFixed(2)),
       today: Number(((o.tokens_today || 0) / TOKEN_UNIT.div).toFixed(2)),
       requests: (o.requests_today || 0).toLocaleString("en-US"),
-      latency: "—", // P1 网关尚未计延迟，真实数据里不伪造
+      // 平均延迟:网关已按分钟桶采集(fleet.record_request);无请求时为 null → 显示「—」
+      latency: Number.isFinite(Number(o.avg_latency_ms))
+        ? `${(Number(o.avg_latency_ms) / 1000).toFixed(2)}s`
+        : "—",
       delta: Number(o.delta_pct || 0),
       status: o.status || "offline",
       models: o.models_today || 0,
       // 地域展示：优先真实地域名，没有就退回域名（旧行为）
       region: o.region_label || o.domain || "",
       regionCode: o.region || "",
+      successPct: o.success_pct === null || o.success_pct === undefined ? null : Number(o.success_pct),
+      avgLatencyMs: o.avg_latency_ms === null || o.avg_latency_ms === undefined ? null : Number(o.avg_latency_ms),
+      peakPerMin: Number(o.peak_per_min || 0),
       geoKnown: o.lat !== null && o.lat !== undefined
         && o.lon !== null && o.lon !== undefined
         && Number.isFinite(Number(o.lat)) && Number.isFinite(Number(o.lon)),
@@ -703,10 +709,20 @@
     setText("#revenue-peak", "峰值 ¥ 0 / h");
     setText("#revenue-delta", "—");
 
-    // —— 底部状态栏:没有探活/区域数据源,别写死"Normal / CN-East-01" ——
-    setText("#footer-gateway", (tt.online || 0) > 0 ? "Normal" : "—");
-    setText("#footer-region", "—");
-    setText("#net-sync-label", "网络同步");
+    // —— 底部状态栏:接真实值 ——
+    // 网关健康:用今日真实成功率判(≥99% Normal / ≥95% Degraded / 更低 Unstable);
+    // 今日没有任何请求时不下结论,显示「—」。
+    const sp = tt.success_pct;
+    setText(
+      "#footer-gateway",
+      sp === null || sp === undefined ? "—" : sp >= 99 ? "Normal" : sp >= 95 ? "Degraded" : "Unstable",
+    );
+    // 区域:在线实例覆盖的真实地域(母舰按 OEM 装机时选的机房算)
+    const regions = Array.isArray(tt.regions) ? tt.regions : [];
+    setText(
+      "#footer-region",
+      regions.length === 0 ? "—" : regions.length === 1 ? regions[0] : `${regions.length} 个地域`,
+    );
   }
 
   // ══════════ 真实数据适配层结束 ══════════
@@ -1749,13 +1765,17 @@
     $("#drawer-token").textContent = `${node.token.toFixed(2)}B`;
     $("#drawer-requests-label").textContent = "今日请求";
     $("#drawer-requests").textContent = node.requests;
-    // 峰值 req/s 原先是 `今日用量 × 1260` 凭空乘出来的,网关没有分钟级采样 → 不编
-    $("#drawer-requests-meta").textContent = "峰值未采集";
+    // 峰值:网关分钟桶里的单分钟最大请求数(真实值;今日无请求则显示「—」)
+    $("#drawer-requests-meta").textContent = node.peakPerMin
+      ? `峰值 ${node.peakPerMin.toLocaleString("en-US")} req/min`
+      : "今日无请求";
     $("#drawer-success-label").textContent = "成功率";
-    // ⚠️ 成功率**不能落 0%**——那等于宣称"全部请求都失败",比不显示更误导。
-    // 网关目前不记录成败,如实显示「—」。等网关加上成败计数再接真值。
-    $("#drawer-success").textContent = "—";
-    $("#drawer-success-meta").textContent = "网关未采集成功率";
+    // ⚠️ 成功率**永远不落 0%**——0% 读起来像"全线故障",比不显示更误导。
+    // 今日没有任何请求时 successPct 为 null → 显示「—」。
+    $("#drawer-success").textContent =
+      node.successPct === null ? "—" : `${node.successPct.toFixed(2)}%`;
+    $("#drawer-success-meta").textContent =
+      node.successPct === null ? "今日无请求" : "网关实测（今日）";
     $("#drawer-latency-label").textContent = "平均延迟";
     $("#drawer-latency").textContent = node.latency;
     // 真实模式下延迟暂未采集（latency="—"），P95 跟着显示占位而不是 NaN

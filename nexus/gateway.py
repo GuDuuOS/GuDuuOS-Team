@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Any, Dict, Tuple
 
 import requests
@@ -204,6 +205,24 @@ def usage_from_sse(lines) -> Tuple[int, int]:
 
 # ---------- 主处理（由 service.NexusHandler 调用）----------
 
+def _record_stat(instance_id: int, *, ok: bool, started: float) -> None:
+    """把一次网关请求记进分钟桶（成功率/延迟/峰值的数据源）。
+
+    **best-effort**：统计只是观测,失败绝不能影响转发或计费——整体吞异常、只记日志。
+    单开短连接：与计费一样,不抱着 DB 连接等 LLM。
+    """
+    latency_ms = int((time.monotonic() - started) * 1000)
+    s = db.session()
+    try:
+        fleet.record_request(s, instance_id, ok=ok, latency_ms=latency_ms)
+        s.commit()
+    except Exception:
+        s.rollback()
+        logger.debug("记录网关请求统计失败（忽略）", exc_info=True)
+    finally:
+        s.close()
+
+
 def handle_post(handler, provider: str, suffix: str) -> None:
     """处理一次网关转发。handler 是 NexusHandler（复用其读体/回包工具）。
 
@@ -257,12 +276,15 @@ def handle_post(handler, provider: str, suffix: str) -> None:
             fwd_headers[name] = val
 
     # ③ 请求上游。连接 10s / 读 600s（长推理），stream=True 统一处理两种形态
+    started = time.monotonic()
     try:
         upstream = requests.post(
             url, data=body, headers=fwd_headers, stream=True, timeout=(10, 600)
         )
     except requests.RequestException as e:
         logger.warning("上游不可达 %s: %s", url, e)
+        # 上游打不通也是一次**失败请求**——必须记,否则成功率永远 100%(见 fleet.record_request)
+        _record_stat(instance_id, ok=False, started=started)
         handler._err(502, "NEXUS_GW_UPSTREAM", "上游模型服务不可达")
         return
 
@@ -304,6 +326,10 @@ def handle_post(handler, provider: str, suffix: str) -> None:
         logger.info("实例侧断开连接（instance=%s）", instance_id)
     finally:
         upstream.close()
+
+    # 请求统计（成功率/延迟/峰值的唯一数据源）：**成败都记**。
+    # 与计费口径一致：上游 2xx 记成功,4xx/5xx 记失败(但不扣钱)。
+    _record_stat(instance_id, ok=upstream.status_code < 400, started=started)
 
     # ④ 记账：上游 2xx 且有用量才扣（4xx/5xx 不该让 OEM 买单）。新开短连。
     total = t_in + t_out

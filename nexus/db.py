@@ -297,6 +297,29 @@ class NexusKeyClaim(Base):
     claimed_ts = Column(BigInteger, nullable=False, default=_now_ms)
 
 
+class NexusRequestStat(Base):
+    """网关请求的**分钟级聚合**（大屏的成功率 / 平均延迟 / 峰值 req 的数据源）。
+
+    为什么按分钟聚合而不是逐请求存一行：大屏要的是聚合值,不需要逐条明细;分钟桶把存储
+    压掉三个数量级(每实例每天最多 1440 行),还天然给出"峰值 req/min"。
+    为什么必须单独记而不能复用 ledger：**ledger 只在扣费成功时写**(上游 4xx/5xx、
+    上游不可达都不写),失败请求根本没留痕 → 成功率无从算起。这张表**成败都记**。
+
+    同样是独立表(本项目无迁移框架,加列不会自动 ALTER,见 NexusKeyClaim 说明)。
+    """
+
+    __tablename__ = "nexus_request_stat"
+
+    # 复合主键：一个实例在一分钟内只有一行，并发写靠"先 UPDATE 不中再 INSERT"收敛
+    instance_id = Column(Integer, primary_key=True)
+    minute_ts = Column(BigInteger, primary_key=True)   # 对齐到整分钟的 epoch ms
+    ok_count = Column(Integer, nullable=False, default=0)
+    fail_count = Column(Integer, nullable=False, default=0)
+    # 延迟只累计**成功**请求（失败往往是秒回的 4xx，混进来会把均值拉得虚低）
+    latency_sum_ms = Column(BigInteger, nullable=False, default=0)
+    latency_max_ms = Column(Integer, nullable=False, default=0)
+
+
 class NexusInstanceGeo(Base):
     """实例地域（大屏地图打点用）。**独立表**，理由同 NexusKeyClaim——本项目没有迁移
     框架，给现存的 nexus_instance 加列不会自动 ALTER，新开一张表零迁移风险。
