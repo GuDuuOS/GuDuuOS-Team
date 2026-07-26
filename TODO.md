@@ -29,8 +29,12 @@
     心跳/AI 通道预填网关/真管理员令牌修 P0 遗留);
     待续:④b 皮肤系统(实例内 cosmac.brand 换 logo/色)+console 管理页(KEY 签发/充值
     UI,现靠 curl);大屏"模型分布/实时动态/配额"三面板仍演示、P2 真实化;
-    ⚠️ 前置欠账:方舟 ARK key 配进母舰 NEXUS_GW_ARK_KEY 后,主站 AI 从 echo 切
-    deepseek-经网关(实例 env 已预填只差改 provider)):
+    ⚠️ **实测状态更正**(2026-07-26 查生产 env,原记录已过时):主站实例的 AI **早已是
+    deepseek、不是 echo**,但 `COSMAC_SDK_BASE_URL=https://api.deepseek.com/anthropic`
+    = **直连原厂、没走母舰网关**(`COSMAC_NEXUS_URL` 虽已配)。后果:网关的逐请求计量/
+    扣钱包/限流对主站**不生效**,大屏的"模型分布/用量"也拿不到主站数据。要么把主站
+    SDK_BASE_URL 指向母舰网关(需母舰侧配好 ARK/DeepSeek key),要么明确"实例#0 作为原厂
+    自留地不受缰绳"并在大屏上单列——**这是个待你拍板的口径,不是纯技术活**):
     fleet 服务(KEY 签发/兑换 API/实例注册/心跳)+ LLM 网关
     (平台 key 鉴权/逐请求计量/token 钱包扣费/限流)+ console 独立前端基础版(实例列表/详情/
     KEY 管理/手动充值)+ 实例内运行时皮肤(控制室 cosmac.brand + 免登录 GET /cosmac/brand +
