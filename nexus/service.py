@@ -6,7 +6,7 @@
 端点总览：
     公开（实例回连，凭 KEY 鉴权）：
         GET  /nexus/health                       探活
-        POST /nexus/redeem     {key,domain,admin_email}   兑换开通（install.sh 调）
+        POST /nexus/redeem     {key,domain,admin_email,region}  兑换开通（install.sh 调）
         POST /nexus/heartbeat  {key,version,stats}        心跳上报（实例定时调）
     管理（console 用，须 Authorization: Bearer <NEXUS_ADMIN_TOKEN>）：
         POST /nexus/admin/keys       {count,note,token_grant}  签发 KEY（明文仅此一次）
@@ -32,7 +32,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict
 
-from nexus import db, fleet, oem as oem_svc, pay
+from nexus import db, fleet, geo, oem as oem_svc, pay
 from nexus.fleet import FleetError
 
 logger = logging.getLogger("nexus.service")
@@ -175,6 +175,11 @@ class NexusHandler(BaseHTTPRequestHandler):
         if path == "/nexus/admin/keys":
             if self._check_admin():
                 self._with_session(lambda s: self._json(200, {"keys": fleet.list_keys(s)}))
+            return
+        if path == "/nexus/admin/regions":
+            # 地域字典（console 下拉 + 大屏图例用）。静态数据，不查库。
+            if self._check_admin():
+                self._json(200, {"regions": geo.options()})
             return
         if path == "/nexus/admin/instances":
             if self._check_admin():
@@ -403,6 +408,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                     str(body.get("key", "")),
                     str(body.get("domain", "")),
                     str(body.get("admin_email", "")),
+                    str(body.get("region", "")),   # OEM 兑码时选的机房地域（大屏地图用）
                 )
                 # 装机成功后销毁申请单里存的交付明文（阅后即焚的"焚"时刻）
                 oem_svc.clear_plain_by_key(s, str(body.get("key", "")))
@@ -420,6 +426,8 @@ class NexusHandler(BaseHTTPRequestHandler):
                         str(body.get("key", "")),
                         str(body.get("version", "")),
                         stats if isinstance(stats, dict) else {},
+                        # 来源 IP 由母舰这边读（实例自报不可信、也拿不到自己的公网 IP）
+                        client_ip=self._client_ip(),
                     ),
                 )
             )
@@ -545,6 +553,21 @@ class NexusHandler(BaseHTTPRequestHandler):
                 self._with_session(
                     lambda s: self._json(
                         200, {"pricing": pay.set_pricing(s, body)}
+                    )
+                )
+            return
+
+        if path == "/nexus/admin/instance_region":
+            # 改实例地域（OEM 兑码时填错/没填时，超管在 console 里纠正）
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        fleet.set_geo(
+                            s,
+                            int(body.get("instance_id") or 0),
+                            str(body.get("region", "")),
+                        ),
                     )
                 )
             return

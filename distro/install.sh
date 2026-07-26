@@ -68,9 +68,10 @@ while [ $# -gt 0 ]; do
     --email)  ADMIN_EMAIL="$2"; shift 2 ;;
     --key)    OEM_KEY="$2"; shift 2 ;;
     --nexus)  NEXUS_URL="$2"; shift 2 ;;
+    --region) REGION="$2"; shift 2 ;;
     --behind-proxy) BEHIND_PROXY=1; shift ;;
     --proxy-port) PROXY_HTTP_PORT="$2"; shift 2 ;;
-    *) die "未知参数：$1（支持 --domain/--email/--key/--nexus/--behind-proxy/--proxy-port）" ;;
+    *) die "未知参数：$1（支持 --domain/--email/--key/--nexus/--region/--behind-proxy/--proxy-port）" ;;
   esac
 done
 
@@ -88,10 +89,19 @@ esac
 
 # —— 兑换授权（P1③：有授权码就向 GuDuu Nexus 真兑换，失败即终止）——
 if [ -n "$OEM_KEY" ]; then
+  # 机房地域：只用于 GuDuu 运营大屏在地图上标出你的实例位置。你自己最清楚机器在哪，
+  # 所以这里选一下——比用 IP 猜准得多（云服务器 IP 的归属常常是服务商注册地）。
+  # 留空也能装，之后可由 GuDuu 侧在后台补填。
+  if [ -z "${REGION:-}" ]; then
+    echo "机房地域代码（仅用于运营大屏地图标点，可留空）："
+    echo "  中国大陆示例：CN-BJ 北京 / CN-SH 上海 / CN-ZJ 浙江 / CN-GD 广东 / CN-SC 四川"
+    echo "  港澳台与境外：CN-HK 香港 / CN-TW 台湾 / SG 新加坡 / JP 日本 / US 美国 / DE 德国"
+    read -rp "地域代码（留空跳过）: " REGION
+  fi
   say "向 GuDuu Nexus（$NEXUS_URL）兑换授权……"
   REDEEM_RESP=$(curl -sS --max-time 20 -X POST "$NEXUS_URL/nexus/redeem" \
     -H "Content-Type: application/json" \
-    -d "{\"key\":\"$OEM_KEY\",\"domain\":\"$DOMAIN\",\"admin_email\":\"$ADMIN_EMAIL\"}") \
+    -d "{\"key\":\"$OEM_KEY\",\"domain\":\"$DOMAIN\",\"admin_email\":\"$ADMIN_EMAIL\",\"region\":\"$REGION\"}") \
     || die "无法连接 GuDuu Nexus（$NEXUS_URL）——检查网络后重试。"
   echo "$REDEEM_RESP" | grep -q '"instance_id"' \
     || die "授权码兑换失败：$REDEEM_RESP"

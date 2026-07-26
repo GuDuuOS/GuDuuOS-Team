@@ -413,6 +413,22 @@
     ["#57e6a5", "#b2ffd9"], ["#ffb65c", "#ffe1b6"], ["#5ca8ff", "#b7d9ff"],
   ];
 
+  /** 经纬度 → 大屏地图归一化坐标(0~1)。等距圆柱投影(Equirectangular)：
+   *  x = (lon+180)/360，y = (90-lat)/180。与底图 land-110m 的常规绘制方式一致。
+   *  没有真实地域的实例回落到按域名哈希的稳定伪随机位（刷新不乱跳），并标出来。 */
+  function projectNode(o, rand) {
+    const lat = Number(o.lat);
+    const lon = Number(o.lon);
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      return {
+        x: (lon + 180) / 360,
+        y: (90 - lat) / 180,
+        z: 0,
+      };
+    }
+    return { x: 0.12 + rand() * 0.76, y: 0.14 + rand() * 0.66, z: rand() * 0.7 - 0.35 };
+  }
+
   // 把 Nexus 返回的一个实例映射成大屏节点（字段形态与演示 OEMS 完全一致）
   function adaptOem(o, index) {
     const seed = hashSeed(o.domain || String(o.id));
@@ -429,9 +445,10 @@
       initials: shortName.slice(0, 2).toUpperCase(),
       color,
       accent,
-      x: 0.12 + rand() * 0.76,
-      y: 0.14 + rand() * 0.66,
-      z: rand() * 0.7 - 0.35,
+      // 地图点位：有真实地域(母舰按 OEM 兑码时选的机房算出经纬度)就按经纬度投影；
+      // 没填地域的实例回落到伪随机位（按域名哈希，位置稳定不乱跳），并标 geoKnown=false
+      // 供上层区分——绝不把"没数据"画成"在某地"。
+      ...projectNode(o, rand),
       size: 13 + Math.min(7, Math.round(Math.log10(1 + (o.tokens_total || 0) / 1e3))),
       token: Number(((o.tokens_total || 0) / TOKEN_UNIT.div).toFixed(2)),
       today: Number(((o.tokens_today || 0) / TOKEN_UNIT.div).toFixed(2)),
@@ -440,7 +457,10 @@
       delta: Number(o.delta_pct || 0),
       status: o.status || "offline",
       models: o.models_today || 0,
-      region: o.domain || "",
+      // 地域展示：优先真实地域名，没有就退回域名（旧行为）
+      region: o.region_label || o.domain || "",
+      regionCode: o.region || "",
+      geoKnown: Number.isFinite(o.lat) && Number.isFinite(o.lon),
       orbit: (index % 3) + 1,
       balance: o.balance_tokens || 0,
       users: o.users || 0,

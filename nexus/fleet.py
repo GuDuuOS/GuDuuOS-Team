@@ -16,9 +16,11 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
 
+from nexus import geo
 from nexus.db import (
     NexusHeartbeat,
     NexusInstance,
+    NexusInstanceGeo,
     NexusKey,
     NexusLedger,
     NexusWallet,
@@ -95,7 +97,9 @@ def _key_by_plain(s, raw_key: str) -> NexusKey:
 
 # ---------- 兑换（OEM 安装脚本调用）----------
 
-def redeem(s, raw_key: str, domain: str, admin_email: str = "") -> Dict[str, Any]:
+def redeem(
+    s, raw_key: str, domain: str, admin_email: str = "", region: str = ""
+) -> Dict[str, Any]:
     """兑换 KEY、登记实例。**幂等**：同 KEY+同域名重复兑换（重装）直接返回原实例。
 
     规则（模块6 拍板语义）：
@@ -142,18 +146,31 @@ def redeem(s, raw_key: str, domain: str, admin_email: str = "") -> Dict[str, Any
                 note=f"KEY#{key.id} 兑换附赠",
             )
         )
+    # 地域：兑码时 OEM 选的（install 引导传上来）。非法/未传就留空，之后 console 补填。
+    code = geo.normalize(region)
+    if code:
+        info = geo.lookup(code)
+        s.add(NexusInstanceGeo(
+            instance_id=inst.id, region_code=code,
+            region_label=info["label"], lat=info["lat"], lon=info["lon"],
+        ))
     return {"instance_id": inst.id, "domain": inst.domain, "reinstall": False}
 
 
 # ---------- 心跳（实例定期回连）----------
 
 def heartbeat(
-    s, raw_key: str, version: str = "", stats: Optional[Dict[str, Any]] = None
+    s, raw_key: str, version: str = "", stats: Optional[Dict[str, Any]] = None,
+    client_ip: str = "",
 ) -> Dict[str, Any]:
     """实例心跳：更新快照 + 记历史。返回母舰想让实例知道的少量信息。
 
     返回里带 ``balance_tokens``：实例侧可以在后台展示"余额快见底"提醒，
     这是续费转化的重要触点（钱包=唯一续费抓手）。
+
+    ``client_ip``：母舰从请求里读到的**真实来源 IP**（实例自报不可信：它在 NAT/容器里
+    根本不知道自己的公网 IP，且可伪造）。这里只**脱敏存网段**、供人工核对 OEM 填的地域
+    是否离谱，**不做自动定位**（云 IP 归属常是服务商注册地，反而更不准，见 geo.py）。
     """
     key = _key_by_plain(s, raw_key)
     if key.instance_id is None:
@@ -171,11 +188,63 @@ def heartbeat(
             instance_id=inst.id, version=inst.version, stats_json=payload
         )
     )
+    # 记下来源网段（best-effort：地域行不存在就顺手建一条空的，等 OEM/管理员填地域）
+    masked = geo.mask_ip(client_ip)
+    if masked:
+        row = s.get(NexusInstanceGeo, inst.id)
+        if row is None:
+            row = NexusInstanceGeo(instance_id=inst.id)
+            s.add(row)
+        if row.last_ip != masked:
+            row.last_ip = masked
+            row.updated_ts = _now_ms()
+
     wallet = s.get(NexusWallet, inst.id)
     return {
         "instance_id": inst.id,
         "status": inst.status,
         "balance_tokens": int(wallet.balance_tokens) if wallet else 0,
+    }
+
+
+# ---------- 实例地域（大屏地图）----------
+
+def set_geo(s, instance_id: int, region_code: str) -> Dict[str, Any]:
+    """设置/修改实例地域。region_code 传空串=清空（大屏不再打点）。
+
+    坐标从字典查出来**冗余存下**：字典将来微调坐标不影响历史展示，大屏读表即可、免查表。
+    """
+    inst = s.get(NexusInstance, int(instance_id))
+    if inst is None:
+        raise FleetError("NEXUS_INSTANCE_MISSING", "实例不存在", 404)
+    code = geo.normalize(region_code)
+    if region_code and not code:
+        raise FleetError("NEXUS_BAD_REGION", "地域代码不合法", 400)
+    row = s.get(NexusInstanceGeo, inst.id)
+    if row is None:
+        row = NexusInstanceGeo(instance_id=inst.id)
+        s.add(row)
+    info = geo.lookup(code) if code else None
+    row.region_code = code
+    row.region_label = info["label"] if info else ""
+    row.lat = info["lat"] if info else None
+    row.lon = info["lon"] if info else None
+    row.updated_ts = _now_ms()
+    s.flush()
+    return {"instance_id": inst.id, "region": code, "label": row.region_label}
+
+
+def _geo_of(s, instance_id: int) -> Dict[str, Any]:
+    """取某实例的地域快照（没填过就返回空壳，调用方无需判 None）。"""
+    row = s.get(NexusInstanceGeo, int(instance_id))
+    if row is None:
+        return {"region": "", "region_label": "", "lat": None, "lon": None, "last_ip": ""}
+    return {
+        "region": row.region_code or "",
+        "region_label": row.region_label or "",
+        "lat": row.lat,
+        "lon": row.lon,
+        "last_ip": row.last_ip or "",
     }
 
 
@@ -269,6 +338,8 @@ def list_instances(s) -> List[Dict[str, Any]]:
                 "last_seen_ts": r.last_seen_ts,
                 "stats": stats,
                 "balance_tokens": int(wallet.balance_tokens) if wallet else 0,
+                # 地域（大屏地图打点；未填时 lat/lon 为 None，前端跳过该点）
+                **_geo_of(s, r.id),
             }
         )
     return out
@@ -413,6 +484,8 @@ def dash_summary(s) -> Dict[str, Any]:
                 "requests_today": today_usage.get(inst.id, {}).get("requests", 0),
                 "models_today": len(models_by_inst.get(inst.id, ())),
                 "delta_pct": delta,
+                # 地域（大屏地图按真实经纬度打点；未填时 lat/lon=None，前端跳过不画）
+                **_geo_of(s, inst.id),
                 "users": int(stats.get("users") or 0),
             }
         )

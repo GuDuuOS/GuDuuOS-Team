@@ -16,6 +16,7 @@ from typing import Optional
 from sqlalchemy import (
     BigInteger,
     Column,
+    Float,
     Index,
     Integer,
     LargeBinary,
@@ -294,6 +295,29 @@ class NexusKeyClaim(Base):
     key_id = Column(Integer, primary_key=True)  # = NexusKey.id
     oem_id = Column(Integer, nullable=False, index=True)
     claimed_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
+class NexusInstanceGeo(Base):
+    """实例地域（大屏地图打点用）。**独立表**，理由同 NexusKeyClaim——本项目没有迁移
+    框架，给现存的 nexus_instance 加列不会自动 ALTER，新开一张表零迁移风险。
+
+    地域**由 OEM 兑码时选定**（他自己最清楚机房在哪），console 可改；不做 IP 自动定位
+    （云 IP 归属常是服务商注册地而非机房，反而更不准，详见 geo.py 模块注释）。
+    ``last_ip`` 是心跳来源 IP 的**脱敏网段**，只作人工核对参考，不参与定位。
+    """
+
+    __tablename__ = "nexus_instance_geo"
+
+    instance_id = Column(Integer, primary_key=True)   # = NexusInstance.id
+    # 地域代码（见 nexus/geo.py REGIONS，如 CN-ZJ / SG）；空=未填，大屏不打点
+    region_code = Column(String(16), nullable=False, default="")
+    # 冗余存下当时的中文名与经纬度：字典将来微调坐标也不影响历史展示，大屏直接读免查表
+    region_label = Column(String(64), nullable=False, default="")
+    lat = Column(Float, nullable=True, default=None)
+    lon = Column(Float, nullable=True, default=None)
+    # 心跳来源 IP 的脱敏网段（如 1.2.3.0/24），仅供核对 OEM 填的地域是否离谱
+    last_ip = Column(String(64), nullable=False, default="")
+    updated_ts = Column(BigInteger, nullable=False, default=_now_ms)
 
 
 # 组合索引：按实例翻流水/心跳是最高频查询
