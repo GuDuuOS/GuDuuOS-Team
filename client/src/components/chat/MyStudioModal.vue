@@ -53,6 +53,23 @@
               <textarea v-model="agForm.system_prompt" class="cam-input ms-ta ms-persona" rows="12" maxlength="4000" placeholder="你是…擅长…工作方式…输出…（可点上方「套用结构模板」按推荐结构写）" />
               <span class="ms-hint">按 角色定位 / 擅长 / 工作方式 / 输出要求 / 注意事项 五段写更专业；智能体只在被 @/点名时激活、不占日常上下文，可以写详细些（上限 4000 字）。</span>
               <input v-model.trim="agForm.model" class="cam-input" placeholder="模型(可选,留空跟随全局)" />
+              <div class="ms-wf">
+                <span class="ms-persona-label">绑定工作流（让它能真的动手，而不只是会说话）</span>
+                <p v-if="!bindableWfs.length" class="ms-hint">
+                  平台还没接入工作流连接器。接入后（n8n / Coze / Dify / ComfyUI）这里就能勾选。
+                </p>
+                <template v-else>
+                  <label v-for="w in bindableWfs" :key="w.slug" class="ms-check">
+                    <input type="checkbox" :checked="(agForm.workflow_slugs || []).includes(w.slug)"
+                      @change="toggleAgWorkflow(w.slug, ($event.target as HTMLInputElement).checked)" />
+                    {{ w.name || w.slug }}<code class="ms-wf-slug">{{ w.slug }}</code>
+                  </label>
+                  <span class="ms-hint">
+                    勾选后，这个智能体被派活时会知道可以调用它们。
+                    ⚠️ 能不能真的跑，仍取决于你自己的「工作流运行」权限——绑定不会额外提权。
+                  </span>
+                </template>
+              </div>
               <label class="ms-check"><input v-model="agForm.enabled" type="checkbox" /> 启用</label>
               <div class="ms-actions">
                 <button class="cam-mini" @click="editing = false">取消</button>
@@ -247,7 +264,7 @@ import Icon from '@/components/Icon.vue'
 import { computed, reactive, ref, watch } from 'vue'
 import '@/styles/admin-modal.css'
 import {
-  myAgentsList, myAgentSave, myAgentDelete,
+  myAgentsList, myAgentSave, myAgentDelete, myWorkflowsList,
   mySkillsList, mySkillSave, mySkillDelete,
   fetchMarketAcquired, setMarketItemAcquired, getMyUsage,
   creatorListings, creatorPublish, creatorSetStatus, creatorEarnings,
@@ -269,7 +286,15 @@ const acquired = ref<AcquiredItem[]>([])
 const editing = ref(false)
 const busy = ref(false)
 const errText = ref('')
-const agForm = reactive<MyAgent & { _edit: boolean }>({ slug: '', name: '', description: '', system_prompt: '', model: '', enabled: true, _edit: false })
+const agForm = reactive<MyAgent & { _edit: boolean }>({ slug: '', name: '', description: '', system_prompt: '', model: '', workflow_slugs: [], enabled: true, _edit: false })
+// 可绑定的工作流清单(服务端只下发 slug/name/输入提示,不含 url 与凭据名)
+const bindableWfs = ref<{ slug: string; name: string; input_hint?: string }[]>([])
+function toggleAgWorkflow(slug: string, on: boolean) {
+  if (!agForm.workflow_slugs) agForm.workflow_slugs = []
+  const i = agForm.workflow_slugs.indexOf(slug)
+  if (on && i < 0) agForm.workflow_slugs.push(slug)
+  else if (!on && i >= 0) agForm.workflow_slugs.splice(i, 1)
+}
 const skForm = reactive<MySkill & { _edit: boolean }>({ slug: '', name: '', description: '', instructions: '', enabled: true, _edit: false })
 
 // 「已获取」额度(按会员等级,服务端强制):-1=不限;null=还没拉到
@@ -289,10 +314,11 @@ const earnItems = ref<CreatorEarningItem[]>([])
 
 async function load() {
   errText.value = ''
-  const [a, s, g, usage, pub] = await Promise.all([
+  const [a, s, g, usage, pub, wfs] = await Promise.all([
     myAgentsList(), mySkillsList(), fetchMarketAcquired(), getMyUsage(),
-    creatorListings(),
+    creatorListings(), myWorkflowsList(),
   ])
+  bindableWfs.value = wfs || []
   agents.value = a
   skills.value = s
   acquired.value = g || []
@@ -423,7 +449,7 @@ async function removeAcquired(it: AcquiredItem) {
 function goMarket() { emit('market') }
 watch(() => props.visible, (v) => { if (v) { editing.value = false; load() } })
 
-function newAgent() { Object.assign(agForm, { slug: '', name: '', description: '', system_prompt: '', model: '', enabled: true, _edit: false }); editing.value = true; errText.value = '' }
+function newAgent() { Object.assign(agForm, { slug: '', name: '', description: '', system_prompt: '', model: '', workflow_slugs: [], enabled: true, _edit: false }); editing.value = true; errText.value = '' }
 
 // 结构化人设模板(与后台建智能体同一套五要素骨架)：引导用户写出更专业的自建智能体人设。
 const PERSONA_TEMPLATE = `【角色定位】你是……（一句话说清身份与核心职责）
@@ -439,7 +465,7 @@ function applyPersonaTemplate() {
       && !confirm('人设框已有内容，套用模板会替换掉它，确定吗？')) return
   agForm.system_prompt = PERSONA_TEMPLATE
 }
-function editAgent(a: MyAgent) { Object.assign(agForm, { ...a, model: a.model || '', _edit: true }); editing.value = true; errText.value = '' }
+function editAgent(a: MyAgent) { Object.assign(agForm, { ...a, model: a.model || '', workflow_slugs: [...(a.workflow_slugs || [])], _edit: true }); editing.value = true; errText.value = '' }
 async function saveAgent() {
   busy.value = true; errText.value = ''
   try { await myAgentSave({ ...agForm }); editing.value = false; await load() }
@@ -474,6 +500,19 @@ async function delSkill(slug: string) {
 .ms-persona-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .ms-persona-label { font-size: 12px; color: var(--text-2, var(--text)); }
 .ms-persona { min-height: 220px; font-family: var(--mono, ui-monospace, "SF Mono", Menlo, monospace); font-size: 13px; line-height: 1.6; tab-size: 2; }
+.ms-wf {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line, rgba(0,0,0,.08));
+  border-radius: 10px;
+}
+.ms-wf-slug {
+  margin-left: 6px;
+  opacity: .68;
+  font-size: 11px;
+}
 .ms-hint { font-size: 12px; color: var(--text-3, var(--text-2)); line-height: 1.5; }
 .ms-check { font-size: 13px; color: var(--text-2); display: inline-flex; gap: 6px; align-items: center; }
 .ms-actions { display: flex; justify-content: flex-end; gap: 8px; }

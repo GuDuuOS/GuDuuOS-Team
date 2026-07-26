@@ -24,6 +24,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from cosmac.db.models import (
+    Agent,
     Base,
     DocPage,
     KnowledgeChunk,
@@ -152,6 +153,17 @@ def _heal_business_schema(engine: Engine) -> None:
                     conn.execute(text(
                         "ALTER TABLE cosmac_kb_chunk "
                         "ADD COLUMN embed_tag VARCHAR(64) NOT NULL DEFAULT ''"
+                    ))
+        # 智能体表补列：旧库的 cosmac_agent 还没有 workflow_slugs（智能体绑工作流），
+        # 补上否则读写个人智能体时报 UndefinedColumn。JSON 列给 '[]' 默认值，
+        # 已有行自动变成"没绑任何工作流"，语义正确。
+        if insp.has_table(Agent.__tablename__):
+            have = {c["name"] for c in insp.get_columns(Agent.__tablename__)}
+            if "workflow_slugs" not in have:
+                with engine.begin() as conn:
+                    conn.execute(text(
+                        "ALTER TABLE cosmac_agent "
+                        "ADD COLUMN workflow_slugs JSON NOT NULL DEFAULT '[]'"
                     ))
         # 任务表补列：旧库的 cosmac_task 还没有类型化执行者两列（模块3.5 档2），补上
         # 否则拆任务带 executor_kind/ref 写入时报 UndefinedColumn。

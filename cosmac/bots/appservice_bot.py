@@ -5385,6 +5385,7 @@ class CosmacBot:
                 out = [{
                     "slug": a.slug, "name": a.name, "description": a.description,
                     "system_prompt": a.system_prompt, "model": a.model,
+                    "workflow_slugs": list(a.workflow_slugs or []),
                     "enabled": a.enabled,
                 } for a in sorted(
                     list_agents(s, scope=SCOPE_USER, scope_id=user_id),
@@ -5396,6 +5397,33 @@ class CosmacBot:
             return 200, {"agents": out}
         except Exception:
             logger.exception("列个人智能体失败")
+            return 500, {"error": "读取失败"}
+
+    def handle_my_workflows_list(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """列出可绑定的工作流连接器（给工坊的「绑定工作流」勾选框用）。需登录。
+
+        ⚠️ **只下发 slug / name / 输入提示**——url、cred（凭据名）、graph 一律不出网。
+        连接器定义存在控制室 state event，普通用户本来就读不到；这里由 bot 代读并**裁剪**，
+        绝不能顺手把整条定义回传（那等于把内网 webhook 地址和凭据名广播给所有登录用户）。
+
+        只回 enabled 的：停用的连接器没有绑定价值，列出来只会让人绑了个跑不动的。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        try:
+            out = [
+                {
+                    "slug": str(w.get("slug") or ""),
+                    "name": str(w.get("name") or ""),
+                    "input_hint": str(w.get("input_hint") or ""),
+                }
+                for w in self._workflow_defs()
+                if w.get("slug")
+            ]
+            return 200, {"workflows": out}
+        except Exception:
+            logger.exception("列可绑定工作流失败")
             return 500, {"error": "读取失败"}
 
     def handle_my_agents_save(
@@ -5417,6 +5445,15 @@ class CosmacBot:
         prompt = str(body.get("system_prompt") or "").strip()
         model = str(body.get("model") or "").strip()[:128]
         enabled = body.get("enabled") is not False
+        # 绑定的工作流：**只存不授权**。个人智能体的绑定不进 ToolContext.authorized_workflows，
+        # 跑不跑得动仍由 workflow_run 门控裁决——否则用户自建一个 Agent 绑上去就绕过了门槛，
+        # 等于自助提权。这里只做格式清洗与条数上限，不校验 slug 是否存在
+        # （连接器可能后建/被停用，运行期 _preset_workflows_text 会自动跳过解析不到的）。
+        wf_slugs = [
+            str(x).strip().lower()[:128]
+            for x in (body.get("workflow_slugs") or [])
+            if str(x).strip()
+        ][:20]
         if not name or not description or not prompt:
             return 400, {"error": "名称、备注(它是干嘛的)与人设都不能为空——主 AI 靠备注理解何时派给它"}
         if len(prompt) > self._MY_PROMPT_MAX:
@@ -5440,7 +5477,7 @@ class CosmacBot:
                 upsert_agent(
                     s, SCOPE_USER, user_id, slug,
                     name=name, description=description, system_prompt=prompt,
-                    model=model, enabled=enabled,
+                    model=model, workflow_slugs=wf_slugs, enabled=enabled,
                 )
             self._storage_cache = {}  # 内容变了,存量缓存作废
             self._my_agents_cache.pop(user_id, None)  # 自建列表缓存失效,点名路由立即感知
@@ -5612,6 +5649,9 @@ class CosmacBot:
                     "slug": a.slug, "name": a.name, "description": a.description,
                     "system_prompt": a.system_prompt, "model": a.model,
                     "skill_slugs": list(a.skill_slugs or []),
+                    # 个人智能体绑定的工作流：只用于「告诉 AI 它该用哪些」，**不构成授权**
+                    # （不进 authorized_workflows）——能不能跑仍由 workflow_run 门控裁决。
+                    "workflow_slugs": list(a.workflow_slugs or []),
                 } for a in list_agents(s, scope=SCOPE_USER, scope_id=owner, enabled_only=True)]
         except Exception:
             logger.debug("读取个人智能体失败(忽略)", exc_info=True)
@@ -7922,6 +7962,12 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if self.path.split("?", 1)[0] == "/cosmac/my/skills":
             code, payload = self.bot.handle_my_skills_list(self._bearer())
+            self._send_json(code, payload, cors=True)
+            return
+        # 可绑定的工作流清单（工坊「绑定工作流」勾选用）。只回 slug/name/输入提示，
+        # url 与凭据名一律不出网（连接器定义在控制室，普通用户读不到，由 bot 代读裁剪）。
+        if self.path.split("?", 1)[0] == "/cosmac/my/workflows":
+            code, payload = self.bot.handle_my_workflows_list(self._bearer())
             self._send_json(code, payload, cors=True)
             return
         # AI Agent 商城目录:平台真实资源(智能体/技能/工作流/知识库)+按发起人标注解锁/已获取

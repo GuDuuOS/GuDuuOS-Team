@@ -188,5 +188,115 @@ class AgentWorkflowBindingTest(unittest.TestCase):
         self.assertIsInstance(a.authorized_workflows, tuple)
 
 
+
+class MyAgentWorkflowTest(unittest.TestCase):
+    """个人（scope=user）智能体绑定工作流：存得下、读得回，但**绝不提权**。"""
+
+    def setUp(self) -> None:
+        from cosmac.db import init_engine
+        init_engine("sqlite://")   # 纯内存库
+
+    def test_column_roundtrip(self) -> None:
+        """新列能存能取（含自愈补列后的读写）。"""
+        from cosmac.db import session_scope
+        from cosmac.db.models import SCOPE_USER
+        from cosmac.db.repo import get_agent, upsert_agent
+
+        with session_scope() as s:
+            upsert_agent(s, SCOPE_USER, "@u:h", "writer",
+                         name="写手", workflow_slugs=["deploy", "cover-gen"])
+        with session_scope() as s:
+            a = get_agent(s, SCOPE_USER, "@u:h", "writer")
+            self.assertEqual(list(a.workflow_slugs), ["deploy", "cover-gen"])
+
+    def test_default_is_empty_list_not_null(self) -> None:
+        """没绑的老数据要读成 []，不能是 None——否则下游 for/includes 全炸。"""
+        from cosmac.db import session_scope
+        from cosmac.db.models import SCOPE_USER
+        from cosmac.db.repo import get_agent, upsert_agent
+
+        with session_scope() as s:
+            upsert_agent(s, SCOPE_USER, "@u:h", "plain", name="朴素")
+        with session_scope() as s:
+            self.assertEqual(list(get_agent(s, SCOPE_USER, "@u:h", "plain").workflow_slugs or []), [])
+
+    def test_personal_binding_does_not_grant_authorization(self) -> None:
+        """核心安全断言：个人智能体绑了工作流，**不能**因此获得运行授权。
+
+        授权只认 ToolContext.authorized_workflows，而它只由管理员配置的来源填充
+        （入驻模板预置 + 频道绑定的全局智能体）。个人绑定绝不能混进去，
+        否则任何付费用户自建一个 Agent 绑上去就绕过了 workflow_run 门槛。
+        """
+        from cosmac.ai.tools import ToolCall, ToolContext, Toolbox
+
+        class _C:
+            def resolve_alias(self, a):
+                return "!ctrl:h"
+
+            def get_state_event(self, *a, **k):
+                return None
+
+        box = Toolbox(_C())
+        box.gate_check = lambda sender, tool: "需要升级会员"
+        # 模拟：用户自建 Agent 绑了 deploy，但 ctx 的授权列表是空的（个人绑定不进来）
+        ctx = ToolContext(room_id="!r:h", sender="@u:h")
+        out = box.execute(ToolCall(id="t", name="run_workflow", arguments={"slug": "deploy"}), ctx)
+        self.assertIn("需要升级", out)
+
+    def test_bindable_list_never_leaks_url_or_credential(self) -> None:
+        """给普通用户的可绑定清单**只能**含 slug/name/input_hint。
+
+        连接器定义里有内网 webhook 地址与凭据名，泄给所有登录用户是事故。
+        """
+        from cosmac.bots.appservice_bot import CosmacBot
+        from cosmac.config import CosmacConfig
+
+        bot = CosmacBot(CosmacConfig(llm_provider="echo"))
+        secret_wf = {
+            "slug": "deploy", "name": "部署", "enabled": True,
+            "url": "https://internal.corp/webhook/SECRET",
+            "cred": "n8n_main", "graph": {"x": 1}, "input_hint": "描述要部署的服务",
+        }
+
+        class C:
+            def resolve_alias(self, a):
+                return "!ctrl:h"
+
+            def get_state_event(self, room, etype, key=""):
+                if etype == WORKFLOWS_EVENT_TYPE:
+                    return {"workflows": [secret_wf]}
+                return None
+
+            def whoami(self, token):
+                return "@u:h"
+
+        bot.client = C()
+        code, payload = bot.handle_my_workflows_list("tok")
+        self.assertEqual(code, 200)
+        item = payload["workflows"][0]
+        self.assertEqual(set(item.keys()), {"slug", "name", "input_hint"})
+        blob = repr(payload)
+        self.assertNotIn("internal.corp", blob)
+        self.assertNotIn("SECRET", blob)
+        self.assertNotIn("n8n_main", blob)
+
+    def test_bindable_list_requires_login(self) -> None:
+        from cosmac.bots.appservice_bot import CosmacBot
+        from cosmac.config import CosmacConfig
+
+        bot = CosmacBot(CosmacConfig(llm_provider="echo"))
+
+        class C:
+            def resolve_alias(self, a):
+                return "!ctrl:h"
+
+            def whoami(self, token):
+                return ""   # 未登录
+
+        bot.client = C()
+        code, _ = bot.handle_my_workflows_list("bad")
+        self.assertEqual(code, 401)
+
+
 if __name__ == "__main__":
     unittest.main()

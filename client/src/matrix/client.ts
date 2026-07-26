@@ -2912,7 +2912,16 @@ export async function storageCheck(addBytes: number): Promise<{ ok: boolean; err
 
 export interface MyAgent {
   slug: string; name: string; description: string; system_prompt: string
-  model?: string; enabled: boolean
+  model?: string
+  /** 绑定的工作流 slug。⚠️ 个人智能体的绑定**不构成授权**——只让 AI 知道该用哪些，
+   *  能不能跑仍受「工作流运行」权限门槛裁决（否则自建一个绑上去就是自助提权）。 */
+  workflow_slugs?: string[]
+  enabled: boolean
+}
+
+/** 可绑定的工作流（只读清单;服务端只下发这三个字段,url 与凭据名不出网）。 */
+export interface BindableWorkflow {
+  slug: string; name: string; input_hint?: string
 }
 export interface MySkill {
   slug: string; name: string; description: string; instructions: string; enabled: boolean
@@ -2943,6 +2952,9 @@ async function _myPost(path: string, body: any): Promise<void> {
 export const myAgentsList = () => _myGet('/cosmac/my/agents', 'agents') as Promise<MyAgent[]>
 export const myAgentSave = (a: MyAgent) => _myPost('/cosmac/my/agents/save', a)
 export const myAgentDelete = (slug: string) => _myPost('/cosmac/my/agents/delete', { slug })
+/** 可绑定的工作流清单（工坊勾选用）。失败返回 []，不阻断工坊其余功能。 */
+export const myWorkflowsList = () =>
+  _myGet('/cosmac/my/workflows', 'workflows') as Promise<BindableWorkflow[]>
 export const mySkillsList = () => _myGet('/cosmac/my/skills', 'skills') as Promise<MySkill[]>
 export const mySkillSave = (s: MySkill) => _myPost('/cosmac/my/skills/save', s)
 export const mySkillDelete = (slug: string) => _myPost('/cosmac/my/skills/delete', { slug })

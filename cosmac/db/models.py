@@ -93,6 +93,10 @@ class Agent(Base, TimestampMixin):
         model:          模型覆盖（空 = 跟随全局 AI 配置；非空 = 这个 Agent 单独用某模型）。
         skill_slugs:    绑定的技能 slug 列表（JSON）。先用列表简化，避免一上来就建多对多
                         关联表；以后真有「跨作用域共享技能」需求再升级成关联表。
+        workflow_slugs: 绑定的工作流连接器 slug 列表（JSON）——让这个 Agent 除了"会说话"
+                        还能真的干活。⚠️ 与全局 Agent 不同，**个人（scope=user）Agent 的
+                        绑定不构成授权**：它只让 AI 知道该用哪些工作流，跑不跑得动仍受
+                        workflow_run 门控裁决。否则用户自建 Agent 一绑就能绕过门槛 = 自助提权。
         enabled:        是否启用。
     """
 
@@ -110,6 +114,7 @@ class Agent(Base, TimestampMixin):
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     model: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     skill_slugs: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    workflow_slugs: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     def __repr__(self) -> str:
