@@ -40,5 +40,9 @@ design-ref/
 # Guduu DI 独立产品源码(单独部署,不属于 CosMac 仓库)
 guduu-di-online/
 
+# 官网(首页 + DI 演示)是独立仓库 GuDuuOS/guduu-website,单独部署。
+# 在这里忽略,否则会在主仓库里存成第二份副本、两边各改各的必然分叉。
+GuDuu首页/
+
 # 对外介绍等 office 文档是负责人工作文件,不入代码仓库(本地保留)
 *.docx
