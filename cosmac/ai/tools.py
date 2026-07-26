@@ -2149,12 +2149,15 @@ class Toolbox:
                 tail += f"（{due_label}）"
             if isinstance(assignee, str) and assignee.strip():
                 tail += f"（改派给 {assignee.strip()}）"
-            # 补派给 AI 同事 → 触发一次自动执行。闭合缺口(负责人实报"AI Agent 执行完任务没更新
-            # 看板、没发初稿到频道"):此前**只有 assemble_team 建任务时内联指定 agent 才自动执行**,
-            # 而中枢AI 事后用 update_task 把任务改派给 agent 的,没人去真正执行→任务永远卡在 doing、
-            # 频道无产出。这里在"本次把执行者设成 agent、任务未完成、尚无产出"时补触发,
-            # 条件苛刻以免对已交付/正在跑的任务重复执行。task_rule 传空(agent 人设仍生效)。
-            if str(exec_kind) == "agent" and self.auto_execute_agent_tasks:
+            # 触发自动执行 → 让"派给 AI 同事的任务真的被执行、产出发频道、回填看板"。
+            # 两种情形都要触发(负责人实报:AI 把任务标 doing 却没人执行,卡在看板、频道无产出):
+            #   ① 本次把执行者**改派**成 agent；
+            #   ② 本次把一个「已是 agent、尚无产出」的任务**推进到 doing**（中枢AI 想让它开工）。
+            #      —— 此前外层闸只认"本次传了 executor_kind=agent",于是"只标 doing、不重传执行者"
+            #      的任务永远不执行(线上 DB 实证:摆摊专班的 agent 任务全卡在 doing/进度0、无产出;
+            #      而 assemble_team 内联触发的三伏贴专班任务都正常 done+有产出)。
+            # fire 条件仍苛刻(agent+未完成+无产出+未在执行中),避免对已交付/正在跑的任务重复执行。
+            if (str(exec_kind) == "agent" or status == "doing") and self.auto_execute_agent_tasks:
                 try:
                     from cosmac.db import session_scope
                     from cosmac.db.task_repo import get_task
@@ -2164,6 +2167,7 @@ class Toolbox:
                         fire = bool(
                             t2 and t2.executor_kind == "agent" and (t2.executor_ref or "")
                             and t2.status != "done" and not (t2.result or "")
+                            and (t2.progress or 0) < 10   # 进度≥10=执行器已在跑,不重复触发
                         )
                     if fire:
                         self.auto_execute_agent_tasks(ctx.room_id, ctx.sender, [tid], "")

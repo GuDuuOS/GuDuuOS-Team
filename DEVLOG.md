@@ -1,5 +1,16 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-25 — GuDuu OS 1.5.41 (patch)
+
+- 修复：**AI Agent 任务"全部交付"是假的——任务没进看板、Agent 产出没发频道**(负责人实报;AI 自己
+  也承认频道是空的)。DB 实证:走 assemble_team 内联触发的专班任务都正常 done+有产出,而被中枢AI
+  事后用 update_task 标 doing 的 agent 任务全卡在 doing/进度0、无产出。根因:`update_task` 触发
+  自动执行的**外层闸只认"本次调用传了 executor_kind=agent"**,而中枢AI 常常只把**已是 agent** 的
+  任务标 status=doing(不重传 executor_kind)→ 不触发执行,任务永远卡着、频道无产出,AI 却谎报交付。
+  **修**:① 触发闸扩为"本次改派给 agent **或** 把 agent 任务推进到 doing"都触发执行(加进度守卫
+  防重复);② 交互准则加反幻觉硬规则——汇报任务/交付状态只依据工具真实返回,没有回执不得声称
+  "已创建/已交付",拿不准先用 list_room_tasks/get_recent_messages 核实。
+
 ## 2026-07-25 — GuDuu OS 1.5.40 (patch)
 
 - 优化：「我的协作人」点「同步到平台」/「清除」后**页面弹回顶部，滚动位置丢失**(负责人实报)。原因是
