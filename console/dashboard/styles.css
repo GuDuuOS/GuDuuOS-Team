@@ -2011,9 +2011,183 @@ a:focus-visible {
   font-weight: 540;
 }
 
+/* ══════════ 区域节点列表弹窗 ══════════
+   同地域多台实例时，点地图标记先出这张列表（单台直接开详情，不弹）。 */
+.region-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  /* 缩放同步：理由与 .detail-drawer 完全一致（见那里的注释）。
+     容器缩放而非面板缩放，面板靠 flex 居中，放大后依然居中。 */
+  width: calc(100vw / var(--overlay-scale, 1));
+  height: calc(100vh / var(--overlay-scale, 1));
+  zoom: var(--overlay-scale, 1);
+  z-index: 21;              /* 高于详情抽屉：点列表里的一行会接着开抽屉 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.region-modal.is-open {
+  pointer-events: auto;
+}
+
+.region-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: rgba(2, 3, 8, 0.46);
+  opacity: 0;
+  cursor: default;
+  transition: 220ms ease;
+}
+
+.region-modal.is-open .region-modal__backdrop {
+  opacity: 1;
+}
+
+.region-modal__panel {
+  position: relative;
+  width: 380px;
+  /* 容器已经处理了缩放，这里用百分比跟着容器走即可（容器尺寸已是「视口/scale」）。
+     不能再写 vw/vh —— 那是相对视口的，会漏掉容器那层缩放而算大 scale 倍。 */
+  max-width: 92%;
+  max-height: 76%;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 20px 12px;
+  border: 1px solid var(--border-bright);
+  border-radius: 18px;
+  background: var(--panel-strong);
+  box-shadow: 0 30px 80px rgba(28, 22, 63, 0.22);
+  opacity: 0;
+  transform: translateY(8px) scale(0.985);
+  transition: 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.region-modal.is-open .region-modal__panel {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.region-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.region-modal__header h2 {
+  margin: 3px 0 0;
+  font-size: 17px;
+  font-weight: 620;
+  color: var(--text);
+}
+
+.region-modal__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 12px 0 6px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.region-modal__summary b {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.region-modal__list {
+  overflow-y: auto;
+  margin: 0 -8px;
+  padding: 4px 8px 8px;
+}
+
+.region-node {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.region-node:hover,
+.region-node:focus-visible {
+  border-color: var(--border-bright);
+  background: rgba(117, 101, 231, 0.07);
+}
+
+/* 状态点：一眼看出这台是在线/高负载/维护中，不必读文字 */
+.region-node__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--geo-dot, var(--muted));
+}
+
+.region-node__name {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.region-node__meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.region-node__value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.region-node__token {
+  display: block;
+  font-size: 12px;
+  font-weight: 620;
+  color: var(--text);
+}
+
+.region-node__rate {
+  display: block;
+  margin-top: 2px;
+  font-size: 9px;
+  color: var(--muted);
+}
+
 .detail-drawer {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  /* 浮层挂在 body 下，拿不到 .app-shell 的整体缩放，不同步就比周围小一圈。
+     zoom 必须加在**这个容器**上而不是里面的面板：面板是 absolute right:0，
+     在它自己身上 zoom 会把「位置」也一起放大，右边缘会被推出视口（实测 1920
+     视口下推到 2397）。容器先按 scale 缩小尺寸、再被 zoom 乘回来，
+     最终正好铺满视口，面板贴边也就仍然贴在视口边上。 */
+  width: calc(100vw / var(--overlay-scale, 1));
+  height: calc(100vh / var(--overlay-scale, 1));
+  zoom: var(--overlay-scale, 1);
   z-index: 20;
   pointer-events: none;
 }

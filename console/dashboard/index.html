@@ -866,6 +866,25 @@
       </footer>
     </div>
 
+    <!-- 区域节点列表：同一地域有多台实例时，点地图标记先看这张列表，再点进单台详情。
+         只有多台才弹（单台直接开详情，列表只有一行没有信息量）。内容由 JS 填充。 -->
+    <div class="region-modal" id="region-modal" aria-hidden="true">
+      <button class="region-modal__backdrop" id="region-modal-backdrop" type="button" aria-label="关闭区域节点列表"></button>
+      <div class="region-modal__panel" role="dialog" aria-modal="true" aria-labelledby="region-modal-title">
+        <div class="region-modal__header">
+          <div>
+            <span class="eyebrow">REGION NODES</span>
+            <h2 id="region-modal-title">区域</h2>
+          </div>
+          <button class="icon-button" id="region-modal-close" type="button" aria-label="关闭">
+            <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+          </button>
+        </div>
+        <div class="region-modal__summary" id="region-modal-summary"></div>
+        <div class="region-modal__list" id="region-modal-list" role="list"></div>
+      </div>
+    </div>
+
     <div class="detail-drawer" id="detail-drawer" aria-hidden="true">
       <button class="detail-drawer__backdrop" id="drawer-backdrop" aria-label="关闭节点详情"></button>
       <aside role="dialog" aria-modal="true" aria-labelledby="drawer-name">

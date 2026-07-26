@@ -824,6 +824,11 @@
     // 只放大不缩小：窄于基准时维持原样，交给既有的 min-width 与 @media 断点处理
     const scale = clamp(window.innerWidth / DESIGN_WIDTH, 1, DISPLAY_SCALE_MAX);
 
+    // 详情抽屉、区域列表这些浮层挂在 body 下，够不到 shell 的 zoom，不同步就会
+    // 比周围界面小一圈。用一个 CSS 变量把倍率透出去，各浮层面板自己消费（见
+    // styles.css 里的 --overlay-scale）。
+    document.documentElement.style.setProperty("--overlay-scale", String(scale));
+
     if (scale <= 1) {
       // 清空而不是写死 1，免得留下残值盖住样式表里的原始声明
       shell.style.zoom = "";
@@ -1392,6 +1397,13 @@
       const count = group.nodes.length;
       // 同地域多台：主名后缀「+N」,一眼看出这个点代表几台,而不是画成重影
       const displayName = count > 1 ? `${node.name} +${count - 1}` : node.name;
+      // 节点数**始终**显示（原先只有 >1 台才显示，导致看到「浙江」时不知道是几台）。
+      // 多台时再补一个在线数，好一眼看出这片区域有没有机器掉线。
+      const onlineCount = group.nodes.filter((n) => n.status === "active").length;
+      const metaText =
+        count > 1
+          ? `${group.regionLabel} · ${count} 个节点 · ${onlineCount}/${count} 在线`
+          : `${group.regionLabel} · 1 个节点`;
       const sumToken = group.nodes.reduce((acc, n) => acc + (Number(n.token) || 0), 0);
       const btn = document.createElement("button");
       btn.className = "geo-node";
@@ -1407,7 +1419,7 @@
         '<span class="geo-node__card">' +
         `<span class="geo-node__icon" aria-hidden="true">${icon}</span>` +
         '<span class="geo-node__copy">' +
-        `<small>${escapeHtml(group.regionLabel)}${count > 1 ? ` · ${count} 台` : ""}</small>` +
+        `<small>${escapeHtml(metaText)}</small>` +
         `<strong><span class="geo-node__name">${escapeHtml(displayName)}</span>` +
         `<em>${escapeHtml(String(Number(sumToken.toFixed(2))))}${TOKEN_UNIT.label}</em></strong>` +
         "</span></span>";
@@ -1840,6 +1852,79 @@
     window.requestAnimationFrame(() => $("#drawer-close").focus({ preventScroll: true }));
   }
 
+  // ══════════ 区域节点列表弹窗 ══════════
+  // 同一地域的多台实例在地图上合并成**一个**标记（否则会叠成重影），但这样一来
+  // 除首台之外的机器就没有任何入口了——group.id 取的是首台 id，点标记只能看到它。
+  // 这张列表就是补这个缺口：多台时先列出全部，点某行再进那台的详情。
+
+  /** 状态 → 小圆点颜色。与 statusText() 的三种取值一一对应。 */
+  function statusDotColor(status) {
+    if (status === "active") return "var(--green-text, #23815a)";
+    if (status === "warning") return "var(--amber, #f39a50)";
+    return "var(--muted, #61637a)";   // offline / 维护中
+  }
+
+  function openRegionModal(group, trigger = null) {
+    const modal = $("#region-modal");
+    if (!modal || !group) return;
+
+    const nodes = [...group.nodes].sort((a, b) => (Number(b.token) || 0) - (Number(a.token) || 0));
+    const online = nodes.filter((n) => n.status === "active").length;
+    const sumToken = nodes.reduce((acc, n) => acc + (Number(n.token) || 0), 0);
+
+    $("#region-modal-title").textContent = group.regionLabel || "未命名区域";
+    $("#region-modal-summary").innerHTML =
+      `<span>共 <b>${nodes.length}</b> 个节点</span>` +
+      `<span>在线 <b>${online}/${nodes.length}</b></span>` +
+      `<span>累计 Token <b>${escapeHtml(String(Number(sumToken.toFixed(2))))}${TOKEN_UNIT.label}</b></span>`;
+
+    $("#region-modal-list").innerHTML = nodes
+      .map((node) => {
+        // 成功率没有数据时显示「—」而不是 0%——0% 读起来像"全线故障"，比不显示更误导
+        const rate =
+          node.successPct === null || node.successPct === undefined
+            ? "—"
+            : `${Number(node.successPct).toFixed(2)}%`;
+        return (
+          `<button class="region-node" type="button" role="listitem" data-node-id="${escapeHtml(node.id)}">` +
+          `<i class="region-node__dot" style="--geo-dot:${statusDotColor(node.status)}"></i>` +
+          `<span><span class="region-node__name">${escapeHtml(node.name)}</span>` +
+          `<span class="region-node__meta">${escapeHtml(node.code || "")} · ${escapeHtml(statusText(node.status))}</span></span>` +
+          `<span class="region-node__value"><span class="region-node__token">` +
+          `${escapeHtml(String(Number((Number(node.token) || 0).toFixed(2))))}${TOKEN_UNIT.label}</span>` +
+          `<span class="region-node__rate">成功率 ${escapeHtml(rate)}</span></span>` +
+          "</button>"
+        );
+      })
+      .join("");
+
+    $$(".region-node", $("#region-modal-list")).forEach((row) => {
+      row.addEventListener("click", () => {
+        const id = row.dataset.nodeId;
+        closeRegionModal();
+        selectNode(id);
+        openDrawer(row);   // 关掉列表、直接进这台的详情
+      });
+    });
+
+    state.regionModalTrigger = trigger;
+    modal.classList.add("is-open");
+    modal.setAttribute("aria-hidden", "false");
+    const first = $(".region-node", modal);
+    if (first) first.focus();
+  }
+
+  function closeRegionModal() {
+    const modal = $("#region-modal");
+    if (!modal || !modal.classList.contains("is-open")) return;
+    modal.classList.remove("is-open");
+    modal.setAttribute("aria-hidden", "true");
+    // 焦点还给触发它的那个地图标记，键盘操作才不会跳回页首
+    const trigger = state.regionModalTrigger;
+    state.regionModalTrigger = null;
+    if (trigger && document.contains(trigger) && typeof trigger.focus === "function") trigger.focus();
+  }
+
   function openDrawer(trigger = null) {
     const node = state.nodes.find((item) => item.id === state.selectedId);
     if (!node) return;
@@ -1862,11 +1947,13 @@
       : "今日无请求";
     $("#drawer-success-label").textContent = "成功率";
     // ⚠️ 成功率**永远不落 0%**——0% 读起来像"全线故障",比不显示更误导。
-    // 今日没有任何请求时 successPct 为 null → 显示「—」。
-    $("#drawer-success").textContent =
-      node.successPct === null ? "—" : `${node.successPct.toFixed(2)}%`;
-    $("#drawer-success-meta").textContent =
-      node.successPct === null ? "今日无请求" : "网关实测（今日）";
+    // 今日没有任何请求时为 null → 显示「—」。
+    // ⚠️ 必须用 isFinite 而不是 `=== null`:演示数据的节点**根本没有** successPct
+    // 这个字段(值是 undefined,不等于 null),只判 null 会走进 undefined.toFixed()
+    // 直接抛 TypeError,抽屉再也打不开(实测踩到)。
+    const successOk = Number.isFinite(node.successPct);
+    $("#drawer-success").textContent = successOk ? `${Number(node.successPct).toFixed(2)}%` : "—";
+    $("#drawer-success-meta").textContent = successOk ? "网关实测（今日）" : "今日无请求";
     $("#drawer-latency-label").textContent = "平均延迟";
     $("#drawer-latency").textContent = node.latency;
     // 真实模式下延迟暂未采集（latency="—"），P95 跟着显示占位而不是 NaN
@@ -2893,11 +2980,34 @@
     });
 
     $$(".geo-node").forEach((marker) => {
-      marker.addEventListener("click", () => selectNode(marker.dataset.nodeId));
+      marker.addEventListener("click", () => {
+        // 多台合并的标记 → 先出区域列表；单台 → 直接进详情
+        // （单台的列表只有一行、没有信息量，多一次点击是纯负担）。
+        // 演示态的静态标记在 geoGroups 里找不到，自然走 else 分支，行为不变。
+        const group = (state.geoGroups || []).find((g) => g.id === marker.dataset.nodeId);
+        if (group && group.nodes.length > 1) {
+          openRegionModal(group, marker);
+          return;
+        }
+        // 单台:选中 + 直接开详情。原先只 selectNode(只更新右侧概览与排行),
+        // 点了标记却要再找别的入口才能看详情;既然多台那条路径点完能直达详情,
+        // 单台没理由更绕(负责人拍板的交互:单台直接进详情)。
+        selectNode(marker.dataset.nodeId);
+        openDrawer(marker);
+      });
     });
 
+    $("#region-modal-close").addEventListener("click", closeRegionModal);
+    $("#region-modal-backdrop").addEventListener("click", closeRegionModal);
+
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") closeDrawer();
+      if (event.key !== "Escape") return;
+      // 区域列表在抽屉之上，Esc 先关最上层的那个，不要一次关两层
+      if ($("#region-modal").classList.contains("is-open")) {
+        closeRegionModal();
+        return;
+      }
+      closeDrawer();
     });
     window.addEventListener("blur", () => {
       clearMapCellHover();
