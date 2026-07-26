@@ -741,16 +741,24 @@ class TokenLedger(Base):
 
 
 class MarketListing(Base, TimestampMixin):
-    """创作者商城的一条「上架」记录（模块4 Token 经济 P2 创作者商城）。
+    """创作者商城的一条「上架」记录（模块4 Token 经济 P2/P4 创作者商城）。
 
-    创作者（会员等级 creator）把自己「我的AI工坊」的自建 Agent（scope=user）上架到商城：
-    普通用户在商城**免费获取**，**使用时按次扣**创作者定的固定价（price_tokens，0=免费用）；
-    平台抽成 10%、创作者得 90%（见 wallet.charge_agent_use 与 CreatorEarning）。
+    创作者（会员等级 creator）把自己「我的AI工坊」的自建资源（scope=user）上架到商城。
+    **两种资源、两种计费**（负责人定稿）：
+      - ``kind='agent'``：Agent 按次计费——获取免费，**每次 @使用**扣 price_tokens
+        （见 wallet.charge_agent_use）。
+      - ``kind='skill'``：Skill **一次性买断**——技能是每轮对话自动注入的，按次扣用户
+        无法预期花费；故在**获取那一刻**付 price_tokens、之后永久可用
+        （见 wallet.charge_skill_purchase）。
+    两者都是平台抽成 10%、创作者得 90%，逐笔进 CreatorEarning。
 
     设计要点：
     - 上架是**引用**而非拷贝：人设/模型仍读创作者的 user-scope Agent（创作者改人设即全网生效）；
       name/description 在此存**橱窗快照**（上架时定，避免商城文案被随意改来改去绕过审视）。
-    - (creator, agent_slug) 唯一——同一个 Agent 只能上架一次；重复上架=更新价格/文案。
+    - (creator, agent_slug) 唯一——同一个资源只能上架一次；重复上架=更新价格/文案。
+      ⚠️ 唯一键**不含 kind**（沿用 P2 建表时的约束，不做生产改约束的高风险手术）：同一创作者
+      的 Agent 与 Skill 用了同一个 slug 时，第二个上架会被 repo 显式拒绝并提示改标识——
+      这种撞名极少见，用一句提示换零迁移风险是划算的。
     - status: pending（待平台审核，P3 起**任何上架/更新都先进这**，审核通过才在售）/
       on（审核通过·在售）/ off（创作者下架）/ rejected（审核拒绝，review_reason 记原因，
       可改后重新提交）/ banned（管理员强制下架，创作者不可自行恢复）。
@@ -766,12 +774,14 @@ class MarketListing(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     # 创作者账号（@user:domain）
     creator: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    # 创作者自己的 user-scope Agent slug（cosmac_agent 里 scope=user, scope_id=creator）
+    # 资源类型：agent（按次计费）/ skill（一次性买断）。历史行默认 agent。
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="agent", index=True)
+    # 创作者自己的 user-scope 资源 slug（cosmac_agent / cosmac_skill 里 scope=user, scope_id=creator）
     agent_slug: Mapped[str] = mapped_column(String(128), nullable=False)
     # 橱窗快照（上架时的名称/说明；人设永不进商城——是创作者的资产）
     name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    # 每次使用价（token）；0=免费用
+    # 价格（token）：kind=agent 时=每次使用价；kind=skill 时=一次性买断价。0=免费
     price_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     # pending / on / off / rejected / banned（见 docstring；P3 起默认待审）
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)

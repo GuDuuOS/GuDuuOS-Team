@@ -325,6 +325,8 @@ class CosmacBot:
         self._acquired_cache: Dict[str, Tuple[Set[str], float]] = {}
         # 用户→已获取的**创作者 Agent**(cagent listing)缓存(P2 创作者商城;同上口径)
         self._acquired_cagent_cache: Dict[str, Tuple[List[Dict[str, Any]], float]] = {}
+        # 用户→**已买断的创作者技能**(cskill listing)缓存(P4;每轮注入都查,必须缓存)
+        self._acquired_cskill_cache: Dict[str, Tuple[List[Dict[str, Any]], float]] = {}
         # AI 同事傀儡账号缓存(slug → MXID;空串=注册失败,重启前不重试)
         self._worker_account_cache: Dict[str, str] = {}
         # 傀儡「已在房」缓存((room_id, slug)):免每次发送前重复 邀请+join 两个 HTTP
@@ -1001,6 +1003,8 @@ class CosmacBot:
                 # 群绑定的(_agent_skill_items)不过滤——绑定是管理员显式配置,即授权。
                 self._global_skill_items(for_user=sender)
                 + self._db_skill_items(room_id, sender)
+                # 从创作者商城**买断**的技能(P4):付过钱就永久随发起人生效,与自建技能同权重
+                + self._acquired_cskill_items(sender)
                 + self._agent_skill_items(agent_slugs)
             )
             # 按 slug 去重（全局已注入的技能若又被 Agent 绑定，不重复注入；保留首次出现）
@@ -1742,6 +1746,53 @@ class CosmacBot:
         if len(self._acquired_cache) > 5000:
             self._acquired_cache.clear()
         return slugs
+
+    def _acquired_cskill_items(self, user_id: str) -> List[Dict[str, Any]]:
+        """某用户**已买断的创作者技能**（P4），每轮对话注入用。
+
+        每条：获取记录 kind='cskill'、slug=listing id；listing 必须仍在售(on)、创作者的
+        user-scope Skill 定义仍存在且启用——下架/删除即失效（已付费不退，但内容归创作者，
+        他下架就没了；商城页会标"已下架"）。slug 用 ``cs<listing_id>`` 避免与他人技能撞名。
+        5 分钟缓存（注入路径每条消息都走），获取/审核变更时主动失效。
+        """
+        if not user_id:
+            return []
+        cached = self._acquired_cskill_cache.get(user_id)
+        if cached and time.monotonic() - cached[1] < 300:
+            return cached[0]
+        items: List[Dict[str, Any]] = []
+        try:
+            from cosmac.db import listing_repo, session_scope
+            from cosmac.db.market_repo import list_acquired
+            from cosmac.db.models import SCOPE_USER
+            from cosmac.db.repo import get_skill
+
+            with session_scope() as s:
+                ids = [
+                    slug for kind, slug in list_acquired(s, user_id) if kind == "cskill"
+                ]
+                for sid in ids:
+                    try:
+                        listing = listing_repo.get_listing(s, int(sid))
+                    except (TypeError, ValueError):
+                        continue
+                    if listing is None or listing.status != "on":
+                        continue
+                    src = get_skill(s, SCOPE_USER, listing.creator, listing.agent_slug)
+                    if src is None or not src.enabled:
+                        continue
+                    items.append({
+                        "slug": f"cs{listing.id}",
+                        "name": listing.name or src.name,
+                        "description": listing.description or src.description,
+                        "instructions": src.instructions,
+                    })
+        except Exception:
+            logger.debug("读取已买断创作者技能失败（忽略）", exc_info=True)
+        self._acquired_cskill_cache[user_id] = (items, time.monotonic())
+        if len(self._acquired_cskill_cache) > 5000:
+            self._acquired_cskill_cache.clear()
+        return items
 
     def _acquired_cagent_items(self, user_id: str) -> List[Dict[str, Any]]:
         """某用户从商城「已获取」的**创作者 Agent**（P2 创作者商城），点名路由用。
@@ -5385,6 +5436,25 @@ class CosmacBot:
             self._my_agents_cache.clear()
         return items
 
+    def _my_skill_items(self, owner: str) -> List[Dict[str, Any]]:
+        """本人自建且启用的技能（P4 上架校验用；不进注入路径，故不做缓存）。"""
+        if not owner:
+            return []
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.models import SCOPE_USER
+            from cosmac.db.repo import list_skills
+
+            with session_scope() as s:
+                return [{
+                    "slug": k.slug, "name": k.name, "description": k.description,
+                } for k in list_skills(
+                    s, scope=SCOPE_USER, scope_id=owner, enabled_only=True
+                )]
+        except Exception:
+            logger.debug("读取个人技能失败(忽略)", exc_info=True)
+            return []
+
     def _my_agent_items_uncached(self, owner: str) -> List[Dict[str, Any]]:
         """_my_agent_items 的真实 DB 读取体(缓存壳见上)。"""
         try:
@@ -5543,24 +5613,30 @@ class CosmacBot:
                 except Exception:
                     logger.debug("商城列平台知识库失败(跳过该分类)", exc_info=True)
 
-        # —— 创作者 Agent（P2 创作者商城）：在售 listing。人人可免费获取（unlocked 恒 True），
-        #    钱在**使用时**按次收（price_tokens/次，0=免费用）。人设绝不下发（创作者资产）。——
-        if not only_kind or only_kind == "cagent":
+        # —— 创作者上架（P2/P4 创作者商城）：在售 listing。人人可获取（unlocked 恒 True），
+        #    cagent=获取免费、**使用时**按次收；cskill=**获取时一次性买断**、之后永久用。
+        #    人设/技能正文绝不下发（创作者资产）。——
+        if not only_kind or only_kind in ("cagent", "cskill"):
             try:
                 from cosmac.db import listing_repo, session_scope
 
+                want = {"cagent": "agent", "cskill": "skill"}.get(only_kind, "")
                 with session_scope() as s:
-                    rows = listing_repo.list_on_sale(s)
+                    rows = listing_repo.list_on_sale(s, kind=want)
                 for li in rows:
-                    _push("cagent", {"slug": str(li.id), "name": li.name}, True, "", {
-                        "description": str(li.description or ""),
-                        "price_tokens": int(li.price_tokens or 0),
-                        "creator": str(li.creator or ""),
-                        "uses": int(li.uses or 0),
-                        "official": False,
-                    })
+                    lk = str(li.kind or "agent")
+                    _push(
+                        "cagent" if lk == "agent" else "cskill",
+                        {"slug": str(li.id), "name": li.name}, True, "", {
+                            "description": str(li.description or ""),
+                            "price_tokens": int(li.price_tokens or 0),
+                            "creator": str(li.creator or ""),
+                            "uses": int(li.uses or 0),
+                            "official": False,
+                        },
+                    )
             except Exception:
-                logger.debug("商城列创作者 Agent 失败(跳过该分类)", exc_info=True)
+                logger.debug("商城列创作者资源失败(跳过该分类)", exc_info=True)
         return items
 
     def handle_market_catalog(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
@@ -5593,8 +5669,9 @@ class CosmacBot:
             "is_admin": is_admin,
         }
 
-    # 商城资源类型全集(acquire 端点校验用)。cagent=创作者上架的 Agent(P2 创作者商城)
-    _MARKET_KINDS = ("agent", "skill", "workflow", "knowledge", "cagent")
+    # 商城资源类型全集(acquire 端点校验用)。cagent=创作者上架的 Agent(按次计费)、
+    # cskill=创作者上架的 Skill(获取即买断,P4)
+    _MARKET_KINDS = ("agent", "skill", "workflow", "knowledge", "cagent", "cskill")
 
     def handle_market_acquire(
         self, access_token: str, body: Dict[str, Any]
@@ -5647,6 +5724,20 @@ class CosmacBot:
                         "error": f"已获取资源已达上限（{cur}/{limit} 个）。"
                                  "在「我的AI工坊 · 已获取」移除不用的，或升级会员扩容。"
                     }
+        # 创作者技能=**获取即买断**（P4）：先付清再记获取；扣不动就明确失败、不给货。
+        # 已买断过/免费/自己的/总开关关都由 charge_skill_purchase 内部放行不扣（幂等）。
+        if want and kind == "cskill":
+            try:
+                r = self.wallet.charge_skill_purchase(user_id, int(slug))
+            except (TypeError, ValueError):
+                return 400, {"error": "参数不合法"}
+            if not r.get("ok"):
+                return 403, {"error": r.get("error") or "购买失败，请稍后重试"}
+            if r.get("charged"):
+                logger.info(
+                    "技能买断：buyer=%s listing=%s 价=%s 抽成=%s 创作者得=%s",
+                    user_id, slug, r.get("charged"), r.get("fee"), r.get("net"),
+                )
         try:
             from cosmac.db import session_scope
             from cosmac.db.market_repo import add_acquired, remove_acquired
@@ -5660,6 +5751,7 @@ class CosmacBot:
                     remove_acquired(s, user_id=user_id, kind=kind, slug=slug)
             self._acquired_cache.pop(user_id, None)  # 名册缓存立刻失效,主 AI 下条消息就能感知
             self._acquired_cagent_cache.pop(user_id, None)  # 创作者 Agent 路由同样立即生效
+            self._acquired_cskill_cache.pop(user_id, None)  # 买断技能的注入同样立即生效
             return 200, {"ok": True, "acquired": want}
         except Exception:
             logger.exception("写入已获取记录失败")
@@ -5880,8 +5972,8 @@ class CosmacBot:
     def handle_creator_admin_listings(
         self, access_token: str
     ) -> Tuple[int, Dict[str, Any]]:
-        """管理员：待审核的上架列表。含创作者 Agent 的**人设全文**——审核就是审内容，
-        管理员（平台方）可见；普通商城目录仍绝不下发人设。"""
+        """管理员：待审核的上架列表。含**人设/技能正文全文**——审核就是审内容，
+        管理员（平台方）可见；普通商城目录仍绝不下发这些正文。"""
         operator = self.client.whoami(access_token)
         if not operator:
             return 401, {"error": "登录已失效，请重新登录"}
@@ -5890,19 +5982,25 @@ class CosmacBot:
         try:
             from cosmac.db import listing_repo, session_scope
             from cosmac.db.models import SCOPE_USER
-            from cosmac.db.repo import get_agent
+            from cosmac.db.repo import get_agent, get_skill
 
             with session_scope() as s:
                 rows = listing_repo.list_pending(s)
                 items = []
                 for li in rows:
-                    src = get_agent(s, SCOPE_USER, li.creator, li.agent_slug)
+                    lk = str(li.kind or "agent")
+                    if lk == "skill":
+                        sk = get_skill(s, SCOPE_USER, li.creator, li.agent_slug)
+                        content = sk.instructions if sk else "（源技能已删除）"
+                    else:
+                        ag = get_agent(s, SCOPE_USER, li.creator, li.agent_slug)
+                        content = ag.system_prompt if ag else "（源智能体已删除）"
                     items.append({
-                        "id": li.id, "creator": li.creator,
+                        "id": li.id, "creator": li.creator, "kind": lk,
                         "agent_slug": li.agent_slug, "name": li.name,
                         "description": li.description,
                         "price_tokens": int(li.price_tokens or 0),
-                        "system_prompt": (src.system_prompt if src else "（源智能体已删除）"),
+                        "system_prompt": content,
                         "created_at": li.updated_at.isoformat() if li.updated_at else "",
                     })
             return 200, {"items": items}
@@ -5934,7 +6032,8 @@ class CosmacBot:
                 row = listing_repo.review_listing(s, lid, approve=approve, reason=reason)
             if row is None:
                 return 404, {"error": "该上架不存在或不在待审核状态"}
-            self._acquired_cagent_cache.clear()  # 审核结果立即反映到路由/计费
+            self._acquired_cagent_cache.clear()
+            self._acquired_cskill_cache.clear()  # 审核结果立即反映到路由/计费
             logger.info(
                 "上架审核：%s %s listing#%s%s", operator,
                 "通过" if approve else "拒绝", lid,
@@ -5966,6 +6065,7 @@ class CosmacBot:
                 "summary": summary,
                 "items": [{
                     "id": li.id, "agent_slug": li.agent_slug, "name": li.name,
+                    "kind": str(li.kind or "agent"),
                     "description": li.description,
                     "price_tokens": int(li.price_tokens or 0),
                     "status": li.status, "uses": int(li.uses or 0),
@@ -5980,30 +6080,35 @@ class CosmacBot:
     def handle_creator_publish(
         self, access_token: str, body: Dict[str, Any]
     ) -> Tuple[int, Dict[str, Any]]:
-        """上架/更新：把本人自建 Agent 上架到商城（定价 token/次，0=免费）。
+        """上架/更新：把本人自建 Agent / Skill 上架到商城。
 
-        服务端强制：① 创作者资格（会员等级 ≥ creator）；② Agent 必须是本人自建且启用
-        （上架是引用，人设仍在创作者名下、绝不进商城橱窗）。同 Agent 重复上架=更新价格/文案。
+        计费（定稿）：kind=agent → price_tokens = **每次使用**价；kind=skill →
+        price_tokens = **一次性买断**价（技能每轮自动注入，按次不可预期，故买断）。
+        服务端强制：① 创作者资格（会员等级 ≥ creator）；② 资源必须是本人自建且启用
+        （上架是引用，人设/技能正文仍在创作者名下、绝不进商城橱窗）。重复上架=更新价格/文案。
         """
         user_id = self.client.whoami(access_token)
         if not user_id:
             return 401, {"error": "登录已失效，请重新登录"}
         if not self._is_creator(user_id):
-            return 403, {"error": "上架需要「创作者会员」资格——升级后即可把你的 Agent 上架赚 token"}
+            return 403, {"error": "上架需要「创作者会员」资格——认证通过后即可上架赚 token"}
+        kind = "skill" if str((body or {}).get("kind") or "") == "skill" else "agent"
         agent_slug = str((body or {}).get("agent_slug") or "").strip().lower()
         try:
             price = int((body or {}).get("price_tokens") or 0)
         except (TypeError, ValueError):
-            return 400, {"error": "价格必须是整数（token/次，0=免费）"}
+            return 400, {"error": "价格必须是整数（token，0=免费）"}
         if price < 0 or price > 1_000_000:
-            return 400, {"error": "价格超出范围（0 ~ 100万 token/次）"}
-        # 橱窗文案：默认取 Agent 的名称/说明，允许单独传（不改 Agent 本体）
-        mine = next(
-            (m for m in self._my_agent_items(user_id) if m.get("slug") == agent_slug),
-            None,
+            return 400, {"error": "价格超出范围（0 ~ 100万 token）"}
+        # 橱窗文案：默认取资源自身的名称/说明，允许单独传（不改资源本体）
+        pool = (
+            self._my_skill_items(user_id) if kind == "skill"
+            else self._my_agent_items(user_id)
         )
+        mine = next((m for m in pool if m.get("slug") == agent_slug), None)
         if mine is None:
-            return 404, {"error": "没有这个自建智能体（或未启用）——先在工坊建好再上架"}
+            what = "自建技能" if kind == "skill" else "自建智能体"
+            return 404, {"error": f"没有这个{what}（或未启用）——先在工坊建好再上架"}
         name = str((body or {}).get("name") or mine.get("name") or agent_slug).strip()[:80]
         description = str(
             (body or {}).get("description") or mine.get("description") or ""
@@ -6012,15 +6117,23 @@ class CosmacBot:
             from cosmac.db import listing_repo, session_scope
 
             with session_scope() as s:
-                row = listing_repo.upsert_listing(
-                    s, creator=user_id, agent_slug=agent_slug,
-                    name=name, description=description, price_tokens=price,
-                )
+                try:
+                    row = listing_repo.upsert_listing(
+                        s, creator=user_id, agent_slug=agent_slug, kind=kind,
+                        name=name, description=description, price_tokens=price,
+                    )
+                except listing_repo.SlugTaken as e:
+                    other = "技能" if str(e) == "skill" else "智能体"
+                    return 400, {
+                        "error": f"标识「{agent_slug}」已被你上架的{other}占用，"
+                                 "请把其中一个改个标识再上架"
+                    }
                 if row is None:
-                    return 403, {"error": "该 Agent 已被平台下架，不可重新上架（如有疑问联系管理员）"}
+                    return 403, {"error": "该资源已被平台下架，不可重新上架（如有疑问联系管理员）"}
                 lid = row.id
             # 上架/更新一律进待审（P3）：原在售的也立即变待审，清全部路由缓存立刻生效。
             self._acquired_cagent_cache.clear()
+            self._acquired_cskill_cache.clear()
             return 200, {"ok": True, "id": lid, "status": "pending"}
         except Exception:
             logger.exception("上架失败 user=%s agent=%s", user_id, agent_slug)
@@ -6054,6 +6167,7 @@ class CosmacBot:
                 return 404, {"error": "找不到该上架记录（或无权操作）"}
             # 下架要立刻生效：清全部路由缓存（谁获取过无从得知，全清最稳；量小无碍）
             self._acquired_cagent_cache.clear()
+            self._acquired_cskill_cache.clear()
             return 200, {"ok": True}
         except Exception:
             logger.exception("改上架状态失败 id=%s", lid)

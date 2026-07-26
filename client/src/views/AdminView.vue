@@ -1454,12 +1454,13 @@
           <div v-for="li in crListings" :key="li.id" class="cr-card">
             <div class="cr-head">
               <b>{{ li.name }}</b> <code>{{ li.agent_slug }}</code>
-              <span class="adm-badge on">{{ li.price_tokens > 0 ? `${li.price_tokens.toLocaleString()} token/次` : '免费' }}</span>
+              <span class="adm-badge">{{ li.kind === 'skill' ? '技能·买断' : '智能体·按次' }}</span>
+              <span class="adm-badge on">{{ li.price_tokens > 0 ? `${li.price_tokens.toLocaleString()} token${li.kind === 'skill' ? ' 买断' : '/次'}` : '免费' }}</span>
               <span class="cr-time">创作者 {{ li.creator }}</span>
             </div>
             <div class="cr-field"><span>商城文案</span>{{ li.description || '（无）' }}</div>
             <details class="cr-prompt">
-              <summary>查看人设全文（审核依据，勿外传）</summary>
+              <summary>查看{{ li.kind === 'skill' ? '技能正文' : '人设全文' }}（审核依据，勿外传）</summary>
               <pre>{{ li.system_prompt }}</pre>
             </details>
             <div class="cr-actions">

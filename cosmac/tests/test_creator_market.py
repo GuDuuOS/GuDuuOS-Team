@@ -211,5 +211,106 @@ class ChargeAgentUseTests(unittest.TestCase):
             self.assertEqual(listing_repo.earnings_summary(s, CREATOR)["count"], 3)
 
 
+def _mk_skill_listing(price: int = 500, *, approve: bool = True) -> int:
+    """建一个创作者 Skill + 上架（默认审核通过=在售），返回 listing id。"""
+    from cosmac.db.repo import upsert_skill
+
+    with session_scope() as s:
+        upsert_skill(
+            s, SCOPE_USER, CREATOR, "recap",
+            name="每日复盘法", description="结构化复盘", instructions="按 STAR 复盘…",
+        )
+        row = listing_repo.upsert_listing(
+            s, creator=CREATOR, agent_slug="recap", kind="skill",
+            name="每日复盘法", description="买断即永久用", price_tokens=price,
+        )
+        lid = row.id
+        if approve:
+            listing_repo.review_listing(s, lid, approve=True)
+        return lid
+
+
+class SkillBuyoutTests(unittest.TestCase):
+    """Skill 一次性买断（P4 定稿口径）。"""
+
+    def setUp(self) -> None:
+        init_engine("sqlite://", create_all=True)
+        self.st = _store()
+
+    def _fund(self, user: str, amount: int) -> None:
+        with session_scope() as s:
+            wallet_repo.credit(s, user, amount, reason="grant")
+
+    def test_buyout_splits_and_is_once_only(self) -> None:
+        lid = _mk_skill_listing(500)
+        self._fund(BUYER, 1000)
+        r = self.st.charge_skill_purchase(BUYER, lid)
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["charged"], 500)
+        self.assertEqual(r["fee"], 50)     # 10%
+        self.assertEqual(r["net"], 450)
+        self.assertEqual(self.st.balance(BUYER), 500)
+        self.assertEqual(self.st.balance(CREATOR), 450)
+        # 再次购买（移除后重新获取）→ 已买断，不再扣钱
+        r2 = self.st.charge_skill_purchase(BUYER, lid)
+        self.assertTrue(r2["ok"])
+        self.assertEqual(r2["charged"], 0)
+        self.assertEqual(self.st.balance(BUYER), 500)
+
+    def test_insufficient_balance_fails_hard(self) -> None:
+        """买断是先付后得：扣不动必须失败（与 Agent 后付"扣到 0 为止"不同）。"""
+        lid = _mk_skill_listing(500)
+        self._fund(BUYER, 100)
+        r = self.st.charge_skill_purchase(BUYER, lid)
+        self.assertFalse(r["ok"])
+        self.assertIn("余额不足", r["error"])
+        self.assertEqual(self.st.balance(BUYER), 100)   # 分文未扣
+        self.assertEqual(self.st.balance(CREATOR), 0)
+
+    def test_free_and_self_and_offsale(self) -> None:
+        # 免费技能：放行不扣
+        lid_free = _mk_skill_listing(0)
+        self.assertTrue(self.st.charge_skill_purchase(BUYER, lid_free)["ok"])
+        self.assertEqual(self.st.balance(BUYER), 0)
+        # 自己的：不扣
+        lid = _mk_skill_listing(500)
+        self._fund(CREATOR, 1000)
+        self.assertEqual(self.st.charge_skill_purchase(CREATOR, lid)["charged"], 0)
+        # 下架的：明确失败（不能买到下架货）
+        with session_scope() as s:
+            listing_repo.set_status(s, lid, "off", creator=CREATOR)
+        r = self.st.charge_skill_purchase(BUYER, lid)
+        self.assertFalse(r["ok"])
+
+    def test_pending_skill_not_purchasable(self) -> None:
+        lid = _mk_skill_listing(500, approve=False)   # 待审
+        self._fund(BUYER, 1000)
+        r = self.st.charge_skill_purchase(BUYER, lid)
+        self.assertFalse(r["ok"])
+        self.assertEqual(self.st.balance(BUYER), 1000)
+
+    def test_disabled_switch_is_passthrough(self) -> None:
+        lid = _mk_skill_listing(500)
+        self._fund(BUYER, 1000)
+        st_off = _store(enabled=False)
+        r = st_off.charge_skill_purchase(BUYER, lid)
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["charged"], 0)
+
+    def test_slug_collision_rejected(self) -> None:
+        """同一创作者用同一 slug 上架另一类资源 → 显式拒绝（唯一键不含 kind）。"""
+        from cosmac.db.repo import upsert_skill
+
+        _mk_listing(300)   # agent slug=wenan
+        with session_scope() as s:
+            upsert_skill(s, SCOPE_USER, CREATOR, "wenan",
+                         name="同名技能", description="d", instructions="i")
+            with self.assertRaises(listing_repo.SlugTaken):
+                listing_repo.upsert_listing(
+                    s, creator=CREATOR, agent_slug="wenan", kind="skill",
+                    name="同名技能", description="d", price_tokens=100,
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

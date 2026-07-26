@@ -2,7 +2,7 @@
  *  ⚠️ 商品数据不在这里——商城列的是平台**真实资源**（全局智能体/技能/工作流/平台知识库），
  *  由 bot 端点 /cosmac/market/catalog 按登录人实时返回（含解锁状态），见 client.ts fetchMarketCatalog。 */
 
-export type MarketCat = 'agent' | 'skill' | 'workflow' | 'knowledge' | 'cagent'
+export type MarketCat = 'agent' | 'skill' | 'workflow' | 'knowledge' | 'cagent' | 'cskill'
 
 /** 分类元信息：标签 + 主题色（与后端 item.kind 一一对应） */
 export const CAT_META: Record<MarketCat, { label: string; color: string }> = {
@@ -11,7 +11,9 @@ export const CAT_META: Record<MarketCat, { label: string; color: string }> = {
   workflow:  { label: '工作流',   color: '#b58932' },
   knowledge: { label: '知识库',   color: '#8a6a8a' },
   // 创作者商城(Token 经济 P2):创作者上架的 Agent,免费获取、使用按次扣 token
-  cagent:    { label: '创作者',   color: '#4a7b9d' }
+  cagent:    { label: '创作者',   color: '#4a7b9d' },
+  // 创作者上架的技能:一次性买断(获取时付清、之后永久用)
+  cskill:    { label: '创作者技能', color: '#5b7f6b' }
 }
 
 /** 解锁要求（后端 access 字段）→ 商城卡片上的徽标文案与颜色。

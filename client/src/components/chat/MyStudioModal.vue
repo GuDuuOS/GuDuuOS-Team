@@ -154,13 +154,14 @@
             <div v-for="li in (pubData?.items || [])" :key="li.id" class="cam-row">
               <div class="cam-row-main">
                 <div class="cam-row-label">{{ li.name }} <code class="ms-slug">{{ li.agent_slug }}</code>
+                  <span class="cam-tag" :style="li.kind === 'skill' ? 'background:#e6efe9;color:#3f6b53' : 'background:#e6ecf3;color:#3c5a78'">{{ li.kind === 'skill' ? '技能·买断' : '智能体·按次' }}</span>
                   <span v-if="li.status === 'banned'" class="cam-tag" style="background:#f6e3e3;color:#b94a4a">平台下架</span>
                   <span v-else-if="li.status === 'pending'" class="cam-tag" style="background:#f4ead9;color:#9a6b1f">审核中</span>
                   <span v-else-if="li.status === 'rejected'" class="cam-tag" style="background:#f6e3e3;color:#b94a4a">未通过</span>
                   <span v-else-if="li.status === 'off'" class="cam-tag" style="background:#eee;color:#888">已下架</span>
                   <span v-else class="cam-tag" style="background:#e5efe0;color:#4a7b42">在售</span>
                 </div>
-                <div class="cam-row-desc">{{ li.price_tokens > 0 ? `${li.price_tokens.toLocaleString()} token/次` : '免费用' }} · 被使用 {{ li.uses }} 次 · 已赚 {{ li.earned.toLocaleString() }} token</div>
+                <div class="cam-row-desc">{{ li.price_tokens > 0 ? `${li.price_tokens.toLocaleString()} token${li.kind === 'skill' ? ' 买断' : '/次'}` : '免费' }} · {{ li.kind === 'skill' ? '已售' : '被使用' }} {{ li.uses }} 次 · 已赚 {{ li.earned.toLocaleString() }} token</div>
                 <div v-if="li.status === 'rejected' && li.review_reason" class="cam-row-desc" style="color:#b94a4a">拒绝原因：{{ li.review_reason }}（可在下方重新提交，将再次审核）</div>
               </div>
               <button v-if="li.status === 'on'" class="cam-mini" :disabled="busy" @click="setListing(li.id, 'off')">下架</button>
@@ -168,14 +169,23 @@
             </div>
             <p v-if="!(pubData?.items || []).length" class="cam-row-desc" style="padding:8px 2px">还没有上架。选一个你的智能体、定个价提交审核，通过后即可售卖。</p>
 
-            <!-- 上架表单 -->
+            <!-- 上架表单：Agent 按次计费 / Skill 一次性买断 -->
             <div class="ms-form">
+              <div class="ms-kind-pick">
+                <label><input type="radio" value="agent" v-model="pubForm.kind" @change="pubForm.agent_slug = ''" /> 智能体（按次收费）</label>
+                <label><input type="radio" value="skill" v-model="pubForm.kind" @change="pubForm.agent_slug = ''" /> 技能（一次性买断）</label>
+              </div>
               <select v-model="pubForm.agent_slug" class="cam-input">
-                <option value="" disabled>选择要上架的智能体…</option>
-                <option v-for="a in agents.filter((x) => x.enabled)" :key="a.slug" :value="a.slug">{{ a.name }}（{{ a.slug }}）</option>
+                <option value="" disabled>{{ pubForm.kind === 'skill' ? '选择要上架的技能…' : '选择要上架的智能体…' }}</option>
+                <option v-for="a in publishablePool" :key="a.slug" :value="a.slug">{{ a.name }}（{{ a.slug }}）</option>
               </select>
-              <input v-model.number="pubForm.price" class="cam-input" type="number" min="0" placeholder="每次使用价（token，0=免费）" />
-              <span class="ms-hint">提交后进入<b>平台审核</b>，通过才在售（任何修改都会重新审核，审核期间暂不可售）。上架是「引用」：人设仍归你、不会公开给用户；用户获取免费，<b>使用时</b>按你定的价扣 token，平台抽成后其余实时充进你的钱包。</span>
+              <input v-model.number="pubForm.price" class="cam-input" type="number" min="0"
+                :placeholder="pubForm.kind === 'skill' ? '买断价（token，一次性，0=免费）' : '每次使用价（token，0=免费）'" />
+              <span class="ms-hint">
+                提交后进入<b>平台审核</b>，通过才在售（任何修改都会重新审核，审核期间暂不可售）。上架是「引用」：内容仍归你、不会公开给用户；平台抽成后其余实时充进你的钱包。
+                <template v-if="pubForm.kind === 'skill'"><br>技能是每轮对话自动生效的，所以按<b>一次性买断</b>卖：用户获取时付清、之后永久可用。</template>
+                <template v-else><br>智能体按<b>次</b>卖：用户获取免费，每次 @ 使用时才扣你定的价。</template>
+              </span>
               <div class="ms-actions">
                 <button class="cam-add-btn" :disabled="busy || !pubForm.agent_slug" @click="publish">{{ busy ? '提交中…' : '提交上架审核' }}</button>
               </div>
@@ -266,7 +276,15 @@ const skForm = reactive<MySkill & { _edit: boolean }>({ slug: '', name: '', desc
 const acquiredLimit = ref<number | null>(null)
 // 上架·收益（创作者商城 P2）：钱包总开关关着时后端回 wallet_enabled=false → 页签隐藏
 const pubData = ref<CreatorListingsResp | null>(null)
-const pubForm = reactive<{ agent_slug: string; price: number | '' }>({ agent_slug: '', price: '' })
+const pubForm = reactive<{ kind: 'agent' | 'skill'; agent_slug: string; price: number | '' }>(
+  { kind: 'agent', agent_slug: '', price: '' },
+)
+/** 可上架的资源池：按选中的类型给智能体或技能（都只列启用的）。 */
+const publishablePool = computed(() =>
+  pubForm.kind === 'skill'
+    ? skills.value.filter((x) => x.enabled).map((x) => ({ slug: x.slug, name: x.name || x.slug }))
+    : agents.value.filter((x) => x.enabled).map((x) => ({ slug: x.slug, name: x.name || x.slug })),
+)
 const earnItems = ref<CreatorEarningItem[]>([])
 
 async function load() {
@@ -352,7 +370,10 @@ async function certConfirmPay() {
 async function republish(li: CreatorListing) {
   busy.value = true; errText.value = ''
   try {
-    await creatorPublish(li.agent_slug, li.price_tokens, li.name, li.description)
+    await creatorPublish(
+      li.agent_slug, li.price_tokens, li.name, li.description,
+      (li.kind === 'skill' ? 'skill' : 'agent'),
+    )
     pubData.value = await creatorListings()
   } catch (e: any) { errText.value = e?.message || String(e) }
   finally { busy.value = false }
@@ -363,7 +384,10 @@ async function publish() {
   if (!pubForm.agent_slug) return
   busy.value = true; errText.value = ''
   try {
-    await creatorPublish(pubForm.agent_slug, Math.max(0, Math.trunc(Number(pubForm.price) || 0)))
+    await creatorPublish(
+      pubForm.agent_slug, Math.max(0, Math.trunc(Number(pubForm.price) || 0)),
+      '', '', pubForm.kind,
+    )
     pubForm.agent_slug = ''; pubForm.price = ''
     pubData.value = await creatorListings()
   } catch (e: any) { errText.value = e?.message || String(e) }
@@ -460,6 +484,8 @@ async function delSkill(slug: string) {
 .ms-earn-num { font-size: 24px; font-weight: 800; color: var(--accent, #c96442); }
 .ms-earn-num span { font-size: 12px; font-weight: 400; color: var(--text-3); margin-left: 6px; }
 .ms-earn-sub { font-size: 12px; color: var(--text-2); margin-top: 4px; }
+.ms-kind-pick { display: flex; gap: 16px; font-size: 13px; color: var(--text-2); }
+.ms-kind-pick label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
 .ms-cert-status { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin: 8px 0; font-size: 13px; line-height: 1.6; }
 .ms-cert-status.rejected { background: #fdf3f3; border-color: #e8c9c9; color: #8a3b3b; }
 .ms-earn-row { display: flex; align-items: baseline; gap: 8px; padding: 6px 2px; border-bottom: 1px dashed var(--border); font-size: 12.5px; }

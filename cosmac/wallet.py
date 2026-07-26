@@ -384,6 +384,67 @@ class WalletStore:
             logger.exception("按次扣费失败（不影响回复）：buyer=%s listing=%s", buyer, listing_id)
         return out
 
+    def charge_skill_purchase(
+        self, buyer: str, listing_id: int
+    ) -> Dict[str, Any]:
+        """Skill **一次性买断**：获取那一刻付清，之后永久可用（P4 定稿）。
+
+        与 Agent 按次的关键差别：**扣不动就必须失败**（返回 ok=False + 提示），由调用方
+        拒绝这次「获取」——买断是先付后得，不能像后付那样"扣到 0 为止"还把货给了。
+        已买断过（listing_repo.has_purchased）/ 自己的 / 免费的 / 总开关关 → 直接放行不扣。
+        返回 {ok, charged, fee, net, error}。
+        """
+        from cosmac.db import listing_repo
+
+        cfg = self.config()
+        out: Dict[str, Any] = {"ok": True, "charged": 0, "fee": 0, "net": 0, "error": ""}
+        if not cfg.get("enabled"):
+            return out
+        try:
+            with session_scope() as s:
+                listing = listing_repo.get_listing(s, listing_id)
+                if listing is None or listing.status != "on":
+                    out.update(ok=False, error="该技能已下架")
+                    return out
+                price = max(0, int(listing.price_tokens or 0))
+                # 免费 / 自己的 / 已买断过 → 放行不扣
+                if (price <= 0 or buyer == listing.creator
+                        or listing_repo.has_purchased(s, buyer, listing.id)):
+                    return out
+                self.ensure_wallet(buyer)
+                new_bal = wallet_repo.try_debit(
+                    s, buyer, price, reason="skill_buy",
+                    ref=f"listing:{listing.id}", note=f"购买技能「{listing.name}」",
+                    meta={"listing_id": listing.id, "creator": listing.creator,
+                          "skill_slug": listing.agent_slug},
+                )
+                if new_bal is None:
+                    bal = wallet_repo.get_balance(s, buyer)
+                    out.update(
+                        ok=False,
+                        error=f"购买该技能需 {price} token，你的余额不足（当前 {bal}）。请先充值～",
+                    )
+                    return out
+                fee_pct = int(cfg.get("platform_fee_pct") or 10)
+                fee = int(math.ceil(price * fee_pct / 100.0))
+                net = max(0, price - fee)
+                if net > 0:
+                    wallet_repo.credit(
+                        s, listing.creator, net, reason="earning",
+                        ref=f"listing:{listing.id}",
+                        note=f"技能售出：{listing.name}",
+                        meta={"listing_id": listing.id, "buyer": buyer,
+                              "gross": price, "fee": fee, "kind": "skill"},
+                    )
+                listing_repo.record_earning(
+                    s, listing=listing, buyer=buyer, gross=price, fee=fee, net=net,
+                )
+                out.update(charged=price, fee=fee, net=net)
+        except Exception:
+            logger.exception("技能买断扣费失败：buyer=%s listing=%s", buyer, listing_id)
+            out.update(ok=False, error="购买失败，请稍后重试")
+        return out
+
     # —— 充值入账（trading 支付成功后调）——
 
     def recharge(

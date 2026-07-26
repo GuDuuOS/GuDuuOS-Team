@@ -60,7 +60,7 @@
                 class="mkt-btn"
                 :class="{ on: isAcquired(it) }"
                 @click="acquire(it)"
-              >{{ isAcquired(it) ? '已获取' : '免费获取' }}</button>
+              >{{ acquireLabel(it) }}</button>
               <button
                 v-else-if="badgeOf(it).cls === 'tier'"
                 class="mkt-btn upgrade"
@@ -69,7 +69,7 @@
               <button v-else class="mkt-btn locked" disabled>专属资源</button>
             </div>
             <div class="mkt-meta">
-              <template v-if="it.kind === 'cagent'">创作者 {{ shortUser(it.creator || '') }}<template v-if="it.uses">· 已被使用 {{ it.uses }} 次</template></template>
+              <template v-if="it.kind === 'cagent' || it.kind === 'cskill'">创作者 {{ shortUser(it.creator || '') }}<template v-if="it.uses">· 已售 {{ it.uses }} 次</template></template>
               <template v-else>{{ it.official ? 'GuDuu OS 官方' : '平台运营' }}</template>
               <template v-if="it.kind === 'agent' && it.skill_count">· 内置 {{ it.skill_count }} 项技能</template>
               <template v-if="it.kind === 'skill' && it.agents?.length">· 随【{{ it.agents.join('/') }}】激活</template>
@@ -101,6 +101,7 @@ const cats: { key: CatKey; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'agent', label: 'AI 同事' },
   { key: 'cagent', label: '创作者 Agent' },
+  { key: 'cskill', label: '创作者技能' },
   { key: 'skill', label: '技能' },
   { key: 'workflow', label: '工作流' },
   { key: 'knowledge', label: '知识库' }
@@ -119,11 +120,12 @@ const itemId = (it: MarketCatalogItem) => `${it.kind}:${it.slug}`
 const isAcquired = (it: MarketCatalogItem) => it.acquired
 /** 徽标：创作者 Agent 标**按次价**（获取免费、用的时候扣 token）；其余按 access 等级标。 */
 const badgeOf = (it: MarketCatalogItem) => {
-  if (it.kind === 'cagent') {
+  if (it.kind === 'cagent' || it.kind === 'cskill') {
     const p = Number(it.price_tokens || 0)
-    return p > 0
-      ? { label: `${p.toLocaleString()} token/次`, cls: 'tier' as const }
-      : { label: '免费用', cls: 'free' as const }
+    if (p <= 0) return { label: '免费', cls: 'free' as const }
+    // Agent=按次计费；Skill=一次性买断（获取时付清、之后永久用）
+    const unit = it.kind === 'cagent' ? '/次' : ' 买断'
+    return { label: `${p.toLocaleString()} token${unit}`, cls: 'tier' as const }
   }
   return accessBadge(it.access)
 }
@@ -152,6 +154,12 @@ watch(visible, (v) => {
  *  随后给出在聊天里怎么用的指引。已获取的再点只重放指引。 */
 async function acquire(it: MarketCatalogItem) {
   if (!it.acquired) {
+    // 创作者技能是**买断**：点一下就真扣 token，必须二次确认（Agent 是用的时候才扣，无需拦）
+    const price = Number(it.price_tokens || 0)
+    if (it.kind === 'cskill' && price > 0
+        && !confirm(`购买技能「${it.name}」需一次性支付 ${price.toLocaleString()} token（买断，之后永久可用）。确认购买？`)) {
+      return
+    }
     const err = await setMarketItemAcquired(it.kind, it.slug, true)
     // 失败(如达上限)走**醒目警告条**而非不起眼的 💡 提示条——负责人实报:达上限时提醒不够明显,
     // 用户以为点了没反应。errMsg 用橙红警告样式,并把 💡 提示清掉免得两条混淆。
@@ -164,6 +172,11 @@ async function acquire(it: MarketCatalogItem) {
 
 /** 各类资源的使用指引（获取后展示；这些资源都在聊天里用，无需额外安装）。 */
 function usageHint(it: MarketCatalogItem): string {
+  if (it.kind === 'cskill') {
+    const p = Number(it.price_tokens || 0)
+    return `已购「${it.name}」${p > 0 ? `（${p.toLocaleString()} token 买断，已永久拥有）` : ''}：`
+      + '它会在你之后的每轮对话中自动生效，无需再做什么。可在「我的AI工坊 · 已获取」查看。'
+  }
   if (it.kind === 'cagent') {
     const p = Number(it.price_tokens || 0)
     const cost = p > 0 ? `每次使用扣 ${p.toLocaleString()} token（余额不足会提示充值）` : '免费使用'
@@ -178,6 +191,14 @@ function usageHint(it: MarketCatalogItem): string {
   }
   if (it.kind === 'workflow') return `已获取「${it.name}」：对主 AI 说「工作流 跑 ${it.slug}」，或直接描述需求让它自动调用。${it.input_hint ? `输入提示：${it.input_hint}` : ''}`
   return `已获取「${it.name}」：向 AI 提问相关内容时会自动检索这篇知识。`
+}
+
+/** 获取按钮文案：创作者技能是**付费买断**，按钮要如实说"购买"并标价，不能写"免费获取"。 */
+function acquireLabel(it: MarketCatalogItem): string {
+  if (isAcquired(it)) return '已获取'
+  const p = Number(it.price_tokens || 0)
+  if (it.kind === 'cskill' && p > 0) return `购买 ${p.toLocaleString()} token`
+  return '免费获取'
 }
 
 /** 创作者账号展示：@carol:xx.com → carol（卡片上短一点，完整 ID 无需暴露域名噪音）。 */

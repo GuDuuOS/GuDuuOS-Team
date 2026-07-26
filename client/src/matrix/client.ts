@@ -2295,7 +2295,7 @@ export async function getPresetAgents(): Promise<GlobalAgent[]> {
 
 /** 商城里的一条资源（后端只下发橱窗字段，人设/技能正文/工作流 url 等敏感内容拿不到）。 */
 export interface MarketCatalogItem {
-  kind: 'agent' | 'skill' | 'workflow' | 'knowledge' | 'cagent'
+  kind: 'agent' | 'skill' | 'workflow' | 'knowledge' | 'cagent' | 'cskill'
   slug: string
   name: string
   description: string
@@ -3611,6 +3611,8 @@ export async function walletAdminAdjust(
 /** 我的一条上架记录。status: pending 待审 / on 在售 / off 已下架 / rejected 未通过 / banned 平台下架 */
 export interface CreatorListing {
   id: number; agent_slug: string; name: string; description: string
+  /** agent=按次计费 / skill=一次性买断 */
+  kind?: string
   price_tokens: number; status: string; uses: number; earned: number
   review_reason?: string
 }
@@ -3687,6 +3689,8 @@ export async function creatorAdminReview(userId: string, approve: boolean, reaso
 /** 管理员：待审核的上架列表（含人设全文，审核依据）。 */
 export interface CreatorListingAdminItem {
   id: number; creator: string; agent_slug: string; name: string; description: string
+  /** agent=按次计费 / skill=一次性买断（system_prompt 字段对 skill 装的是技能正文） */
+  kind?: string
   price_tokens: number; system_prompt: string; created_at: string
 }
 
@@ -3734,15 +3738,16 @@ export async function creatorListings(): Promise<CreatorListingsResp | null> {
   } catch { return null }
 }
 
-/** 上架/更新自建 Agent（创作者会员）。返回 listing id。 */
+/** 上架/更新自建 Agent（按次计费）或 Skill（一次性买断）。返回 listing id。 */
 export async function creatorPublish(
   agentSlug: string, priceTokens: number, name = '', description = '',
+  kind: 'agent' | 'skill' = 'agent',
 ): Promise<number> {
   const token = (mx as any)?.getAccessToken?.() || ''
   const r = await fetch(`${payBase()}/cosmac/creator/publish`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ agent_slug: agentSlug, price_tokens: priceTokens, name, description }),
+    body: JSON.stringify({ agent_slug: agentSlug, price_tokens: priceTokens, name, description, kind }),
   })
   const j = await r.json().catch(() => ({}))
   if (!r.ok) throw new Error(j?.error || '上架失败')

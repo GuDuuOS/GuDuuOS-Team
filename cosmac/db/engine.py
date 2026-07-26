@@ -210,11 +210,21 @@ def _heal_business_schema(engine: Engine) -> None:
         from cosmac.db.models import MarketListing as _ML
         if insp.has_table(_ML.__tablename__):
             have = {c["name"] for c in insp.get_columns(_ML.__tablename__)}
-            if "review_reason" not in have:
-                with engine.begin() as conn:
+            with engine.begin() as conn:
+                if "review_reason" not in have:
                     conn.execute(text(
                         "ALTER TABLE cosmac_market_listing "
                         "ADD COLUMN review_reason VARCHAR(500) NOT NULL DEFAULT ''"
+                    ))
+                # P4：Skill 也能上架（买断制）→ 需要 kind 区分；历史行都是 Agent 上架。
+                if "kind" not in have:
+                    conn.execute(text(
+                        "ALTER TABLE cosmac_market_listing "
+                        "ADD COLUMN kind VARCHAR(16) NOT NULL DEFAULT 'agent'"
+                    ))
+                    conn.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_cosmac_market_listing_kind "
+                        "ON cosmac_market_listing (kind)"
                     ))
         # 图文页表补列：旧库的 cosmac_doc_page 还没 cover（封面图），补上否则带封面写入报
         # UndefinedColumn。

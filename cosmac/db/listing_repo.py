@@ -14,6 +14,10 @@ from sqlalchemy.orm import Session
 from cosmac.db.models import CreatorEarning, MarketListing
 
 
+class SlugTaken(Exception):
+    """同一创作者已用该 slug 上架过**另一类**资源（见 MarketListing 唯一键说明）。"""
+
+
 def upsert_listing(
     session: Session,
     *,
@@ -22,12 +26,14 @@ def upsert_listing(
     name: str,
     description: str,
     price_tokens: int,
+    kind: str = "agent",
 ) -> Optional[MarketListing]:
     """上架/更新一条 listing（同 (creator, agent_slug) 幂等更新）。
 
     **P3 起任何上架/更新都进 pending 待审**（负责人定稿：任何更新都重审）——原在售的
     改价/改文案也立即变待审（待审期间下架，不再可购可用），审核通过才恢复在售。
     被管理员 banned 的条目创作者不可经此复活/修改（返回 None，调用方转提示）。
+    同 slug 已被自己**另一类**资源占用时抛 :class:`SlugTaken`（唯一键不含 kind）。
     """
     row = session.execute(
         select(MarketListing).where(
@@ -35,11 +41,14 @@ def upsert_listing(
             MarketListing.agent_slug == agent_slug,
         )
     ).scalar_one_or_none()
+    if row is not None and str(row.kind or "agent") != kind:
+        raise SlugTaken(str(row.kind or "agent"))
     if row is not None and row.status == "banned":
         return None  # 管理员强制下架的不允许创作者自行复活
     if row is None:
-        row = MarketListing(creator=creator, agent_slug=agent_slug)
+        row = MarketListing(creator=creator, agent_slug=agent_slug, kind=kind)
         session.add(row)
+    row.kind = kind
     row.name = name
     row.description = description
     row.price_tokens = max(0, int(price_tokens))
@@ -97,12 +106,27 @@ def get_listing(session: Session, listing_id: int) -> Optional[MarketListing]:
     return session.get(MarketListing, int(listing_id))
 
 
-def list_on_sale(session: Session) -> List[MarketListing]:
-    """全部在售（status=on）——商城货架用，新→旧。"""
-    return list(session.execute(
-        select(MarketListing).where(MarketListing.status == "on")
-        .order_by(MarketListing.id.desc())
-    ).scalars())
+def list_on_sale(session: Session, *, kind: str = "") -> List[MarketListing]:
+    """全部在售（status=on）——商城货架用，新→旧。kind 非空则只列该类。"""
+    stmt = select(MarketListing).where(MarketListing.status == "on")
+    if kind:
+        stmt = stmt.where(MarketListing.kind == kind)
+    return list(session.execute(stmt.order_by(MarketListing.id.desc())).scalars())
+
+
+def has_purchased(session: Session, buyer: str, listing_id: int) -> bool:
+    """该买家是否**曾经为这条 listing 付过费**（买断制的"已购"判据）。
+
+    用收益流水反查，不另建购买表：买断只在首次获取时扣款，之后移除再获取都免费
+    （已买断=永久拥有；否则用户移除一下就要重复付钱）。
+    """
+    row = session.execute(
+        select(CreatorEarning.id).where(
+            CreatorEarning.buyer == buyer,
+            CreatorEarning.listing_id == int(listing_id),
+        ).limit(1)
+    ).first()
+    return row is not None
 
 
 def list_by_creator(session: Session, creator: str) -> List[MarketListing]:
