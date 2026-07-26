@@ -169,6 +169,31 @@ class MatrixClient:
             logger.debug("编辑消息失败 room=%s", room_id, exc_info=True)
             return False
 
+    def edit_text_as(
+        self, room_id: str, event_id: str, new_text: str, user_id: str
+    ) -> bool:
+        """以**傀儡账号身份**编辑它自己发过的消息（流式回复要原地更新草稿用）。
+
+        与 :meth:`edit_text` 同 wire 格式，只是带 ``as_user``——Matrix 只允许编辑自己发的
+        消息，所以以谁的身份发的就得以谁的身份改。失败返回 False（调用方降级即可）。
+        """
+        url = self._url(
+            f"/_matrix/client/v3/rooms/{quote(room_id)}/send/m.room.message/{self._txn_id()}",
+            as_user=user_id,
+        )
+        body = {
+            "msgtype": "m.text",
+            "body": f"* {new_text}",
+            "m.new_content": {"msgtype": "m.text", "body": new_text},
+            "m.relates_to": {"rel_type": "m.replace", "event_id": event_id},
+        }
+        try:
+            resp = self._session.put(url, json=body, timeout=10)
+            return resp.status_code == 200
+        except requests.RequestException:
+            logger.debug("以 %s 身份编辑消息失败 room=%s", user_id, room_id, exc_info=True)
+            return False
+
     def set_typing(self, room_id: str, typing: bool, timeout_ms: int = 30000) -> None:
         """设置主 AI 在房间里的"正在输入…"状态（③ 流式体感）。
 

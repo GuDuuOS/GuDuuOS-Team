@@ -164,6 +164,110 @@ class _ProgressReporter:
             logger.debug("定格执行进度失败(忽略)", exc_info=True)
 
 
+class _StreamWriter:
+    """流式回复:AI 边生成,这里边把「草稿」消息原地编辑出来,而不是憋到最后一次性发。
+
+    为什么做它(2026-07-26):实测「长连接复用」只能省约 2.6 秒、且 SDK 的 session 不隔离
+    有跨用户泄露风险(见 engine.py 类注释),所以提速改走这条——**体感**收益远大于 2.6 秒
+    (用户 1 秒内就看到字在动),且完全不碰规则注入/会话隔离,零正确性风险。
+
+    工作方式:
+      - 第一次收到正文 → 发一条草稿消息(记 event_id);之后**节流**编辑同一条。
+      - :meth:`finalize` 把草稿定格成最终回复,并返回 True 表示「这条消息我已经发过了」,
+        调用方据此**跳过**原来的发送,避免同一段话在群里出现两次。
+      - 傀儡身份(AI 同事)回复时,草稿也以它的身份发/改(edit_text_as)。
+      - **全程 best-effort**:任何一步失败都把自己置为不可用(owns=False),让调用方回落到
+        原来的"一次性发送"路径——流式坏了顶多退回旧体验,绝不能丢回复。
+
+    节流参数的取舍:每次编辑都是一条真实 Matrix 事件,会永久留在房间时间线里。太密会刷爆
+    事件量、也可能触发限频;太疏又没有"在动"的感觉。取 1.2 秒/24 字,并限制单条回复最多
+    编辑 24 次(超过就只等最终定格),兼顾观感与事件量。
+    """
+
+    _MIN_INTERVAL = 1.2      # 两次编辑最小间隔（秒）
+    _MIN_CHARS = 24          # 距上次至少新增这么多字才值得编辑一次
+    _MAX_EDITS = 24          # 单条回复最多编辑次数（防长文把房间刷成编辑流水）
+
+    def __init__(self, client, room_id: str, as_user: str = "") -> None:
+        self.client = client
+        self.room_id = room_id
+        self.as_user = as_user or ""
+        self.event_id: Optional[str] = None
+        self._last_ts = 0.0
+        self._last_text = ""     # 草稿当前显示的内容（定格时据此免掉重复编辑）
+        self._edits = 0
+        self._broken = False     # 出过错就彻底停用,不再打扰
+
+    def _send(self, text: str) -> Optional[str]:
+        if self.as_user:
+            return self.client.send_text_as(self.room_id, text, self.as_user)
+        return self.client.send_text(self.room_id, text)
+
+    def _edit(self, text: str) -> bool:
+        if self.as_user:
+            return self.client.edit_text_as(self.room_id, self.event_id, text, self.as_user)
+        return self.client.edit_text(self.room_id, self.event_id, text)
+
+    def __call__(self, partial: str) -> None:
+        """引擎每吐一点正文就调一次(partial=当前文本块的累计内容)。节流后原地更新草稿。"""
+        if self._broken:
+            return
+        text = (partial or "").strip()
+        if not text:
+            return
+        now = time.monotonic()
+        if self.event_id is not None:
+            # 已有草稿:同时满足"间隔够久"和"新增够多"才编辑；编辑次数用完就只等定格
+            if self._edits >= self._MAX_EDITS:
+                return
+            if (now - self._last_ts) < self._MIN_INTERVAL:
+                return
+            if (len(text) - len(self._last_text)) < self._MIN_CHARS:
+                return
+        try:
+            if self.event_id is None:
+                ev = self._send(text)
+                if not ev:
+                    self._broken = True
+                    return
+                self.event_id = ev
+            else:
+                if not self._edit(text):
+                    self._broken = True
+                    return
+                self._edits += 1
+        except Exception:
+            logger.debug("流式更新失败(停用流式,回落一次性发送)", exc_info=True)
+            self._broken = True
+            return
+        self._last_ts = now
+        self._last_text = text
+
+    def finalize(self, final_text: str) -> bool:
+        """把草稿定格成最终回复。返回 True=这条已由我发出,调用方不要再发一遍。
+
+        草稿内容与最终文本一致时不做多余编辑(省一条事件)。最终文本为空(终止性工具场景)
+        时保留草稿原样——那是模型真实说过的引导语,留着比删掉好。
+        """
+        if self._broken or self.event_id is None:
+            return False
+        final = (final_text or "").strip()
+        if not final:
+            return True     # 空回复:草稿已在房里,别再发一条空消息
+        if final == self._last_text:
+            return True     # 草稿正好就是最终文本,省一条编辑事件
+        try:
+            if not self._edit(final):
+                # 定格失败:草稿停在中途会让用户看到半截话——如实退回,让调用方补发完整回复
+                self._broken = True
+                return False
+        except Exception:
+            logger.debug("定格流式回复失败(回落一次性发送)", exc_info=True)
+            self._broken = True
+            return False
+        return True
+
+
 # 公开回调端点（外部工作流平台调）允许的最大请求体（防无认证内存 DoS）。
 # 工作流结果文本不大、下游还会截断，512KB 绰绰有余。
 _MAX_CALLBACK_BODY = 512 * 1024
@@ -211,6 +315,16 @@ def _env_int(name: str, default: int) -> int:
         return int(v) if str(v).strip() else default
     except (TypeError, ValueError):
         return default
+
+
+def _stream_reply_enabled() -> bool:
+    """流式回复总开关（默认**开**；设 COSMAC_STREAM_REPLY=0 可一键关掉回落旧行为）。
+
+    默认开是因为它纯属体验增强、且内部全程 best-effort（坏了自动回落一次性发送）；
+    留这个开关是为了万一线上表现异常（编辑刷屏/客户端渲染问题），改 env 重启即可止血，
+    不用回滚发版。
+    """
+    return _env_int("STREAM_REPLY", 1) != 0
 
 
 class CosmacBot:
@@ -724,26 +838,38 @@ class CosmacBot:
                 # 任务看板据此按工作区过滤（私聊房的 room_id 归不了工作区）。
                 space_id=str(content.get("cosmac.doc_space") or "")[:255],
             )
+            # 以谁的身份回这条：worker 路由解析出傀儡(AI 同事)就用它，否则主 AI。
+            # ⚠️ 这段**必须在引擎开跑前**定下来：流式草稿一上来就要以最终身份发，
+            # 不然会出现"草稿是主AI发的、定稿却该是同事发"的错位。
+            # 拉不进房(权限等)则清空 as_user，直接走主 AI 身份，省一次注定失败的请求。
+            as_user = str(gctx.get("as_user") or "")
+            if as_user:
+                _slug = self._worker_slug_of(as_user)
+                if _slug and not self._ensure_worker_in_room(room_id, _slug):
+                    as_user = ""
+            # 流式输出：AI 边生成边把草稿消息原地更新出来（体感提速）。
+            # 出任何问题都会自动停用、回落到下面的一次性发送，绝不丢回复。
+            # 一键停用：设 COSMAC_STREAM_REPLY=0（改 env 重启即可，无需改代码）。
+            streamer = (
+                _StreamWriter(self.client, room_id, as_user)
+                if _stream_reply_enabled() else None
+            )
             reply, usage_tokens = self._run_agent_engine(
                 agent, text or user_text, tool_ctx, extra_system, history,
                 model_override=gctx.get("model", ""),  # 群级模型联动:SDK 引擎也认群模型
+                stream_cb=streamer,
             )
             # 幂等发送：用 event_id 派生固定 txn_id，让 Synapse 据此去重。
             # 场景：同一事务里若有别的事件失败，handle_transaction 会让 Synapse 重发**整批**，
             # 已成功的这条 AI 回复会被重新处理；固定 txn_id 保证群里不会冒出两条同样的回复。
             # 方案B:worker 路由若解析出傀儡账号(as_user),回复以该 AI 同事本人身份发——
             # 时间线上显示它的名字/头像;傀儡发送失败退回主 AI 身份,绝不丢回复。
+            # 流式已把这段话发出去了(草稿定格成最终文本)→ 跳过下面的发送，避免同一段话
+            # 在群里出现两条。流式没启用/中途坏了/定格失败 → streamed=False，照旧一次性发。
+            streamed = bool(streamer and streamer.finalize(reply))
             # 空回复不发多余消息(终止性工具如 ask_user_choice 已把选择卡发进房,
             # Agent 返回空串——此时再发一条空文本就是骚扰)。选择卡本身已是给用户的交互。
-            if reply.strip():
-                as_user = str(gctx.get("as_user") or "")
-                if as_user:
-                    # 发送前确保傀儡在本房(评审#7:普通频道 @ 已获取智能体/旧专班里
-                    # 傀儡从未 join,不在房 send_text_as 必 403)。带在房缓存,平时零开销;
-                    # 拉不进房(权限等)则清空 as_user,直接走主 AI 身份,省一次注定失败的请求。
-                    _slug = self._worker_slug_of(as_user)
-                    if _slug and not self._ensure_worker_in_room(room_id, _slug):
-                        as_user = ""
+            if reply.strip() and not streamed:
                 sent_ok = False
                 if as_user:
                     sent_ok = bool(self.client.send_text_as(
@@ -1524,7 +1650,8 @@ class CosmacBot:
             return self.agent
 
     def _run_agent_engine(
-        self, agent, user_text, tool_ctx, extra_system, history, model_override=""
+        self, agent, user_text, tool_ctx, extra_system, history, model_override="",
+        stream_cb=None,
     ):
         """按 COSMAC_AGENT_ENGINE 选执行引擎跑一条消息，返回 (回复文本, 真实用量token数)。
 
@@ -1549,7 +1676,7 @@ class CosmacBot:
                 )
                 reply = eng.run(
                     user_text, tool_ctx, extra_system=extra_system, history=history,
-                    progress_cb=reporter,
+                    progress_cb=reporter, stream_cb=stream_cb,   # 流式:边生成边显示
                 )
                 reporter.finish()
                 return reply, int(getattr(eng, "last_usage_tokens", 0) or 0)

@@ -104,8 +104,12 @@ class ClaudeSdkEngine:
 
     与 legacy `Agent.run` 同签名,bot 里可无缝替换。每次 run 拉起一个 SDK 会话
     (CLI 子进程),跑完即弃——无跨请求状态,天然并发安全(bot 是每事件一线程)。
-    体验代价:子进程冷启动约 3~8 秒,比 legacy 直连 HTTP 慢;换来的是完整的
-    Claude Code harness(多轮工具循环/自动重试/上下文管理)。
+
+    ⚠️ **别再想"长连接复用同一个 client 提速"**(2026-07-26 生产实测结论,详见 TODO C 节):
+    ① 固定开销实测只有约 2.6s(connect 0.7s + 首次 query 暖机 1.9s),不是早先估计的 3~8s;
+    ② SDK 的 `query(session_id=...)` **根本不隔离上下文**——同一 client 上 A 会话存的内容
+    B 会话读得到,复用即**跨用户泄露**;③ `system_prompt` 只能 connect 时定,而我们每轮都不同。
+    提速改走**流式输出**(stream_cb):边生成边显示,体感收益远大于 2.6s 且零正确性风险。
     """
 
     # 上次 run 的真实 LLM 用量（Token 经济计费用）；run 开始清零、由 ResultMessage 累加。
@@ -136,12 +140,19 @@ class ClaudeSdkEngine:
         extra_system: str = "",
         history: Optional[List[Message]] = None,
         progress_cb=None,
+        stream_cb=None,
     ) -> str:
         """处理一句用户输入,返回最终文本回复。失败**抛异常**——由 bot 回退 legacy。
-        progress_cb(tool_name, args):每次工具调用前回调,给用户滚动展示"正在干什么"。"""
+
+        progress_cb(tool_name, args):每次工具调用前回调,给用户滚动展示"正在干什么"。
+        stream_cb(partial_text):**流式输出**——正文每增长一点就回调一次(传的是当前这段
+        文本块的**累计**内容,不是增量,调用方直接拿去覆盖显示即可)。传了才开启增量流。
+        """
         import asyncio  # 局部 import:引擎未启用时本模块零依赖负担
 
-        return asyncio.run(self._arun(user_text, ctx, extra_system, history, progress_cb))
+        return asyncio.run(
+            self._arun(user_text, ctx, extra_system, history, progress_cb, stream_cb)
+        )
 
     # ── 真正干活(async;SDK 是异步接口) ────────────────────────────────────
     async def _arun(
@@ -151,6 +162,7 @@ class ClaudeSdkEngine:
         extra_system: str,
         history: Optional[List[Message]],
         progress_cb=None,
+        stream_cb=None,
     ) -> str:
         # 懒 import:claude-agent-sdk 只在 3.10+ 且已安装时存在;3.9 环境 import 会
         # ModuleNotFoundError → 抛给 bot 回退 legacy,不影响现有功能。
@@ -160,6 +172,7 @@ class ClaudeSdkEngine:
             AssistantMessage,
             ClaudeAgentOptions,
             ResultMessage,
+            StreamEvent,
             TextBlock,
             ToolUseBlock,
             create_sdk_mcp_server,
@@ -225,6 +238,9 @@ class ClaudeSdkEngine:
             model=model,
             mcp_servers={"cosmac": server},
             allowed_tools=allowed,
+            # 流式输出:只有调用方要流时才开——开了 SDK 会额外推大量 StreamEvent,
+            # 不用则平白多一堆进程间消息。
+            include_partial_messages=bool(stream_cb),
             # 工具权限:业务安全不靠 SDK 的确认弹窗(没人在终端上点确认),而靠
             # Toolbox 内部的门控/配额/越权检查——那层对两种引擎一视同仁。
             permission_mode="bypassPermissions",
@@ -249,11 +265,34 @@ class ClaudeSdkEngine:
         # input/output/cache token 数，这里累计；bot 在 run 后读 self.last_usage_tokens 结算。
         self.last_usage_tokens = 0
 
+        # 流式输出用:当前正在生成的那个文本块的累计内容。模型可能先说一段、调工具、再说
+        # 最终答复——每遇到新文本块就清零,与下面"取最后一段非空文本作最终回复"口径一致。
+        stream_buf = ""
+
         async def _consume() -> None:
             # 内部协程:跑完整个 query 流。用 asyncio.wait_for 包它(3.9 兼容,不用 3.11 的
             # asyncio.timeout),超时会取消它、连带取消底层 query 生成器。
-            nonlocal final_text
+            nonlocal final_text, stream_buf
             async for message in query(prompt=prompt, options=options):
+                # ── 流式增量(开了 include_partial_messages 才有)──
+                # event 是标准 Anthropic SSE 事件 dict。只取 text_delta:thinking_delta 是
+                # 模型的**内部推理**,绝不能流给用户看。
+                if stream_cb is not None and isinstance(message, StreamEvent):
+                    try:
+                        ev = message.event or {}
+                        et = ev.get("type")
+                        if et == "content_block_start":
+                            if (ev.get("content_block") or {}).get("type") == "text":
+                                stream_buf = ""
+                        elif et == "content_block_delta":
+                            delta = ev.get("delta") or {}
+                            if delta.get("type") == "text_delta":
+                                stream_buf += str(delta.get("text") or "")
+                                stream_cb(stream_buf)
+                    except Exception:
+                        # 流式是纯体验增强:解析/回调出任何问题都吞掉,绝不影响这条回复
+                        logger.debug("处理流式增量失败(忽略)", exc_info=True)
+                    continue
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, ToolUseBlock) and progress_cb:

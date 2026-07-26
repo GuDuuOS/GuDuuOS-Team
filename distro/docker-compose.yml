@@ -117,6 +117,9 @@ services:
       # 不配用代码默认(240s / 120s)。
       COSMAC_SDK_TIMEOUT: ${COSMAC_SDK_TIMEOUT:-}
       COSMAC_LLM_TIMEOUT: ${COSMAC_LLM_TIMEOUT:-}
+      # 流式回复(边生成边显示)总开关:默认开,置 0 一键关掉回落"一次性发送"。
+      # compose 的 environment 是白名单式,不在此列出则 .env 里配了也传不进容器。
+      COSMAC_STREAM_REPLY: ${COSMAC_STREAM_REPLY:-}
       # —— OEM 体系（模块6）：授权码 + 母舰地址（心跳/网关）——
       COSMAC_OEM_KEY: ${COSMAC_OEM_KEY:-}
       COSMAC_NEXUS_URL: ${COSMAC_NEXUS_URL:-}

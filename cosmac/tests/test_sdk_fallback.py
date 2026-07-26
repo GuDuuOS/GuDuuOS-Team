@@ -31,7 +31,7 @@ class TestSdkFallback(unittest.TestCase):
     def test_no_legacy_rerun_after_tools_executed(self, MockEngine, _enabled) -> None:
         bot = self._bot()
 
-        def run(user_text, ctx, extra_system="", history=None, progress_cb=None):
+        def run(user_text, ctx, extra_system="", history=None, progress_cb=None, stream_cb=None):
             # 模拟 SDK 已执行过一个副作用工具（建群），随后在后续轮次失败
             if progress_cb:
                 progress_cb("create_room", {"name": "项目专班"})
@@ -56,7 +56,7 @@ class TestSdkFallback(unittest.TestCase):
     def test_legacy_fallback_when_no_tool_executed(self, MockEngine, _enabled) -> None:
         bot = self._bot()
 
-        def run(user_text, ctx, extra_system="", history=None, progress_cb=None):
+        def run(user_text, ctx, extra_system="", history=None, progress_cb=None, stream_cb=None):
             raise RuntimeError("boom before any tool")  # 未调用 progress_cb
         MockEngine.return_value.run.side_effect = run
 
