@@ -1,5 +1,20 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-26 — GuDuu OS 1.6.7 (patch)
+
+- 修复：**大屏地图上的真实节点仍然不显示**（1.6.6 只修了一半）。本地把大屏跑起来、用浏览器
+  逐层查 DOM 才定位到最后两环：
+  - `GLOBAL_MAP_CONFIG.nodeIds` 是一串**写死的演示节点 id**（nb/db/gl…）。真实节点 `nx-N`
+    不在这个白名单里 → `updateMapFilters` 给它们打上 `is-out-of-scope`/`is-filtered`
+    → `aria-hidden=true`。**标记明明生成了却看不见**，就卡在这。改为真实节点接管后同步
+    替换白名单（并清掉按演示 id 写死的 callout 冲突表）。
+  - 标记是在 `renderMapDecorations` **之后**才创建的，而算像素位置的 `positionMapCallouts`
+    那时已经跑过 → 标记一直停在占位的 50%/50%（手动触发 resize 才归位）。补一次
+    `requestAnimationFrame(positionMapCallouts)`（要等浏览器完成布局，否则量到 0）。
+  - 本地实测确认：中国东南沿海出现真实热区，「浙江 dev-cs」「广东 guduuos」两个节点卡片正常浮出。
+- 说明：排查中一度以为地图整个空了——实际是**白底白六边形在缩略截图里看不出来**，
+  DOM 里 1134 个格子都在、热区 fill 也是紫色。不是 bug，记此免得下次又误判。
+
 ## 2026-07-26 — GuDuu OS 1.6.6 (patch)
 
 - 修复：**大屏地图上看不到任何节点**（负责人实报，截图为证）。根因比预想的更深——

@@ -1175,6 +1175,16 @@
       frag.appendChild(btn);
     }
     stage.appendChild(frag);
+    // 关键:把"地图作用域白名单"换成真实节点 id。GLOBAL_MAP_CONFIG.nodeIds 原本是一串写死的
+    // 演示 id(nb/db/gl…),真实节点不在其中会被 updateMapFilters 判成 is-out-of-scope 而隐藏
+    // ——标记明明生成了却看不见,就卡在这一步(本地实测定位)。
+    GLOBAL_MAP_CONFIG.nodeIds = geoNodes.map((n) => n.id);
+    // 演示期的 callout 冲突表(按演示 id 写死)对真实节点没有意义,清掉免得误伤
+    MAP_CALLOUT_CONFLICTS.clear();
+    // 标记是在 renderMapDecorations 之后才建的,而算像素位置的 positionMapCallouts 那时已经
+    // 跑过了 → 不补这一下,标记会一直停在占位的 50%/50%(本地实测:手动触发 resize 才归位)。
+    // 用 rAF 等浏览器完成一次布局,否则 getBoundingClientRect 拿到的是 0。
+    window.requestAnimationFrame(() => positionMapCallouts());
   }
 
   /** 极简 HTML 转义：节点名/地域来自服务端，虽可信但拼进 innerHTML 前一律转义。 */
