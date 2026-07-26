@@ -21,7 +21,7 @@ import {
   Tv, Smartphone, Camera, Sparkles, Check, RefreshCw, ChevronRight,
   ChevronDown, Upload, Download, Trash2, Link, Folder, MessageSquare,
   ChartColumnBig, KeyRound, Rocket, Hash, Building2, Palette, Eye,
-  House, Calendar, Inbox,
+  House, Calendar, Inbox, Coins,
 } from 'lucide-vue-next'
 
 // 语义名 → Lucide 组件。命名按"这个图标在产品里代表什么"取,不按图形取,
@@ -55,6 +55,7 @@ const MAP: Record<string, any> = {
   plug: Plug,                   // 连接器
   puzzle: Puzzle,               // 插件
   plan: CreditCard,             // 会员套餐
+  wallet: Coins,                // Token 经济/钱包
   members: Crown,               // 会员等级
   marketplace: Store,           // 市场/商城
   web: Globe,                   // 网络/公开

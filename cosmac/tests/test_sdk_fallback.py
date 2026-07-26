@@ -37,15 +37,18 @@ class TestSdkFallback(unittest.TestCase):
                 progress_cb("create_room", {"name": "项目专班"})
             raise RuntimeError("boom at turn 3")
         MockEngine.return_value.run.side_effect = run
+        MockEngine.return_value.last_usage_tokens = 0  # Token 计量：mock 引擎给个整数用量
 
         # legacy agent 绝不应被调用（否则会重复建群/派单）
         legacy = SimpleNamespace(
             system_prompt="s",
             run=mock.Mock(side_effect=AssertionError("已动过手，legacy 不应被再次调用")),
         )
-        reply = bot._run_agent_engine(
+        # 新契约：返回 (回复文本, 真实用量token数)
+        reply, usage = bot._run_agent_engine(
             legacy, "组个专班", ToolContext("!r:h", "@u:h"), "", [])
         self.assertIn("部分操作", reply)      # 告知用户已做部分、已停下
+        self.assertEqual(usage, 0)
         legacy.run.assert_not_called()        # 关键：没有整单重跑
 
     @mock.patch("cosmac.ai.engine.sdk_engine_enabled", return_value=True)
@@ -59,7 +62,7 @@ class TestSdkFallback(unittest.TestCase):
 
         legacy = SimpleNamespace(
             system_prompt="s", run=lambda *a, **k: "legacy 正常回复")
-        reply = bot._run_agent_engine(
+        reply, _usage = bot._run_agent_engine(
             legacy, "你好", ToolContext("!r:h", "@u:h"), "", [])
         self.assertEqual(reply, "legacy 正常回复")  # 无副作用 → 安全回退
 

@@ -27,14 +27,21 @@ def create_order(
     currency: str,
     provider: str,
     provider_ref: str = "",
+    kind: str = "member",
+    tokens: int = 0,
 ) -> Order:
-    """新建一笔待支付订单（status=created）。order_no 须唯一（调用方生成）。"""
+    """新建一笔待支付订单（status=created）。order_no 须唯一（调用方生成）。
+
+    kind=member（会员套餐，默认）/ token（token 充值包，tokens=购买数量）。
+    """
     order = Order(
         order_no=order_no,
         user_id=user_id,
+        kind=kind or "member",
         plan_slug=plan_slug,
         tier=tier,
         period_days=int(period_days),
+        tokens=int(tokens or 0),
         amount_cents=int(amount_cents),
         currency=(currency or "usd").lower(),
         provider=provider or "manual",

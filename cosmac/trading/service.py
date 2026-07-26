@@ -61,11 +61,15 @@ class OrderService:
         client: Any,
         control_room_alias: str,
         providers: Optional[Dict[str, PaymentProvider]] = None,
+        wallet: Any = None,
     ):
         self._members = members
         self._client = client
         self._alias = control_room_alias
         self._providers = providers or build_default_providers()
+        # Token 经济（1c）：token 充值单支付成功后经它入账（WalletStore.recharge）。
+        # 不传则 token 单不可下（create_token_order 会拒），会员链路不受影响。
+        self._wallet = wallet
         # 按 user_id 的串行锁：同一用户的多笔订单回调并发时，避免各自从相同旧到期日顺延
         # 导致续期叠加错误（用户付两次却只续一次 / grant 互相覆盖）。
         self._user_locks: Dict[str, threading.Lock] = {}
@@ -151,6 +155,90 @@ class OrderService:
             "tier": plan.tier, "period_days": plan.period_days, "checkout": checkout,
         }
 
+    # —— token 充值下单（1c）——
+
+    def create_token_order(
+        self,
+        *,
+        user_id: str,
+        package_slug: str,
+        currency: str,
+        provider: str = "manual",
+        return_url: str = "",
+    ) -> Dict[str, Any]:
+        """token 充值下单：校验充值包/货币/渠道 → 建 DB 订单(kind=token) → 生成支付方式。
+
+        与会员下单同骨架（同一渠道表、同一回调端点），差别只在履约：支付成功后不开会员、
+        而是给钱包充 tokens（见 on_payment_success 的 kind 分流）。校验失败抛 OrderError。
+        """
+        if not user_id.startswith("@") or ":" not in user_id:
+            raise OrderError("非法用户")
+        if self._wallet is None:
+            raise OrderError("token 充值未开通")
+        pkg = self._wallet.find_package(package_slug)
+        if pkg is None:
+            raise OrderError("充值包不存在或已下架")
+        cur = (currency or "").lower()
+        cents = (pkg.get("prices") or {}).get(cur)
+        if not cents:
+            raise OrderError(f"该充值包不支持货币 {currency}")
+        prov = self._providers.get(provider)
+        if prov is None:
+            raise OrderError(f"暂不支持的支付渠道 {provider}")
+
+        order_no = _gen_order_no()
+        tokens = int(pkg.get("tokens") or 0)
+        with session_scope() as s:
+            order_repo.create_order(
+                s, order_no=order_no, user_id=user_id, plan_slug=pkg["slug"],
+                tier="", period_days=0, amount_cents=int(cents), currency=cur,
+                provider=provider, kind="token", tokens=tokens,
+            )
+        checkout = prov.create_checkout(
+            order_no=order_no, amount_cents=int(cents), currency=cur,
+            title=str(pkg.get("name") or pkg["slug"]), return_url=return_url,
+        )
+        return {
+            "order_no": order_no, "amount_cents": int(cents), "currency": cur,
+            "tokens": tokens, "package": pkg["slug"], "checkout": checkout,
+        }
+
+    def _fulfill_token_order(
+        self, order_no: str, *, provider_ref: str, user_id: str, tokens: int
+    ) -> Dict[str, Any]:
+        """token 单履约：原子置 paid（恰好一次闸）→ 给钱包充值。
+
+        与会员履约同幂等骨架：mark_paid 的 CAS 保证重复回调只充一次；充值失败回滚订单
+        待平台重试（收了钱必须最终把 token 给到）。
+        """
+        with session_scope() as s:
+            first = order_repo.mark_paid(
+                s, order_no, provider_ref=provider_ref, granted_expires_ts=0,
+            )
+        if not first:
+            return {"ok": True, "already": True, "order_no": order_no}
+        try:
+            if self._wallet is None:
+                raise RuntimeError("wallet 未注入")
+            new_bal = self._wallet.recharge(
+                user_id, tokens, order_no=order_no,
+                note=f"充值 {tokens} token",
+            )
+        except Exception:
+            # 收了钱却没充上 → 回滚订单，让平台重试回调（与会员开通失败同口径）
+            with session_scope() as s:
+                order_repo.revert_to_created(s, order_no)
+            logger.exception("订单 %s 已支付但 token 入账失败，已回滚待重试", order_no)
+            raise OrderError("充值入账失败，请稍后重试")
+        logger.info(
+            "订单 %s 支付成功：%s 充值 %s token，余额 %s",
+            order_no, user_id, tokens, new_bal,
+        )
+        return {
+            "ok": True, "order_no": order_no, "user_id": user_id,
+            "tokens": tokens, "balance": new_bal,
+        }
+
     # —— 支付成功（平台回调归一化后调这里）——
 
     def on_payment_success(
@@ -177,6 +265,9 @@ class OrderService:
             tier, period, user_id = order.tier, order.period_days, order.user_id
             order_amount = int(order.amount_cents or 0)
             order_currency = (order.currency or "").lower()
+            # 订单种类（Token 经济 1c）：token 充值单走独立履约（充钱包），会员单走原有开通链。
+            order_kind = str(getattr(order, "kind", "") or "member")
+            order_tokens = int(getattr(order, "tokens", 0) or 0)
 
         # 金额/货币二次校验：平台回传了就强制比对，不符绝不开通（先于一切开通逻辑）。
         if paid_amount_cents is not None and int(paid_amount_cents) != order_amount:
@@ -191,6 +282,13 @@ class OrderService:
                 order_no, order_currency, paid_currency,
             )
             raise OrderError("支付货币与订单不符")
+
+        # token 充值单：金额校验已过，直接充钱包（幂等靠 mark_paid CAS），不进会员逻辑。
+        if order_kind == "token":
+            return self._fulfill_token_order(
+                order_no, provider_ref=provider_ref,
+                user_id=user_id, tokens=order_tokens,
+            )
 
         # 同一用户串行：读旧到期日 + 算 new_exp + 置 paid + grant 整体不被另一笔回调插队。
         with self._user_lock(user_id):

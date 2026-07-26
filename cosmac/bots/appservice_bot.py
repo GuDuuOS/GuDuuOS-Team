@@ -240,12 +240,20 @@ class CosmacBot:
         from cosmac.quotas import QuotaStore
 
         self.quotas = QuotaStore(self.client, config.control_room_alias)
+        # 模块4 变现·Token 经济（P1）：用户 token 钱包 + 计量 + 充值。读控制室 cosmac.token_config
+        # （倍率/汇率/免费日额度/总开关，带 TTL 缓存），钱包/流水进各实例 cosmac DB。
+        # **总开关默认关**——现网存量用户钱包都是 0，开关关着时 precheck/charge 全放行、零影响；
+        # 等前端充值与赠送就绪、给存量用户补过额度后，管理员后台再打开（见 cosmac/wallet.py）。
+        from cosmac.wallet import WalletStore
+
+        self.wallet = WalletStore(self.client, config.control_room_alias)
         # 模块4 交易系统：订单服务（读控制室套餐 cosmac.plans + 建订单 + 支付成功开会员）。
         # 前端「升级会员」走 bot 的 /cosmac/pay/* 端点调它（前端够不到 cosmac DB）。
         from cosmac.trading.service import OrderService
 
         self.orders = OrderService(
-            self.members, self.client, config.control_room_alias
+            self.members, self.client, config.control_room_alias,
+            wallet=self.wallet,  # token 充值单支付成功后经它入账（1c）
         )
         # 让 run_workflow 工具能走异步连接器的回调协议（#1）：注入 bot 的 _dispatch_async。
         # 没配 public_url 时不注入——_dispatch_async 没有回调地址也没意义。
@@ -634,6 +642,12 @@ class CosmacBot:
         if quota_msg:
             self.client.send_text(room_id, quota_msg)
             return
+        # Token 经济前拦（模块4）：今日免费额度 + 钱包余额都空则拦（总开关关时恒放行）。
+        # 与配额同口径——回复前只拦、不扣，真实用量在回复成功后按 usage 结算。
+        wallet_msg = self._wallet_precheck_blocked(sender)
+        if wallet_msg:
+            self.client.send_text(room_id, wallet_msg)
+            return
         #     它能边想边调用工具（建群/发消息/查记录），最后把结论发回群。
         #     （echo 后端不支持工具，会自动退化为纯文本回复。）
         # ③ 流式体感：进入可能较慢的 LLM 生成/工具调用前打开"正在输入…"，让用户看到
@@ -688,7 +702,7 @@ class CosmacBot:
                 # 任务看板据此按工作区过滤（私聊房的 room_id 归不了工作区）。
                 space_id=str(content.get("cosmac.doc_space") or "")[:255],
             )
-            reply = self._run_agent_engine(
+            reply, usage_tokens = self._run_agent_engine(
                 agent, text or user_text, tool_ctx, extra_system, history,
                 model_override=gctx.get("model", ""),  # 群级模型联动:SDK 引擎也认群模型
             )
@@ -723,6 +737,9 @@ class CosmacBot:
                     )
             # L2：回复真正发出后才消费当日 AI 对话额度（失败走下面的 except 分支、不扣）。
             self._rate_quota_blocked(sender, "ai_msg_daily", consume=True)
+            # Token 经济（模块4）：回复成功后按真实 LLM 用量扣 token（先今日免费额度、再钱包余额）。
+            # 总开关关/管理员/取不到用量时不扣；扣费失败不影响这条已发出的回复。
+            self._wallet_charge(sender, usage_tokens, room_id)
         except Exception:
             # 引擎/LLM 本体调用失败（网络错、模型不存在、后端 4xx/5xx 等）：绝不让异常穿透到
             # handle_transaction —— 那会使其返回 False、Synapse 重发**整批**、整条 Agent run
@@ -1457,7 +1474,10 @@ class CosmacBot:
     def _run_agent_engine(
         self, agent, user_text, tool_ctx, extra_system, history, model_override=""
     ):
-        """按 COSMAC_AGENT_ENGINE 选执行引擎跑一条消息。
+        """按 COSMAC_AGENT_ENGINE 选执行引擎跑一条消息，返回 (回复文本, 真实用量token数)。
+
+        真实用量用于 Token 经济计费（见 cosmac/wallet.py）：SDK 引擎读 ResultMessage.usage、
+        legacy 读 Agent 累计的 last_usage_tokens。取不到=0（不计费）。回退/异常路径也带 0。
 
         - claude_sdk:Claude Agent SDK(Claude Code 同款 harness),env 可插拔(P1,
           见 cosmac/ai/engine.py 模块注释)。模型端点由 COSMAC_SDK_* 决定——测试用
@@ -1480,7 +1500,7 @@ class CosmacBot:
                     progress_cb=reporter,
                 )
                 reporter.finish()
-                return reply
+                return reply, int(getattr(eng, "last_usage_tokens", 0) or 0)
             except Exception as exc:
                 logger.exception("Claude SDK 引擎执行失败,本条回退 legacy 引擎")
                 # 回退不能是无声的:欠费/CLI 坏了会让引擎一直默默回退,没人发现"高级引擎"
@@ -1496,10 +1516,11 @@ class CosmacBot:
                 # 才无副作用。已动过手就停下、如实告知，让用户决定是否接着做。
                 if reporter.steps:
                     reporter.finish()
+                    # 已产生副作用才停：这条已消耗过真实 token，带上 SDK 已累计的用量照实结算。
                     return (
                         "⚠️ 我在执行过程中已经做了部分操作，但随后遇到故障。为避免重复建群/"
                         "重复派单，这条先停在这里。请看下已完成的部分，需要我接着把剩下的做完就说一声。"
-                    )
+                    ), int(getattr(eng, "last_usage_tokens", 0) or 0)
         try:
             reply = agent.run(
                 user_text, tool_ctx, extra_system=extra_system, history=history,
@@ -1509,7 +1530,7 @@ class CosmacBot:
             # legacy 引擎抛异常时也要定格"正在执行"卡片，否则它永久卡在"⏳ 正在执行"（#7 连带）。
             # finish() 自带 event_id/steps 守卫并自兜异常，任何时候调用都安全。
             reporter.finish()
-        return reply
+        return reply, int(getattr(agent, "last_usage_tokens", 0) or 0)
 
     def _alert_engine_fallback(self, exc: Exception) -> None:
         """SDK 引擎回退时向控制室发告警(节流:1 小时最多一条)。
@@ -4204,6 +4225,134 @@ class CosmacBot:
         exp = int(rec.get("expires_ts") or 0) if (rec and tier != "free") else 0
         return 200, {"tier": tier, "tier_label": tier_label(tier), "expires_ts": exp}
 
+    # —— Token 钱包端点（模块4 Token 经济 1c/1d：前端够不到 cosmac DB，经 bot 读写）——
+
+    def handle_wallet_me(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """查"我的 token 钱包"：余额 + 今日免费额度 + 公开配置 + 充值包（钱包面板一次拉全）。
+
+        总开关关着也返回（enabled=false），前端据此隐藏/置灰入口——不用另设探测端点。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        cfg = self.wallet.config()
+        try:
+            balance = self.wallet.balance(user_id)
+            free = self.wallet.free_daily_status(user_id)
+        except Exception:
+            logger.exception("读钱包失败 user=%s", user_id)
+            return 500, {"error": "读取钱包失败，请稍后再试"}
+        return 200, {
+            "enabled": bool(cfg.get("enabled")),
+            "balance": balance,
+            "free_daily": free,
+            "tokens_per_yuan": int(cfg.get("tokens_per_yuan") or 1000),
+            # 管理员豁免标记：前端可提示"管理员不消耗 token"
+            "exempt": self._is_platform_admin(user_id),
+            "packages": [
+                {"slug": p["slug"], "name": p["name"], "tokens": p["tokens"],
+                 "prices": p["prices"]}
+                for p in self.wallet.packages()
+            ],
+        }
+
+    def handle_wallet_ledger(
+        self, access_token: str, limit: int = 50, offset: int = 0
+    ) -> Tuple[int, Dict[str, Any]]:
+        """查"我的 token 流水"（新→旧分页）——收支明细就是"钱花哪了"的答案。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        try:
+            items = self.wallet.ledger(user_id, limit=limit, offset=offset)
+        except Exception:
+            logger.exception("读流水失败 user=%s", user_id)
+            return 500, {"error": "读取流水失败，请稍后再试"}
+        return 200, {"items": items}
+
+    def handle_wallet_checkout(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """token 充值下单：验明身份 → 建 token 订单 → 返回支付方式（与会员下单同骨架）。"""
+        from cosmac.trading.service import OrderError
+
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self.wallet.enabled():
+            return 400, {"error": "token 充值暂未开放"}
+        package_slug = str(body.get("package_slug") or "")
+        currency = str(body.get("currency") or "cny")
+        provider = str(body.get("provider") or "manual")
+        try:
+            res = self.orders.create_token_order(
+                user_id=user_id, package_slug=package_slug,
+                currency=currency, provider=provider,
+            )
+        except OrderError as e:
+            return 400, {"error": str(e)}
+        except Exception:
+            logger.exception("token 下单失败 user=%s pkg=%s", user_id, package_slug)
+            return 500, {"error": "下单失败，请稍后再试"}
+        co = res["checkout"]
+        return 200, {
+            "order_no": res["order_no"], "amount_cents": res["amount_cents"],
+            "currency": res["currency"], "tokens": res["tokens"],
+            "checkout": {"kind": co.kind, "url": co.url, "address": co.address,
+                         "extra": co.extra},
+        }
+
+    def handle_wallet_admin_adjust(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """管理员手动加/减某用户 token（后台「Token 经济」页用）。服务端强制管理员身份。"""
+        operator = self.client.whoami(access_token)
+        if not operator:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(operator):
+            return 403, {"error": "仅平台管理员可操作"}
+        target = str(body.get("user_id") or "").strip()
+        if not target.startswith("@") or ":" not in target:
+            return 400, {"error": "请填写完整用户 ID（@user:域名）"}
+        try:
+            delta = int(body.get("delta"))
+        except (TypeError, ValueError):
+            return 400, {"error": "调整数量必须是整数（正=加、负=减）"}
+        if delta == 0:
+            return 400, {"error": "调整数量不能为 0"}
+        note = str(body.get("note") or "")[:200]
+        try:
+            new_bal = self.wallet.adjust(target, delta, note=note, operator=operator)
+        except Exception:
+            logger.exception("管理员调整 token 失败 target=%s delta=%s", target, delta)
+            return 500, {"error": "调整失败，请稍后再试"}
+        if new_bal is None:
+            return 400, {"error": "对方余额不足，无法扣减该数量"}
+        logger.info("管理员 %s 调整 %s token %+d，新余额 %s", operator, target, delta, new_bal)
+        return 200, {"ok": True, "user_id": target, "balance": new_bal}
+
+    def handle_wallet_admin_balance(
+        self, access_token: str, target: str
+    ) -> Tuple[int, Dict[str, Any]]:
+        """管理员查某用户余额 + 最近流水（后台调整前先看一眼）。"""
+        operator = self.client.whoami(access_token)
+        if not operator:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(operator):
+            return 403, {"error": "仅平台管理员可操作"}
+        t = str(target or "").strip()
+        if not t.startswith("@") or ":" not in t:
+            return 400, {"error": "请填写完整用户 ID（@user:域名）"}
+        try:
+            return 200, {
+                "user_id": t,
+                "balance": self.wallet.balance(t),
+                "items": self.wallet.ledger(t, limit=20),
+            }
+        except Exception:
+            logger.exception("管理员查钱包失败 target=%s", t)
+            return 500, {"error": "查询失败，请稍后再试"}
+
     def handle_register_request_code(
         self, body: Dict[str, Any], client_ip: str = ""
     ) -> Tuple[int, Dict[str, Any]]:
@@ -6459,6 +6608,44 @@ class CosmacBot:
             logger.debug("配额计数失败（放行）：metric=%s", metric, exc_info=True)
         return None
 
+    def _wallet_precheck_blocked(self, user_id: str) -> Optional[str]:
+        """Token 余额/免费额度前拦（模块4 Token 经济）：不足返回提示文案，否则 None。
+
+        - 总开关关（默认）→ wallet.precheck 恒返回 None（现网零影响）。
+        - 平台管理员豁免（与配额/门控一致）。
+        - 任何异常一律放行（fail-open）——绝不因计费层出错把用户挡在门外。
+        """
+        try:
+            if self._is_platform_admin(user_id):
+                return None
+            return self.wallet.precheck(user_id)
+        except Exception:
+            logger.debug("Token 前拦失败（放行）：user=%s", user_id, exc_info=True)
+            return None
+
+    def _wallet_charge(self, user_id: str, usage_tokens: int, room_id: str) -> None:
+        """按真实用量给用户扣 token（模块4 Token 经济）。回复成功后调，best-effort。
+
+        总开关关或管理员豁免时不扣；扣费任何异常都吞掉（已发出的回复不因计费失败而回滚）。
+        """
+        try:
+            if usage_tokens <= 0 or self._is_platform_admin(user_id):
+                return
+            if not self.wallet.enabled():
+                return
+            r = self.wallet.charge_usage(
+                user_id, real_tokens=usage_tokens, room_id=room_id,
+            )
+            if r.get("charged"):
+                logger.info(
+                    "Token 扣费：user=%s 真实=%s 扣=%s(免费%s+钱包%s) 余额=%s%s",
+                    user_id, r.get("real_tokens"), r.get("charged"),
+                    r.get("from_free"), r.get("from_wallet"), r.get("balance"),
+                    "（余额不足已扣到0）" if r.get("capped") else "",
+                )
+        except Exception:
+            logger.debug("Token 扣费失败（忽略）：user=%s", user_id, exc_info=True)
+
     def _tool_gate_check(self, sender: str, tool_name: str) -> Optional[str]:
         """工具门控钩子（注入 Toolbox.gate_check）：放行返回 None，拦下返回拒绝文案。"""
         cap = self._TOOL_GATE_MAP.get(tool_name)
@@ -6653,6 +6840,7 @@ class _Handler(BaseHTTPRequestHandler):
                 or p.startswith("/cosmac/space/")
                 or p.startswith("/cosmac/profile/")
                 or p.startswith("/cosmac/usage/")
+                or p.startswith("/cosmac/wallet/")   # Token 钱包（余额/流水/充值，带 Authorization）
                 or p.startswith("/cosmac/admin/")
                 or p.startswith("/cosmac/channel/")   # 频道规则文档 AI 一键写      # 后台用户列表拉邮箱（GET 带 Authorization 也要预检）
                 or p.startswith("/cosmac/channel/")     # 平台管理员接管频道（bug14）
@@ -6745,6 +6933,35 @@ class _Handler(BaseHTTPRequestHandler):
             auth = self.headers.get("Authorization", "")
             token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
             code, payload = self.bot.handle_stats(token)
+            self._send_json(code, payload, cors=True)
+            return
+
+        # Token 钱包：我的余额/免费额度/充值包（模块4 Token 经济 1d）
+        if self.path.split("?", 1)[0] == "/cosmac/wallet/me":
+            code, payload = self.bot.handle_wallet_me(self._bearer())
+            self._send_json(code, payload, cors=True)
+            return
+        # Token 钱包：我的流水（?limit=&offset=）
+        if self.path.split("?", 1)[0] == "/cosmac/wallet/ledger":
+            from urllib.parse import parse_qs, urlparse
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                limit = int((qs.get("limit") or ["50"])[0])
+                offset = int((qs.get("offset") or ["0"])[0])
+            except (TypeError, ValueError):
+                limit, offset = 50, 0
+            code, payload = self.bot.handle_wallet_ledger(
+                self._bearer(), limit=limit, offset=offset
+            )
+            self._send_json(code, payload, cors=True)
+            return
+        # Token 钱包：管理员查某用户余额+流水（?user_id=，仅平台管理员）
+        if self.path.split("?", 1)[0] == "/cosmac/wallet/admin/balance":
+            from urllib.parse import parse_qs, urlparse
+            qs = parse_qs(urlparse(self.path).query)
+            code, payload = self.bot.handle_wallet_admin_balance(
+                self._bearer(), (qs.get("user_id") or [""])[0]
+            )
             self._send_json(code, payload, cors=True)
             return
 
@@ -7321,6 +7538,25 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "请求无效"}, cors=True)
                 return
             code, payload = self.bot.handle_pay_checkout(token, body)
+            self._send_json(code, payload, cors=True)
+            return
+
+        # Token 钱包：充值下单（前端「Token 充值」调；回调复用 /cosmac/pay/callback/*）
+        if path == "/cosmac/wallet/checkout":
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_wallet_checkout(self._bearer(), body)
+            self._send_json(code, payload, cors=True)
+            return
+        # Token 钱包：管理员手动加/减 token（后台「Token 经济」页）
+        if path == "/cosmac/wallet/admin/adjust":
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_wallet_admin_adjust(self._bearer(), body)
             self._send_json(code, payload, cors=True)
             return
 

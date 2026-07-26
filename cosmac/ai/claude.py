@@ -177,4 +177,18 @@ class ClaudeProvider(LLMProvider):
                         arguments=dict(block.input or {}),
                     )
                 )
-        return TurnResult(text="".join(text_parts).strip(), tool_calls=tool_calls)
+        # 真实用量（Token 经济计费用）：Anthropic 响应带 usage.input_tokens/output_tokens。
+        usage_tokens = 0
+        try:
+            u = getattr(resp, "usage", None)
+            if u is not None:
+                usage_tokens = int(getattr(u, "input_tokens", 0) or 0) + int(
+                    getattr(u, "output_tokens", 0) or 0
+                )
+        except (TypeError, ValueError, AttributeError):
+            usage_tokens = 0
+        return TurnResult(
+            text="".join(text_parts).strip(),
+            tool_calls=tool_calls,
+            usage_tokens=usage_tokens,
+        )

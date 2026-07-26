@@ -277,3 +277,15 @@ PEOPLE_EVENT_TYPE = "cosmac.people"
 # 内容形如 {"limits": {"ai_msg_daily": {"free": 30, "paid": -1, "creator": -1}, ...}}。
 # 同 gating 套路（浏览器够不到 DB→走控制室 state event；bot 读、服务端强制）。计数进 cosmac DB。
 QUOTAS_EVENT_TYPE = "cosmac.quotas"
+
+# 管理后台写、bot 读的「Token 经济配置」state event 类型（存控制室；模块4 变现·Token P1）。
+# 后台可调（同 gating/quotas 套路，浏览器够不到 DB→走控制室 state event；bot 读、服务端强制）：
+#   enabled          总开关（默认 False）——现网存量用户钱包都是 0，不设开关一开就全被拦死；
+#                    等钱包/计量/充值/前端全链路就绪、给存量用户补过赠送后，管理员再打开。
+#   markup           倍率：用户 token 消耗 = 真实 LLM 总 token × markup（吸收底层成本波动的旋钮）。
+#   tokens_per_yuan  汇率：1 元 = 多少 token（充值套餐/余额展示换算用）。
+#   free_daily       每天赠送的免费 token（每天清零、不累积；免费层模型，走 cosmac_usage 计数）。
+#   free_grant       新钱包首次创建时一次性欢迎赠送（与每日免费额度是两回事，默认 0）。
+#   min_balance      钱包余额低于此**且**今日免费额度用尽时才拦（用量后付、只前拦"有没有额度"）。
+# 内容形如 {"enabled": false, "markup": 1.5, "tokens_per_yuan": 1000, "free_daily": 500, "free_grant": 0, "min_balance": 1}
+TOKEN_CONFIG_EVENT_TYPE = "cosmac.token_config"

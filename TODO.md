@@ -1,7 +1,7 @@
 # GuDuu OS — 待办事宜(Backlog)
 
 > 未完成事项的唯一清单。做完就删行;新欠账随手加。大方向以 CLAUDE.md §4 路线图为准。
-> 更新:2026-07-03(重复群清理/控制室隐藏/LiveView死代码 已完成移除)
+> 更新:2026-07-23(新增 F 节「市场盲区补缺」:移动端/推送/i18n/GDPR/E2EE/创作者市场/增长)
 
 ## A. 主线大项(路线图欠账)
 
@@ -36,12 +36,26 @@
   - [ ] **P2 规模化**:数据大屏(实时树状图:母舰→OEM→实例,节点大小=用户数/颜色=健康度 +
     增长面板)+ 联邦生态白名单下发(federation whitelist,只通生态不接公网 Matrix)+
     余额/健康告警 + 网关双活 + 网关最低兼容版本强制(催升级抓手)
-  - [ ] **P3 接钱**:token 在线充值 + KEY 在线购买(硬依赖模块4 Stripe 全链路)
-  - ⚠️ 连锁:上百家规模下 token 充值不可能手工记账 → **模块4 P2 Stripe 优先级被拉高**
+  - [ ] **P3 接钱**(2026-07-23 负责人定调:**国内市场,渠道=支付宝+微信,Stripe/PayPal 不做**):
+    - [x] 非 API 部分已全落地(c16220e):定价(nexus_setting,超管UI即改即生效)+订单
+      (nexus_order,金额单位分)+渠道抽象(alipay 页面跳转/wechat Native 扫码占位,
+      env 凭据配齐自动亮)+mock 渠道(NEXUS_PAY_MOCK=1)线上全链路实测通过
+      (下单→模拟支付→出码→自动归属→订单表;充值→钱包到账)
+    - [ ] 等负责人支付宝/微信 API 凭据(预计 1~2 天)→ 只差两处:AlipayProvider/
+      WechatProvider 的 create(下单参数+签名)与 verify_notify(回调验签)→ 真钱联调
+  - ~~⚠️ 连锁:模块4 P2 Stripe 优先级被拉高~~(国内定调后 Stripe 缓;会员订阅支付渠道后续同用支付宝/微信评估)
 - [ ] **模块5 · 个人主页**(未开工;需要客户端 UI 设计配合)
 - [ ] **模块R · 品牌化**(持续:碰到呈现层 Matrix/Synapse 字样顺手改)
 
 ## B. 安全
+
+- [ ] **新域名配 Cloudflare Turnstile 人机验证**(负责人实报:新域名下获取验证码的人机验证消失,
+      防机器人恶意刷验证码/注册)。**阻塞中**:负责人暂时拿不到公司 Cloudflare 域名解析账号,拿到后再弄。
+  - 代码侧透传管道**已修好**(1.5.11:distro compose 补 `COSMAC_TURNSTILE_SITE_KEY`/`COSMAC_TURNSTILE_SECRET`)
+  - 待办:Cloudflare→Turnstile 建 Widget,Hostname 加 `dev-cs.guduuos.com`→取 Site Key+Secret
+    →填进新服务器 `/opt/cosmac/.env`→`docker compose up -d bot`
+  - 验证:`curl https://dev-cs.guduuos.com/cosmac/auth/config` 返回 `"turnstile": true`
+  - 注:老站 cosmac.cc 的 key 绑旧域名,新域名不可用,须为新域名重拿一套
 
 - [ ] **auth 阶段3**:短信验证码 + 手机号防多号(要接短信服务商,花钱,上量前不急)
 - [ ] **凭据轮换**:COSMAC_ADMIN_TOKEN / REGISTRATION_SHARED_SECRET / SMTP 密码 / AS·HS token / ARK key
@@ -83,3 +97,28 @@
 - ECC(affaan-m/ECC):已评估——其**开发者技能**(代码审查/PR/调试)对 GuDuu OS 产品无用、不引入;
   但**借鉴其「技能=结构化方法论清单」形式**做了 9 个面向营销/内容/运营的预置技能库
   (cosmac/ai/preset_skills.py,绑预置 Agent 激活)。后续要加方法论技能沿用此模式,别做全局注入
+
+## F. 市场盲区补缺(2026-07-23 新增;TODO 此前未覆盖的产品级缺口,由负责人排期)
+
+> 来源:与企业版(Mattermost 版)对标梳理时,按「个人版产品的市场标准」盘出的盲区,均为本清单原先没有的条目。
+> 优先级建议:真实支付(A 节已有)→ 凭据轮换(B 节已有,立即做)→ 移动端 → GDPR/i18n → 其余。
+
+- [ ] **移动端 App**(最大产品级缺口:个人 IM 没有手机端难以成立;现仅 Web)
+  - 三条路线待评估拍板:①fork 成熟 Matrix 客户端(Element X / FluffyChat)换皮+接 /cosmac 端点
+    ②企业版 guduu-mobile(RN/鸿蒙)改接 Matrix 协议(工作量大,不推荐先做)
+    ③PWA 过渡(最快:可安装到桌面+基础 Web Push,先解决"离开页面即失联")
+  - 前置:推送通道(见下条);品牌皮肤可复用模块R成果
+- [ ] **推送通知**(APNs/FCM/Web Push + 邮件摘要兜底;现在用户不在页面上就收不到任何消息)
+  - Matrix 有标准 Push Gateway(sygnal)可自托管;Web Push 可先行,App 推送随移动端一起做
+- [ ] **多语言 i18n**(定位「海外版」而 UI 现为中文,自相矛盾;至少中/英)
+  - client 用 vue-i18n;先盘点硬编码文案量再排期;后端 bot 回复文案也要过一遍
+- [ ] **GDPR 合规**(海外运营的法律硬要求,现完全没有)
+  - 数据导出(账号数据全量打包)、账号注销(Synapse 自带 GDPR erase API + 级联清理 cosmac DB)、
+    隐私政策/ToS 页面、Cookie 同意条
+- [ ] **E2EE 端到端加密**(Matrix 原生支持而自研客户端未实现;海外隐私敏感用户的核心卖点)
+  - 大活:client 需接 olm/megolm(matrix-js-sdk 内置);先出可行性评估,可先只覆盖 1v1 私聊
+  - ⚠️ 与主 AI 的边界要先定产品规则:开 E2EE 的房间 bot/appservice 读不到消息,AI 功能如何降级/提示
+- [ ] **创作者市场**(Agent/技能 上架→定价→分成 的交易闭环)
+  - 现有 creator 等级 + access 体系 + 「我的AI工坊」是地基,但没有「市场」;硬前置:模块4 真实支付(Stripe P2 之后排)
+- [ ] **增长机制**(邀请码/推荐奖励/免费额度策略;个人产品冷启动标配,现在没有)
+  - 可挂现有配额引擎(quotas):邀请成功双方加额度;注册引导/入驻模板可埋钩子

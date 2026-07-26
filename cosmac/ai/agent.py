@@ -26,6 +26,9 @@ logger = logging.getLogger("cosmac.ai.agent")
 class Agent:
     """主 AI 的"思考-行动"循环。"""
 
+    # 上次 run 累计的真实 LLM 用量（Token 经济计费用）；run 开始清零、逐轮累加。
+    last_usage_tokens: int = 0
+
     def __init__(
         self,
         llm: LLMProvider,
@@ -73,8 +76,13 @@ class Agent:
 
         tools = self.toolbox.specs()
 
+        # 本次 run 累计的真实 LLM 用量（Token 经济按它计费）；每轮 complete 累加，
+        # bot 在 run 结束后读 self.last_usage_tokens 结算（见 _run_agent_engine）。
+        self.last_usage_tokens = 0
+
         for step in range(self.max_steps):
             turn = self.llm.complete_with_tools(messages, tools)
+            self.last_usage_tokens += int(getattr(turn, "usage_tokens", 0) or 0)
 
             # 没有工具调用 → 这就是最终回复
             if not turn.tool_calls:
@@ -122,6 +130,7 @@ class Agent:
                         "根据上面各工具的真实执行结果,简明总结哪些已完成、哪些没做完)",
             ))
             turn = self.llm.complete_with_tools(messages, [])  # 不给工具,只许说话
+            self.last_usage_tokens += int(getattr(turn, "usage_tokens", 0) or 0)
             if turn.text:
                 return turn.text
         except Exception:

@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, Optional
 
 from cosmac.ai.base import Message, ToolCall
 from cosmac.ai.tools import Toolbox, ToolContext
@@ -75,6 +75,30 @@ def _history_text(history: Optional[List[Message]], limit: int = 12) -> str:
     return "### 本群最近对话(供参考)\n" + "\n".join(lines) + "\n\n### 用户这次说\n"
 
 
+def _result_usage_tokens(message: Any) -> int:
+    """从 SDK 的 ResultMessage 里取真实总 token 数（Token 经济计费用）。取不到返回 0。
+
+    ``ResultMessage.usage`` 可能是 dict 或对象，字段含 input_tokens / output_tokens /
+    cache_creation_input_tokens / cache_read_input_tokens——都算真实消耗，累加求和。
+    任何异常/缺字段都退化成能取到的部分、再退化 0，绝不因取用量失败而影响回复。
+    """
+    try:
+        usage = getattr(message, "usage", None)
+        if usage is None:
+            return 0
+        keys = (
+            "input_tokens", "output_tokens",
+            "cache_creation_input_tokens", "cache_read_input_tokens",
+        )
+        total = 0
+        for k in keys:
+            v = usage.get(k) if isinstance(usage, dict) else getattr(usage, k, 0)
+            total += int(v or 0)
+        return total
+    except (TypeError, ValueError, AttributeError):
+        return 0
+
+
 class ClaudeSdkEngine:
     """用 Claude Agent SDK 驱动的一次性问答引擎。
 
@@ -83,6 +107,9 @@ class ClaudeSdkEngine:
     体验代价:子进程冷启动约 3~8 秒,比 legacy 直连 HTTP 慢;换来的是完整的
     Claude Code harness(多轮工具循环/自动重试/上下文管理)。
     """
+
+    # 上次 run 的真实 LLM 用量（Token 经济计费用）；run 开始清零、由 ResultMessage 累加。
+    last_usage_tokens: int = 0
 
     def __init__(
         self, toolbox: Toolbox, get_system: Callable[[], str], model_override: str = ""
@@ -132,6 +159,7 @@ class ClaudeSdkEngine:
         from claude_agent_sdk import (  # type: ignore[import-not-found]
             AssistantMessage,
             ClaudeAgentOptions,
+            ResultMessage,
             TextBlock,
             ToolUseBlock,
             create_sdk_mcp_server,
@@ -217,6 +245,9 @@ class ClaudeSdkEngine:
         _sdk_to = max(30.0, _sdk_to)
         prompt = _history_text(history) + user_text
         final_text = ""
+        # 本次会话真实 LLM 用量（Token 经济计费用）：SDK 末尾的 ResultMessage.usage 带
+        # input/output/cache token 数，这里累计；bot 在 run 后读 self.last_usage_tokens 结算。
+        self.last_usage_tokens = 0
 
         async def _consume() -> None:
             # 内部协程:跑完整个 query 流。用 asyncio.wait_for 包它(3.9 兼容,不用 3.11 的
@@ -234,6 +265,9 @@ class ClaudeSdkEngine:
                                 pass
                         if isinstance(block, TextBlock) and block.text.strip():
                             final_text = block.text.strip()  # 取最后一段非空文本 = 最终回复
+                elif isinstance(message, ResultMessage):
+                    # 会话结束消息：累计真实 token 用量（input+output+缓存读/写都算真实消耗）。
+                    self.last_usage_tokens += _result_usage_tokens(message)
 
         try:
             await asyncio.wait_for(_consume(), timeout=_sdk_to)

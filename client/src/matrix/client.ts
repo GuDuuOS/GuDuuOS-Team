@@ -3427,6 +3427,193 @@ export async function setPlans(plans: PlanDef[]): Promise<void> {
   await (mx as any).sendStateEvent(rid, PLANS_EVENT_TYPE, { plans: clean }, '')
 }
 
+/* =====================================================================
+ *  Token 钱包（模块4 Token 经济）
+ *  - 用户侧：余额/免费额度/流水/充值 走 bot 端点 /cosmac/wallet/*（前端够不到 cosmac DB）。
+ *  - 管理侧：经济配置（开关/倍率/汇率/免费日额度/充值包）存控制室 state event
+ *    `cosmac.token_config`（同 plans/gating 套路，管理员写、bot 读并服务端强制）。
+ * ===================================================================== */
+
+const TOKEN_CONFIG_EVENT_TYPE = 'cosmac.token_config'
+
+/** 一个 token 充值包（管理后台编辑）。prices：货币 code → **分**(整数)。 */
+export interface TokenPackageDef {
+  slug: string
+  name: string
+  tokens: number
+  prices: Record<string, number>
+  enabled: boolean
+}
+
+/** Token 经济配置（管理后台编辑；与后端 cosmac/wallet.py parse_token_config 一致）。 */
+export interface TokenConfigDef {
+  enabled: boolean          // 总开关（关=不计量不拦截，前端也隐藏钱包入口）
+  markup: number            // 倍率：用户扣量 = 真实 LLM token × markup
+  tokens_per_yuan: number   // 汇率：1 元 = 多少 token
+  free_daily: number        // 每天赠送的免费 token（每天清零）
+  free_grant: number        // 新钱包一次性欢迎赠送
+  min_balance: number       // 免费额度用尽后，余额低于此拦截
+  packages: TokenPackageDef[]
+}
+
+/** 读 Token 经济配置（控制室 state event）。404→默认；瞬时读失败抛异常（防空覆盖）。 */
+export async function getTokenConfig(): Promise<TokenConfigDef> {
+  const dft: TokenConfigDef = {
+    enabled: false, markup: 1, tokens_per_yuan: 1000,
+    free_daily: 0, free_grant: 0, min_balance: 1, packages: [],
+  }
+  if (!mx) return dft
+  const rid = await resolveControlRoom()
+  if (!rid) return dft
+  try {
+    const ev = await (mx as any).getStateEvent(rid, TOKEN_CONFIG_EVENT_TYPE, '')
+    const pkgs = Array.isArray(ev?.packages) ? ev.packages : []
+    return {
+      enabled: !!ev?.enabled,
+      markup: Number(ev?.markup) > 0 ? Number(ev.markup) : 1,
+      tokens_per_yuan: Math.max(1, Math.trunc(Number(ev?.tokens_per_yuan) || 1000)),
+      free_daily: Math.max(0, Math.trunc(Number(ev?.free_daily) || 0)),
+      free_grant: Math.max(0, Math.trunc(Number(ev?.free_grant) || 0)),
+      min_balance: Math.max(0, Math.trunc(Number(ev?.min_balance ?? 1))),
+      packages: pkgs.map((p: any) => {
+        const prices: Record<string, number> = {}
+        if (p?.prices && typeof p.prices === 'object') {
+          for (const [cur, cents] of Object.entries(p.prices)) {
+            const c = Math.trunc(Number(cents))
+            if (Number.isFinite(c) && c > 0) prices[String(cur).toLowerCase()] = c
+          }
+        }
+        return {
+          slug: String(p?.slug || ''),
+          name: String(p?.name || ''),
+          tokens: Math.max(0, Math.trunc(Number(p?.tokens) || 0)),
+          prices,
+          enabled: p?.enabled !== false,
+        }
+      }).filter((p: TokenPackageDef) => p.slug),
+    }
+  } catch (e: any) {
+    if (e?.errcode === 'M_NOT_FOUND') return dft
+    throw new Error('读取 Token 配置失败，请重试（避免在读取失败时把空配置覆盖真实配置）')
+  }
+}
+
+/** 整体写入 Token 经济配置（必要时先建控制室）。 */
+export async function setTokenConfig(cfg: TokenConfigDef): Promise<void> {
+  if (!mx) throw new Error('未登录')
+  const rid = await ensureControlRoom()
+  const clean = {
+    enabled: !!cfg.enabled,
+    markup: Number(cfg.markup) > 0 ? Number(cfg.markup) : 1,
+    tokens_per_yuan: Math.max(1, Math.trunc(cfg.tokens_per_yuan) || 1000),
+    free_daily: Math.max(0, Math.trunc(cfg.free_daily) || 0),
+    free_grant: Math.max(0, Math.trunc(cfg.free_grant) || 0),
+    min_balance: Math.max(0, Math.trunc(cfg.min_balance) || 0),
+    packages: (cfg.packages || [])
+      .filter((p) => p.slug && p.tokens > 0)
+      .map((p) => ({
+        slug: p.slug, name: p.name || p.slug,
+        tokens: Math.trunc(p.tokens), prices: p.prices,
+        enabled: p.enabled !== false,
+      })),
+  }
+  await (mx as any).sendStateEvent(rid, TOKEN_CONFIG_EVENT_TYPE, clean, '')
+}
+
+/** 我的钱包总览（钱包面板一次拉全）。未登录/失败返回 null。 */
+export interface WalletMe {
+  enabled: boolean
+  balance: number
+  free_daily: { total: number; used: number; remaining: number }
+  tokens_per_yuan: number
+  exempt: boolean          // 管理员豁免（不消耗 token）
+  packages: { slug: string; name: string; tokens: number; prices: Record<string, number> }[]
+}
+
+export async function walletGetMe(): Promise<WalletMe | null> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return null
+  try {
+    const r = await fetch(`${payBase()}/cosmac/wallet/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return null
+    return await r.json()
+  } catch { return null }
+}
+
+/** 一条 token 流水（新→旧）。 */
+export interface WalletLedgerItem {
+  id: number; delta: number; reason: string; ref: string
+  balance_after: number; note: string; meta: any; created_at: string
+}
+
+export async function walletGetLedger(limit = 50, offset = 0): Promise<WalletLedgerItem[]> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return []
+  try {
+    const r = await fetch(
+      `${payBase()}/cosmac/wallet/ledger?limit=${limit}&offset=${offset}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    )
+    if (!r.ok) return []
+    const j = await r.json().catch(() => ({}))
+    return Array.isArray(j?.items) ? j.items : []
+  } catch { return [] }
+}
+
+/** token 充值下单（回调复用会员的 /cosmac/pay/callback/*，manual 测试通道同款）。 */
+export interface WalletCheckoutResp {
+  order_no: string; amount_cents: number; currency: string; tokens: number
+  checkout: { kind: string; url: string; address: string; extra: any }
+}
+
+export async function walletCheckout(
+  packageSlug: string, currency: string, provider = 'manual',
+): Promise<WalletCheckoutResp> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  const r = await fetch(`${payBase()}/cosmac/wallet/checkout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ package_slug: packageSlug, currency, provider }),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || '下单失败')
+  return j
+}
+
+/** 管理员手动加/减某用户 token（后台「Token 经济」页）。返回新余额。 */
+export async function walletAdminAdjust(
+  userId: string, delta: number, note = '',
+): Promise<number> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  const r = await fetch(`${payBase()}/cosmac/wallet/admin/adjust`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ user_id: userId, delta, note }),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || '调整失败')
+  return Number(j?.balance || 0)
+}
+
+/** 管理员查某用户余额 + 最近流水。 */
+export async function walletAdminBalance(
+  userId: string,
+): Promise<{ balance: number; items: WalletLedgerItem[] } | null> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return null
+  try {
+    const r = await fetch(
+      `${payBase()}/cosmac/wallet/admin/balance?user_id=${encodeURIComponent(userId)}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    )
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(j?.error || '查询失败')
+    return { balance: Number(j?.balance || 0), items: Array.isArray(j?.items) ? j.items : [] }
+  } catch { return null }
+}
+
 /** 读某个频道当前时间线的消息（含发送者昵称与 cosmac.card 富卡）。 */
 export function listMessages(roomId: string): LiveMsg[] {
   const room = mx?.getRoom(roomId)

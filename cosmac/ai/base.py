@@ -74,10 +74,14 @@ class TurnResult:
       - tool_calls 非空：模型想先调用工具，Agent 执行后把结果回灌再问下一轮。
       - tool_calls 为空：text 即最终回复，对话结束。
     text 在有 tool_calls 时也可能带着模型的"思考旁白"，可忽略或记录。
+    usage_tokens: 本轮真实消耗的 LLM token 数（prompt+completion，后端能取到就填；
+                  取不到=0）。Token 经济按它计费（见 cosmac/wallet.py），"真实计算使用量"
+                  的数据来源之一（另一条是 SDK 引擎的 ResultMessage.usage）。
     """
 
     text: str = ""
     tool_calls: List[ToolCall] = field(default_factory=list)
+    usage_tokens: int = 0
 
 
 class LLMProvider(abc.ABC):

@@ -19,6 +19,26 @@ from cosmac.ai.base import LLMProvider, Message, ToolCall, ToolSpec, TurnResult
 logger = logging.getLogger("cosmac.ai.openai_compat")
 
 
+def _usage_total(resp: Any) -> int:
+    """从 OpenAI 兼容响应里取真实总 token 数（prompt+completion）。取不到返回 0。
+
+    Token 经济按真实用量计费用（见 cosmac/wallet.py）。不同兼容后端字段名一致
+    （usage.total_tokens），个别缺失就退化成 prompt+completion 之和、再退化 0。
+    """
+    try:
+        u = getattr(resp, "usage", None)
+        if u is None:
+            return 0
+        total = getattr(u, "total_tokens", None)
+        if total:
+            return int(total)
+        pt = int(getattr(u, "prompt_tokens", 0) or 0)
+        ct = int(getattr(u, "completion_tokens", 0) or 0)
+        return pt + ct
+    except (TypeError, ValueError, AttributeError):
+        return 0
+
+
 class OpenAICompatProvider(LLMProvider):
     """调用任意 OpenAI 兼容接口的后端（支持工具调用）。"""
 
@@ -154,4 +174,9 @@ class OpenAICompatProvider(LLMProvider):
             tool_calls.append(
                 ToolCall(id=tc.id, name=tc.function.name, arguments=args)
             )
-        return TurnResult(text=(msg.content or "").strip(), tool_calls=tool_calls)
+        # 真实用量（Token 经济计费用）：OpenAI 兼容响应带 usage.total_tokens；取不到=0（不计费）。
+        return TurnResult(
+            text=(msg.content or "").strip(),
+            tool_calls=tool_calls,
+            usage_tokens=_usage_total(resp),
+        )

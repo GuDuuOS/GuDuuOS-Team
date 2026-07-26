@@ -13,6 +13,11 @@ const MAIN_SITE_HOSTS = ['app.cosmac.cc', 'localhost', '127.0.0.1']
 
 /** 当前部署环境的默认 homeserver 基址（不带尾斜杠） */
 export function defaultHsUrl(): string {
+  // 本地联调覆盖（仅 dev）：client/.env.local 设 VITE_HS_URL 可强制指定 homeserver——
+  // 配合 vite.config 的 /_matrix、/cosmac 代理即可全链路连本机 Synapse+bot。
+  // 生产构建不设该变量，走下面的正常解析，线上零影响。
+  const override = (import.meta as any).env?.VITE_HS_URL
+  if (override) return String(override).replace(/\/$/, '')
   if (MAIN_SITE_HOSTS.includes(window.location.hostname)) {
     return 'https://hs.cosmac.cc'
   }

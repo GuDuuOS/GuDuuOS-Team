@@ -228,14 +228,16 @@ class SeenTxn(Base, TimestampMixin):
 
 
 class Order(Base, TimestampMixin):
-    """一笔会员购买订单（模块4 交易系统）。
+    """一笔购买订单（模块4 交易系统）：会员套餐 或 token 充值包。
 
-    会员**套餐定义**走控制室 state event（`cosmac.plans`，后台配）；这里只存**订单**这种
-    关系型、要对账、要审计的交易数据。下单即建一行(status=created)，支付平台 webhook 验签
-    成功后置 paid 并据 ``period_days`` 给用户开/续会员（写 ``cosmac.member`` state event）。
+    **套餐定义**走控制室 state event（会员=`cosmac.plans`、token 包=`cosmac.token_config`
+    的 packages，后台配）；这里只存**订单**这种关系型、要对账、要审计的交易数据。
+    下单即建一行(status=created)，支付平台 webhook 验签成功后置 paid 并履约：
+      - kind=member：据 ``period_days`` 给用户开/续会员（写 ``cosmac.member`` state event）。
+      - kind=token ：给用户钱包充 ``tokens`` 个 token（见 cosmac/wallet.py recharge）。
 
     幂等：``order_no`` 唯一；webhook 可能重复回调，靠 status 的原子 CAS(created→paid)保证
-    只开通一次会员（见 db/order_repo.mark_paid）。金额用**最小货币单位整数**(分/cent)，不用浮点。
+    只履约一次（见 db/order_repo.mark_paid）。金额用**最小货币单位整数**(分/cent)，不用浮点。
     """
 
     __tablename__ = "cosmac_order"
@@ -244,10 +246,14 @@ class Order(Base, TimestampMixin):
     # 对外订单号（唯一）；也用作支付平台回调里定位订单的业务标识
     order_no: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    # 订单种类：member（会员套餐，历史默认）/ token（token 充值包）。回调履约按它分流。
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="member")
     # 下单时对套餐的快照（套餐定义以后可能改，订单要记下"当时买的是什么"）
     plan_slug: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     tier: Mapped[str] = mapped_column(String(16), nullable=False, default="paid")
     period_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    # kind=token 时：这单买的 token 数（支付成功即充进钱包）；member 单恒 0。
+    tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="usd")
     # 支付渠道（manual/stripe/paypal/usdt/alipay/wechat）+ 渠道侧引用 id（session/intent/txhash）
@@ -655,3 +661,80 @@ class SalesRecord(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<SalesRecord {self.emp_no} {self.period} {self.actual}/{self.target}>"
+
+
+class TokenWallet(Base, TimestampMixin):
+    """用户 token 钱包（模块4 变现·Token 经济 P1）：一个账号的当前 token 余额 + 累计统计。
+
+    背景（CLAUDE.md §4 模块4 定案）：用户充值 token，用平台 AI / 创作者 Agent 时消耗 token。
+    **本期 token = 单用途消费积分（只能买本平台服务、不可退现）**——把储值/资金归集的合规风险
+    关在门外（创作者提现是后续单独评估的一步）。
+
+    **两层钱包的哪一层**：这是「用户 ↔ 本 OEM 实例」的**零售**钱包，落**各实例自己的 cosmac DB**
+    （路线=折衷：中心商城供货、扣费在各实例、用各实例 token）；与「实例 ↔ 母舰」的**批发** token
+    钱包（nexus_link 的 balance_tokens）是不同的两层，别混。
+
+    余额扣减的原子性：用带余额守卫的原子 UPDATE（``balance = balance - :cost WHERE balance >= :cost``，
+    看 rowcount 判成败），避免"读-改-写"在并发回复线程/多房间下扣穿（见 db/wallet_repo）。
+    金额一律用**整数 token**，不用浮点。一个账号一条（user_id 唯一）。
+    """
+
+    __tablename__ = "cosmac_token_wallet"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # 账号（@user:domain），唯一——一个用户一个钱包
+    user_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, unique=True, index=True
+    )
+    # 当前可用余额（token）。>=0；扣费用原子守卫保证不扣穿
+    balance: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # 累计充值/赠送入账（审计与运营统计用，单调递增，不随消费回落）
+    total_in: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # 累计消费出账（同上，单调递增）
+    total_out: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+    def __repr__(self) -> str:
+        return f"<TokenWallet {self.user_id} bal={self.balance}>"
+
+
+class TokenLedger(Base):
+    """token 流水账（模块4 变现·Token 经济 P1）：钱包每一笔变动记一行——**"体现"的底层账本**。
+
+    为什么要独立流水：钱包表只存"当前余额"，但充值/消费/赠送/调整每一笔都要可追溯、可对账、
+    可给用户看明细（"我的 token 花在哪了"），这些是审计级的关系数据，一笔一行、只增不改。
+    每行冗余记 ``balance_after``（变动后余额快照），便于对账时逐行复核余额演进。
+
+    ``reason`` 取值（P1）：
+        recharge  用户充值入账（ref=order_no）
+        grant     系统/管理员赠送（新用户礼包、活动）
+        ai_usage  平台内置 AI 真实用量扣费（ref=room_id；meta 记真实 LLM token 数与倍率）
+        adjust    管理员手动调整（可正可负）
+        refund    退款回补
+    （创作者 Agent 按次扣费 ``agent_use`` 与创作者分成收入 ``earning`` 属 P2 创作者商城，
+      届时再加——收益账本可能落**母舰**侧，本表先服务用户零售钱包。）
+    """
+
+    __tablename__ = "cosmac_token_ledger"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # 账号（@user:domain）
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    # 变动量：入账为正（充值/赠送/退款），出账为负（消费/负向调整）
+    delta: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # 变动类型（见 docstring）
+    reason: Mapped[str] = mapped_column(String(24), nullable=False, default="", index=True)
+    # 关联引用：订单号 / room_id / agent-slug 等，按 reason 语义不同
+    ref: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # 变动后余额快照（对账用）
+    balance_after: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # 备注（给用户看的人类可读说明，如"充值 100 元"/"AI 对话"）
+    note: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # 附加结构化元数据（如真实 LLM prompt/completion tokens、倍率、模型名），JSON
+    meta: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # 记账时间（只增不改，不用 TimestampMixin 的 updated_at）
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False, index=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<TokenLedger {self.user_id} {self.reason} {self.delta:+d} bal={self.balance_after}>"

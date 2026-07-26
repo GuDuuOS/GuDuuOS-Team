@@ -83,7 +83,8 @@ class TestEngineErrorFallback(unittest.TestCase):
     def test_success_path_still_works(self) -> None:
         # 确认兜底没误伤正常路径：引擎正常返回 → 回复发出、记忆推进。
         bot = self._bot()
-        bot._run_agent_engine = lambda *a, **k: "已为你建好群"  # type: ignore
+        # 新契约：_run_agent_engine 返回 (回复文本, 真实用量token数)
+        bot._run_agent_engine = lambda *a, **k: ("已为你建好群", 0)  # type: ignore
         bot._handle_event(self._event())
         self.assertIn("已为你建好群", bot.client.sent)
         self.assertTrue(self._memory_called)

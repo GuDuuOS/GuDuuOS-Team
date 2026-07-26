@@ -27,6 +27,7 @@ from cosmac.db.models import (
     Base,
     DocPage,
     KnowledgeChunk,
+    Order,
     SeenTxn,
     Task,
     WorkflowRun,
@@ -188,6 +189,21 @@ def _heal_business_schema(engine: Engine) -> None:
                     conn.execute(text(
                         "CREATE INDEX IF NOT EXISTS ix_cosmac_task_space_id "
                         "ON cosmac_task (space_id)"
+                    ))
+        # 订单表补列：旧生产库的 cosmac_order 建于 Token 经济之前，没 kind/tokens 两列——
+        # 不补的话 token 充值下单 INSERT 直接 UndefinedColumn；历史会员单按默认 kind='member' 归类。
+        if insp.has_table(Order.__tablename__):
+            have = {c["name"] for c in insp.get_columns(Order.__tablename__)}
+            with engine.begin() as conn:
+                if "kind" not in have:
+                    conn.execute(text(
+                        "ALTER TABLE cosmac_order "
+                        "ADD COLUMN kind VARCHAR(16) NOT NULL DEFAULT 'member'"
+                    ))
+                if "tokens" not in have:
+                    conn.execute(text(
+                        "ALTER TABLE cosmac_order "
+                        "ADD COLUMN tokens BIGINT NOT NULL DEFAULT 0"
                     ))
         # 图文页表补列：旧库的 cosmac_doc_page 还没 cover（封面图），补上否则带封面写入报
         # UndefinedColumn。

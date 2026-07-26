@@ -74,6 +74,9 @@
         <button class="adm-mi" :class="{ active: tab === 'plans' }" @click="switchToPlans">
           <span class="adm-mi-ic"><Icon name="plan" /></span> 会员套餐
         </button>
+        <button class="adm-mi" :class="{ active: tab === 'wallet' }" @click="switchToWallet">
+          <span class="adm-mi-ic"><Icon name="wallet" /></span> Token 经济
+        </button>
         </template>
 
         <button class="adm-menu-cap" @click="toggleMenuGroup('ops')">
@@ -1305,6 +1308,111 @@
         </div>
       </template>
 
+      <!-- Token 经济面板(模块4 Token P1)：总开关/倍率/汇率/免费日额度 + 充值包 + 手动调整。
+           配置写控制室 cosmac.token_config(bot 读+服务端强制)；调整走 bot /cosmac/wallet/admin/*。 -->
+      <template v-else-if="tab === 'wallet'">
+        <header class="adm-head">
+          <div>
+            <h1 class="adm-h1">Token 经济</h1>
+            <p class="adm-hint">用户充值 token · 用 AI 按真实用量扣 · 约 20 秒热生效 · <strong>总开关关闭时完全不计费不拦截</strong></p>
+          </div>
+          <div class="adm-actions">
+            <button class="adm-btn ghost" :disabled="tkLoading || tkSaving" @click="loadTokenCfg">
+              {{ tkLoading ? '加载中…' : '重新加载' }}
+            </button>
+            <button class="adm-btn" :disabled="tkLoading || tkSaving || !tkLoaded" @click="saveTokenCfg">
+              {{ tkSaving ? '保存中…' : '保存配置' }}
+            </button>
+          </div>
+        </header>
+
+        <div v-if="tkLoading" class="adm-center"><div class="adm-spin" /> 加载配置…</div>
+        <div v-else-if="!tkLoaded" class="adm-center adm-denied">
+          <div class="adm-denied-ic">⚠️</div>
+          <div class="adm-denied-t">配置加载失败</div>
+          <div class="adm-denied-d">为避免把默认值误存覆盖真实配置，已暂不显示。请点「重新加载」重试。</div>
+        </div>
+
+        <div v-else class="adm-form">
+          <!-- 基础配置 -->
+          <label class="adm-tool">
+            <input type="checkbox" v-model="tkCfg.enabled" />
+            <span class="adm-tool-l"><strong>启用 Token 经济</strong>（开启后：免费日额度用尽且余额不足的用户将无法使用 AI，请先配好充值包与免费额度再开）</span>
+          </label>
+          <div class="adm-grid2">
+            <label class="adm-field">
+              <span>计费倍率 markup（用户扣量 = 真实 LLM token × 倍率；用它吸收模型成本波动）</span>
+              <input v-model.number="tkCfg.markup" type="number" min="0.1" step="0.1" />
+            </label>
+            <label class="adm-field">
+              <span>汇率（1 元 = 多少 token；充值包定价与展示换算）</span>
+              <input v-model.number="tkCfg.tokens_per_yuan" type="number" min="1" />
+            </label>
+            <label class="adm-field">
+              <span>每日免费 token（每天送、当天清零不累积；0=不送）</span>
+              <input v-model.number="tkCfg.free_daily" type="number" min="0" />
+            </label>
+            <label class="adm-field">
+              <span>新用户一次性赠送 token（首次建钱包发；0=不送）</span>
+              <input v-model.number="tkCfg.free_grant" type="number" min="0" />
+            </label>
+          </div>
+
+          <!-- 充值包 -->
+          <div class="adm-sub-head">
+            <h2 class="adm-h2">充值包</h2>
+            <button class="adm-btn ghost sm" @click="tkAddPkg">＋ 加一档</button>
+          </div>
+          <p v-if="!tkCfg.packages.length" class="adm-hint">还没有充值包。加几档（如「入门包 / 1万 token / ¥9.9」），用户在「Token 充值」页购买。</p>
+          <table v-else class="adm-table">
+            <thead>
+              <tr><th>标识</th><th>名称</th><th>token 数</th><th>价格(元)</th><th>上架</th><th></th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(p, i) in tkCfg.packages" :key="i">
+                <td><input v-model.trim="p.slug" class="adm-qnum wide" placeholder="t10" /></td>
+                <td><input v-model.trim="p.name" class="adm-qnum wide" placeholder="入门包" /></td>
+                <td><input v-model.number="p.tokens" type="number" min="1" class="adm-qnum" /></td>
+                <td><input v-model.trim="tkPkgYuan[i]" type="text" inputmode="decimal" class="adm-qnum" placeholder="9.9" /></td>
+                <td><input type="checkbox" v-model="p.enabled" /></td>
+                <td><button class="adm-btn ghost sm danger" @click="tkCfg.packages.splice(i, 1); tkPkgYuan.splice(i, 1)">删</button></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <!-- 手动调整某用户余额 -->
+          <div class="adm-sub-head"><h2 class="adm-h2">用户 token 管理</h2></div>
+          <p class="adm-hint">给指定用户手动加/减 token（补偿、活动赠送、纠错）。正数=加、负数=减；每笔都会记入对方流水。</p>
+          <div class="adm-wal-adjust">
+            <input v-model.trim="tkTarget" class="adm-search" placeholder="@用户:域名（完整用户 ID）" />
+            <button class="adm-btn ghost" :disabled="!tkTarget || tkAdjBusy" @click="tkQueryBalance">查余额</button>
+            <input v-model.number="tkDelta" type="number" class="adm-qnum wide" placeholder="±数量" />
+            <input v-model.trim="tkNote" class="adm-search" placeholder="备注（对方流水可见）" style="max-width:180px" />
+            <button class="adm-btn" :disabled="!tkTarget || !tkDelta || tkAdjBusy" @click="tkDoAdjust">
+              {{ tkAdjBusy ? '处理中…' : '执行调整' }}
+            </button>
+          </div>
+          <div v-if="tkQueried" class="adm-wal-info">
+            <div class="adm-wal-bal">「{{ tkTarget }}」当前余额：<strong>{{ (tkBalance ?? 0).toLocaleString() }}</strong> token</div>
+            <table v-if="tkLedger.length" class="adm-table">
+              <thead><tr><th>时间</th><th>类型</th><th>变动</th><th>余额</th><th>备注</th></tr></thead>
+              <tbody>
+                <tr v-for="it in tkLedger" :key="it.id">
+                  <td>{{ new Date(it.created_at).toLocaleString() }}</td>
+                  <td>{{ TK_REASON[it.reason] || it.reason }}</td>
+                  <td :style="{ color: it.delta < 0 ? '#c0392b' : '#2c9a5b', fontWeight: 600 }">
+                    {{ it.delta > 0 ? '+' : '' }}{{ it.delta.toLocaleString() }}
+                  </td>
+                  <td>{{ it.balance_after.toLocaleString() }}</td>
+                  <td class="adm-skill-desc">{{ it.note || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-else class="adm-hint">暂无流水记录。</p>
+          </div>
+        </div>
+      </template>
+
       <!-- 图文教程：编辑全平台图文内容(前台只读·类公众号；付费会员可见) -->
       <template v-else-if="tab === 'docs'">
         <header class="adm-head">
@@ -1693,6 +1801,12 @@ import {
   setPlans,
   PLAN_CURRENCIES,
   type PlanDef,
+  getTokenConfig,
+  setTokenConfig,
+  walletAdminAdjust,
+  walletAdminBalance,
+  type TokenConfigDef,
+  type WalletLedgerItem,
   getMembers,
   setMemberTier,
   memberTierLabel,
@@ -1741,7 +1855,7 @@ const { success, warn } = useToast()
 // 当前管理模块：用户/频道/AI配置/技能库/智能体/规则/工作流/数据概览
 // 用 defineModel 双向绑给 LiveView——后台各菜单要有独立地址(刷新留在原菜单、可后退/深链,
 // 见 CLAUDE.md 客户端路由约定);负责人实报:此前刷新一律弹回「用户管理」。
-type AdminTab = 'users' | 'rooms' | 'ai' | 'skills' | 'agents' | 'people' | 'templates' | 'rules' | 'workflows' | 'gating' | 'quotas' | 'plans' | 'docs' | 'platformKb' | 'sitePages' | 'archives' | 'overview'
+type AdminTab = 'users' | 'rooms' | 'ai' | 'skills' | 'agents' | 'people' | 'templates' | 'rules' | 'workflows' | 'gating' | 'quotas' | 'plans' | 'wallet' | 'docs' | 'platformKb' | 'sitePages' | 'archives' | 'overview'
 const tab = defineModel<AdminTab>('tab', { default: 'users' })
 // 侧栏菜单分组折叠状态(负责人要求可收缩);localStorage 记住,默认全展开
 const menuFold = reactive<Record<string, boolean>>(
@@ -1933,6 +2047,7 @@ function loadActiveTab(t: AdminTab) {
     case 'gating': if (!gateLoaded.value) loadGating(); break
     case 'quotas': if (!quotaLoaded.value) loadQuotas(); break
     case 'plans': if (!planLoaded.value) loadPlans(); break
+    case 'wallet': if (!tkLoaded.value) loadTokenCfg(); break
     case 'archives': if (!arcLoaded.value) loadArchives(); break
     case 'overview': if (!ovLoaded.value) loadOverview(); break
     case 'platformKb': loadPlatformKb(); break   // 无 loaded 标记;本函数仅挂载时跑一次,直接拉
@@ -3226,6 +3341,111 @@ async function removePlan(p: PlanDef) {
   try { await persistPlans(next, '已删除') } catch { /* 已提示 */ }
 }
 
+/* —— Token 经济（模块4 Token P1）：配置写控制室 cosmac.token_config；调整走 bot 端点 —— */
+const tkCfg = reactive<TokenConfigDef>({
+  enabled: false, markup: 1, tokens_per_yuan: 1000,
+  free_daily: 0, free_grant: 0, min_balance: 1, packages: [],
+})
+// 充值包价格的「元」文本（与 packages 按下标对齐；保存时 ×100 转分存 prices.cny）
+const tkPkgYuan = reactive<string[]>([])
+const tkLoading = ref(false)
+const tkSaving = ref(false)
+const tkLoaded = ref(false)
+// 用户 token 管理（手动调整）
+const tkTarget = ref('')
+const tkDelta = ref<number | ''>('')
+const tkNote = ref('')
+const tkAdjBusy = ref(false)
+const tkBalance = ref<number | null>(null)
+const tkLedger = ref<WalletLedgerItem[]>([])
+const tkQueried = ref(false)
+const TK_REASON: Record<string, string> = {
+  recharge: '充值', grant: '赠送', ai_usage: 'AI 对话', adjust: '人工调整', refund: '退款',
+}
+
+function switchToWallet() {
+  tab.value = 'wallet'
+  if (!tkLoaded.value) loadTokenCfg()
+}
+
+async function loadTokenCfg() {
+  tkLoading.value = true
+  try {
+    const cfg = await getTokenConfig()
+    Object.assign(tkCfg, cfg)
+    // 分→元 文本回填（cny 定价；无 cny 的包显示空）
+    tkPkgYuan.length = 0
+    for (const p of cfg.packages) {
+      const cents = Number(p.prices?.cny)
+      tkPkgYuan.push(cents > 0 ? String(cents / 100) : '')
+    }
+    tkLoaded.value = true
+  } catch (e: any) {
+    warn('加载失败', e?.message || '无法读取 Token 配置')
+  } finally {
+    tkLoading.value = false
+  }
+}
+
+async function saveTokenCfg() {
+  // 元→分：按下标把「元」文本转回 prices.cny（非法/空丢弃该包定价 → 后端会过滤无价包）
+  const packages = tkCfg.packages.map((p, i) => {
+    const yuan = parseFloat((tkPkgYuan[i] || '').trim())
+    const prices: Record<string, number> = { ...p.prices }
+    if (Number.isFinite(yuan) && yuan > 0) prices.cny = Math.round(yuan * 100)
+    else delete prices.cny
+    return { ...p, prices }
+  }).filter((p) => p.slug && p.tokens > 0)
+  // 有 slug 但没任何定价的包提醒（保存后用户买不到）
+  const noPrice = packages.filter((p) => !Object.keys(p.prices).length)
+  if (noPrice.length && !confirm(`${noPrice.length} 个充值包没填价格，用户将看不到它们。继续保存？`)) return
+  tkSaving.value = true
+  try {
+    await setTokenConfig({ ...tkCfg, packages })
+    success('已保存', 'Token 经济配置已更新（约 20 秒热生效）')
+  } catch (e: any) {
+    warn('保存失败', e?.message || '无法写入控制室')
+  } finally {
+    tkSaving.value = false
+  }
+}
+
+function tkAddPkg() {
+  tkCfg.packages.push({ slug: '', name: '', tokens: 10000, prices: {}, enabled: true })
+  tkPkgYuan.push('')
+}
+
+async function tkQueryBalance() {
+  if (!tkTarget.value) return
+  tkAdjBusy.value = true
+  try {
+    const r = await walletAdminBalance(tkTarget.value)
+    if (!r) { warn('查询失败', '请确认用户 ID 完整（@user:域名）'); return }
+    tkBalance.value = r.balance
+    tkLedger.value = r.items
+    tkQueried.value = true
+  } finally {
+    tkAdjBusy.value = false
+  }
+}
+
+async function tkDoAdjust() {
+  const delta = Number(tkDelta.value)
+  if (!tkTarget.value || !Number.isFinite(delta) || delta === 0) return
+  if (!confirm(`确认给「${tkTarget.value}」${delta > 0 ? '增加' : '扣减'} ${Math.abs(delta).toLocaleString()} token？`)) return
+  tkAdjBusy.value = true
+  try {
+    const newBal = await walletAdminAdjust(tkTarget.value, delta, tkNote.value)
+    success('已调整', `新余额 ${newBal.toLocaleString()} token`)
+    tkDelta.value = ''; tkNote.value = ''
+    await tkQueryBalance()   // 刷新余额与流水
+  } catch (e: any) {
+    warn('调整失败', e?.message || '请稍后再试')
+  } finally {
+    tkAdjBusy.value = false
+  }
+}
+
 /* —— 工作流连接器（写控制室 state event）—— */
 const workflows = ref<WorkflowDef[]>([])
 const wfLoading = ref(false)
@@ -3908,4 +4128,13 @@ watch([tab, state], () => nextTick(rewireHead))
 .adm-ava.bot { background: #2b2b33; color: #fff; }
 .adm-mid { font-family: var(--mono); font-size: var(--fs-75); color: var(--text-2); }
 .adm-mid b { font-family: var(--font-body); font-weight: 600; color: var(--text); margin-right: 4px; }
+/* —— Token 经济面板 —— */
+.adm-sub-head { display: flex; align-items: center; justify-content: space-between; margin-top: 22px; border-top: 1px solid var(--border); padding-top: 14px; }
+.adm-sub-head .adm-h2 { margin: 0; }
+.adm-qnum.wide { width: 110px; }
+.adm-wal-adjust { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 12px; }
+.adm-wal-adjust .adm-search { max-width: 240px; }
+.adm-wal-info { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg-soft); }
+.adm-wal-bal { font-size: var(--fs-100); margin-bottom: 8px; }
+.adm-wal-bal strong { color: var(--accent); font-size: var(--fs-300); }
 </style>
