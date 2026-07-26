@@ -625,6 +625,23 @@
                 </label>
               </div>
             </div>
+            <div class="adm-field">
+              <span>绑定工作流（让这个智能体能真的干活，而不只是会说话）</span>
+              <div v-if="!workflows.length" class="adm-note">还没有工作流连接器，可先去「工作流」页接入 n8n / Coze / Dify / ComfyUI。</div>
+              <div v-else class="adm-tools">
+                <label v-for="w in workflows" :key="w.slug" class="adm-tool">
+                  <input type="checkbox" :checked="(agForm.workflow_slugs || []).includes(w.slug)"
+                    @change="toggleAgentWorkflow(w.slug, ($event.target as HTMLInputElement).checked)" />
+                  <span class="adm-tool-l">{{ w.name || w.slug }}</span>
+                  <code>{{ w.slug }}</code>
+                </label>
+              </div>
+              <span class="adm-hint">
+                绑定后：绑了本智能体的频道里，AI 会知道有这些工作流并能直接调用 —
+                <b>绑定即授权</b>，这些工作流在该频道不再受「工作流运行」权限门槛限制
+                （与「群绑定技能不按发起人过滤」同一原则）。未绑定的工作流仍按原门槛。
+              </span>
+            </div>
             <label class="adm-field">
               <span>可用范围（谁能使用此智能体；平台管理员始终可用，服务端强制）</span>
               <select v-model="agAccessKind" class="adm-fsel">
@@ -2728,13 +2745,14 @@ const agLoaded = ref(false)
 const agEditing = ref(false)
 const agForm = reactive<GlobalAgent & { _isEdit: boolean }>({
   slug: '', name: '', description: '', system_prompt: '', model: '',
-  skill_slugs: [], enabled: true, _isEdit: false,
+  skill_slugs: [], workflow_slugs: [], enabled: true, _isEdit: false,
 })
 
 function switchToAgents() {
   tab.value = 'agents'
   if (!agLoaded.value) loadAgents()
   if (!skLoaded.value) loadSkills() // 绑定技能用的勾选列表
+  if (!wfLoaded.value) loadWorkflows() // 绑定工作流用的勾选列表
 }
 
 async function loadAgents() {
@@ -2784,7 +2802,7 @@ function overridePresetAgent(a: GlobalAgent) {
   Object.assign(agForm, {
     slug: a.slug, name: a.name, description: a.description,
     system_prompt: a.system_prompt, model: a.model || '',
-    skill_slugs: [...(a.skill_slugs || [])], enabled: true, access: '', _isEdit: false,
+    skill_slugs: [...(a.skill_slugs || [])], workflow_slugs: [], enabled: true, access: '', _isEdit: false,
   })
   agAccessKind.value = ''
   agAccessTpls.value = []
@@ -2795,7 +2813,7 @@ function overridePresetAgent(a: GlobalAgent) {
 function startAddAgent() {
   Object.assign(agForm, {
     slug: '', name: '', description: '', system_prompt: '', model: '',
-    skill_slugs: [], enabled: true, _isEdit: false,
+    skill_slugs: [], workflow_slugs: [], enabled: true, _isEdit: false,
   })
   agAccessKind.value = ''
   agAccessTpls.value = []
@@ -2804,7 +2822,10 @@ function startAddAgent() {
 }
 
 function startEditAgent(a: GlobalAgent) {
-  Object.assign(agForm, { ...a, skill_slugs: [...a.skill_slugs], _isEdit: true })
+  // workflow_slugs 是后加的字段,老数据没有 → 兜底空数组,免得 includes() 炸
+  Object.assign(agForm, {
+    ...a, skill_slugs: [...a.skill_slugs], workflow_slugs: [...(a.workflow_slugs || [])], _isEdit: true,
+  })
   const p = parseAccess(a.access)
   agAccessKind.value = p.kind
   agAccessTpls.value = p.tpls
@@ -2816,6 +2837,13 @@ function toggleAgentSkill(slug: string, on: boolean) {
   const i = agForm.skill_slugs.indexOf(slug)
   if (on && i < 0) agForm.skill_slugs.push(slug)
   else if (!on && i >= 0) agForm.skill_slugs.splice(i, 1)
+}
+
+function toggleAgentWorkflow(slug: string, on: boolean) {
+  if (!agForm.workflow_slugs) agForm.workflow_slugs = []
+  const i = agForm.workflow_slugs.indexOf(slug)
+  if (on && i < 0) agForm.workflow_slugs.push(slug)
+  else if (!on && i >= 0) agForm.workflow_slugs.splice(i, 1)
 }
 
 async function persistAgents(next: GlobalAgent[], okMsg: string) {

@@ -125,6 +125,9 @@ def preset_agents() -> List[Dict[str, Any]]:
             "system_prompt": a.get("system_prompt", ""),
             "model": a.get("model", ""),
             "skill_slugs": list(a.get("skill_slugs", [])),
+            # 预置库不绑工作流：连接器是各站自己接的(URL/凭据因人而异)，内置库无从预设。
+            # 给空列表而非缺省，让下游一律能安全地 for 它，不必到处判 None。
+            "workflow_slugs": list(a.get("workflow_slugs", [])),
             "division": a.get("division", ""),  # 分组展示用(原生班底无此字段=通用班底)
             "enabled": True,
             "preset": True,  # 标记来源，便于前端/调试区分内置 vs 后台配置

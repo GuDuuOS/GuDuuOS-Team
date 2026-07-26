@@ -113,6 +113,12 @@ class ToolContext:
     # 发起人当前所在的工作区(Space room_id)——前端随消息带上的 `cosmac.doc_space`。
     # 拆任务时盖在任务上，任务看板据此按工作区过滤(私聊房的 room_id 归不了工作区)。
     space_id: str = ""
+    # 本频道**已授权**的工作流 slug：来自管理员配置（入驻模板预置 + 频道绑定的智能体
+    # 自带，见 appservice_bot._group_context_uncached）。绑定即授权——这批 slug 在本频道
+    # 免过 workflow_run 门控，与「群绑定技能不按发起人过滤」同一原则。
+    # ⚠️ 只放**管理员显式配置**的来源。用户自建的绑定绝不能进这里，否则等于自助提权。
+    # 默认空元组（不可变）：绝不能用可变默认值，dataclass 会让所有实例共享同一个 list。
+    authorized_workflows: tuple = ()
 
 
 def _parse_due_to_epoch(raw: str) -> Optional[int]:
@@ -270,6 +276,28 @@ class Toolbox:
             if self._is_enabled(name)
         ]
 
+    @staticmethod
+    def _is_bound_workflow(call: ToolCall, ctx: ToolContext) -> bool:
+        """这次调用是不是「跑一个已绑定给本频道的工作流」——是则免过会员门控。
+
+        为什么要这个豁免：管理员在后台把工作流绑给本频道的智能体（或经入驻模板预置），
+        本身就是一次显式授权；再让它去撞 workflow_run 的会员门槛，会出现「AI 说我能用、
+        一调就被拒」的荒谬体验。与「群绑定的技能不按发起人过滤」是同一条原则。
+
+        收得很紧，避免变成提权口子：
+          · 只对 run_workflow 这一个工具生效；
+          · slug 必须**精确**命中 authorized_workflows（该列表只装管理员配置的来源）；
+          · 不带 slug（列可用工作流）不豁免——那是查询语义，仍按门槛裁决；
+          · 豁免的只是**会员门控**，后面的用量配额照常扣、SSRF/凭据校验一步不少。
+        """
+        if call.name != "run_workflow":
+            return False
+        allowed = ctx.authorized_workflows or ()
+        if not allowed:
+            return False
+        slug = str((call.arguments or {}).get("slug") or "").strip()
+        return bool(slug) and slug in allowed
+
     def execute(self, call: ToolCall, ctx: ToolContext) -> str:
         """执行一次工具调用，返回给模型读的文本结果（绝不抛异常，出错也转成文本）。"""
         entry = self._tools.get(call.name)
@@ -279,7 +307,7 @@ class Toolbox:
             return f"工具 {call.name} 已被管理员停用。"
         # 会员门控：跑工具前先过 bot 注入的门控钩子（同聊天命令那道闸，防自然语言绕过）。
         # 返回拒绝文案就把它当作工具结果回灌给模型，让模型据此礼貌告知用户需升级。
-        if self.gate_check is not None:
+        if self.gate_check is not None and not self._is_bound_workflow(call, ctx):
             denial = self.gate_check(ctx.sender, call.name)
             if denial:
                 return denial
@@ -1673,7 +1701,10 @@ class Toolbox:
         # 接了门控钩子时(生产)由 execute() 的 gate_check 统一裁决(走 workflow_run 门槛配置)；
         # 没接门控钩子时(独立/单测)退回硬基线——只许平台管理员，绝不无授权放行。
         if self.gate_check is None and not self._is_platform_admin(ctx.sender):
-            return "只有平台管理员能让我跑工作流（它会触发外部/付费操作、用服务端共享凭据）。"
+            # 绑定即授权：口径与 execute 的 _is_bound_workflow 保持一致，
+            # 否则单测/独立模式下会出现「生产放行、离线拒绝」的行为分叉。
+            if str(args.get("slug") or "").strip() not in (ctx.authorized_workflows or ()):
+                return "只有平台管理员能让我跑工作流（它会触发外部/付费操作、用服务端共享凭据）。"
         defs = self._workflow_defs()
         slug = (args.get("slug") or "").strip()
         if not slug:

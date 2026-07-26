@@ -2267,6 +2267,10 @@ export interface GlobalAgent {
   system_prompt: string
   model: string
   skill_slugs: string[]
+  /** 绑定的工作流连接器 slug。**绑定即授权**:这是管理员在后台显式配的,
+   *  所以绑给本频道的工作流不再受 workflow_run 门控(与"群绑定技能不按发起人过滤"同理)。
+   *  只影响绑了这个 Agent 的频道,不改变其它地方的权限。 */
+  workflow_slugs?: string[]
   enabled: boolean
   /** 可用范围(同 GlobalSkill.access):''=所有人;paid/creator=等级及以上;admin;tpl:slug列表。 */
   access?: string

@@ -837,6 +837,10 @@ class CosmacBot:
                 # 前端随每条发给中枢AI 的消息带上当前工作区；拆任务时盖在任务上，
                 # 任务看板据此按工作区过滤（私聊房的 room_id 归不了工作区）。
                 space_id=str(content.get("cosmac.doc_space") or "")[:255],
+                # 本频道已授权的工作流：入驻模板预置 + 频道绑定的智能体自带（都是管理员
+                # 显式配置）。绑定即授权——这批在本频道免过 workflow_run 会员门控，
+                # 免得出现「AI 说它能用、一调就被拒」。配额与 SSRF/凭据校验照常。
+                authorized_workflows=tuple(gctx.get("workflow_slugs") or ()),
             )
             # 以谁的身份回这条：worker 路由解析出傀儡(AI 同事)就用它，否则主 AI。
             # ⚠️ 这段**必须在引擎开跑前**定下来：流式草稿一上来就要以最终身份发，
@@ -1467,6 +1471,14 @@ class CosmacBot:
                         f"本群已绑定智能体「{name}」，请始终以下述人设与职责回应：\n{sp}"
                     )
                     out["skill_slugs"] = [str(s) for s in (agent.get("skill_slugs") or [])]
+                    # 智能体绑定的工作流：与入驻模板预置的合并（模板给工作区打底，
+                    # 智能体带自己的专属能力），按 slug 去重、保持顺序。
+                    # **绑定即授权**——这是管理员在后台显式配的，所以下面 _tool_ctx 会
+                    # 把它们作为「已授权工作流」传给工具层，在本频道免受 workflow_run 门控。
+                    for wf in (agent.get("workflow_slugs") or []):
+                        sw = str(wf).strip()
+                        if sw and sw not in out["workflow_slugs"]:
+                            out["workflow_slugs"].append(sw)
                     out["model"] = (agent.get("model") or "").strip()
                     return out
             # 退回自定义人设（自由文本）。引导按模板写入时，persona 里还可带 model/skill_slugs
@@ -3207,10 +3219,15 @@ class CosmacBot:
             return []
 
     def _preset_workflows_text(self, slugs: List[str]) -> str:
-        """入驻模板给本工作区预置的默认工作流（P2）：渲染成一段引导，让 AI 知道有现成工作流可跑。
+        """本频道可直接调用的工作流：渲染成一段引导，让 AI 知道有现成工作流可跑。
 
-        只是「告诉 AI 有这些、可用 run_workflow 调用」，不改变 run_workflow 的权限（它本就能跑
-        任意全局工作流）。把 slug 解析成名字更友好；解析不到的 slug 跳过（可能已被后台删）。
+        两个来源合并而来（见 _group_context_uncached）：入驻模板给工作区预置的 +
+        本频道绑定的智能体自带的。二者都是管理员显式配置，因此**绑定即授权**——
+        这批 slug 会随 ToolContext.authorized_workflows 下发，在本频道免受
+        workflow_run 门控（与「群绑定技能不按发起人过滤」同一原则）。
+        未列入的工作流仍按原门槛裁决。
+
+        把 slug 解析成名字更友好；解析不到的 slug 跳过（可能已被后台删）。
         失败返回空，绝不阻断回复。
         """
         if not slugs:
@@ -3227,8 +3244,9 @@ class CosmacBot:
             if not lines:
                 return ""
             return (
-                "【本工作区预置的工作流】：用户选的入驻模板预置了以下现成工作流，"
-                "需要时可用 run_workflow 直接调用：\n" + "\n".join(lines)
+                "【本频道可直接调用的工作流】：以下工作流已由管理员配置给本频道"
+                "（入驻模板预置 / 频道绑定的智能体自带），需要时用 run_workflow 直接调用，"
+                "无需再申请权限：\n" + "\n".join(lines)
             )
         except Exception as e:
             logger.debug("渲染预置工作流失败（忽略）：%s", e)
