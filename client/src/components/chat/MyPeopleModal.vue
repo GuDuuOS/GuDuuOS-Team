@@ -56,8 +56,8 @@
                 <button class="mp-mini" :disabled="busy" @click="startEdit(r)">{{ r.hasProfile ? '编辑能力' : '设置能力' }}</button>
                 <!-- 方案B:管理员把个人标注提升为平台能力(全平台可见)。仅对「已设且非平台来源」的条目显示 -->
                 <button v-if="amAdmin && r.hasProfile && !r.isGlobal" class="mp-mini sync" :disabled="busy"
-                        title="把这条能力同步到平台名册，全平台可见（管理员）" @click="promote(r.id)">同步到平台</button>
-                <button v-if="r.hasProfile" class="mp-mini danger" :disabled="busy" @click="remove(r.id)">清除</button>
+                        title="把这条能力同步到平台名册，全平台可见（管理员）" @click="keepScroll(() => promote(r.id))">同步到平台</button>
+                <button v-if="r.hasProfile" class="mp-mini danger" :disabled="busy" @click="keepScroll(() => remove(r.id))">清除</button>
               </div>
             </li>
           </ul>
@@ -85,6 +85,16 @@ watch(editing, (v) => {
     nextTick(() => { if (bodyEl.value) bodyEl.value.scrollTop = savedScroll })
   }
 })
+
+// 「同步到平台」/「清除」这类操作内部会 load() 全量重拉、列表重渲染,scrollTop 归零
+// (负责人报:列表滑到中间点「同步到平台」,页面弹回顶部还得重新找人)。包一层:操作前记下
+// 滚动位置,重渲染后 nextTick 恢复。
+async function keepScroll(fn: () => Promise<unknown>) {
+  const y = bodyEl.value?.scrollTop || 0
+  try { await fn() } finally {
+    nextTick(() => { if (bodyEl.value) bodyEl.value.scrollTop = y })
+  }
+}
 </script>
 
 <style scoped>
