@@ -205,20 +205,40 @@ class ClaudeSdkEngine:
             env=env,
         )
 
-        # ── 3) 跑一次会话,取最终文本 ──
+        # ── 3) 跑一次会话,取最终文本(带整体超时) ──
+        # 负责人实报:"推进 AI 执行"卡死很久没响应——某次模型/工具调用挂住,而 query 循环没有
+        # 整体超时,就无限等、前端"正在执行"一直转圈。这里包一层超时:超了就抛 TimeoutError,
+        # 交给 bot 的引擎兜底(_run_agent_engine:已执行过工具就返回"遇到故障停在这里",没执行过
+        # 就回退 legacy),把"无限转圈"变成一条明确回复。COSMAC_SDK_TIMEOUT 可配(默认 240s、最低 30s)。
+        try:
+            _sdk_to = float(_env("SDK_TIMEOUT", "") or 240)
+        except (TypeError, ValueError):
+            _sdk_to = 240.0
+        _sdk_to = max(30.0, _sdk_to)
         prompt = _history_text(history) + user_text
         final_text = ""
-        async for message in query(prompt=prompt, options=options):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, ToolUseBlock) and progress_cb:
-                        # 过程可见:引擎每发起一次工具调用就报给回调(工具名去掉 mcp 前缀)。
-                        try:
-                            name = str(block.name or "").split("__")[-1]
-                            progress_cb(name, dict(block.input or {}))
-                        except Exception:
-                            pass
-                    if isinstance(block, TextBlock) and block.text.strip():
-                        final_text = block.text.strip()  # 取最后一段非空文本 = 最终回复
+
+        async def _consume() -> None:
+            # 内部协程:跑完整个 query 流。用 asyncio.wait_for 包它(3.9 兼容,不用 3.11 的
+            # asyncio.timeout),超时会取消它、连带取消底层 query 生成器。
+            nonlocal final_text
+            async for message in query(prompt=prompt, options=options):
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, ToolUseBlock) and progress_cb:
+                            # 过程可见:引擎每发起一次工具调用就报给回调(工具名去掉 mcp 前缀)。
+                            try:
+                                name = str(block.name or "").split("__")[-1]
+                                progress_cb(name, dict(block.input or {}))
+                            except Exception:
+                                pass
+                        if isinstance(block, TextBlock) and block.text.strip():
+                            final_text = block.text.strip()  # 取最后一段非空文本 = 最终回复
+
+        try:
+            await asyncio.wait_for(_consume(), timeout=_sdk_to)
+        except (asyncio.TimeoutError, TimeoutError):
+            logger.warning("Claude SDK 引擎执行超时(%ss),中止本轮", _sdk_to)
+            raise TimeoutError(f"Claude SDK engine timed out after {_sdk_to}s")
 
         return final_text or "(引擎没有产出回复,请重试)"

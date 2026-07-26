@@ -113,6 +113,10 @@ services:
       COSMAC_SDK_API_KEY: ${COSMAC_SDK_API_KEY:-}
       COSMAC_SDK_MODEL: ${COSMAC_SDK_MODEL:-}
       COSMAC_SDK_MAX_TURNS: ${COSMAC_SDK_MAX_TURNS:-}
+      # 防卡死超时(负责人实报"推进 AI 执行卡死很久"):SDK 引擎整轮上限秒数、单次 LLM 调用上限秒数。
+      # 不配用代码默认(240s / 120s)。
+      COSMAC_SDK_TIMEOUT: ${COSMAC_SDK_TIMEOUT:-}
+      COSMAC_LLM_TIMEOUT: ${COSMAC_LLM_TIMEOUT:-}
       # —— OEM 体系（模块6）：授权码 + 母舰地址（心跳/网关）——
       COSMAC_OEM_KEY: ${COSMAC_OEM_KEY:-}
       COSMAC_NEXUS_URL: ${COSMAC_NEXUS_URL:-}
