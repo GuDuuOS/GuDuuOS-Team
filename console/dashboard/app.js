@@ -417,8 +417,10 @@
    *  x = (lon+180)/360，y = (90-lat)/180。与底图 land-110m 的常规绘制方式一致。
    *  没有真实地域的实例回落到按域名哈希的稳定伪随机位（刷新不乱跳），并标出来。 */
   function projectNode(o, rand) {
-    const lat = Number(o.lat);
-    const lon = Number(o.lon);
+    // ⚠️ 必须先排除 null/undefined：Number(null) === 0（不是 NaN），
+    // 否则"没填地域"的实例会被当成经纬度 (0,0)，画到几内亚湾的 Null Island 上去。
+    const lat = o.lat === null || o.lat === undefined ? NaN : Number(o.lat);
+    const lon = o.lon === null || o.lon === undefined ? NaN : Number(o.lon);
     if (Number.isFinite(lat) && Number.isFinite(lon)) {
       return {
         x: (lon + 180) / 360,
@@ -460,7 +462,11 @@
       // 地域展示：优先真实地域名，没有就退回域名（旧行为）
       region: o.region_label || o.domain || "",
       regionCode: o.region || "",
-      geoKnown: Number.isFinite(o.lat) && Number.isFinite(o.lon),
+      geoKnown: o.lat !== null && o.lat !== undefined
+        && o.lon !== null && o.lon !== undefined
+        && Number.isFinite(Number(o.lat)) && Number.isFinite(Number(o.lon)),
+      lat: o.lat === null || o.lat === undefined ? null : Number(o.lat),
+      lon: o.lon === null || o.lon === undefined ? null : Number(o.lon),
       orbit: (index % 3) + 1,
       balance: o.balance_tokens || 0,
       users: o.users || 0,
@@ -1029,13 +1035,10 @@
             hotClass = " is-hot";
             hotNodeId = nearest.id;
           }
-        } else if (colorNoise < 0.022) {
-          fill = scatterNoise > 0.5 ? "#cbc5f1" : "#d9d7f4";
-          stroke = "#cac7e8";
-          opacity = 0.62;
-          hotClass = " is-hot";
-          heatScore = Math.round(31 + scatterNoise * 14);
         }
+        // 注：这里原本还有一段"随机把 2.2% 的格子染成淡紫"的装饰逻辑，已删除——
+        // 它和真实节点的热区长得一模一样，会让人误以为"全球到处都是节点"（负责人实报）。
+        // 地图上出现颜色 = 那里真的有实例，不制造视觉噪音。
 
         const cellId = `HEX-${String(cellIndex + 1).padStart(4, "0")}`;
         const path = [
@@ -1091,10 +1094,31 @@
         console.warn("Natural Earth boundary unavailable; using embedded fallback.", error);
       }
 
-      const worldHotspots = MAP_HOTSPOT_DEFINITIONS.map((hotspot) => {
-        const [x, y] = project ? project(hotspot.coordinates) : hotspot.fallback;
-        return { ...hotspot, x, y };
-      });
+      // 热点来源：**优先用真实实例的经纬度**（母舰按 OEM 装机时选的机房算出来的）。
+      // 只有一个真实实例都没定位到时，才回落到 MAP_HOTSPOT_DEFINITIONS 那组演示坐标
+      // ——否则地图上画的是芝加哥/柏林这些假点，而真实节点一个都不在（负责人实报"看不到任何节点"）。
+      const geoNodes = state.nodes.filter((n) => n.geoKnown);
+      const worldHotspots = geoNodes.length
+        ? geoNodes.map((node, i) => {
+            const palette = MAP_HOTSPOT_DEFINITIONS[i % MAP_HOTSPOT_DEFINITIONS.length];
+            const [x, y] = project
+              ? project([node.lon, node.lat])
+              : palette.fallback;
+            return {
+              id: node.id,          // 用真实节点 id，让 .geo-node 标记能对上
+              coordinates: [node.lon, node.lat],
+              radius: palette.radius,
+              core: palette.core,
+              mid: palette.mid,
+              outer: palette.outer,
+              x,
+              y,
+            };
+          })
+        : MAP_HOTSPOT_DEFINITIONS.map((hotspot) => {
+            const [x, y] = project ? project(hotspot.coordinates) : hotspot.fallback;
+            return { ...hotspot, x, y };
+          });
       state.mapScene = {
         cellMarkup: buildHexCellMarkup(landCells, worldHotspots),
         cellCount: landCells.length,
@@ -1111,6 +1135,53 @@
         return `<i class="map-traffic__bar map-traffic__bar--${tone}" style="height:${height}px"></i>`;
       }).join("");
     }
+  }
+
+  /** 用真实实例重建地图上的节点标记（.geo-node）。
+   *
+   *  为什么要这一步：index.html 里那几个 .geo-node 是**写死的演示节点**（Nebula One /
+   *  深蓝数据…），它们的 data-node-id 是 nb/db 这类演示 id。真实数据接管后节点 id 变成
+   *  nx-<n>，演示标记既对不上、又会被可见性逻辑判成"不在范围"而全部隐藏——结果地图上
+   *  一个节点都不剩（负责人实报）。这里直接按真实节点重建，id 与热点保持一致。
+   *  只渲染**定位得到**的节点：没填地域的宁可不画，也不假装它在某个地方。 */
+  function renderRealGeoMarkers() {
+    const stage = $("#world-map-stage");
+    if (!stage) return;
+    const geoNodes = state.nodes.filter((n) => n.geoKnown);
+    if (!geoNodes.length) return;   // 一个都没定位：保留演示件，别把地图弄成空白
+
+    stage.querySelectorAll(".geo-node").forEach((el) => el.remove());
+    const icon =
+      '<svg viewBox="0 0 20 20"><rect x="4" y="4" width="12" height="12" rx="2"></rect>' +
+      '<path d="M7 8h6M7 11h6M7 14h4"></path></svg>';
+    const frag = document.createDocumentFragment();
+    for (const node of geoNodes) {
+      const btn = document.createElement("button");
+      btn.className = "geo-node";
+      btn.type = "button";
+      btn.dataset.nodeId = node.id;
+      btn.style.setProperty("--geo-color", node.color || "#6e7cf6");
+      // 具体像素位置由 positionMapCallouts() 按投影算；这里先给个占位百分比避免闪到左上角
+      btn.style.setProperty("--geo-x", "50%");
+      btn.style.setProperty("--geo-y", "50%");
+      btn.innerHTML =
+        '<span class="geo-node__card">' +
+        `<span class="geo-node__icon" aria-hidden="true">${icon}</span>` +
+        '<span class="geo-node__copy">' +
+        `<small>${escapeHtml(node.region || "")}</small>` +
+        `<strong><span class="geo-node__name">${escapeHtml(node.name || "")}</span>` +
+        `<em>${escapeHtml(String(node.token ?? ""))}${TOKEN_UNIT.label}</em></strong>` +
+        "</span></span>";
+      frag.appendChild(btn);
+    }
+    stage.appendChild(frag);
+  }
+
+  /** 极简 HTML 转义：节点名/地域来自服务端，虽可信但拼进 innerHTML 前一律转义。 */
+  function escapeHtml(text) {
+    return String(text ?? "").replace(/[&<>"']/g, (ch) => (
+      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]
+    ));
   }
 
   let worldRevealTimer = 0;
@@ -2689,6 +2760,7 @@
     const usingRealData = await loadFleetData();
     if (usingRealData) startFleetRefresh();
     await renderMapDecorations();
+    renderRealGeoMarkers();   // 真实实例接管地图标记（演示件在此被替换掉）
     renderRanking();
     updateInspector(state.nodes[0], true);
     refreshTotals();
