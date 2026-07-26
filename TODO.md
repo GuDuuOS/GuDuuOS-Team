@@ -77,10 +77,20 @@
   - 注:老站 cosmac.cc 的 key 绑旧域名,新域名不可用,须为新域名重拿一套
 
 - [ ] **auth 阶段3**:短信验证码 + 手机号防多号(要接短信服务商,花钱,上量前不急)
+- [ ] 🔴 **作废并重发 GitHub PAT（新增·优先）**:`/opt/nexus/app` 的 git remote URL 里**内嵌明文
+  PAT**(`ghp_...`),2026-07-26 排查时被打印进聊天记录 → **该 token 已泄露,必须去 GitHub 立即
+  revoke 并换新**;换完把服务器上内嵌它的 remote 一并改掉(`/opt/nexus/app`,以及 `/root/cosmac`
+  若同样内嵌)。**更好的做法**:改用 deploy key(只读 SSH key)或 git credential store——
+  别把 token 写进 remote URL,那玩意儿任何一句 `git remote -v` 都会原样打出来。
 - [ ] **凭据轮换**:COSMAC_ADMIN_TOKEN / REGISTRATION_SHARED_SECRET / SMTP 密码 / AS·HS token / ARK key
   曾在 SSH 截图(systemctl show)中整屏暴露于聊天记录,建议统一换一轮(DEPLOY.md 记新值)
 - [ ] 异地登录**放行**场景的提醒邮件(现在只有"挑战"场景发码;放行时不提醒"有新地点登录了")
 - [ ] 确认生产 COSMAC_SDK_API_KEY 用的是**重置后**的 DeepSeek key(旧 key 曾贴进聊天)
+
+- [ ] **服务器拉代码不可靠**(2026-07-26 又踩):`guduu-cn` → GitHub 的 fetch 连续 8 次全失败
+  (TLS 挂起/超时),1.6.5 部署因此静默没上去。**当时的绕行办法**:本地 `git bundle create` →
+  `scp` 到服务器 → `git fetch /tmp/x.bundle main:refs/remotes/origin/main` → reset,完全避开
+  GitHub。可考虑固化成一个 `deploy-bundle.sh`,或给服务器配国内 Git 镜像/代理。
 
 ## C. 功能补全 / 增强
 
