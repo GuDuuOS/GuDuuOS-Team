@@ -205,6 +205,17 @@ def _heal_business_schema(engine: Engine) -> None:
                         "ALTER TABLE cosmac_order "
                         "ADD COLUMN tokens BIGINT NOT NULL DEFAULT 0"
                     ))
+        # 创作者上架表补列：1.6.1 建的生产库还没 review_reason（P3 上架审核的拒绝原因），
+        # 不补的话审核拒绝写入报 UndefinedColumn。
+        from cosmac.db.models import MarketListing as _ML
+        if insp.has_table(_ML.__tablename__):
+            have = {c["name"] for c in insp.get_columns(_ML.__tablename__)}
+            if "review_reason" not in have:
+                with engine.begin() as conn:
+                    conn.execute(text(
+                        "ALTER TABLE cosmac_market_listing "
+                        "ADD COLUMN review_reason VARCHAR(500) NOT NULL DEFAULT ''"
+                    ))
         # 图文页表补列：旧库的 cosmac_doc_page 还没 cover（封面图），补上否则带封面写入报
         # UndefinedColumn。
         if insp.has_table(DocPage.__tablename__):

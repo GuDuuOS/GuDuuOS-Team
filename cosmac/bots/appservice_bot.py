@@ -5717,6 +5717,234 @@ class CosmacBot:
         except Exception:
             return False
 
+    def handle_creator_apply_get(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """查"我的创作者认证申请"状态（工坊申请入口回显）。需登录。
+
+        返回 {is_creator, cert_fee_cents, application:{...}|null}——已是创作者也返回
+        （前端据此不再展示申请入口）。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        fee = int(self.wallet.config().get("creator_cert_fee_cents") or 0)
+        app = None
+        try:
+            from cosmac.db import cert_repo, session_scope
+
+            with session_scope() as s:
+                row = cert_repo.get_application(s, user_id)
+                if row is not None:
+                    app = {
+                        "status": row.status, "reason": row.reason,
+                        "name": row.name, "contact": row.contact,
+                        "intro": row.intro, "portfolio": row.portfolio,
+                        "paid": bool(row.paid), "order_no": row.order_no,
+                    }
+        except Exception:
+            logger.exception("读认证申请失败 user=%s", user_id)
+            return 500, {"error": "读取失败"}
+        return 200, {
+            "is_creator": self._is_creator(user_id),
+            "cert_fee_cents": fee,
+            "application": app,
+        }
+
+    def handle_creator_apply_submit(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """提交/重新提交创作者认证申请（P3 类公众号流程）。
+
+        流转（定稿：拒绝不退费、可免费重提）：
+        - 新申请 → 存资料；认证费>0 则建认证费订单返回支付方式（付完自动进待审），
+          =0 则直接进待审。
+        - 被拒后重提 → 已付过费直接回待审（不再收费）；没付过仍要付。
+        - 已通过 / 已是创作者 → 拦（无需重复申请）。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if self._is_creator(user_id):
+            return 400, {"error": "你已是创作者，无需申请认证"}
+        name = str((body or {}).get("name") or "").strip()[:128]
+        contact = str((body or {}).get("contact") or "").strip()[:255]
+        intro = str((body or {}).get("intro") or "").strip()[:2000]
+        portfolio = str((body or {}).get("portfolio") or "").strip()[:4000]
+        if not name or not contact or not intro:
+            return 400, {"error": "称呼、联系方式与自我介绍都不能为空——这是审核的主要依据"}
+        try:
+            from cosmac.db import cert_repo, session_scope
+
+            fee = int(self.wallet.config().get("creator_cert_fee_cents") or 0)
+            with session_scope() as s:
+                row = cert_repo.get_application(s, user_id)
+                if row is not None and row.status == "approved":
+                    return 400, {"error": "你的申请已通过，无需重复提交"}
+                row = cert_repo.submit(
+                    s, user_id=user_id, name=name, contact=contact,
+                    intro=intro, portfolio=portfolio,
+                )
+                # 免费认证：直接进待审（不建单）
+                if fee <= 0 and row.status == "pending_payment":
+                    cert_repo.mark_paid(s, user_id, "")
+                    row.paid = False  # 免费≠已付费（将来开始收费时老免费户重提要补缴，先如实记）
+                    status = "pending_review"
+                else:
+                    status = row.status
+            # 待付费 → 建认证费订单（复用交易系统，测试通道先行）
+            if status == "pending_payment":
+                from cosmac.trading.service import OrderError
+                try:
+                    res = self.orders.create_cert_order(user_id=user_id)
+                except OrderError as e:
+                    return 400, {"error": str(e)}
+                co = res["checkout"]
+                return 200, {
+                    "ok": True, "status": "pending_payment",
+                    "order_no": res["order_no"], "amount_cents": res["amount_cents"],
+                    "checkout": {"kind": co.kind, "url": co.url,
+                                 "address": co.address, "extra": co.extra},
+                }
+            return 200, {"ok": True, "status": status}
+        except Exception:
+            logger.exception("提交认证申请失败 user=%s", user_id)
+            return 500, {"error": "提交失败，请稍后再试"}
+
+    def handle_creator_admin_applications(
+        self, access_token: str
+    ) -> Tuple[int, Dict[str, Any]]:
+        """管理员：待审核的认证申请列表（含资料全文，审核依据）。"""
+        operator = self.client.whoami(access_token)
+        if not operator:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(operator):
+            return 403, {"error": "仅平台管理员可操作"}
+        try:
+            from cosmac.db import cert_repo, session_scope
+
+            with session_scope() as s:
+                rows = cert_repo.list_pending(s)
+            return 200, {"items": [{
+                "user_id": r.user_id, "name": r.name, "contact": r.contact,
+                "intro": r.intro, "portfolio": r.portfolio,
+                "paid": bool(r.paid),
+                "created_at": r.created_at.isoformat() if r.created_at else "",
+            } for r in rows]}
+        except Exception:
+            logger.exception("读待审申请失败")
+            return 500, {"error": "读取失败"}
+
+    def handle_creator_admin_review(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """管理员审核认证申请：通过=授予「创作者会员」（永久）；拒绝=记原因（可免费重提）。"""
+        operator = self.client.whoami(access_token)
+        if not operator:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(operator):
+            return 403, {"error": "仅平台管理员可操作"}
+        target = str((body or {}).get("user_id") or "").strip()
+        approve = bool((body or {}).get("approve"))
+        reason = str((body or {}).get("reason") or "").strip()[:500]
+        if not target.startswith("@"):
+            return 400, {"error": "参数不合法"}
+        if not approve and not reason:
+            return 400, {"error": "拒绝时请填写原因（会展示给申请人，指导重新提交）"}
+        try:
+            from cosmac.db import cert_repo, session_scope
+
+            with session_scope() as s:
+                row = cert_repo.review(s, target, approve=approve, reason=reason)
+            if row is None:
+                return 404, {"error": "该申请不存在或不在待审核状态"}
+            if approve:
+                # 授予创作者会员（永久；将来要年审再改带期限）。授予失败回滚状态待重试。
+                ok = self.members.grant(
+                    target, TIER_CREATOR, source="cert", expires_ts=0,
+                )
+                if not ok:
+                    with session_scope() as s:
+                        r2 = cert_repo.get_application(s, target)
+                        if r2 is not None:
+                            r2.status = "pending_review"
+                    return 500, {"error": "授予创作者资格失败，请稍后重试"}
+            logger.info(
+                "认证审核：%s %s %s%s", operator,
+                "通过" if approve else "拒绝", target,
+                "" if approve else f"（{reason}）",
+            )
+            return 200, {"ok": True, "status": "approved" if approve else "rejected"}
+        except Exception:
+            logger.exception("审核认证申请失败 target=%s", target)
+            return 500, {"error": "操作失败，请稍后再试"}
+
+    def handle_creator_admin_listings(
+        self, access_token: str
+    ) -> Tuple[int, Dict[str, Any]]:
+        """管理员：待审核的上架列表。含创作者 Agent 的**人设全文**——审核就是审内容，
+        管理员（平台方）可见；普通商城目录仍绝不下发人设。"""
+        operator = self.client.whoami(access_token)
+        if not operator:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(operator):
+            return 403, {"error": "仅平台管理员可操作"}
+        try:
+            from cosmac.db import listing_repo, session_scope
+            from cosmac.db.models import SCOPE_USER
+            from cosmac.db.repo import get_agent
+
+            with session_scope() as s:
+                rows = listing_repo.list_pending(s)
+                items = []
+                for li in rows:
+                    src = get_agent(s, SCOPE_USER, li.creator, li.agent_slug)
+                    items.append({
+                        "id": li.id, "creator": li.creator,
+                        "agent_slug": li.agent_slug, "name": li.name,
+                        "description": li.description,
+                        "price_tokens": int(li.price_tokens or 0),
+                        "system_prompt": (src.system_prompt if src else "（源智能体已删除）"),
+                        "created_at": li.updated_at.isoformat() if li.updated_at else "",
+                    })
+            return 200, {"items": items}
+        except Exception:
+            logger.exception("读待审上架失败")
+            return 500, {"error": "读取失败"}
+
+    def handle_creator_admin_listing_review(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """管理员审核上架：通过=在售（on）；拒绝=rejected（记原因，创作者可改后重提）。"""
+        operator = self.client.whoami(access_token)
+        if not operator:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(operator):
+            return 403, {"error": "仅平台管理员可操作"}
+        try:
+            lid = int((body or {}).get("id"))
+        except (TypeError, ValueError):
+            return 400, {"error": "参数不合法"}
+        approve = bool((body or {}).get("approve"))
+        reason = str((body or {}).get("reason") or "").strip()[:500]
+        if not approve and not reason:
+            return 400, {"error": "拒绝时请填写原因（会展示给创作者）"}
+        try:
+            from cosmac.db import listing_repo, session_scope
+
+            with session_scope() as s:
+                row = listing_repo.review_listing(s, lid, approve=approve, reason=reason)
+            if row is None:
+                return 404, {"error": "该上架不存在或不在待审核状态"}
+            self._acquired_cagent_cache.clear()  # 审核结果立即反映到路由/计费
+            logger.info(
+                "上架审核：%s %s listing#%s%s", operator,
+                "通过" if approve else "拒绝", lid,
+                "" if approve else f"（{reason}）",
+            )
+            return 200, {"ok": True, "status": "on" if approve else "rejected"}
+        except Exception:
+            logger.exception("审核上架失败 id=%s", lid)
+            return 500, {"error": "操作失败，请稍后再试"}
+
     def handle_creator_listings(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """列本人全部上架（含已下架/被封）+ 收益汇总——工坊「我的上架」区回显。需登录。
 
@@ -5742,6 +5970,7 @@ class CosmacBot:
                     "price_tokens": int(li.price_tokens or 0),
                     "status": li.status, "uses": int(li.uses or 0),
                     "earned": int(li.earned or 0),
+                    "review_reason": str(getattr(li, "review_reason", "") or ""),
                 } for li in rows],
             }
         except Exception:
@@ -5790,10 +6019,9 @@ class CosmacBot:
                 if row is None:
                     return 403, {"error": "该 Agent 已被平台下架，不可重新上架（如有疑问联系管理员）"}
                 lid = row.id
-            # 已获取者的路由缓存不失效也没关系（5 分钟内价格/文案渐次生效）；
-            # 但保险起见清本人（创作者常自测）。
-            self._acquired_cagent_cache.pop(user_id, None)
-            return 200, {"ok": True, "id": lid}
+            # 上架/更新一律进待审（P3）：原在售的也立即变待审，清全部路由缓存立刻生效。
+            self._acquired_cagent_cache.clear()
+            return 200, {"ok": True, "id": lid, "status": "pending"}
         except Exception:
             logger.exception("上架失败 user=%s agent=%s", user_id, agent_slug)
             return 500, {"error": "上架失败，请稍后再试"}
@@ -5811,9 +6039,10 @@ class CosmacBot:
             return 400, {"error": "参数不合法"}
         status = str((body or {}).get("status") or "").strip()
         is_admin = self._is_platform_admin(user_id)
-        allowed = ("on", "off", "banned") if is_admin else ("on", "off")
+        # 创作者只能下架（off）；重新上架必须走 publish 进待审（P3 任何更新都重审）。
+        allowed = ("on", "off", "banned") if is_admin else ("off",)
         if status not in allowed:
-            return 400, {"error": "状态不合法"}
+            return 400, {"error": "状态不合法（重新上架请用「上架/更新」按钮，会进入审核）"}
         try:
             from cosmac.db import listing_repo, session_scope
 
@@ -7229,6 +7458,21 @@ class _Handler(BaseHTTPRequestHandler):
             )
             self._send_json(code, payload, cors=True)
             return
+        # 创作者认证：我的申请状态（P3）
+        if self.path.split("?", 1)[0] == "/cosmac/creator/apply":
+            code, payload = self.bot.handle_creator_apply_get(self._bearer())
+            self._send_json(code, payload, cors=True)
+            return
+        # 创作者认证：管理员待审申请列表（P3）
+        if self.path.split("?", 1)[0] == "/cosmac/creator/admin/applications":
+            code, payload = self.bot.handle_creator_admin_applications(self._bearer())
+            self._send_json(code, payload, cors=True)
+            return
+        # 上架审核：管理员待审上架列表（P3）
+        if self.path.split("?", 1)[0] == "/cosmac/creator/admin/listings":
+            code, payload = self.bot.handle_creator_admin_listings(self._bearer())
+            self._send_json(code, payload, cors=True)
+            return
         # 创作者商城：我的上架列表 + 收益汇总（P2）
         if self.path.split("?", 1)[0] == "/cosmac/creator/listings":
             code, payload = self.bot.handle_creator_listings(self._bearer())
@@ -7841,6 +8085,35 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "请求无效"}, cors=True)
                 return
             code, payload = self.bot.handle_wallet_checkout(self._bearer(), body)
+            self._send_json(code, payload, cors=True)
+            return
+        # 创作者认证：提交/重新提交申请（P3）
+        if path == "/cosmac/creator/apply":
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_creator_apply_submit(self._bearer(), body)
+            self._send_json(code, payload, cors=True)
+            return
+        # 创作者认证：管理员审核（P3）
+        if path == "/cosmac/creator/admin/review":
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_creator_admin_review(self._bearer(), body)
+            self._send_json(code, payload, cors=True)
+            return
+        # 上架审核：管理员通过/拒绝（P3）
+        if path == "/cosmac/creator/admin/listing_review":
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_creator_admin_listing_review(
+                self._bearer(), body
+            )
             self._send_json(code, payload, cors=True)
             return
         # 创作者商城：上架/更新（P2）

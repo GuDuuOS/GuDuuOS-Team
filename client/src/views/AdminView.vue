@@ -77,6 +77,10 @@
         <button class="adm-mi" :class="{ active: tab === 'wallet' }" @click="switchToWallet">
           <span class="adm-mi-ic"><Icon name="wallet" /></span> Token 经济
         </button>
+        <button class="adm-mi" :class="{ active: tab === 'creatorReview' }" @click="switchToCreatorReview">
+          <span class="adm-mi-ic"><Icon name="gating" /></span> 创作者审核
+          <span v-if="crPendingCount" class="adm-mi-badge">{{ crPendingCount }}</span>
+        </button>
         </template>
 
         <button class="adm-menu-cap" @click="toggleMenuGroup('ops')">
@@ -1413,6 +1417,60 @@
         </div>
       </template>
 
+      <!-- 创作者审核面板(Token 经济 P3)：认证申请审核 + 上架内容审核 -->
+      <template v-else-if="tab === 'creatorReview'">
+        <header class="adm-head">
+          <div>
+            <h1 class="adm-h1">创作者审核</h1>
+            <p class="adm-hint">认证申请（付费后进入待审）与上架内容（任何上架/修改都重审）· 拒绝必须写原因，会展示给对方</p>
+          </div>
+          <button class="adm-btn ghost" :disabled="crLoading" @click="loadCreatorReview">{{ crLoading ? '加载中…' : '刷新' }}</button>
+        </header>
+
+        <div v-if="crLoading" class="adm-center"><div class="adm-spin" /> 加载待审…</div>
+        <div v-else class="adm-form">
+          <!-- 认证申请 -->
+          <div class="adm-sub-head" style="border-top:none;padding-top:0;margin-top:0"><h2 class="adm-h2">认证申请（{{ crApps.length }}）</h2></div>
+          <p v-if="!crApps.length" class="adm-hint">暂无待审核的认证申请。</p>
+          <div v-for="a in crApps" :key="a.user_id" class="cr-card">
+            <div class="cr-head">
+              <b>{{ a.name }}</b> <code>{{ a.user_id }}</code>
+              <span class="adm-badge" :class="{ on: a.paid }">{{ a.paid ? '已付认证费' : '未付费' }}</span>
+              <span class="cr-time">{{ a.created_at ? new Date(a.created_at).toLocaleString() : '' }}</span>
+            </div>
+            <div class="cr-field"><span>联系方式</span>{{ a.contact }}</div>
+            <div class="cr-field"><span>自我介绍</span>{{ a.intro }}</div>
+            <div v-if="a.portfolio" class="cr-field"><span>作品证明</span>{{ a.portfolio }}</div>
+            <div class="cr-actions">
+              <input v-model.trim="crAppReason[a.user_id]" class="adm-search" placeholder="拒绝原因（拒绝时必填，展示给申请人）" />
+              <button class="adm-btn ghost sm danger" :disabled="crBusy" @click="reviewApp(a, false)">拒绝</button>
+              <button class="adm-btn sm" :disabled="crBusy" @click="reviewApp(a, true)">通过并授予创作者</button>
+            </div>
+          </div>
+
+          <!-- 上架审核 -->
+          <div class="adm-sub-head"><h2 class="adm-h2">上架审核（{{ crListings.length }}）</h2></div>
+          <p v-if="!crListings.length" class="adm-hint">暂无待审核的上架。</p>
+          <div v-for="li in crListings" :key="li.id" class="cr-card">
+            <div class="cr-head">
+              <b>{{ li.name }}</b> <code>{{ li.agent_slug }}</code>
+              <span class="adm-badge on">{{ li.price_tokens > 0 ? `${li.price_tokens.toLocaleString()} token/次` : '免费' }}</span>
+              <span class="cr-time">创作者 {{ li.creator }}</span>
+            </div>
+            <div class="cr-field"><span>商城文案</span>{{ li.description || '（无）' }}</div>
+            <details class="cr-prompt">
+              <summary>查看人设全文（审核依据，勿外传）</summary>
+              <pre>{{ li.system_prompt }}</pre>
+            </details>
+            <div class="cr-actions">
+              <input v-model.trim="crLiReason[li.id]" class="adm-search" placeholder="拒绝原因（拒绝时必填，展示给创作者）" />
+              <button class="adm-btn ghost sm danger" :disabled="crBusy" @click="reviewListing(li, false)">拒绝</button>
+              <button class="adm-btn sm" :disabled="crBusy" @click="reviewListing(li, true)">通过上架</button>
+            </div>
+          </div>
+        </div>
+      </template>
+
       <!-- 图文教程：编辑全平台图文内容(前台只读·类公众号；付费会员可见) -->
       <template v-else-if="tab === 'docs'">
         <header class="adm-head">
@@ -1807,6 +1865,12 @@ import {
   walletAdminBalance,
   type TokenConfigDef,
   type WalletLedgerItem,
+  creatorAdminApplications,
+  creatorAdminReview,
+  creatorAdminListings,
+  creatorAdminListingReview,
+  type CreatorApplicationAdminItem,
+  type CreatorListingAdminItem,
   getMembers,
   setMemberTier,
   memberTierLabel,
@@ -1855,7 +1919,7 @@ const { success, warn } = useToast()
 // 当前管理模块：用户/频道/AI配置/技能库/智能体/规则/工作流/数据概览
 // 用 defineModel 双向绑给 LiveView——后台各菜单要有独立地址(刷新留在原菜单、可后退/深链,
 // 见 CLAUDE.md 客户端路由约定);负责人实报:此前刷新一律弹回「用户管理」。
-type AdminTab = 'users' | 'rooms' | 'ai' | 'skills' | 'agents' | 'people' | 'templates' | 'rules' | 'workflows' | 'gating' | 'quotas' | 'plans' | 'wallet' | 'docs' | 'platformKb' | 'sitePages' | 'archives' | 'overview'
+type AdminTab = 'users' | 'rooms' | 'ai' | 'skills' | 'agents' | 'people' | 'templates' | 'rules' | 'workflows' | 'gating' | 'quotas' | 'plans' | 'wallet' | 'creatorReview' | 'docs' | 'platformKb' | 'sitePages' | 'archives' | 'overview'
 const tab = defineModel<AdminTab>('tab', { default: 'users' })
 // 侧栏菜单分组折叠状态(负责人要求可收缩);localStorage 记住,默认全展开
 const menuFold = reactive<Record<string, boolean>>(
@@ -2048,6 +2112,7 @@ function loadActiveTab(t: AdminTab) {
     case 'quotas': if (!quotaLoaded.value) loadQuotas(); break
     case 'plans': if (!planLoaded.value) loadPlans(); break
     case 'wallet': if (!tkLoaded.value) loadTokenCfg(); break
+    case 'creatorReview': loadCreatorReview(); break   // 每次进都拉最新待审（审核实时性优先）
     case 'archives': if (!arcLoaded.value) loadArchives(); break
     case 'overview': if (!ovLoaded.value) loadOverview(); break
     case 'platformKb': loadPlatformKb(); break   // 无 loaded 标记;本函数仅挂载时跑一次,直接拉
@@ -3368,6 +3433,65 @@ function switchToWallet() {
   if (!tkLoaded.value) loadTokenCfg()
 }
 
+/* —— 创作者审核（P3）：认证申请 + 上架内容 —— */
+const crApps = ref<CreatorApplicationAdminItem[]>([])
+const crListings = ref<CreatorListingAdminItem[]>([])
+const crLoading = ref(false)
+const crBusy = ref(false)
+const crAppReason = reactive<Record<string, string>>({})
+const crLiReason = reactive<Record<number, string>>({})
+// 侧栏小红点：待审总数（进过一次页面后有值）
+const crPendingCount = computed(() => crApps.value.length + crListings.value.length)
+
+function switchToCreatorReview() {
+  tab.value = 'creatorReview'
+  loadCreatorReview()
+}
+
+async function loadCreatorReview() {
+  crLoading.value = true
+  try {
+    const [apps, lis] = await Promise.all([
+      creatorAdminApplications(), creatorAdminListings(),
+    ])
+    crApps.value = apps
+    crListings.value = lis
+  } finally {
+    crLoading.value = false
+  }
+}
+
+async function reviewApp(a: CreatorApplicationAdminItem, approve: boolean) {
+  const reason = (crAppReason[a.user_id] || '').trim()
+  if (!approve && !reason) { warn('请填写拒绝原因', '会展示给申请人，指导重新提交'); return }
+  if (approve && !confirm(`确认通过「${a.name}（${a.user_id}）」的认证？将授予创作者会员资格。`)) return
+  crBusy.value = true
+  try {
+    await creatorAdminReview(a.user_id, approve, reason)
+    success(approve ? '已通过' : '已拒绝', approve ? '已授予创作者资格' : '对方可修改资料免费重提')
+    crApps.value = crApps.value.filter((x) => x.user_id !== a.user_id)
+  } catch (e: any) {
+    warn('操作失败', e?.message || '请稍后再试')
+  } finally {
+    crBusy.value = false
+  }
+}
+
+async function reviewListing(li: CreatorListingAdminItem, approve: boolean) {
+  const reason = (crLiReason[li.id] || '').trim()
+  if (!approve && !reason) { warn('请填写拒绝原因', '会展示给创作者'); return }
+  crBusy.value = true
+  try {
+    await creatorAdminListingReview(li.id, approve, reason)
+    success(approve ? '已通过' : '已拒绝', approve ? `「${li.name}」已在售` : '创作者可修改后重新提交')
+    crListings.value = crListings.value.filter((x) => x.id !== li.id)
+  } catch (e: any) {
+    warn('操作失败', e?.message || '请稍后再试')
+  } finally {
+    crBusy.value = false
+  }
+}
+
 async function loadTokenCfg() {
   tkLoading.value = true
   try {
@@ -4137,4 +4261,17 @@ watch([tab, state], () => nextTick(rewireHead))
 .adm-wal-info { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg-soft); }
 .adm-wal-bal { font-size: var(--fs-100); margin-bottom: 8px; }
 .adm-wal-bal strong { color: var(--accent); font-size: var(--fs-300); }
+/* —— 创作者审核面板 —— */
+.adm-mi-badge { margin-left: auto; background: #d1462f; color: #fff; border-radius: 999px; font-size: 10px; font-weight: 700; padding: 1px 7px; }
+.cr-card { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; background: var(--bg-soft); }
+.cr-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.cr-head code { font-size: var(--fs-75); color: var(--text-2); }
+.cr-time { margin-left: auto; font-size: var(--fs-75); color: var(--text-3); }
+.cr-field { font-size: var(--fs-90, 13px); color: var(--text); margin: 4px 0; line-height: 1.6; white-space: pre-wrap; }
+.cr-field > span { display: inline-block; min-width: 64px; color: var(--text-3); font-size: var(--fs-75); margin-right: 6px; }
+.cr-prompt { margin: 6px 0; }
+.cr-prompt summary { cursor: pointer; font-size: var(--fs-75); color: var(--text-2); }
+.cr-prompt pre { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.6; white-space: pre-wrap; max-height: 260px; overflow-y: auto; }
+.cr-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.cr-actions .adm-search { flex: 1; max-width: none; }
 </style>

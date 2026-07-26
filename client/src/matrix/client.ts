@@ -3608,10 +3608,111 @@ export async function walletAdminAdjust(
 
 /* —— 创作者商城（Token 经济 P2）：上架自建 Agent、按次收费、收益账本 —— */
 
-/** 我的一条上架记录。 */
+/** 我的一条上架记录。status: pending 待审 / on 在售 / off 已下架 / rejected 未通过 / banned 平台下架 */
 export interface CreatorListing {
   id: number; agent_slug: string; name: string; description: string
   price_tokens: number; status: string; uses: number; earned: number
+  review_reason?: string
+}
+
+/* —— 创作者认证（P3 类公众号流程：申请→付认证费→平台审核→获得创作者资格）—— */
+
+/** 我的认证申请。status: pending_payment 待付费 / pending_review 审核中 / approved / rejected */
+export interface CreatorApplication {
+  status: string; reason: string
+  name: string; contact: string; intro: string; portfolio: string
+  paid: boolean; order_no: string
+}
+
+export async function creatorApplyGet(): Promise<{
+  is_creator: boolean; cert_fee_cents: number; application: CreatorApplication | null
+} | null> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return null
+  try {
+    const r = await fetch(`${payBase()}/cosmac/creator/apply`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return null
+    return await r.json()
+  } catch { return null }
+}
+
+/** 提交/重新提交认证申请。待付费时返回订单+支付方式（测试通道同会员/充值那套）。 */
+export async function creatorApplySubmit(args: {
+  name: string; contact: string; intro: string; portfolio: string
+}): Promise<{ status: string; order_no?: string; amount_cents?: number; checkout?: any }> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  const r = await fetch(`${payBase()}/cosmac/creator/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(args),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || '提交失败')
+  return j
+}
+
+/** 管理员：待审核的认证申请列表。 */
+export interface CreatorApplicationAdminItem {
+  user_id: string; name: string; contact: string; intro: string; portfolio: string
+  paid: boolean; created_at: string
+}
+
+export async function creatorAdminApplications(): Promise<CreatorApplicationAdminItem[]> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return []
+  try {
+    const r = await fetch(`${payBase()}/cosmac/creator/admin/applications`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return []
+    const j = await r.json().catch(() => ({}))
+    return Array.isArray(j?.items) ? j.items : []
+  } catch { return [] }
+}
+
+/** 管理员审核认证申请（通过=授予创作者会员；拒绝必须给原因）。 */
+export async function creatorAdminReview(userId: string, approve: boolean, reason = ''): Promise<void> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  const r = await fetch(`${payBase()}/cosmac/creator/admin/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ user_id: userId, approve, reason }),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || '操作失败')
+}
+
+/** 管理员：待审核的上架列表（含人设全文，审核依据）。 */
+export interface CreatorListingAdminItem {
+  id: number; creator: string; agent_slug: string; name: string; description: string
+  price_tokens: number; system_prompt: string; created_at: string
+}
+
+export async function creatorAdminListings(): Promise<CreatorListingAdminItem[]> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) return []
+  try {
+    const r = await fetch(`${payBase()}/cosmac/creator/admin/listings`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!r.ok) return []
+    const j = await r.json().catch(() => ({}))
+    return Array.isArray(j?.items) ? j.items : []
+  } catch { return [] }
+}
+
+/** 管理员审核上架（通过=在售；拒绝必须给原因）。 */
+export async function creatorAdminListingReview(id: number, approve: boolean, reason = ''): Promise<void> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  const r = await fetch(`${payBase()}/cosmac/creator/admin/listing_review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ id, approve, reason }),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || '操作失败')
 }
 
 /** 我的上架列表 + 收益汇总。 */

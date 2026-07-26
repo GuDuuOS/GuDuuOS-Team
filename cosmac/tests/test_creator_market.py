@@ -37,8 +37,11 @@ def _store(**cfg) -> WalletStore:
     return WalletStore(_FakeClient(base), "#ctrl:h", ttl=0)
 
 
-def _mk_listing(price: int = 300) -> int:
-    """建一个创作者 Agent + 上架，返回 listing id。"""
+def _mk_listing(price: int = 300, *, approve: bool = True) -> int:
+    """建一个创作者 Agent + 上架（默认顺手审核通过=在售），返回 listing id。
+
+    P3 起 upsert 一律进 pending 待审，须 review_listing 通过才在售——测试默认帮审。
+    """
     with session_scope() as s:
         upsert_agent(
             s, SCOPE_USER, CREATOR, "wenan",
@@ -48,7 +51,10 @@ def _mk_listing(price: int = 300) -> int:
             s, creator=CREATOR, agent_slug="wenan",
             name="文案高手", description="写爆款文案", price_tokens=price,
         )
-        return row.id
+        lid = row.id
+        if approve:
+            listing_repo.review_listing(s, lid, approve=True)
+        return lid
 
 
 class ListingRepoTests(unittest.TestCase):
@@ -60,14 +66,43 @@ class ListingRepoTests(unittest.TestCase):
         with session_scope() as s:
             row = listing_repo.get_listing(s, lid)
             self.assertEqual(row.price_tokens, 300)
-            self.assertEqual(row.status, "on")
-            # 重复上架=更新价格
+            self.assertEqual(row.status, "on")   # _mk_listing 已帮审核通过
+            # 重复上架=更新价格，且**任何更新都重审**（P3）：在售的立即回待审
             row2 = listing_repo.upsert_listing(
                 s, creator=CREATOR, agent_slug="wenan",
                 name="文案高手", description="d", price_tokens=500,
             )
             self.assertEqual(row2.id, lid)
             self.assertEqual(row2.price_tokens, 500)
+            self.assertEqual(row2.status, "pending")
+
+    def test_pending_needs_review_and_creator_cannot_self_on(self) -> None:
+        lid = _mk_listing(300, approve=False)   # 不帮审：停在 pending
+        with session_scope() as s:
+            self.assertEqual(listing_repo.get_listing(s, lid).status, "pending")
+            # 创作者不能自己置 on（上架必经审核）
+            self.assertFalse(listing_repo.set_status(s, lid, "on", creator=CREATOR))
+            # 管理员审核拒绝 → rejected + 原因
+            row = listing_repo.review_listing(s, lid, approve=False, reason="文案夸大")
+            self.assertEqual(row.status, "rejected")
+            self.assertEqual(row.review_reason, "文案夸大")
+            # 重提（upsert）→ 回 pending、原因清空 → 再审通过 → 在售
+            listing_repo.upsert_listing(
+                s, creator=CREATOR, agent_slug="wenan",
+                name="文案高手", description="改好了", price_tokens=300,
+            )
+            self.assertEqual(listing_repo.get_listing(s, lid).status, "pending")
+            self.assertEqual(listing_repo.get_listing(s, lid).review_reason, "")
+            listing_repo.review_listing(s, lid, approve=True)
+            self.assertEqual(listing_repo.get_listing(s, lid).status, "on")
+
+    def test_pending_listing_not_charged(self) -> None:
+        # 待审中的 listing 不可计费（charge 视为不在售）
+        lid = _mk_listing(300, approve=False)
+        st = _store()
+        with session_scope() as s:
+            wallet_repo.credit(s, BUYER, 1000, reason="grant")
+        self.assertEqual(st.charge_agent_use(BUYER, lid)["charged"], 0)
 
     def test_creator_cannot_touch_banned(self) -> None:
         lid = _mk_listing()

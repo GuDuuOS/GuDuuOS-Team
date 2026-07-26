@@ -239,6 +239,69 @@ class OrderService:
             "tokens": tokens, "balance": new_bal,
         }
 
+    # —— 创作者认证费下单（P3 认证流程）——
+
+    def create_cert_order(
+        self, *, user_id: str, provider: str = "manual", return_url: str = "",
+    ) -> Dict[str, Any]:
+        """创作者认证费下单：金额从后台配置读（token_config.creator_cert_fee_cents，元→分已配好）。
+
+        与会员/token 下单同骨架、同回调端点；支付成功后履约=把认证申请从「待付费」
+        推进到「待审核」（见 on_payment_success 的 kind 分流）。货币固定 cny（认证费
+        面向国内创作者；将来要多币种再扩）。
+        """
+        if not user_id.startswith("@") or ":" not in user_id:
+            raise OrderError("非法用户")
+        if self._wallet is None:
+            raise OrderError("认证服务未开通")
+        cents = int(self._wallet.config().get("creator_cert_fee_cents") or 0)
+        if cents <= 0:
+            raise OrderError("当前认证免费，无需支付")
+        prov = self._providers.get(provider)
+        if prov is None:
+            raise OrderError(f"暂不支持的支付渠道 {provider}")
+        order_no = _gen_order_no()
+        with session_scope() as s:
+            order_repo.create_order(
+                s, order_no=order_no, user_id=user_id, plan_slug="creator-cert",
+                tier="", period_days=0, amount_cents=cents, currency="cny",
+                provider=provider, kind="creator_cert",
+            )
+        checkout = prov.create_checkout(
+            order_no=order_no, amount_cents=cents, currency="cny",
+            title="创作者认证费", return_url=return_url,
+        )
+        return {"order_no": order_no, "amount_cents": cents, "currency": "cny",
+                "checkout": checkout}
+
+    def _fulfill_cert_order(
+        self, order_no: str, *, provider_ref: str, user_id: str
+    ) -> Dict[str, Any]:
+        """认证费履约：原子置 paid → 申请状态 待付费→待审核（幂等）。
+
+        入账失败回滚订单待平台重试（收了钱必须把申请推进到待审）。
+        """
+        from cosmac.db import cert_repo
+
+        with session_scope() as s:
+            first = order_repo.mark_paid(
+                s, order_no, provider_ref=provider_ref, granted_expires_ts=0,
+            )
+        if not first:
+            return {"ok": True, "already": True, "order_no": order_no}
+        try:
+            with session_scope() as s:
+                ok = cert_repo.mark_paid(s, user_id, order_no)
+            if not ok:
+                raise RuntimeError("没有找到该用户的认证申请")
+        except Exception:
+            with session_scope() as s:
+                order_repo.revert_to_created(s, order_no)
+            logger.exception("订单 %s 已支付但认证申请推进失败，已回滚待重试", order_no)
+            raise OrderError("认证费入账失败，请稍后重试")
+        logger.info("订单 %s 支付成功：%s 认证申请进入待审核", order_no, user_id)
+        return {"ok": True, "order_no": order_no, "user_id": user_id, "cert": True}
+
     # —— 支付成功（平台回调归一化后调这里）——
 
     def on_payment_success(
@@ -288,6 +351,11 @@ class OrderService:
             return self._fulfill_token_order(
                 order_no, provider_ref=provider_ref,
                 user_id=user_id, tokens=order_tokens,
+            )
+        # 创作者认证费单（P3）：推进认证申请 待付费→待审核，不进会员逻辑。
+        if order_kind == "creator_cert":
+            return self._fulfill_cert_order(
+                order_no, provider_ref=provider_ref, user_id=user_id,
             )
 
         # 同一用户串行：读旧到期日 + 算 new_exp + 置 paid + grant 整体不被另一笔回调插队。

@@ -751,7 +751,9 @@ class MarketListing(Base, TimestampMixin):
     - 上架是**引用**而非拷贝：人设/模型仍读创作者的 user-scope Agent（创作者改人设即全网生效）；
       name/description 在此存**橱窗快照**（上架时定，避免商城文案被随意改来改去绕过审视）。
     - (creator, agent_slug) 唯一——同一个 Agent 只能上架一次；重复上架=更新价格/文案。
-    - status: on（在售）/ off（创作者下架）/ banned（管理员强制下架，创作者不可自行恢复）。
+    - status: pending（待平台审核，P3 起**任何上架/更新都先进这**，审核通过才在售）/
+      on（审核通过·在售）/ off（创作者下架）/ rejected（审核拒绝，review_reason 记原因，
+      可改后重新提交）/ banned（管理员强制下架，创作者不可自行恢复）。
     - uses/earned 是**冗余累计**（橱窗展示"多少人用过"与创作者收益总览用），逐笔明细在
       CreatorEarning；两者由同一事务一起更新。
     """
@@ -771,8 +773,10 @@ class MarketListing(Base, TimestampMixin):
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # 每次使用价（token）；0=免费用
     price_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    # on / off / banned
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="on", index=True)
+    # pending / on / off / rejected / banned（见 docstring；P3 起默认待审）
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    # 审核拒绝原因（rejected 时给创作者看，指导修改重提）
+    review_reason: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     # 冗余累计：总使用次数 / 创作者累计净收益（token）
     uses: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     earned: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
@@ -809,3 +813,45 @@ class CreatorEarning(Base):
 
     def __repr__(self) -> str:
         return f"<CreatorEarning #{self.id} {self.creator} +{self.net} (gross {self.gross})>"
+
+
+class CreatorApplication(Base, TimestampMixin):
+    """创作者认证申请（Token 经济 P3：类公众号认证流程，负责人 2026-07-26 定稿）。
+
+    流程：用户提交资料 → 付认证费（金额后台可配，走订单系统；测试通道先行、真实支付
+    接好自动切）→ 平台管理员审核资料 → 通过=授予「创作者会员」资格（可上架赚 token）。
+    **拒绝不退费、可免费重新提交**（认证费=审核服务费，公众号同款口径）——所以单独记
+    ``paid`` 位：重新提交时已付过就直接回待审、不再建单收费。
+
+    状态机（status）：
+        pending_payment  已提交资料、待付认证费
+        pending_review   已付费、待管理员审核（重新提交也回到这）
+        approved         已通过（同时已授予 creator 会员）
+        rejected         已拒绝（reason 记原因；用户可改资料重新提交）
+    一人一条（user_id 唯一）：重复申请就地覆盖资料、按状态机流转。
+    """
+
+    __tablename__ = "cosmac_creator_application"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # 申请人（@user:domain），唯一——一人一条申请（重新提交=更新本条）
+    user_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, unique=True, index=True
+    )
+    # —— 申请资料（审核依据；只收文本，不碰证件图片等敏感材料）——
+    name: Mapped[str] = mapped_column(String(128), nullable=False, default="")       # 称呼/机构名
+    contact: Mapped[str] = mapped_column(String(255), nullable=False, default="")    # 联系方式
+    intro: Mapped[str] = mapped_column(Text, nullable=False, default="")             # 自我介绍/资质
+    portfolio: Mapped[str] = mapped_column(Text, nullable=False, default="")         # 作品/能力证明
+    # 状态机（见 docstring）
+    status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="pending_payment", index=True
+    )
+    # 拒绝原因（rejected 时展示给用户，指导重新提交）
+    reason: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    # 认证费订单号（复用 cosmac_order，kind=creator_cert）；paid=是否已付过（免费重提判据）
+    order_no: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    paid: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    def __repr__(self) -> str:
+        return f"<CreatorApplication {self.user_id} {self.status}>"

@@ -1,4 +1,4 @@
-import{bg as s,al as g,a4 as v,cC as m,a0 as x,cj as w}from"./index-Dcwgs04P.js";function R1(){return String("http://localhost:5199").replace(/\/$/,"")}const T1="/assets/cosmac-logo-Bgg8S7cg.png",f=(a,t)=>{const h=a.__vccOpts||a;for(const[c,r]of t)h[c]=r;return h};/**
+import{bm as s,ar as g,a4 as v,cI as m,a0 as x,cp as w}from"./index-zLRKsXhs.js";function R1(){return String("http://localhost:5199").replace(/\/$/,"")}const T1="/assets/cosmac-logo-Bgg8S7cg.png",f=(a,t)=>{const h=a.__vccOpts||a;for(const[c,r]of t)h[c]=r;return h};/**
  * @license lucide-vue-next v0.577.0 - ISC
  *
  * This source code is licensed under the ISC license.
@@ -83,17 +83,17 @@ import{bg as s,al as g,a4 as v,cC as m,a0 as x,cj as w}from"./index-Dcwgs04P.js"
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const P=e("chart-column-big",[["path",{d:"M3 3v16a2 2 0 0 0 2 2h16",key:"c24i48"}],["rect",{x:"15",y:"5",width:"4",height:"12",rx:"1",key:"q8uenq"}],["rect",{x:"7",y:"8",width:"4",height:"9",rx:"1",key:"sr5ea"}]]);/**
+ */const I=e("chart-column-big",[["path",{d:"M3 3v16a2 2 0 0 0 2 2h16",key:"c24i48"}],["rect",{x:"15",y:"5",width:"4",height:"12",rx:"1",key:"q8uenq"}],["rect",{x:"7",y:"8",width:"4",height:"9",rx:"1",key:"sr5ea"}]]);/**
  * @license lucide-vue-next v0.577.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const U=e("check",[["path",{d:"M20 6 9 17l-5-5",key:"1gmf2c"}]]);/**
+ */const P=e("check",[["path",{d:"M20 6 9 17l-5-5",key:"1gmf2c"}]]);/**
  * @license lucide-vue-next v0.577.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const I=e("chevron-down",[["path",{d:"m6 9 6 6 6-6",key:"qrunsl"}]]);/**
+ */const U=e("chevron-down",[["path",{d:"m6 9 6 6 6-6",key:"qrunsl"}]]);/**
  * @license lucide-vue-next v0.577.0 - ISC
  *
  * This source code is licensed under the ISC license.
@@ -358,14 +358,14 @@ import{bg as s,al as g,a4 as v,cC as m,a0 as x,cj as w}from"./index-Dcwgs04P.js"
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const P1=e("wrench",[["path",{d:"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z",key:"1ngwbx"}]]);/**
+ */const I1=e("wrench",[["path",{d:"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z",key:"1ngwbx"}]]);/**
  * @license lucide-vue-next v0.577.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const U1=e("x",[["path",{d:"M18 6 6 18",key:"1bl5f8"}],["path",{d:"m6 6 12 12",key:"d8bk6v"}]]);/**
+ */const P1=e("x",[["path",{d:"M18 6 6 18",key:"1bl5f8"}],["path",{d:"m6 6 12 12",key:"d8bk6v"}]]);/**
  * @license lucide-vue-next v0.577.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const I1=e("zap",[["path",{d:"M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z",key:"1xq2db"}]]),$1=g({__name:"Icon",props:{name:{},size:{default:18},strokeWidth:{default:2}},setup(a){const t={dashboard:c1,tasks:T,tutorial:p1,org:B1,people:S1,star:q1,film:R,search:x1,settings:w1,profile:D,studio:G,usage:j1,lock:d1,gating:f1,bell:j,logout:k1,plus:u1,bot:A,archive:V,skills:P1,rules:m1,workflow:_1,templates:r1,knowledge:y1,pages:X,plug:M1,puzzle:i,plan:N,wallet:F,members:O,marketplace:H1,web:Q,edit:C1,close:U1,pin:i1,memory:L,clock:Z,flame:J,zap:I1,music:s1,image:a1,video:A1,phone:b1,camera:_,sparkle:z1,check:U,refresh:g1,"chevron-right":$,"chevron-down":I,upload:L1,download:E,trash:V1,link:o1,folder:K,message:l1,data:P,key:h1,rocket:v1,hash:Y,building:S,palette:n1,eye:W,home:e1,calendar:B,inbox:t1},h=a,c=x(()=>t[h.name]||i);return(r,o)=>(w(),v(m(c.value),{size:Number(a.size),"stroke-width":Number(a.strokeWidth),class:"app-icon"},null,8,["size","stroke-width"]))}}),Z1=f($1,[["__scopeId","data-v-d266f328"]]);export{Z1 as I,f as _,R1 as d,T1 as l};
+ */const U1=e("zap",[["path",{d:"M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z",key:"1xq2db"}]]),$1=g({__name:"Icon",props:{name:{},size:{default:18},strokeWidth:{default:2}},setup(a){const t={dashboard:c1,tasks:T,tutorial:p1,org:B1,people:S1,star:q1,film:R,search:x1,settings:w1,profile:D,studio:G,usage:j1,lock:d1,gating:f1,bell:j,logout:k1,plus:u1,bot:A,archive:V,skills:I1,rules:m1,workflow:_1,templates:r1,knowledge:y1,pages:X,plug:M1,puzzle:i,plan:N,wallet:F,members:O,marketplace:H1,web:Q,edit:C1,close:P1,pin:i1,memory:L,clock:Z,flame:J,zap:U1,music:s1,image:a1,video:A1,phone:b1,camera:_,sparkle:z1,check:P,refresh:g1,"chevron-right":$,"chevron-down":U,upload:L1,download:E,trash:V1,link:o1,folder:K,message:l1,data:I,key:h1,rocket:v1,hash:Y,building:S,palette:n1,eye:W,home:e1,calendar:B,inbox:t1},h=a,c=x(()=>t[h.name]||i);return(r,o)=>(w(),v(m(c.value),{size:Number(a.size),"stroke-width":Number(a.strokeWidth),class:"app-icon"},null,8,["size","stroke-width"]))}}),Z1=f($1,[["__scopeId","data-v-d266f328"]]);export{Z1 as I,f as _,R1 as d,T1 as l};

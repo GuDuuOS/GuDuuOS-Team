@@ -25,8 +25,9 @@ def upsert_listing(
 ) -> Optional[MarketListing]:
     """上架/更新一条 listing（同 (creator, agent_slug) 幂等更新）。
 
-    被管理员 banned 的条目创作者不可经此恢复/修改（返回 None，调用方转提示）；
-    创作者主动 off 过的重新上架=置回 on。
+    **P3 起任何上架/更新都进 pending 待审**（负责人定稿：任何更新都重审）——原在售的
+    改价/改文案也立即变待审（待审期间下架，不再可购可用），审核通过才恢复在售。
+    被管理员 banned 的条目创作者不可经此复活/修改（返回 None，调用方转提示）。
     """
     row = session.execute(
         select(MarketListing).where(
@@ -42,7 +43,8 @@ def upsert_listing(
     row.name = name
     row.description = description
     row.price_tokens = max(0, int(price_tokens))
-    row.status = "on"
+    row.status = "pending"      # 任何上架/更新一律待审
+    row.review_reason = ""
     session.flush()
     return row
 
@@ -50,19 +52,44 @@ def upsert_listing(
 def set_status(
     session: Session, listing_id: int, status: str, *, creator: str = ""
 ) -> bool:
-    """改上架状态。creator 非空=创作者本人操作（只能动自己的、且动不了 banned）；
-    空=管理员操作（可 banned/恢复任何条目）。成功返回 True。"""
+    """改上架状态。creator 非空=创作者本人操作：只能把自己的**下架(off)**——重新上架
+    必须走 upsert 进待审（审核通过才能在售），不能自置 on。空=管理员操作（banned/恢复）。
+    成功返回 True。"""
     row = session.get(MarketListing, int(listing_id))
     if row is None:
         return False
     if creator:
         if row.creator != creator or row.status == "banned":
             return False
-        if status not in ("on", "off"):
-            return False
+        if status != "off":
+            return False  # 创作者只能下架；上架必经审核
     row.status = status
     session.flush()
     return True
+
+
+def review_listing(
+    session: Session, listing_id: int, *, approve: bool, reason: str = ""
+) -> Optional[MarketListing]:
+    """管理员审核上架：approve=True → on（在售）；False → rejected（记原因）。
+
+    只审 pending 的（防止把在售/banned 的误操作）；状态不符返回 None。
+    """
+    row = session.get(MarketListing, int(listing_id))
+    if row is None or row.status != "pending":
+        return None
+    row.status = "on" if approve else "rejected"
+    row.review_reason = "" if approve else (reason or "")[:500]
+    session.flush()
+    return row
+
+
+def list_pending(session: Session, *, limit: int = 200) -> List[MarketListing]:
+    """全部待审 listing（管理员后台，旧→新：先来先审）。"""
+    return list(session.execute(
+        select(MarketListing).where(MarketListing.status == "pending")
+        .order_by(MarketListing.id.asc()).limit(max(1, min(int(limit), 500)))
+    ).scalars())
 
 
 def get_listing(session: Session, listing_id: int) -> Optional[MarketListing]:

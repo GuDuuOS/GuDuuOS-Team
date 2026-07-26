@@ -44,6 +44,8 @@ _DEFAULTS: Dict[str, Any] = {
     "free_grant": 0,        # 新钱包一次性欢迎赠送，默认 0（与每日免费额度是两回事）
     "min_balance": 1,       # 钱包余额低于此且无免费额度时，拦截并提示充值
     "platform_fee_pct": 10,  # 创作者商城平台抽成百分比（负责人定稿 10%；其余归创作者）
+    # 创作者认证费（分，P3 类公众号认证；默认 300 元）。拒绝不退、可免费重提（定稿）。
+    "creator_cert_fee_cents": 30000,
 }
 
 
@@ -116,6 +118,9 @@ def parse_token_config(ev: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         # 平台抽成百分比（P2 创作者商城）：0~100，脏值回默认 10
         "platform_fee_pct": min(100, max(0, _as_int(
             raw.get("platform_fee_pct"), _DEFAULTS["platform_fee_pct"]))),
+        # 创作者认证费（分；0=免费认证）
+        "creator_cert_fee_cents": max(0, _as_int(
+            raw.get("creator_cert_fee_cents"), _DEFAULTS["creator_cert_fee_cents"])),
         # 充值包（1c）：管理员在后台配的"多少钱买多少 token"套餐，下单时按 slug 取快照。
         "packages": _parse_packages(raw.get("packages")),
     }

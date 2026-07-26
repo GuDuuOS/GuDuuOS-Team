@@ -94,10 +94,54 @@
           <div v-else class="cam-add"><button class="cam-add-btn" @click="newSkill">＋ 新建技能</button></div>
         </template>
 
-        <!-- ═══ 上架·收益（创作者商城 P2）═══ -->
+        <!-- ═══ 上架·收益（创作者商城 P2/P3）═══ -->
         <template v-else-if="tab === 'publish'">
+          <!-- 非创作者：认证申请流程（P3 类公众号：提交资料→付认证费→平台审核） -->
           <template v-if="!pubData?.is_creator">
-            <div class="cam-help cam-help-top">把你的自建智能体上架到商城、按次收 token，需要<b>创作者会员</b>资格。升级后即可上架赚 token。</div>
+            <div class="cam-help cam-help-top">把你的自建智能体上架到商城、按次收 token，需要先<b>申请成为创作者</b>：提交资料 → 支付认证费{{ certFeeText }} → 平台审核通过即获得创作者资格。审核不通过不退费，但可免费修改资料重新提交。</div>
+
+            <!-- 审核中 -->
+            <div v-if="certApp?.status === 'pending_review'" class="ms-cert-status">
+              ⏳ 你的认证申请<b>审核中</b>——平台会尽快审核，通过后这里自动解锁上架功能。
+            </div>
+            <!-- 被拒：展示原因 + 重新提交表单 -->
+            <template v-else-if="certApp?.status === 'rejected' && !certEditing">
+              <div class="ms-cert-status rejected">
+                ❌ 上次申请未通过：{{ certApp.reason || '未说明原因' }}
+              </div>
+              <div class="ms-actions"><button class="cam-add-btn" @click="startCertEdit">修改资料重新提交（免费）</button></div>
+            </template>
+            <!-- 待付费：已提交资料、还没付 -->
+            <template v-else-if="certApp?.status === 'pending_payment' && !certOrder && !certEditing">
+              <div class="ms-cert-status">资料已提交，还差最后一步：支付认证费{{ certFeeText }}。</div>
+              <div class="ms-actions">
+                <button class="cam-add-btn" :disabled="busy" @click="certPay">{{ busy ? '下单中…' : `支付认证费${certFeeText}` }}</button>
+                <button class="cam-mini" @click="startCertEdit">修改资料</button>
+              </div>
+            </template>
+            <!-- 申请表单（新申请 / 修改资料） -->
+            <template v-else-if="certEditing || !certApp">
+              <div class="ms-form">
+                <input v-model.trim="certForm.name" class="cam-input" placeholder="称呼 / 机构名（必填）" />
+                <input v-model.trim="certForm.contact" class="cam-input" placeholder="联系方式：手机 / 微信 / 邮箱（必填，审核联系用）" />
+                <textarea v-model="certForm.intro" class="cam-input ms-ta" rows="3" maxlength="2000" placeholder="自我介绍 / 资质说明（必填）：你是谁、擅长什么领域" />
+                <textarea v-model="certForm.portfolio" class="cam-input ms-ta" rows="3" maxlength="4000" placeholder="作品 / 能力证明（选填）：代表作、账号链接、案例说明等" />
+                <div class="ms-actions">
+                  <button v-if="certApp" class="cam-mini" @click="certEditing = false">取消</button>
+                  <button class="cam-add-btn" :disabled="busy || !certForm.name || !certForm.contact || !certForm.intro" @click="certSubmit">
+                    {{ busy ? '提交中…' : '提交申请' }}
+                  </button>
+                </div>
+              </div>
+            </template>
+            <!-- 认证费订单：测试通道确认 -->
+            <template v-if="certOrder">
+              <div class="ms-cert-status">订单 <code>{{ certOrder.order_no }}</code> 已创建（测试通道，不收款）</div>
+              <div class="ms-actions">
+                <button class="cam-add-btn" :disabled="busy" @click="certConfirmPay">{{ busy ? '确认中…' : '模拟支付成功（测试）' }}</button>
+                <button class="cam-mini" @click="certOrder = null">取消</button>
+              </div>
+            </template>
           </template>
           <template v-else>
             <!-- 收益汇总 -->
@@ -111,15 +155,18 @@
               <div class="cam-row-main">
                 <div class="cam-row-label">{{ li.name }} <code class="ms-slug">{{ li.agent_slug }}</code>
                   <span v-if="li.status === 'banned'" class="cam-tag" style="background:#f6e3e3;color:#b94a4a">平台下架</span>
+                  <span v-else-if="li.status === 'pending'" class="cam-tag" style="background:#f4ead9;color:#9a6b1f">审核中</span>
+                  <span v-else-if="li.status === 'rejected'" class="cam-tag" style="background:#f6e3e3;color:#b94a4a">未通过</span>
                   <span v-else-if="li.status === 'off'" class="cam-tag" style="background:#eee;color:#888">已下架</span>
                   <span v-else class="cam-tag" style="background:#e5efe0;color:#4a7b42">在售</span>
                 </div>
                 <div class="cam-row-desc">{{ li.price_tokens > 0 ? `${li.price_tokens.toLocaleString()} token/次` : '免费用' }} · 被使用 {{ li.uses }} 次 · 已赚 {{ li.earned.toLocaleString() }} token</div>
+                <div v-if="li.status === 'rejected' && li.review_reason" class="cam-row-desc" style="color:#b94a4a">拒绝原因：{{ li.review_reason }}（可在下方重新提交，将再次审核）</div>
               </div>
               <button v-if="li.status === 'on'" class="cam-mini" :disabled="busy" @click="setListing(li.id, 'off')">下架</button>
-              <button v-else-if="li.status === 'off'" class="cam-mini" :disabled="busy" @click="setListing(li.id, 'on')">重新上架</button>
+              <button v-else-if="li.status === 'off' || li.status === 'rejected'" class="cam-mini" :disabled="busy" @click="republish(li)">重新提交审核</button>
             </div>
-            <p v-if="!(pubData?.items || []).length" class="cam-row-desc" style="padding:8px 2px">还没有上架。选一个你的智能体、定个价，让全站用户用起来。</p>
+            <p v-if="!(pubData?.items || []).length" class="cam-row-desc" style="padding:8px 2px">还没有上架。选一个你的智能体、定个价提交审核，通过后即可售卖。</p>
 
             <!-- 上架表单 -->
             <div class="ms-form">
@@ -128,9 +175,9 @@
                 <option v-for="a in agents.filter((x) => x.enabled)" :key="a.slug" :value="a.slug">{{ a.name }}（{{ a.slug }}）</option>
               </select>
               <input v-model.number="pubForm.price" class="cam-input" type="number" min="0" placeholder="每次使用价（token，0=免费）" />
-              <span class="ms-hint">上架是「引用」：人设仍归你、不会公开；用户获取免费，<b>使用时</b>按你定的价扣 token，平台抽成后其余实时充进你的钱包。改人设即全网生效；重复上架同一个智能体=更新价格。</span>
+              <span class="ms-hint">提交后进入<b>平台审核</b>，通过才在售（任何修改都会重新审核，审核期间暂不可售）。上架是「引用」：人设仍归你、不会公开给用户；用户获取免费，<b>使用时</b>按你定的价扣 token，平台抽成后其余实时充进你的钱包。</span>
               <div class="ms-actions">
-                <button class="cam-add-btn" :disabled="busy || !pubForm.agent_slug" @click="publish">{{ busy ? '上架中…' : '上架 / 更新价格' }}</button>
+                <button class="cam-add-btn" :disabled="busy || !pubForm.agent_slug" @click="publish">{{ busy ? '提交中…' : '提交上架审核' }}</button>
               </div>
             </div>
 
@@ -187,15 +234,17 @@
 
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue'
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import '@/styles/admin-modal.css'
 import {
   myAgentsList, myAgentSave, myAgentDelete,
   mySkillsList, mySkillSave, mySkillDelete,
   fetchMarketAcquired, setMarketItemAcquired, getMyUsage,
   creatorListings, creatorPublish, creatorSetStatus, creatorEarnings,
+  creatorApplyGet, creatorApplySubmit, payManualConfirm,
   type MyAgent, type MySkill, type AcquiredItem,
-  type CreatorListingsResp, type CreatorEarningItem,
+  type CreatorListingsResp, type CreatorEarningItem, type CreatorApplication,
+  type CreatorListing,
 } from '@/matrix/client'
 import { CAT_META } from '@/data/marketplace'
 
@@ -234,11 +283,79 @@ async function load() {
   pubData.value = pub
 }
 
-/** 切到「上架·收益」时顺带拉最近收益明细（懒加载，别的页签不掏这个钱）。 */
+/* —— 创作者认证申请（P3）—— */
+const certApp = ref<CreatorApplication | null>(null)
+const certFee = ref(0)                     // 认证费（分）
+const certEditing = ref(false)             // 是否在编辑申请表单
+const certForm = reactive({ name: '', contact: '', intro: '', portfolio: '' })
+const certOrder = ref<{ order_no: string; checkout?: any } | null>(null)
+const certFeeText = computed(() => certFee.value > 0 ? `（¥${(certFee.value / 100).toFixed(2)}）` : '（当前免费）')
+
+/** 切到「上架·收益」时顺带拉最近收益明细 + 认证申请状态（懒加载）。 */
 async function switchPublish() {
   tab.value = 'publish'
-  const e = await creatorEarnings(20)
+  const [e, ap] = await Promise.all([creatorEarnings(20), creatorApplyGet()])
   earnItems.value = e?.items || []
+  if (ap) {
+    certApp.value = ap.application
+    certFee.value = ap.cert_fee_cents || 0
+    if (ap.application) Object.assign(certForm, {
+      name: ap.application.name, contact: ap.application.contact,
+      intro: ap.application.intro, portfolio: ap.application.portfolio,
+    })
+  }
+}
+
+function startCertEdit() { certEditing.value = true }
+
+/** 提交/重新提交认证申请；后端待付费时会带回订单。 */
+async function certSubmit() {
+  busy.value = true; errText.value = ''
+  try {
+    const r = await creatorApplySubmit({ ...certForm })
+    certEditing.value = false
+    if (r.status === 'pending_payment' && r.order_no) {
+      certOrder.value = { order_no: r.order_no, checkout: r.checkout }
+    }
+    const ap = await creatorApplyGet()
+    if (ap) certApp.value = ap.application
+  } catch (e: any) { errText.value = e?.message || String(e) }
+  finally { busy.value = false }
+}
+
+/** 已提交待付费：单独点「支付认证费」（重进页面时表单不重填）。 */
+async function certPay() {
+  busy.value = true; errText.value = ''
+  try {
+    const r = await creatorApplySubmit({ ...certForm })
+    if (r.status === 'pending_payment' && r.order_no) {
+      certOrder.value = { order_no: r.order_no, checkout: r.checkout }
+    }
+  } catch (e: any) { errText.value = e?.message || String(e) }
+  finally { busy.value = false }
+}
+
+/** 认证费测试通道确认 → 申请进入待审核。 */
+async function certConfirmPay() {
+  if (!certOrder.value) return
+  busy.value = true; errText.value = ''
+  try {
+    await payManualConfirm(certOrder.value.order_no, certOrder.value.checkout?.extra?.confirm_token || '')
+    certOrder.value = null
+    const ap = await creatorApplyGet()
+    if (ap) certApp.value = ap.application
+  } catch (e: any) { errText.value = e?.message || String(e) }
+  finally { busy.value = false }
+}
+
+/** off/rejected 条目重新提交审核（P3：重新上架必经审核，走 publish 而非直接置 on）。 */
+async function republish(li: CreatorListing) {
+  busy.value = true; errText.value = ''
+  try {
+    await creatorPublish(li.agent_slug, li.price_tokens, li.name, li.description)
+    pubData.value = await creatorListings()
+  } catch (e: any) { errText.value = e?.message || String(e) }
+  finally { busy.value = false }
 }
 
 /** 上架/更新价格。 */
@@ -343,6 +460,8 @@ async function delSkill(slug: string) {
 .ms-earn-num { font-size: 24px; font-weight: 800; color: var(--accent, #c96442); }
 .ms-earn-num span { font-size: 12px; font-weight: 400; color: var(--text-3); margin-left: 6px; }
 .ms-earn-sub { font-size: 12px; color: var(--text-2); margin-top: 4px; }
+.ms-cert-status { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin: 8px 0; font-size: 13px; line-height: 1.6; }
+.ms-cert-status.rejected { background: #fdf3f3; border-color: #e8c9c9; color: #8a3b3b; }
 .ms-earn-row { display: flex; align-items: baseline; gap: 8px; padding: 6px 2px; border-bottom: 1px dashed var(--border); font-size: 12.5px; }
 .ms-earn-what { flex: 1; color: var(--text); }
 .ms-earn-net { font-weight: 700; color: #2c9a5b; }
