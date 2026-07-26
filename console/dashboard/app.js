@@ -982,6 +982,26 @@
     });
   }
 
+  let mapStageObserver = null;
+
+  /** 地图舞台一拿到真实尺寸就重算标记位置。
+   *
+   *  为什么用 ResizeObserver 而不是 rAF/setTimeout 赌时机:标记的像素位置要靠
+   *  getBoundingClientRect 量 SVG,而首屏有揭示动画、布局稳定的时刻不固定——单 rAF、
+   *  双 rAF 都试过,量到的仍是 0,标记卡在占位的 50%/50%(手动触发 resize 才归位)。
+   *  ResizeObserver 在元素真正拿到/改变尺寸时才回调,是这件事的正确原语,顺带把
+   *  窗口缩放、面板折叠等布局变化也一并覆盖了。 */
+  function observeMapStageSize() {
+    const stage = $("#world-map-stage");
+    if (!stage || mapStageObserver || typeof ResizeObserver === "undefined") {
+      // 环境不支持 ResizeObserver 时退化成一次性延时兜底,总比不定位强
+      if (stage && !mapStageObserver) window.setTimeout(() => positionMapCallouts(), 400);
+      return;
+    }
+    mapStageObserver = new ResizeObserver(() => positionMapCallouts());
+    mapStageObserver.observe(stage);
+  }
+
   function mapCellNoise(x, y, salt = 0) {
     const raw = Math.sin(x * 12.9898 + y * 78.233 + salt * 37.719) * 43758.5453;
     return raw - Math.floor(raw);
@@ -999,7 +1019,37 @@
       : [];
   }
 
-  function buildHexCellMarkup(landCells, hotspots) {
+  /** 把每个地域吸附到**最近的陆地格子**：一个地域只点亮一个格子。
+   *
+   *  为什么要吸附而不是直接用投影坐标：地图是六边形栅格,投影出来的点未必正好落在某个
+   *  格子中心,更可能落在两格之间甚至海里(沿海城市尤其常见)。吸附到最近的陆地格子后,
+   *  ①点一定在陆地上 ②标记与被点亮的格子严格对齐 ③一个实例=一个格子,不会糊成一片。
+   *  已被占用的格子会跳过,保证两个相邻地域不会抢同一格。 */
+  function assignRegionCells(landCells, groups, project) {
+    const used = new Set();
+    const byCell = new Map();     // cellIndex → group
+    for (const group of groups) {
+      const [px, py] = project([group.lon, group.lat]);
+      let best = -1;
+      let bestDistance = Infinity;
+      landCells.forEach(([x, y], index) => {
+        if (used.has(index)) return;
+        const distance = Math.hypot(x - px, y - py);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = index;
+        }
+      });
+      if (best >= 0) {
+        used.add(best);
+        byCell.set(best, group);
+        group.cell = landCells[best];   // 记下格子中心,标记按它定位
+      }
+    }
+    return byCell;
+  }
+
+  function buildHexCellMarkup(landCells, hotspots, regionCells = null) {
     const radius = 5.65;
     const halfHeight = (Math.sqrt(3) * radius) / 2;
 
@@ -1022,7 +1072,19 @@
         let hotNodeId = "";
         let heatScore = Math.round(8 + mapCellNoise(x, y, 4) * 22);
 
-        if (nearest) {
+        // 真实模式:只点亮"被指派给某地域"的那一个格子。演示模式(regionCells 为空)
+        // 才走下面按 radius 铺光晕的老逻辑——那是给空场景看的装饰,不能用来表示真实节点。
+        if (regionCells) {
+          const group = regionCells.get(cellIndex);
+          if (group) {
+            fill = group.color || "#6e7cf6";
+            stroke = "rgba(255,255,255,0.55)";
+            opacity = 1;
+            hotClass = " is-hot";
+            hotNodeId = group.id;
+            heatScore = 99;
+          }
+        } else if (nearest) {
           const intensity = 1 - nearest.distance;
           heatScore = Math.round(36 + intensity * 63);
           const shouldColor = intensity > 0.56 || colorNoise < 0.14 + intensity * 0.83;
@@ -1097,30 +1159,54 @@
       // 热点来源：**优先用真实实例的经纬度**（母舰按 OEM 装机时选的机房算出来的）。
       // 只有一个真实实例都没定位到时，才回落到 MAP_HOTSPOT_DEFINITIONS 那组演示坐标
       // ——否则地图上画的是芝加哥/柏林这些假点，而真实节点一个都不在（负责人实报"看不到任何节点"）。
+      // 真实节点**按地域合并**：同一个地域(如都在浙江)只出一个点,并记下实例数——
+      // 否则同地域的多台机器会叠在同一格上、看起来像重影(负责人实报"同区域应该是一个")。
       const geoNodes = state.nodes.filter((n) => n.geoKnown);
-      const worldHotspots = geoNodes.length
-        ? geoNodes.map((node, i) => {
-            const palette = MAP_HOTSPOT_DEFINITIONS[i % MAP_HOTSPOT_DEFINITIONS.length];
-            const [x, y] = project
-              ? project([node.lon, node.lat])
-              : palette.fallback;
-            return {
-              id: node.id,          // 用真实节点 id，让 .geo-node 标记能对上
-              coordinates: [node.lon, node.lat],
-              radius: palette.radius,
-              core: palette.core,
-              mid: palette.mid,
-              outer: palette.outer,
-              x,
-              y,
-            };
-          })
-        : MAP_HOTSPOT_DEFINITIONS.map((hotspot) => {
-            const [x, y] = project ? project(hotspot.coordinates) : hotspot.fallback;
-            return { ...hotspot, x, y };
+      const groupMap = new Map();
+      for (const node of geoNodes) {
+        const key = node.regionCode || `${node.lat},${node.lon}`;
+        const g = groupMap.get(key);
+        if (g) {
+          g.nodes.push(node);
+        } else {
+          groupMap.set(key, {
+            id: node.id,               // 用组内首个节点 id 当标识,便于与排行/选中联动
+            regionLabel: node.region || "",
+            lat: node.lat,
+            lon: node.lon,
+            color: node.color,
+            nodes: [node],
+            cell: null,
           });
+        }
+      }
+      const geoGroups = [...groupMap.values()];
+      state.geoGroups = geoGroups;
+
+      let regionCells = null;
+      let worldHotspots;
+      if (geoGroups.length && project) {
+        regionCells = assignRegionCells(landCells, geoGroups, project);
+        // 热点坐标用**吸附后的格子中心**,保证标记与点亮的格子严格对齐
+        worldHotspots = geoGroups.map((g) => ({
+          id: g.id,
+          coordinates: [g.lon, g.lat],
+          radius: 1,                   // 真实模式不铺光晕,点亮哪格由 regionCells 决定
+          core: g.color,
+          mid: [g.color],
+          outer: [g.color],
+          x: g.cell ? g.cell[0] : project([g.lon, g.lat])[0],
+          y: g.cell ? g.cell[1] : project([g.lon, g.lat])[1],
+        }));
+      } else {
+        // 一个真实节点都没定位到：回落演示热点，免得地图完全空白
+        worldHotspots = MAP_HOTSPOT_DEFINITIONS.map((hotspot) => {
+          const [x, y] = project ? project(hotspot.coordinates) : hotspot.fallback;
+          return { ...hotspot, x, y };
+        });
+      }
       state.mapScene = {
-        cellMarkup: buildHexCellMarkup(landCells, worldHotspots),
+        cellMarkup: buildHexCellMarkup(landCells, worldHotspots, regionCells),
         cellCount: landCells.length,
         hotspots: worldHotspots,
       };
@@ -1147,19 +1233,25 @@
   function renderRealGeoMarkers() {
     const stage = $("#world-map-stage");
     if (!stage) return;
-    const geoNodes = state.nodes.filter((n) => n.geoKnown);
-    if (!geoNodes.length) return;   // 一个都没定位：保留演示件，别把地图弄成空白
+    // 按地域合并后的组（renderMapDecorations 里算好的）：同地区多台机器只出一个标记
+    const geoGroups = state.geoGroups || [];
+    if (!geoGroups.length) return;  // 一个都没定位：保留演示件，别把地图弄成空白
 
     stage.querySelectorAll(".geo-node").forEach((el) => el.remove());
     const icon =
       '<svg viewBox="0 0 20 20"><rect x="4" y="4" width="12" height="12" rx="2"></rect>' +
       '<path d="M7 8h6M7 11h6M7 14h4"></path></svg>';
     const frag = document.createDocumentFragment();
-    for (const node of geoNodes) {
+    for (const group of geoGroups) {
+      const node = group.nodes[0];
+      const count = group.nodes.length;
+      // 同地域多台：主名后缀「+N」,一眼看出这个点代表几台,而不是画成重影
+      const displayName = count > 1 ? `${node.name} +${count - 1}` : node.name;
+      const sumToken = group.nodes.reduce((acc, n) => acc + (Number(n.token) || 0), 0);
       const btn = document.createElement("button");
       btn.className = "geo-node";
       btn.type = "button";
-      btn.dataset.nodeId = node.id;
+      btn.dataset.nodeId = group.id;
       btn.style.setProperty("--geo-color", node.color || "#6e7cf6");
       // 具体像素位置由 positionMapCallouts() 按投影算；这里先给个占位百分比避免闪到左上角
       btn.style.setProperty("--geo-x", "50%");
@@ -1168,9 +1260,9 @@
         '<span class="geo-node__card">' +
         `<span class="geo-node__icon" aria-hidden="true">${icon}</span>` +
         '<span class="geo-node__copy">' +
-        `<small>${escapeHtml(node.region || "")}</small>` +
-        `<strong><span class="geo-node__name">${escapeHtml(node.name || "")}</span>` +
-        `<em>${escapeHtml(String(node.token ?? ""))}${TOKEN_UNIT.label}</em></strong>` +
+        `<small>${escapeHtml(group.regionLabel)}${count > 1 ? ` · ${count} 台` : ""}</small>` +
+        `<strong><span class="geo-node__name">${escapeHtml(displayName)}</span>` +
+        `<em>${escapeHtml(String(Number(sumToken.toFixed(2))))}${TOKEN_UNIT.label}</em></strong>` +
         "</span></span>";
       frag.appendChild(btn);
     }
@@ -1178,13 +1270,11 @@
     // 关键:把"地图作用域白名单"换成真实节点 id。GLOBAL_MAP_CONFIG.nodeIds 原本是一串写死的
     // 演示 id(nb/db/gl…),真实节点不在其中会被 updateMapFilters 判成 is-out-of-scope 而隐藏
     // ——标记明明生成了却看不见,就卡在这一步(本地实测定位)。
-    GLOBAL_MAP_CONFIG.nodeIds = geoNodes.map((n) => n.id);
+    GLOBAL_MAP_CONFIG.nodeIds = geoGroups.map((g) => g.id);
     // 演示期的 callout 冲突表(按演示 id 写死)对真实节点没有意义,清掉免得误伤
     MAP_CALLOUT_CONFLICTS.clear();
-    // 标记是在 renderMapDecorations 之后才建的,而算像素位置的 positionMapCallouts 那时已经
-    // 跑过了 → 不补这一下,标记会一直停在占位的 50%/50%(本地实测:手动触发 resize 才归位)。
-    // 用 rAF 等浏览器完成一次布局,否则 getBoundingClientRect 拿到的是 0。
-    window.requestAnimationFrame(() => positionMapCallouts());
+    // 注:像素定位不在这里做——此刻 SVG 还没完成布局(量到的尺寸是 0),rAF 也不够稳。
+    // 统一放到 init() 末尾、场景全部就绪后再算一次(见 init 里的 positionMapCallouts)。
   }
 
   /** 极简 HTML 转义：节点名/地域来自服务端，虽可信但拼进 innerHTML 前一律转义。 */
@@ -2779,6 +2869,7 @@
     initOverviewCarousel();
     initInteractions();
     switchVisualMode("global");
+    observeMapStageSize();
     resizeTrend();
     initLiveMetrics();
   }
