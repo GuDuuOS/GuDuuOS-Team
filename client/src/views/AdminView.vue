@@ -3533,7 +3533,9 @@ watch([tab, state], () => nextTick(rewireHead))
 .adm-close {
   position: absolute;
   top: 14px; right: 18px;
-  z-index: 3;
+  /* 必须高于吸顶页头(.adm-head/.adm-filters 的 z-index:5)——否则页头的全宽背景会盖住
+     关闭按钮,用户无法退出后台(负责人实报:关闭按钮丢失)。 */
+  z-index: 20;
   width: 30px; height: 30px;
   border: 1px solid var(--border);
   border-radius: 8px;
