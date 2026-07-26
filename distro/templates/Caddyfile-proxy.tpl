@@ -48,9 +48,20 @@
 		respond `{"m.homeserver": {"base_url": "https://{{DOMAIN}}"}}` 200
 	}
 
+	# —— 构建产物（文件名自带内容哈希）——
+	# 必须排在通配 handle **之前**，且不做 SPA 回退：不存在就该 404。
+	# 理由与直出模板一致，详见 Caddyfile.tpl 同段注释。
+	handle /assets/* {
+		root * /srv
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
 	# —— 前端静态 ——
 	handle {
 		root * /srv
+		# index.html 绝不缓存：它是「本次构建用哪套 chunk」的唯一索引。
+		header Cache-Control "no-cache"
 		try_files {path} /index.html
 		file_server
 	}

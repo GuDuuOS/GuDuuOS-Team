@@ -49,9 +49,25 @@
 		respond `{"m.homeserver": {"base_url": "https://{{DOMAIN}}"}}` 200
 	}
 
+	# —— 构建产物（文件名自带内容哈希）——
+	# ⚠️ 必须排在通配 handle **之前**，且**不做 SPA 回退**：文件不存在就该老实 404。
+	# 若回退成 index.html，浏览器会拿着 HTML 当 JS 解析、动态 import 静默失败，
+	# 表现是「点了没反应」而非报错，极难排查（负责人实报「添加账号点了没反应」，
+	# 根因正是浏览器缓存着旧 index.html → 请求已被新构建删除的 chunk → 被回退成 HTML）。
+	# 文件名带哈希，内容一变名字就变，所以可以放心永久缓存。
+	handle /assets/* {
+		root * /srv
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
 	# —— 前端静态（hash 路由，深链统一回 index.html）——
 	handle {
 		root * /srv
+		# index.html 绝不能被缓存：它是「本次构建用哪套 chunk」的唯一索引。
+		# 一旦被浏览器缓存住，用户会一直引用上个版本的 chunk（部署后已删除）。
+		# 之前这里没有任何 Cache-Control，浏览器按启发式缓存了数小时。
+		header Cache-Control "no-cache"
 		try_files {path} /index.html
 		file_server
 	}
