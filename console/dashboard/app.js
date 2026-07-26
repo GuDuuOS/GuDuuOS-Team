@@ -743,6 +743,58 @@
     return Math.min(max, Math.max(min, value));
   }
 
+  // ══════════ 品牌色 → 文字安全色 ══════════
+  // OEM 的品牌色(青/橙/紫/绿…)用作**色块**时——球体、图标渐变、地图格子、
+  // 光晕——鲜艳是对的,不能动。但同一个色值直接拿去写**文字**,在接近白的
+  // 卡片底上只有 1.7~3.6:1,远低于 AA 的 4.5,正是「大屏上看不清」的一部分。
+  // 这里按同色相压暗到刚好达标:色块继续用原色,文字改用本函数的返回值。
+  function relLuminance([r, g, b]) {
+    const f = (c) => {
+      c /= 255;
+      return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+  }
+
+  // 默认目标取 4.6 而不是 AA 线 4.5,留 0.1 余量:一是下面二分找的是「改动最小」
+  // 的解,会稳定落在略低于 target 的位置;二是卡片底色常比纯白略暗一点点。
+  // 不留余量就会出现 4.49 这种擦线不过的结果。
+  function textSafeColor(hex, target = 4.6) {
+    const matched = /^#?([0-9a-f]{6})$/i.exec(String(hex || "").trim());
+    if (!matched) return hex;   // 认不出的格式原样返回,绝不因为配色问题把界面搞崩
+    const rgb = [0, 2, 4].map((i) => Number.parseInt(matched[1].slice(i, i + 2), 16));
+    // 标注卡片是接近纯白的浅底,按纯白算最严格 —— 在白底上达标,在其它浅底上必然也达标
+    const contrastOnWhite = (c) => 1.05 / (relLuminance(c) + 0.05);
+    if (contrastOnWhite(rgb) >= target) return hex;
+    // 二分找**最大**的缩放系数(即改动最小的那个),三分量等比缩放 → 色相基本不变,
+    // 仍看得出是青/橙/紫,只是更深。比直接调成灰褐色保留了品牌辨识度。
+    let low = 0;
+    let high = 1;
+    for (let i = 0; i < 40; i += 1) {
+      const mid = (low + high) / 2;
+      if (contrastOnWhite(rgb.map((c) => c * mid)) >= target) low = mid;
+      else high = mid;
+    }
+    return `#${rgb.map((c) => Math.round(c * low).toString(16).padStart(2, "0")).join("")}`;
+  }
+
+  /** 给地图上所有节点标记补齐「文字安全色」(--geo-color-text)。
+   *
+   *  为什么要单独一步:.geo-node 有**两个来源** ——
+   *    ① index.html 里写死的 8 个演示节点(只有 --geo-color);
+   *    ② renderRealGeoMarkers() 用真实实例重建的节点(创建时已设好)。
+   *  接上真实 Nexus 数据时走 ②,本地/演示态走 ①。与其在 HTML 里手写 8 份
+   *  算好的色值(将来加节点必漏),不如在这里按 --geo-color 统一推导。
+   *  幂等:已有值的跳过,所以放在 renderRealGeoMarkers() 之后调用是安全的。
+   */
+  function ensureGeoTextColors() {
+    $$(".geo-node").forEach((marker) => {
+      if (marker.style.getPropertyValue("--geo-color-text")) return;
+      const base = marker.style.getPropertyValue("--geo-color").trim();
+      if (base) marker.style.setProperty("--geo-color-text", textSafeColor(base));
+    });
+  }
+
   function hexToRgba(hex, alpha = 1) {
     const normalized = hex.replace("#", "");
     const value = Number.parseInt(normalized.length === 3 ? normalized.split("").map((c) => c + c).join("") : normalized, 16);
@@ -1345,7 +1397,9 @@
       btn.className = "geo-node";
       btn.type = "button";
       btn.dataset.nodeId = group.id;
-      btn.style.setProperty("--geo-color", node.color || "#6e7cf6");
+      const geoColor = node.color || "#6e7cf6";
+      btn.style.setProperty("--geo-color", geoColor);            // 色块用:图标渐变/阴影/边框/描边
+      btn.style.setProperty("--geo-color-text", textSafeColor(geoColor));  // 文字用:压到浅底上可读
       // 具体像素位置由 positionMapCallouts() 按投影算；这里先给个占位百分比避免闪到左上角
       btn.style.setProperty("--geo-x", "50%");
       btn.style.setProperty("--geo-y", "50%");
@@ -2971,6 +3025,7 @@
     if (usingRealData) startFleetRefresh();
     await renderMapDecorations();
     renderRealGeoMarkers();   // 真实实例接管地图标记（演示件在此被替换掉）
+    ensureGeoTextColors();    // 补齐标记的文字安全色（演示节点走这里，真实节点创建时已设）
     renderRanking();
     updateInspector(state.nodes[0], true);
     refreshTotals();

@@ -1036,7 +1036,9 @@ a:focus-visible {
 }
 
 .ranking-item__value small.negative {
-  color: var(--red);
+  /* 不用 --red(#eb6079):它在白底上仅 3.2:1。--red 还用作状态点等色块,
+     故此处单独给同色相的深红,不动变量本身。 */
+  color: #bc4d61;
 }
 
 .efficiency-card {
@@ -1608,7 +1610,8 @@ a:focus-visible {
 }
 
 .universe-scale strong {
-  color: var(--cyan);
+  /* 同上:--cyan 是色块色,文字用同色相的深青(4.8:1) */
+  color: #2b7688;
   font-weight: 550;
 }
 
@@ -2595,7 +2598,7 @@ body.motion-paused *::after {
   --green: #27bd78;
   /* 文字专用:浅底上 #27bd78 仅 2.43:1,远低于 AA(4.5);色块背景仍用 --green */
   --green-text: #1c8756;
-  --purple-text: #7364e4;
+  --purple-text: #695bd0;
   --amber: #f39a50;
   --red: #eb6079;
 }
@@ -2734,7 +2737,7 @@ body {
 }
 
 .ranking-item__index {
-  color: #757684;
+  color: #737483;
 }
 
 .ranking-item:nth-child(-n + 3) .ranking-item__index {
@@ -2814,7 +2817,7 @@ body {
 
 .statusbar {
   border-color: rgba(92, 85, 151, 0.08);
-  color: #6e707d;
+  color: #6a6c78;
 }
 
 .statusbar strong {
@@ -3118,7 +3121,7 @@ body {
 }
 
 .hex-hover-card em {
-  color: #7364e4;
+  color: #695bd0;
   font-size: 6px;
   font-style: normal;
 }
@@ -3280,7 +3283,7 @@ body {
   display: block;
   min-width: 0;
   overflow: hidden;
-  color: #6e707d;
+  color: #6a6c78;
   font-size: 8px;
   letter-spacing: 0.02em;
   text-overflow: ellipsis;
@@ -3309,7 +3312,10 @@ body {
 
 .geo-node__card em {
   min-width: 38px;
-  color: var(--geo-color);
+  /* 用文字专用色而非 --geo-color:后者是 OEM 品牌原色,拿来写字在白卡片上
+     只有 1.7~3.6:1。--geo-color-text 由 JS 按同色相压到 AA 达标(见
+     app.js textSafeColor),色块仍用原色。fallback 保证变量缺失时不至于没颜色。 */
+  color: var(--geo-color-text, var(--geo-color));
   font-size: 12px;
   font-style: normal;
   font-variant-numeric: tabular-nums;
@@ -3499,7 +3505,7 @@ body {
   --purple-bright: #6958d8;
   --cyan: #35d9ff;
   --green: #31b980;
-  --green-text: #24865d;
+  --green-text: #23815a;
   --amber: #ffb65c;
   --red: #ff6b7e;
   color: var(--text);
@@ -3672,7 +3678,7 @@ body {
   --purple-bright: #6958d8;
   --cyan: #35d9ff;
   --green: #31b980;
-  --green-text: #24865d;
+  --green-text: #23815a;
   --amber: #ffb65c;
   --red: #ff6b7e;
   color: var(--text);
