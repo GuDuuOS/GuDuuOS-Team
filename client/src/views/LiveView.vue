@@ -211,19 +211,25 @@ function openOrg() { org.value = true; board.value = false; tasks.value = false;
 // 任务看板（AI 任务编排 P1）：主 AI 拆解的真实任务，三列 Kanban + 手动改状态。
 import { getTasks, updateTask, currentUserId, type TaskItem } from '@/matrix/client'
 const taskList = ref<TaskItem[]>([])
-// 全屏中枢AI聊天「进度」面板**跟随对话正在推进的项目**(负责人拍板),不按当前工作区过滤——
-// 中枢AI 是全局助理、跨工作区,你在对话里拆解 A 项目时,进度面板若还显示当前工作区 B 项目,
-// 就与左侧 AI 画的流程图对不上(负责人实报)。「当前对话项目」= 最新创建任务所属的项目(goal):
-// AI 每次拆解都生成新任务,最新那批的 goal 即"正在聊的项目"。无任务时回退全部。
-const convoGoal = computed(() => {
+// 全屏中枢AI聊天「进度」面板**跟随当前这条会话**(负责人拍板:不按工作区过滤——
+// 中枢AI 是跨工作区的全局助理,拆解 A 项目时若显示当前工作区 B 项目就与流程图对不上)。
+// ⚠️ 归属判定必须落到**会话房间**上:此前是"全局取 id 最大的任务的 goal",于是所有会话
+// 共享同一份——新建会话后右侧还挂着上一个项目的进度,永远不跟着变(负责人实报)。
+// 现在按 aiRoom 过滤:create_tasks 建任务时会记 room_id(=当前会话房),天然可归属。
+// 同一条会话里可能先后拆过多个项目 → 仍取最新那批(id 最大者的 goal),保留原语义。
+const convoScope = computed<{ goal: string; tasks: TaskItem[] }>(() => {
+  const rid = aiRoom.value
+  if (!rid) return { goal: '', tasks: [] }
+  const mine = taskList.value.filter((t) => t.room_id === rid)
+  if (!mine.length) return { goal: '', tasks: [] }   // 新会话没任务 → 空态,而非显示别人的
   let goal = '', bestId = -1
-  for (const t of taskList.value) {
+  for (const t of mine) {
     if (t.id > bestId) { bestId = t.id; goal = t.goal || '' }
   }
-  return goal
+  return { goal, tasks: goal ? mine.filter((t) => (t.goal || '') === goal) : mine }
 })
-const convoTasks = computed(() =>
-  convoGoal.value ? taskList.value.filter((t) => (t.goal || '') === convoGoal.value) : taskList.value)
+const convoGoal = computed(() => convoScope.value.goal)
+const convoTasks = computed(() => convoScope.value.tasks)
 // AI 侧栏放大态右栏：进度=对话项目的完成数（跟随 convoTasks，与流程图对应）
 const doneCount = computed(() => convoTasks.value.filter((t) => t.status === 'done').length)
 // 个人知识库文档：与「知识库管理」弹窗共用同一份单例（增删后两处同步刷新）
@@ -583,6 +589,7 @@ async function newAiSession() {
     refreshAiSessions()
     refreshDms()
     refresh()               // 让频道列表把新会话房排除掉
+    loadTasks()             // 右侧进度面板跟着换会话:重拉后按新 aiRoom 过滤 → 自动清空
     nextTick(scrollAiToBottom)
   } catch { /* 建会话失败静默，保持当前会话 */ }
 }
@@ -591,6 +598,7 @@ function switchAiSession(roomId: string) {
   if (!roomId || roomId === aiRoom.value) return
   aiRoom.value = roomId
   aiMsgs.value = listMessages(roomId)
+  loadTasks()   // 同 newAiSession:进度面板按会话归属,切会话必须重拉
   nextTick(scrollAiToBottom)
 }
 // 删除会话：离开房间；若删的是当前会话，切到下一个（没有则新建）
@@ -655,6 +663,18 @@ function scrollAiToBottom() {
   if (el) el.scrollTop = el.scrollHeight
 }
 watch(aiMsgs, () => nextTick(scrollAiToBottom), { deep: true })
+// AI 可能刚在这轮对话里用 create_tasks 拆了任务：收到新消息后补拉一次任务列表，
+// 否则右侧进度要等 10 分钟轮询才更新(负责人实报「没有变化」)。
+// 延迟 1.5s：bot 是「先回消息还是先落库」并无保证，给一点缓冲；
+// 8 秒内不重复拉：sync 触发很频繁，不节流会把接口打爆。
+let lastConvoTaskSync = 0
+watch(() => aiMsgs.value.length, (n, old) => {
+  if (!aiMax.value || n <= (old || 0)) return
+  const now = Date.now()
+  if (now - lastConvoTaskSync < 8000) return
+  lastConvoTaskSync = now
+  window.setTimeout(() => { loadTasks() }, 1500)
+})
 watch(aiOpen, (v) => { if (v) nextTick(scrollAiToBottom) })
 
 // ── 纯界面态（折叠分组 / 下拉菜单 / 专注模式 / 收藏星）────
@@ -3007,7 +3027,7 @@ onBeforeUnmount(() => {
                   {{ t.title }}<template v-if="t.status === 'doing' && t.progress"> · {{ t.progress }}%</template>
                 </li>
               </ul>
-              <div v-else class="ai-cw-empty">还没有任务。在数据看板「一句话下达目标」让中枢 AI 拆解。</div>
+              <div v-else class="ai-cw-empty">这条会话还没有任务。让中枢 AI 拆解目标后，进度会显示在这里。</div>
             </div>
             <div class="ai-cw-sec">
               <div class="ai-cw-proj-h">

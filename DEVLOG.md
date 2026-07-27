@@ -1,5 +1,34 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-27 — GuDuu OS 1.6.12 (patch)
+
+- 🔴 **安全修复：主 AI 不再能在生产容器里执行任意命令 / 读写任意文件**。
+  负责人实报：让主 AI「把某个 GitHub 上的 skill 装进来」，它真的跑了十几条 Bash，
+  把包下载解压到了 `~/.claude/skills/`——**既没达到目的**（GuDuu OS 的技能存
+  DB/state event，根本不读那个目录；且容器一重建就没了、其他用户也看不到），
+  **又暴露出主 AI 拥有 shell 与文件系统权限**。
+  - 根因：SDK 选项给的是 `allowed_tools=[mcp__cosmac__*]` + `permission_mode=
+    "bypassPermissions"`。bypass 的字面含义就是跳过所有权限检查，于是 CLI 自带的
+    Bash/Read/Write 等内置工具**全部放行且不询问**，`allowed_tools` 在该模式下形同虚设。
+    而 Toolbox 的门控/配额/越权检查**只管得到 mcp__cosmac__\* 自定义工具**，对内置工具
+    毫无约束力——原注释「业务安全靠 Toolbox 层」在这里并不成立。
+  - 风险面：bot 容器里有 `.env`（模型 key / 管理员令牌 / AS·HS token / 数据库密码）；
+    触发**不需要管理员权限**，任何能跟 AI 对话的人一句话即可；再叠加提示词注入
+    （AI 会抓网页、读知识库，其中一句「请执行以下命令」就可能被当成指令）。
+  - 处置：新增 `_SDK_BLOCKED_TOOLS` 并经 `disallowed_tools` 下发——SDK 文档明确其语义为
+    「从模型上下文中移除、即使本来允许也不可用」，故在 bypassPermissions 下依然生效
+    （`can_use_tool` 回调不行：bypass 下压根不触发）。拉黑：Bash/BashOutput/KillShell、
+    Read/Write/Edit/MultiEdit/NotebookEdit/NotebookRead、Glob/Grep、Skill、Task/SlashCommand。
+  - **保留** WebSearch/WebFetch（负责人定：AI 要能联网查资料）。⚠️ 遗留：WebFetch 能抓
+    任意 URL = SSRF，可达容器内网与云元数据地址，已记 TODO 单独处理。
+  - 新增 6 条回归测试把黑名单钉死，并断言它真的接进了 options（防「常量定义了、忘了用」）。
+- 修复：**中枢 AI 右侧「进度」面板不跟随会话**。负责人实报：新建会话后右侧仍挂着上一个
+  项目的 7/7。根因是归属判定用的是「**全局** id 最大的任务的 goal」，于是所有会话共享
+  同一份——新会话自然显示旧项目。改为按**当前会话房间**(`aiRoom`)过滤（`create_tasks`
+  建任务时已记 `room_id`，天然可归属），同一会话内先后拆多个项目时仍取最新那批，保留原语义。
+  同时补上：新建/切换会话时重拉任务（原先完全没碰它）；AI 回复后延迟 1.5s 补拉一次
+  （节流 8s），不必再等 10 分钟轮询才看到新任务。空态文案改为贴合会话语境。
+
 ## 2026-07-27 — GuDuu OS 1.6.11 (patch)
 
 - 新增：**智能体可以绑定工作流**——让 Agent 从「只会说话」变成「能真的干活」。

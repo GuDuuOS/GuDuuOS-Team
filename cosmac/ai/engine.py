@@ -45,6 +45,44 @@ logger = logging.getLogger(__name__)
 # 打到 DeepSeek 端点直接 401)。目录内容可随时删,无状态依赖。
 _SDK_HOME = "/tmp/cosmac-sdk-home"
 
+# ══════════ SDK 内置工具黑名单（安全红线，改之前先读完这段） ══════════
+# 背景（2026-07-27 负责人实报）：用户让主 AI「把某个 GitHub 上的 skill 装进来」，
+# AI 真的在 bot 容器里跑了十几条 Bash，把包下载解压到了 ~/.claude/skills/。
+# 既没达到目的（GuDuu OS 的技能存 DB/state event，根本不读那个目录），
+# 又暴露出：**主 AI 能在生产容器里执行任意命令、读写任意文件**。
+#
+# 根因：options 里给的是 allowed_tools=[mcp__cosmac__*] + permission_mode=
+# "bypassPermissions"。bypass 的字面含义就是「跳过所有权限检查」，于是 CLI 自带的
+# Bash/Read/Write 等内置工具全部放行且不询问——allowed_tools 在该模式下形同虚设。
+# 而 Toolbox 的门控/配额/越权检查**只管得到 mcp__cosmac__\* 这些自定义工具**，
+# 对内置工具一点约束力都没有（原注释「业务安全靠 Toolbox 层」在这里是不成立的）。
+#
+# 风险面：bot 容器里有 .env（模型 key、管理员令牌、AS/HS token、数据库密码）；
+# 触发它不需要管理员权限——任何能跟 AI 对话的人一句话即可；再叠加提示词注入
+# （AI 会抓网页、读知识库，那些内容里的一句“请执行以下命令”就可能被当指令），
+# 等于把服务器交出去。
+#
+# 处置：用 disallowed_tools 显式拉黑。SDK 文档明确其语义是「从模型上下文中移除、
+# 不可使用，**即使本来会被允许**」——所以它在 bypassPermissions 下依然生效。
+# （can_use_tool 回调不行：文档写明 bypassPermissions 下压根不会触发它。）
+#
+# 保留 WebSearch/WebFetch（负责人定：AI 要能联网查资料）。
+# ⚠️ 遗留风险：WebFetch 能抓任意 URL = SSRF，可访问容器内网（如 synapse:8008）
+# 与云元数据地址。已记 TODO，后续要么换成走 cosmac 自己的 web_search（有防护），
+# 要么给 WebFetch 加目标地址白名单。
+_SDK_BLOCKED_TOOLS = [
+    # —— 执行命令 ——
+    "Bash", "BashOutput", "KillShell", "KillBash",
+    # —— 读写宿主文件系统（Read 能直接读 .env 拿到全部密钥）——
+    "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "NotebookRead",
+    # —— 文件系统侦察（为上面两类踩点）——
+    "Glob", "Grep",
+    # —— 会加载并执行 ~/.claude/skills 下的技能：正是本次事故里被误用的那个 ——
+    "Skill",
+    # —— 能派生子代理 / 执行斜杠命令，可能绕开上面的限制 ——
+    "Task", "SlashCommand",
+]
+
 
 def _env(key: str, default: str = "") -> str:
     """读 COSMAC_ 前缀环境变量(与项目其它模块同约定;此引擎较新,不做 GUDUU_ 回退)。"""
@@ -244,6 +282,10 @@ class ClaudeSdkEngine:
             # 工具权限:业务安全不靠 SDK 的确认弹窗(没人在终端上点确认),而靠
             # Toolbox 内部的门控/配额/越权检查——那层对两种引擎一视同仁。
             permission_mode="bypassPermissions",
+            # 安全红线：bypassPermissions 会放行**所有** CLI 内置工具（Bash/Read/Write…），
+            # 而 Toolbox 的门控层管不到它们。这里显式拉黑，语义是"从模型上下文移除、
+            # 即使本来允许也不可用"，故在 bypass 模式下依然生效。详见 _SDK_BLOCKED_TOOLS。
+            disallowed_tools=_SDK_BLOCKED_TOOLS,
             max_turns=max_turns,
             system_prompt=system or None,
             env=env,
