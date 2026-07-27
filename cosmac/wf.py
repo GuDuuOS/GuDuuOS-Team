@@ -76,6 +76,26 @@ def submit_background(fn: Callable[[], None], *, pool: str = "fast") -> bool:
     return True
 
 
+# ── 云元数据地址：SSRF 最值钱的目标，必须永远拒绝 ────────────────
+# 169.254.169.254（AWS/GCP/Azure/华为）落在链路本地段，下面的通用规则本就挡得住；
+# ⚠️ 但**阿里云的 100.100.100.200 挡不住**——它属 RFC 6598 运营商级 NAT
+# (100.64.0.0/10)，而 Python 的 ipaddress **不**把这一段判为 is_private，
+# 于是被当成普通公网地址放行。本项目生产就跑在阿里云上，等于给 SSRF 留了一条
+# 直通元数据、可取 RAM 临时凭据的路（2026-07-27 排查 WebFetch 风险时发现）。
+_CARRIER_NAT_V4 = ipaddress.ip_network("100.64.0.0/10")
+
+
+def _is_metadata_addr(addr) -> bool:
+    """是不是云厂商的元数据地址（含阿里云所在的运营商级 NAT 段）。"""
+    try:
+        if addr.version == 4 and addr in _CARRIER_NAT_V4:
+            return True
+    except Exception:
+        pass
+    # AWS 的 IPv6 元数据端点；其余厂商的 v6 端点也都落在 fd00::/8(is_private) 里
+    return str(addr) in ("fd00:ec2::254",)
+
+
 def check_outbound_url(url: str) -> str:
     """SSRF 防护：校验"服务端将要外呼的 URL"是否安全。放行返回 ""，否则返回拒绝原因。
 
@@ -110,6 +130,11 @@ def check_outbound_url(url: str) -> str:
             addr = ipaddress.ip_address(info[4][0])
         except ValueError:
             return f"解析到非法 IP：{info[4][0]}"
+        if _is_metadata_addr(addr):
+            # 单独一类：**永远拒绝，连 ALLOW_INTERNAL 也不放行**。
+            # 云元数据能直接吐出实例信息与 RAM/IAM 临时凭据，是 SSRF 最值钱的目标；
+            # 「我要打内网」这个诉求从来不包含「我要打元数据」。
+            return f"目标 {addr} 是云元数据地址，已拒绝（会泄露实例凭据）"
         if (
             addr.is_link_local or addr.is_reserved
             or addr.is_multicast or addr.is_unspecified

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -648,6 +649,24 @@ class Toolbox:
 
         # 8) 联网搜索（让主 AI"会上网查"）：可插拔搜索后端、无 key 自动降级。
         #    共享付费 key、有成本，受 web_search 门控（默认仅管理员，同 run_workflow 思路）。
+        self._register(
+            name="fetch_url",
+            description=(
+                "抓取一个网页/接口地址的内容并返回其文本，用于「读这个链接里写了什么」。"
+                "适合：用户直接给了链接、或 web_search 返回结果后要读某一条的详情。"
+                "⚠️ 只能抓公网 http/https 地址；内网、环回、云元数据地址会被拒绝。"
+                "返回的是纯文本（已去掉 HTML 标签），过长会截断。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "要抓取的完整地址（http/https）。"},
+                },
+                "required": ["url"],
+            },
+            fn=self._tool_fetch_url,
+        )
+
         self._register(
             name="web_search",
             description=(
@@ -1966,6 +1985,60 @@ class Toolbox:
         except Exception:
             logger.exception("知识库检索工具执行出错")
             return "检索知识库时出错了。"
+
+    # 单次抓取的上限：够读一篇长文，又不至于把几 MB 的页面塞进模型上下文
+    _FETCH_MAX_BYTES = 512 * 1024
+    _FETCH_MAX_CHARS = 8000
+    _FETCH_TIMEOUT = 15
+
+    def _tool_fetch_url(self, args: Dict[str, Any], ctx: ToolContext) -> str:
+        """抓一个网页并返回纯文本。**替代 SDK 内置的 WebFetch**。
+
+        为什么要自己做一个：SDK 的 WebFetch 能抓任意 URL，在容器里等于一条 SSRF 通道——
+        实测 bot 容器可直连 synapse:8008 / postgres:5432，云元数据(阿里云
+        100.100.100.200)还能吐出 RAM 临时凭据。那个工具已在 engine 里拉黑，
+        能力挪到这里、走 wf.check_outbound_url 的防护。
+
+        防护要点与 manifest 导入一致：禁重定向(302 到内网即绕过)、限大小、限超时。
+        """
+        url = (args.get("url") or "").strip()
+        if not url:
+            return "请给出要抓取的地址。"
+        from cosmac.wf import check_outbound_url
+
+        bad = check_outbound_url(url)
+        if bad:
+            return f"这个地址不能抓取：{bad}"
+        try:
+            import requests
+
+            resp = requests.get(
+                url, timeout=self._FETCH_TIMEOUT, allow_redirects=False,
+                headers={"User-Agent": "GuDuuOS-Bot/1.0"},
+            )
+        except Exception as exc:
+            return f"抓取失败：{type(exc).__name__}: {str(exc)[:120]}"
+        if resp.status_code in (301, 302, 303, 307, 308):
+            loc = resp.headers.get("Location", "")[:200]
+            # 不自动跟随:重定向目标可能指向内网。把地址给模型,让它显式再抓一次(会重新过校验)。
+            return f"该地址跳转到了：{loc}\n如需继续，请对这个新地址再调一次 fetch_url。"
+        if resp.status_code != 200:
+            return f"抓取失败（HTTP {resp.status_code}）。"
+        body = (resp.content or b"")[: self._FETCH_MAX_BYTES]
+        try:
+            text = body.decode(resp.encoding or "utf-8", errors="replace")
+        except (LookupError, TypeError):
+            text = body.decode("utf-8", errors="replace")
+        # 粗略去标签：脚本/样式整段丢掉，再去掉标签、压缩空白。
+        # 不引第三方解析库——这里只要"能读懂大意"，不需要精确的 DOM。
+        text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", text)
+        text = re.sub(r"(?s)<[^>]+>", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text:
+            return "抓到了，但内容为空或无法解析成文本。"
+        if len(text) > self._FETCH_MAX_CHARS:
+            text = text[: self._FETCH_MAX_CHARS] + "…（内容过长已截断）"
+        return text
 
     def _tool_web_search(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         """联网搜索（走 cosmac.ai.websearch 的可插拔后端）。门控由 execute 的 gate_check

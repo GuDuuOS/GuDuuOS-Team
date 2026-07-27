@@ -1,5 +1,25 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-27 — GuDuu OS 1.6.19 (patch)
+
+- 🔴 **安全修复：SSRF 防护漏掉了阿里云元数据地址**（排查 WebFetch 风险时发现的真实漏洞）。
+  `100.100.100.200` 是阿里云的元数据服务，能吐出实例信息与绑定 RAM 角色的**临时凭据**。
+  它属 RFC 6598 运营商级 NAT（`100.64.0.0/10`），而 Python 的 `ipaddress`
+  **不**把这一段判为 `is_private` —— 于是 `check_outbound_url` 一直把它当普通公网**放行**。
+  本项目生产就跑在阿里云上，等于给 SSRF 留了一条直通凭据的路。
+  - 处置：新增 `_is_metadata_addr`，整段 `100.64.0.0/10` + AWS 的 IPv6 端点一并拒绝，
+    且**开了 `COSMAC_WF_ALLOW_INTERNAL=1` 也不放行**——"我要打内网"从不包含"我要打元数据"。
+  - 影响面不止新功能：现有的**工作流连接器**走的也是这个校验，一并修好。
+- 🔴 **拉黑 SDK 内置 WebFetch，换成自研 `fetch_url`**。1.6.12 拉黑 Bash 时保留了 WebFetch
+  并记了遗留风险，这次坐实：**实测 bot 容器可直连 `synapse:8008` 与 `postgres:5432`**，
+  加上元数据地址，WebFetch 就是一条完整的 SSRF 通道。
+  - **不是砍能力**：新的 `fetch_url` 做同一件事（取网页读文本），但走
+    `wf.check_outbound_url` 防护、禁重定向（302 到内网即绕过）、限 512KB/15s，
+    并把 HTML 剥成纯文本（省 token 也更好读）。门控与 `web_search` 共用一道闸。
+  - 保留 `WebSearch`：它走搜索引擎，指定不了内网目标。
+- 测试：新增 10 条（元数据整段拦截、公网边界不误伤、开了内网开关也拒元数据、
+  `fetch_url` 拒内网/元数据/坏协议、HTML 剥离）；全套 847 通过。
+
 ## 2026-07-27 — GuDuu OS 1.6.18 (patch)
 
 - 新增：**导入前的依赖缺口提示**。manifest 里的 `skill_slugs` / `workflow_slugs`

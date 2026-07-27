@@ -38,14 +38,28 @@ class SdkToolBlocklistTest(unittest.TestCase):
         for name in ("Glob", "Grep", "Skill", "Task", "SlashCommand"):
             self.assertIn(name, _SDK_BLOCKED_TOOLS, f"{name} 必须在黑名单里")
 
-    def test_web_tools_remain_available(self) -> None:
-        """负责人明确要保留联网查资料的能力，别把它们一起误封。
+    def test_websearch_remains_available(self) -> None:
+        """保留 WebSearch：它走搜索引擎，指定不了内网目标，风险面小得多。"""
+        self.assertNotIn("WebSearch", _SDK_BLOCKED_TOOLS)
 
-        ⚠️ WebFetch 仍有 SSRF 面（能抓容器内网与云元数据地址），已记 TODO 单独处理；
-        这里断言"没被封"是为了忠实反映当前决策，不是说它没有风险。
+    def test_webfetch_is_blocked_and_replaced(self) -> None:
+        """WebFetch 必须拉黑：它能抓任意 URL = SSRF 通道。
+
+        实测 bot 容器可直连 synapse:8008 / postgres:5432，阿里云元数据
+        100.100.100.200 还能吐 RAM 临时凭据。能力不是砍掉而是挪到自研 fetch_url——
+        那个走 wf.check_outbound_url 防护，所以这里同时断言替代品确实存在。
         """
-        for name in ("WebSearch", "WebFetch"):
-            self.assertNotIn(name, _SDK_BLOCKED_TOOLS)
+        from cosmac.ai.tools import Toolbox
+
+        class _C:
+            def resolve_alias(self, a):
+                return "!c:h"
+
+            def get_state_event(self, *a, **k):
+                return None
+
+        self.assertIn("WebFetch", _SDK_BLOCKED_TOOLS)
+        self.assertIn("fetch_url", {s.name for s in Toolbox(_C()).specs()})
 
     def test_blocklist_is_wired_into_options(self) -> None:
         """光有常量不算数——必须真的传进了 ClaudeAgentOptions。

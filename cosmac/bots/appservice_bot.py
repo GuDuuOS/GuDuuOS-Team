@@ -7625,6 +7625,8 @@ class CosmacBot:
         "run_workflow": "workflow_run",
         "search_knowledge": "knowledge",  # 与「知识」命令、RAG 自动注入同一道 knowledge 门
         "web_search": "web_search",       # 联网搜索：共享付费 key、默认仅管理员（见 GATE_CATALOG）
+        # 抓网页：与联网搜索同属"对外读取"，共用一道闸（替代被拉黑的 SDK WebFetch）
+        "fetch_url": "web_search",
         "assemble_team": "assemble_team",  # 一键建专班：独立门控（默认免费，可在后台调成付费）
         "create_tasks": "task_board",      # AI 拆解任务到看板：独立门控（默认免费）
         "query_hr": "hr_data",             # 人事数据查询：敏感数据，默认仅管理员（见 GATE_CATALOG）

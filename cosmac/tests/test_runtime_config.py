@@ -53,8 +53,9 @@ class TestRuntimeConfig(unittest.TestCase):
         self.assertEqual(bot._applied_sig, before)
         # 本断言的意义是「控制室拿不到配置时，工具**一个都不该被停用**」——
         # 数字本身会随新增工具变化，加了工具就把它同步过来（别改成 >=，那样
-        # "工具被意外停用"就漏过去了）。20 = 原 18 + 从 GitHub 导入的 preview/import 两个。
-        self.assertEqual(len(bot.toolbox.specs()), 20)
+        # "工具被意外停用"就漏过去了）。
+        # 21 = 原 18 + 导入的 preview/import 两个 + 替代 SDK WebFetch 的 fetch_url。
+        self.assertEqual(len(bot.toolbox.specs()), 21)
 
     def test_persona_override_rebuilds_agent(self) -> None:
         # 下发新人设 → 签名变、Agent 被换成新对象、system_prompt 生效

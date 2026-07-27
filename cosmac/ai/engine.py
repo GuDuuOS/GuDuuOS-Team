@@ -66,10 +66,10 @@ _SDK_HOME = "/tmp/cosmac-sdk-home"
 # 不可使用，**即使本来会被允许**」——所以它在 bypassPermissions 下依然生效。
 # （can_use_tool 回调不行：文档写明 bypassPermissions 下压根不会触发它。）
 #
-# 保留 WebSearch/WebFetch（负责人定：AI 要能联网查资料）。
-# ⚠️ 遗留风险：WebFetch 能抓任意 URL = SSRF，可访问容器内网（如 synapse:8008）
-# 与云元数据地址。已记 TODO，后续要么换成走 cosmac 自己的 web_search（有防护），
-# 要么给 WebFetch 加目标地址白名单。
+# 保留 WebSearch（负责人定：AI 要能联网查资料）——它走搜索引擎，指定不了内网目标。
+# WebFetch 已拉黑并**换成自研的 fetch_url**：能力等价（都是取一个网页回来读），
+# 但自研那个走 wf.check_outbound_url，挡内网/环回/云元数据，且禁重定向、限大小。
+# 这不是砍能力，是把同一件事挪到有防护的路径上。
 _SDK_BLOCKED_TOOLS = [
     # —— 执行命令 ——
     "Bash", "BashOutput", "KillShell", "KillBash",
@@ -81,6 +81,10 @@ _SDK_BLOCKED_TOOLS = [
     "Skill",
     # —— 能派生子代理 / 执行斜杠命令，可能绕开上面的限制 ——
     "Task", "SlashCommand",
+    # —— 抓任意 URL = SSRF：能打容器内网(实测 synapse:8008 / postgres:5432 都可达)
+    #    与云元数据(阿里云 100.100.100.200 可取 RAM 临时凭据)。
+    #    不是砍掉联网能力——换成自研的 fetch_url，那个走 wf.check_outbound_url 防护。
+    "WebFetch",
 ]
 
 
