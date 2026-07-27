@@ -302,6 +302,10 @@
             <ul v-if="importPv.notes.length" class="ms-import-notes">
               <li v-for="(n, i) in importPv.notes" :key="i">{{ n }}</li>
             </ul>
+            <p v-if="importMissing" class="ms-import-err">
+              ⚠️ 缺依赖：它引用了{{ importMissing }}，而你手上没有。
+              装了也用不上这部分能力——可以先装，之后再补齐。
+            </p>
             <p v-if="importPv.exists" class="ms-import-err">
               你已有同名 {{ importPv.item.slug }}，导入会<b>覆盖</b>它。
             </p>
@@ -370,6 +374,16 @@ function openImport(kind: 'agent' | 'skill') {
   importOpen.value = true
 }
 function closeImport() { importOpen.value = false; importPv.value = null; importErr.value = '' }
+
+/** 把缺失的依赖拼成一句人话；都不缺则为空串（模板据此决定要不要显示）。 */
+const importMissing = computed(() => {
+  const m = importPv.value?.missing
+  if (!m) return ''
+  const parts: string[] = []
+  if (m.skills?.length) parts.push(`技能 ${m.skills.join('、')}`)
+  if (m.workflows?.length) parts.push(`工作流 ${m.workflows.join('、')}`)
+  return parts.join('；')
+})
 
 async function doPreview() {
   importBusy.value = true; importErr.value = ''

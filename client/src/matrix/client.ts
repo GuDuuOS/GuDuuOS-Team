@@ -2968,6 +2968,8 @@ export interface ImportPreview {
   sha256: string
   notes: string[]
   exists: boolean
+  /** 引用了但你没有的技能/工作流。注入侧对缺失是静默跳过的，所以要在装之前挑明。 */
+  missing?: { skills: string[]; workflows: string[] }
 }
 
 /** 取回并预览 manifest（不落库）。抛错时带服务端的中文原因。 */

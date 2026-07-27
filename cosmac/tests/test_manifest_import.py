@@ -258,5 +258,65 @@ class SourceTrackingTest(unittest.TestCase):
             self.assertEqual(get_agent(s, SCOPE_USER, "@u:h", "mine").source_url or "", "")
 
 
+
+class MissingDepsTest(unittest.TestCase):
+    """导入前的依赖缺口检测。
+
+    注入侧对解析不到的 slug 是**静默跳过**的（资源被删了不该让整条回复崩），
+    副作用是用户装了个引用 3 个技能、实际一个都没有的 Agent 却毫不知情。
+    所以必须在导入前把缺口摆出来。
+    """
+
+    def _bot(self, global_skills=(), workflows=()):
+        from cosmac.bots.appservice_bot import CosmacBot
+        from cosmac.config import CosmacConfig
+        from cosmac.db import init_engine
+
+        init_engine("sqlite://")
+        bot = CosmacBot(CosmacConfig(llm_provider="echo"))
+        bot._global_skill_items = lambda for_user="", **k: [
+            {"slug": s} for s in global_skills
+        ]
+        bot._workflow_defs = lambda: [{"slug": w} for w in workflows]
+        return bot
+
+    def test_reports_missing_skills_and_workflows(self) -> None:
+        bot = self._bot(global_skills=["have-skill"], workflows=["have-wf"])
+        miss = bot._missing_deps("@u:h", {
+            "skill_slugs": ["have-skill", "ghost-skill"],
+            "workflow_slugs": ["have-wf", "ghost-wf"],
+        })
+        self.assertEqual(miss["skills"], ["ghost-skill"])
+        self.assertEqual(miss["workflows"], ["ghost-wf"])
+
+    def test_personal_skills_count_as_present(self) -> None:
+        """用户自己建的技能也算"有"——否则会误报缺失、吓唬用户。"""
+        from cosmac.db import session_scope
+        from cosmac.db.models import SCOPE_USER
+        from cosmac.db.repo import upsert_skill
+
+        bot = self._bot(global_skills=[])
+        with session_scope() as s:
+            upsert_skill(s, SCOPE_USER, "@u:h", "my-own", name="自建技能")
+        miss = bot._missing_deps("@u:h", {"skill_slugs": ["my-own"]})
+        self.assertEqual(miss["skills"], [])
+
+    def test_no_refs_means_nothing_missing(self) -> None:
+        bot = self._bot()
+        miss = bot._missing_deps("@u:h", {"kind": "skill"})
+        self.assertEqual(miss, {"skills": [], "workflows": []})
+
+    def test_failure_is_swallowed(self) -> None:
+        """检查依赖只是提示，读取出错绝不能阻断导入本身。"""
+        bot = self._bot()
+
+        def boom(**k):
+            raise RuntimeError("炸了")
+
+        bot._global_skill_items = boom
+        miss = bot._missing_deps("@u:h", {"skill_slugs": ["x"]})
+        self.assertEqual(miss, {"skills": [], "workflows": []})
+
+
 if __name__ == "__main__":
     unittest.main()

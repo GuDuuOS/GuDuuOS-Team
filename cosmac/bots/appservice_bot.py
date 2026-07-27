@@ -5438,9 +5438,49 @@ class CosmacBot:
             "item": item,
             "sha256": digest,
             "notes": review_notes(item),
+            # 引用了但用户没有的技能/工作流：注入侧对缺失是静默跳过的，
+            # 不在这里挑明，用户会装完才发现"这 Agent 怎么不好使"。
+            "missing": self._missing_deps(user_id, item),
             # 同 slug 已存在 → 前端提示"将覆盖"，避免用户误以为是新增
             "exists": self._my_item_exists(user_id, item["kind"], item["slug"]),
         }
+
+    def _missing_deps(self, user_id: str, item: Dict[str, Any]) -> Dict[str, List[str]]:
+        """找出 manifest 引用了、但这个用户手上**并没有**的技能 / 工作流。
+
+        为什么必须提前告诉用户：注入侧对解析不到的 slug 是**静默跳过**的
+        （_agent_skill_items / _preset_workflows_text 都如此，这本身是对的——
+        资源被删了不该让整条回复崩）。但副作用是：装了一个引用 3 个技能的 Agent、
+        实际一个都没有，用户毫不知情，只会觉得"这 Agent 怎么不好使"。
+        所以在**导入前**就把缺口摆出来，让用户知道自己装的是不完整的东西。
+
+        返回 {"skills": [...], "workflows": [...]}，都缺不到就是两个空列表。
+        """
+        out: Dict[str, List[str]] = {"skills": [], "workflows": []}
+        try:
+            want_sk = [str(x) for x in (item.get("skill_slugs") or [])]
+            want_wf = [str(x) for x in (item.get("workflow_slugs") or [])]
+            if want_sk:
+                # 用户实际能用到的技能 = 他可见的全局技能 + 他自己的个人技能
+                have = {str(s.get("slug")) for s in self._global_skill_items(for_user=user_id)}
+                try:
+                    from cosmac.db import session_scope
+                    from cosmac.db.models import SCOPE_USER
+                    from cosmac.db.repo import list_skills
+
+                    with session_scope() as s:
+                        have |= {
+                            k.slug for k in list_skills(s, scope=SCOPE_USER, scope_id=user_id)
+                        }
+                except Exception:
+                    logger.debug("读个人技能失败（按缺处理）", exc_info=True)
+                out["skills"] = [x for x in want_sk if x not in have]
+            if want_wf:
+                have_wf = {str(w.get("slug")) for w in self._workflow_defs()}
+                out["workflows"] = [x for x in want_wf if x not in have_wf]
+        except Exception:
+            logger.debug("检查依赖失败（忽略，不阻断导入）", exc_info=True)
+        return out
 
     def _my_item_exists(self, user_id: str, kind: str, slug: str) -> bool:
         """本人名下是否已有同 slug 的技能/智能体（导入前提示"将覆盖"用）。"""
@@ -5580,6 +5620,18 @@ class CosmacBot:
             lines.append(f"⚠️ 用户已有同标识的{kind_cn}，安装会覆盖它。")
         for n in review_notes(item):
             lines.append(f"提醒：{n}")
+        miss = self._missing_deps(ctx.sender, item)
+        if miss["skills"] or miss["workflows"]:
+            parts = []
+            if miss["skills"]:
+                parts.append("技能 " + "、".join(miss["skills"]))
+            if miss["workflows"]:
+                parts.append("工作流 " + "、".join(miss["workflows"]))
+            lines.append(
+                "⚠️ 缺依赖：它引用了 " + "；".join(parts)
+                + "，而用户手上没有这些。装了也用不上这部分能力——"
+                "请如实告诉用户这个缺口，让他决定还要不要装。"
+            )
         lines.append(f"—— 以下是完整{'人设' if item['kind'] == 'agent' else '正文'}，请原样展示给用户 ——")
         lines.append(body)
         lines.append(
@@ -5596,7 +5648,14 @@ class CosmacBot:
             "", {"url": url, "sha256": sha256}, user_id=ctx.sender,
         )
         if code == 200:
-            return "已安装到该用户的工坊。请告诉用户：可在「我的AI工坊」查看或删除它。"
+            # 明确告诉用户**怎么用**：个人智能体不需要绑频道——它会进主 AI 的派单名册
+            # （标「我的·」），在任意频道输入它的名字即可点名它应答。
+            return (
+                "已安装到该用户的工坊。请告诉用户三件事："
+                "① 它已进入主 AI 的派单名册（显示为「我的·<名称>」）；"
+                "② 在任意频道直接输入它的名字就能点名它应答，**不需要额外绑定频道**；"
+                "③ 想改人设或删除，去「我的AI工坊」。"
+            )
         return f"安装失败：{payload.get('error') or code}"
 
     def handle_my_workflows_list(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
