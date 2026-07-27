@@ -1,0 +1,11 @@
+{
+  "guduu": "1",
+  "kind": "skill",
+  "slug": "weekly-report",
+  "name": "周报格式",
+  "description": "把零散进展整理成结构化周报",
+  "instructions": "当用户要写周报时，按以下结构输出：\n\n1. 本周完成：逐条列出，每条注明产出物或可验证结果。\n2. 进行中：写明当前卡点与预计完成时间。\n3. 下周计划：按优先级排序，最多 5 条。\n4. 需要协调：明确写出需要谁、做什么、什么时候要。\n\n规则：不写空泛套话（如「持续推进」）；没有实际进展就如实写「无进展」并说明原因。",
+  "author": "GuDuu OS",
+  "homepage": "https://github.com/GuDuuOS/CosMac",
+  "license": "MIT"
+}

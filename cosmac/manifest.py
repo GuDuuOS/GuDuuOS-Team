@@ -43,6 +43,11 @@ _ALLOWED_HOSTS = {
     "github.com",
     "gist.githubusercontent.com",
     "gist.github.com",
+    # jsDelivr 的 GitHub CDN。**这条是国内部署的生命线**：实测本项目的国内服务器
+    # 访问 raw.githubusercontent.com 直接读超时（12s 无响应），而 jsdelivr 1 秒返回
+    # （2026-07-27 在 guduu-cn 实测）。所以下面把 github.com 的网页地址统一转成
+    # jsdelivr 直链，否则这个功能在生产上根本用不了。
+    "cdn.jsdelivr.net",
 }
 
 MANIFEST_MAX_BYTES = 256 * 1024   # 256KB：一份 JSON 定义绰绰有余，防超大响应打爆内存
@@ -58,11 +63,12 @@ _LIST_MAX = 20         # skill_slugs / workflow_slugs 条数上限
 
 
 def normalize_url(raw: str) -> Tuple[str, str]:
-    """把用户粘的各种 GitHub 地址规整成可直接取 JSON 的 raw 地址。
+    """把用户粘的各种 GitHub 地址规整成可直接取 JSON 的直链。
 
     支持：
-      · 已经是 raw.githubusercontent.com/... → 原样
-      · github.com/<u>/<r>/blob/<ref>/<path> → 转成 raw（网页地址转直链）
+      · github.com/<u>/<r>/blob/<ref>/<path> → 转成 jsDelivr CDN 直链（见下方注释：
+        国内服务器打 raw.githubusercontent.com 会超时，这是生产可用的关键）
+      · 已经是 raw.githubusercontent.com / cdn.jsdelivr.net / gist 直链 → 原样
     返回 (规整后的 url, 错误原因)；错误非空表示不接受。
 
     刻意**不**支持"给个仓库根地址、我去猜文件名"：猜测会让服务端为一次导入发多个
@@ -85,12 +91,19 @@ def normalize_url(raw: str) -> Tuple[str, str]:
         allowed = "、".join(sorted(_ALLOWED_HOSTS))
         return "", f"暂只支持从这些来源导入：{allowed}（收到 {host or '空'}）"
 
-    # github.com/<user>/<repo>/blob/<ref>/<path...> → raw.githubusercontent.com/<user>/<repo>/<ref>/<path...>
+    # github.com/<user>/<repo>/blob/<ref>/<path...>
+    #   → cdn.jsdelivr.net/gh/<user>/<repo>@<ref>/<path...>
+    # 为什么转 jsdelivr 而不是 raw.githubusercontent.com：国内服务器打 raw 会直接
+    # 读超时（实测 12s 无响应），jsdelivr 1 秒返回。用户照旧粘 GitHub 网页地址即可。
+    # ⚠️ 代价：jsdelivr 对分支名有 CDN 缓存（分钟级），刚 push 的改动可能要等一会儿；
+    # 想立刻生效可以把 <ref> 换成 commit hash（jsdelivr 对具体 commit 不缓存陈旧内容）。
+    # 用户若直接粘 raw.githubusercontent.com 地址则**原样尊重**——有些部署环境能直连。
     if host == "github.com":
-        m = re.match(r"^/([^/]+)/([^/]+)/blob/(.+)$", u.path)
+        m = re.match(r"^/([^/]+)/([^/]+)/blob/([^/]+)/(.+)$", u.path)
         if not m:
             return "", "请给 manifest 文件的地址（形如 .../blob/main/guduu-agent.json）"
-        url = f"https://raw.githubusercontent.com/{m.group(1)}/{m.group(2)}/{m.group(3)}"
+        user, repo, ref, path = m.group(1), m.group(2), m.group(3), m.group(4)
+        url = f"https://cdn.jsdelivr.net/gh/{user}/{repo}@{ref}/{path}"
     return url, ""
 
 

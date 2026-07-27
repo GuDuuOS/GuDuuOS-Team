@@ -20,11 +20,20 @@ class NormalizeUrlTest(unittest.TestCase):
         self.assertEqual(err, "")
         self.assertTrue(u.startswith("https://raw.githubusercontent.com/"))
 
-    def test_converts_blob_url_to_raw(self) -> None:
-        """用户多半直接从浏览器地址栏复制 blob 地址，要能自动转直链。"""
+    def test_converts_blob_url_to_jsdelivr(self) -> None:
+        """用户多半直接从浏览器地址栏复制 blob 地址，要能自动转直链。
+
+        转 jsDelivr 而非 raw.githubusercontent.com：实测国内服务器打 raw 直接读超时
+        （12s 无响应），jsdelivr 1 秒返回——不转的话这功能在生产上根本用不了。
+        """
         u, err = normalize_url("https://github.com/u/r/blob/main/skills/x.json")
         self.assertEqual(err, "")
-        self.assertEqual(u, "https://raw.githubusercontent.com/u/r/main/skills/x.json")
+        self.assertEqual(u, "https://cdn.jsdelivr.net/gh/u/r@main/skills/x.json")
+
+    def test_accepts_jsdelivr_directly(self) -> None:
+        u, err = normalize_url("https://cdn.jsdelivr.net/gh/u/r@main/x.json")
+        self.assertEqual(err, "")
+        self.assertEqual(u, "https://cdn.jsdelivr.net/gh/u/r@main/x.json")
 
     def test_rejects_non_whitelisted_host(self) -> None:
         """白名单之外一律拒绝——这是挡 SSRF 的第一道，也是最有效的一道。"""
