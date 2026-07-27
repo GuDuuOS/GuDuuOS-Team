@@ -100,10 +100,18 @@ def normalize_url(raw: str) -> Tuple[str, str]:
     # 用户若直接粘 raw.githubusercontent.com 地址则**原样尊重**——有些部署环境能直连。
     if host == "github.com":
         m = re.match(r"^/([^/]+)/([^/]+)/blob/([^/]+)/(.+)$", u.path)
-        if not m:
-            return "", "请给 manifest 文件的地址（形如 .../blob/main/guduu-agent.json）"
-        user, repo, ref, path = m.group(1), m.group(2), m.group(3), m.group(4)
-        url = f"https://cdn.jsdelivr.net/gh/{user}/{repo}@{ref}/{path}"
+        if m:
+            user, repo, ref, path = m.group(1), m.group(2), m.group(3), m.group(4)
+            return f"https://cdn.jsdelivr.net/gh/{user}/{repo}@{ref}/{path}", ""
+        # 仓库根地址（github.com/<user>/<repo>）：直接指向根目录的 SKILL.md。
+        # 这不是"猜文件名"——SKILL.md 放仓库根是 Claude Code 生态的固定约定，
+        # 而用户从浏览器复制的多半就是仓库首页地址（负责人实报：粘了仓库根，
+        # AI 只能反复 fetch_url 去翻找）。只多一次请求，不铺开乱试。
+        m2 = re.match(r"^/([^/]+)/([^/]+)/?$", u.path)
+        if m2:
+            user, repo = m2.group(1), m2.group(2).removesuffix(".git")
+            return f"https://cdn.jsdelivr.net/gh/{user}/{repo}@main/SKILL.md", ""
+        return "", "请给 manifest 或 SKILL.md 的地址，或直接给仓库首页地址"
     return url, ""
 
 
@@ -145,13 +153,78 @@ def fetch_manifest(url: str) -> Tuple[Optional[Dict[str, Any]], str, str]:
         return None, "", f"文件过大（上限 {MANIFEST_MAX_BYTES // 1024}KB）"
 
     digest = hashlib.sha256(body).hexdigest()
+    text = body.decode("utf-8", errors="replace")
+
+    # 两种受支持的格式：
+    #   ① GuDuu 自家的 JSON manifest；
+    #   ② Claude Code 生态的 SKILL.md（YAML frontmatter + Markdown 正文）。
+    # 加 ② 是因为真实生态里的技能几乎都是这个格式——只认自家 JSON，等于
+    # 「从 GitHub 装别人的技能」是句空话（负责人拿 guizang-ppt-skill 实测踩到）。
+    stripped = text.lstrip()
+    if stripped.startswith("{"):
+        try:
+            data = json.loads(text)
+        except Exception:
+            return None, "", "不是合法的 JSON（本功能导入的是定义文件，不是代码包）"
+        if not isinstance(data, dict):
+            return None, "", "manifest 顶层必须是一个 JSON 对象"
+        return data, digest, ""
+    if stripped.startswith("---"):
+        data, err = parse_skill_md(text)
+        return (data, digest, "") if data else (None, "", err)
+    return None, "", (
+        "无法识别的格式：需要 GuDuu 的 JSON manifest，"
+        "或带 YAML frontmatter 的 SKILL.md"
+    )
+
+
+def parse_skill_md(text: str) -> Tuple[Optional[Dict[str, Any]], str]:
+    """解析 Claude Code 生态的 SKILL.md → 统一成本模块的 manifest 结构。
+
+    格式约定（社区通行）：
+        ---
+        name: 技能名
+        description: 什么时候用它
+        ---
+        （下面是 Markdown 正文 = 技能指令）
+
+    映射到 GuDuu 的技能：frontmatter 的 name/description 直接用，正文进 instructions。
+    ⚠️ 只搬**文本**：Claude Code 的技能常附带 scripts/ 与 assets/，那些是要执行的代码
+    与二进制资源，本功能一概不碰（见模块 docstring 的第 1 条原则）。
+    """
+    m = re.match(r"^\s*---\s*\n(.*?)\n---\s*\n?(.*)$", text, re.S)
+    if not m:
+        return None, "SKILL.md 缺少 YAML frontmatter（开头的 --- 区块）"
+    head, body = m.group(1), m.group(2).strip()
     try:
-        data = json.loads(body.decode("utf-8"))
-    except Exception:
-        return None, "", "不是合法的 JSON（本功能导入的是 manifest 定义文件，不是代码包）"
-    if not isinstance(data, dict):
-        return None, "", "manifest 顶层必须是一个 JSON 对象"
-    return data, digest, ""
+        import yaml
+
+        meta = yaml.safe_load(head) or {}
+    except Exception as exc:
+        return None, f"SKILL.md 的 frontmatter 解析失败：{str(exc)[:80]}"
+    if not isinstance(meta, dict):
+        return None, "SKILL.md 的 frontmatter 必须是键值对"
+    name = str(meta.get("name") or "").strip()
+    desc = str(meta.get("description") or "").strip()
+    if not name:
+        return None, "SKILL.md 的 frontmatter 缺少 name"
+    if not body:
+        return None, "SKILL.md 没有正文（frontmatter 之后是空的）"
+    # slug：优先 frontmatter 显式给的，否则从 name 规整（非法字符统统换成中划线）
+    slug = str(meta.get("slug") or meta.get("id") or name).strip().lower()
+    slug = re.sub(r"[^a-z0-9-]+", "-", slug).strip("-")[:64] or "imported-skill"
+    return {
+        "guduu": "1",
+        "kind": "skill",
+        "slug": slug,
+        "name": name[:_NAME_MAX],
+        # description 是主 AI 判断"何时该用这个技能"的依据，不能空
+        "description": (desc or f"从 SKILL.md 导入：{name}")[:_DESC_MAX],
+        "instructions": body,
+        "author": str(meta.get("author") or "").strip()[:80],
+        "license": str(meta.get("license") or "").strip()[:64],
+        "_from_skill_md": True,   # 供上层提示"附带的脚本/资源未导入"
+    }, ""
 
 
 def _clean_slugs(raw: Any) -> list:
@@ -199,8 +272,17 @@ def parse_manifest(data: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], str]
         if not instr:
             return None, "技能的 instructions 不能为空"
         if len(instr) > _INSTR_MAX:
-            return None, f"技能正文过长（上限 {_INSTR_MAX} 字符，实际 {len(instr)}）"
+            # 自家 JSON manifest：作者本就该按上限写，超了直接拒、让他改。
+            # SKILL.md：生态里的技能动辄几千字，一律拒等于这个功能白做——
+            # 改为**截断 + 在预览里明示**，把"要不要接受一个被截短的技能"交给用户判断。
+            # （技能正文每轮都注入，2000 字的上限是为了不吃光对话上下文，不能随便抬。）
+            if not data.get("_from_skill_md"):
+                return None, f"技能正文过长（上限 {_INSTR_MAX} 字符，实际 {len(instr)}）"
+            out["_truncated_from"] = len(instr)
+            instr = instr[:_INSTR_MAX]
         out["instructions"] = instr
+        if data.get("_from_skill_md"):
+            out["_from_skill_md"] = True
     else:
         prompt = str(data.get("system_prompt") or "").strip()
         if not prompt:
@@ -244,4 +326,16 @@ def review_notes(item: Dict[str, Any]) -> list:
         notes.append(
             "技能正文会在每轮对话中注入给 AI。请通读下方全文，确认内容符合预期。"
         )
+        if item.get("_from_skill_md"):
+            notes.append(
+                "这份来自 Claude Code 生态的 SKILL.md。**只导入了文字指令**——"
+                "仓库里附带的脚本(scripts/)与素材(assets/)不会被导入，"
+                "依赖那些文件才能完成的步骤在这里跑不了。"
+            )
+        if item.get("_truncated_from"):
+            notes.append(
+                f"⚠️ 原文 {item['_truncated_from']} 字，超过技能正文上限 {_INSTR_MAX} 字，"
+                f"**已截取前 {_INSTR_MAX} 字**。若后半部分有关键规则，导入后请自行补全，"
+                "或只保留最核心的部分。"
+            )
     return notes

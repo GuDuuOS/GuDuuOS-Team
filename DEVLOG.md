@@ -1,5 +1,27 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-27 — GuDuu OS 1.6.20 (patch)
+
+- 新增：**支持 Claude Code 生态的 `SKILL.md`**。负责人拿 `op7418/guizang-ppt-skill`
+  实测：AI 反复调 `fetch_url` / `preview_skill_import` 十来次都装不进去。查明原因不是
+  没更新，而是**格式不匹配**——那个仓库里根本没有 `guduu-agent.json`（404），
+  它是 `SKILL.md`（YAML frontmatter + Markdown 正文）。真实生态里的技能几乎都是这个
+  格式，只认自家 JSON 等于「从 GitHub 装别人的技能」是句空话。
+  - 现在两种格式都认：以 `{` 开头按 JSON manifest 解析，以 `---` 开头按 SKILL.md 解析。
+    frontmatter 的 name/description 直接用，正文进 instructions，slug 从 name 规整。
+  - **仓库首页地址也能粘了**：`github.com/<user>/<repo>` → 自动指向根目录的 `SKILL.md`。
+    这不是"猜文件名"（SKILL.md 放仓库根是该生态的固定约定），且只多一次请求。
+    此前只认 `.../blob/...` 的精确文件地址，而用户从浏览器复制的多半是仓库首页。
+  - **超长正文改为截断而非拒绝**：生态里的技能动辄几千字，而技能正文上限 2000 字
+    （每轮都注入，上限是为了不吃光对话上下文，不能随便抬）。一律拒等于功能白做，
+    改为截取前 2000 字并**在预览里明示**「原文 N 字、已截取、后半部分若有关键规则请自行补全」，
+    把"要不要接受一个被截短的技能"交给用户判断。自家 JSON manifest 仍然直接拒——
+    作者本就该按上限写。
+  - **明确告知只搬文字**：Claude Code 技能常附带 `scripts/` 与 `assets/`，预览里会写明
+    那些不会被导入、依赖它们的步骤在这里跑不了。（模块第一原则：只搬数据不执行代码。）
+- 测试：新增 7 条（frontmatter 解析、slug 规整、缺字段拒绝、超长截断且提示、
+  JSON 仍拒超长、脚本未导入提示、仓库根地址映射）；全套 854 通过。
+
 ## 2026-07-27 — GuDuu OS 1.6.19 (patch)
 
 - 🔴 **安全修复：SSRF 防护漏掉了阿里云元数据地址**（排查 WebFetch 风险时发现的真实漏洞）。

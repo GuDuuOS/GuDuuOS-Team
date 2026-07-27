@@ -318,5 +318,95 @@ class MissingDepsTest(unittest.TestCase):
         self.assertEqual(miss, {"skills": [], "workflows": []})
 
 
+
+class SkillMdTest(unittest.TestCase):
+    """支持 Claude Code 生态的 SKILL.md。
+
+    只认自家 JSON manifest 的话，「从 GitHub 装别人的技能」就是空话——真实生态里
+    几乎都是 SKILL.md（负责人拿 op7418/guizang-ppt-skill 实测踩到：仓库里根本没有
+    guduu-agent.json，AI 只能反复 fetch_url 去翻找）。
+    """
+
+    MD = (
+        "---\n"
+        "name: Guizang PPT Skill\n"
+        "description: 生成网页 PPT / 配图 / 封面\n"
+        "author: op7418\n"
+        "license: MIT\n"
+        "---\n\n"
+        "# 用法\n按以下步骤生成 PPT……\n"
+    )
+
+    def test_parses_frontmatter_and_body(self) -> None:
+        from cosmac.manifest import parse_skill_md
+
+        d, err = parse_skill_md(self.MD)
+        self.assertEqual(err, "")
+        self.assertEqual(d["kind"], "skill")
+        self.assertEqual(d["name"], "Guizang PPT Skill")
+        self.assertEqual(d["slug"], "guizang-ppt-skill")   # 从 name 规整而来
+        self.assertIn("按以下步骤", d["instructions"])
+        self.assertEqual(d["author"], "op7418")
+
+    def test_slug_is_sanitised(self) -> None:
+        """name 里有空格/大写/中文/符号都要能规整成合法 slug。"""
+        from cosmac.manifest import parse_skill_md
+
+        for name, want in (
+            ("My Cool Skill!", "my-cool-skill"),
+            ("PPT 技能", "ppt"),          # 中文被替换成中划线后收尾
+        ):
+            d, err = parse_skill_md(f"---\nname: {name}\ndescription: d\n---\n\n正文\n")
+            self.assertEqual(err, "")
+            self.assertEqual(d["slug"], want, name)
+
+    def test_rejects_missing_frontmatter_or_body(self) -> None:
+        from cosmac.manifest import parse_skill_md
+
+        self.assertNotEqual(parse_skill_md("# 只有正文没有 frontmatter")[1], "")
+        self.assertNotEqual(parse_skill_md("---\ndescription: 没有 name\n---\n\n正文")[1], "")
+        self.assertNotEqual(parse_skill_md("---\nname: 有名字\n---\n\n")[1], "")
+
+    def test_long_body_is_truncated_not_rejected(self) -> None:
+        """生态里的技能动辄几千字，一律拒等于功能白做；改为截断 + 明示。"""
+        from cosmac.manifest import parse_manifest, parse_skill_md, review_notes
+
+        long_md = self.MD + ("很长的正文。" * 500)
+        d, _ = parse_skill_md(long_md)
+        item, err = parse_manifest(d)
+        self.assertEqual(err, "", "SKILL.md 超长应截断而不是拒绝")
+        self.assertEqual(len(item["instructions"]), 2000)
+        self.assertGreater(item["_truncated_from"], 2000)
+        notes = " ".join(review_notes(item))
+        self.assertIn("已截取前", notes, "必须把截断这件事告诉用户")
+
+    def test_json_manifest_still_rejects_overlong(self) -> None:
+        """自家 JSON manifest 的作者本就该按上限写，超了仍然直接拒。"""
+        from cosmac.manifest import parse_manifest
+
+        _, err = parse_manifest({
+            "kind": "skill", "slug": "s", "name": "n", "description": "d",
+            "instructions": "x" * 2001,
+        })
+        self.assertIn("过长", err)
+
+    def test_notes_warn_scripts_not_imported(self) -> None:
+        """Claude Code 技能常附带 scripts/assets，必须说清那些不会被导入。"""
+        from cosmac.manifest import parse_manifest, parse_skill_md, review_notes
+
+        d, _ = parse_skill_md(self.MD)
+        item, _ = parse_manifest(d)
+        self.assertIn("scripts/", " ".join(review_notes(item)))
+
+    def test_repo_root_url_maps_to_skill_md(self) -> None:
+        """用户多半直接粘仓库首页地址——要能落到根目录的 SKILL.md。"""
+        from cosmac.manifest import normalize_url
+
+        u, err = normalize_url("https://github.com/op7418/guizang-ppt-skill")
+        self.assertEqual(err, "")
+        self.assertTrue(u.endswith("/SKILL.md"), u)
+        self.assertIn("op7418/guizang-ppt-skill", u)
+
+
 if __name__ == "__main__":
     unittest.main()
