@@ -1,5 +1,31 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-27 — GuDuu OS 1.6.14 (patch)
+
+- 新增：**主 AI 也能装 Skill / Agent 了**。1.6.13 只做了工坊界面的导入，用户在对话里
+  甩个 GitHub 链接说「把这个装进来」时，AI 只能回「我的工具集里没有这个接口」——
+  它说得对，但体验是断的（负责人实报）。现在补上两个工具：
+  - `preview_skill_import`：**只读**取回并渲染 manifest，返回完整人设/正文 + sha256。
+  - `import_skill_from_url`：真正落库，**必须带预览返回的 sha256**。
+  - 为什么拆成两个而不是「一键安装」：合并会让 AI 拉到什么就装什么，而第三方人设是要
+    注入进系统提示的。sha256 只能从 preview 拿到，等于**强制 AI 先看过内容**；工具描述
+    里也硬性要求它把正文原样展示给用户、再用 `ask_user_choice` 征得同意才可安装。
+  - 服务端复用工坊那套 confirm 逻辑：门控(custom_skill/custom_agent)、条数上限、
+    存储配额、字段清洗全走同一份实现——避免"AI 导入"成为绕过配额与门控的后门。
+    为此给 `handle_my_agents_save`/`handle_my_skills_save`/`handle_my_import_confirm`
+    加了可选 `user_id` 入口（工具侧只有 ctx.sender，拿不到用户 token）。
+- 变更：manifest 拉取改走 **jsDelivr CDN**。实测国内服务器打 `raw.githubusercontent.com`
+  直接读超时（12s 无响应），而 `cdn.jsdelivr.net` 1 秒返回。
+  ⚠️ 注意区分：**部署拉代码走的是 `github.com`（通）**，取文件原始内容走的是
+  `raw.githubusercontent.com`（不通）——两个域名的连通性彼此独立，不矛盾。
+  用户照旧粘 GitHub 网页地址，服务端自动转直链；直接粘 raw 地址则原样尊重。
+  代价：jsdelivr 对分支名有分钟级 CDN 缓存，想立刻生效可把 ref 换成 commit hash。
+- 新增：`docs/examples/` 两份示例 manifest（agent/skill 各一），既是端到端验证素材，
+  也给第三方当格式模板。已在生产容器实测：粘 GitHub 网页地址 → 自动转 jsdelivr →
+  取回解析成功、两次拉取哈希一致。
+- 测试：新增 4 条主 AI 工具测试（缺 sha256 时**绝不调到落库回调**、未注入回调时优雅降级），
+  连同 manifest 解析共 21 条；全套 815 通过。
+
 ## 2026-07-27 — GuDuu OS 1.6.13 (patch)
 
 - 新增：**从 GitHub 导入 Skill / Agent**（负责人要的「别人 GitHub 上的能不能装进来」）。

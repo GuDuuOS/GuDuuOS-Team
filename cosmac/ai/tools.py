@@ -205,6 +205,12 @@ class Toolbox:
         # 能力名册回调（模块3.5 档1）：由 bot 注入 _list_capabilities_for_tool。签名 (ctx)->文本。
         # 让 list_capabilities 工具能列出"可调配的 人/Agent/Skill/知识库"，供主AI 拆任务匹配。
         self.list_capabilities: Optional[Callable[[ToolContext], str]] = None
+        # manifest 导入回调（bot 注入 _manifest_preview_for_tool / _manifest_import_for_tool）。
+        # 让主 AI 也能走「从 GitHub 装 Skill/Agent」这条路——此前只有工坊界面能导入，
+        # 用户在对话里说"帮我把这个装进来"时 AI 只能干瞪眼（负责人实报）。
+        # 签名：preview (url, ctx)->文本；import (url, sha256, ctx)->文本。
+        self.manifest_preview: Optional[Callable[[str, ToolContext], str]] = None
+        self.manifest_import: Optional[Callable[[str, str, ToolContext], str]] = None
         # 是否平台管理员回调（bot 注入 _is_platform_admin）。签名 (user_id)->bool。
         # 用于 list_my_rooms 的可见范围：普通用户只看自己在的频道(隐私边界)；管理员/负责人看
         # 全部 bot 频道(跨工作区统筹——否则他查不到自己没加入、但组织里存在的频道)。None=当作非管理员。
@@ -771,6 +777,50 @@ class Toolbox:
             ),
             parameters={"type": "object", "properties": {}},
             fn=self._tool_list_capabilities,
+        )
+
+        # 9.5) 从 GitHub 装 Skill/Agent：拆成 preview + import 两个工具，**刻意不合并**。
+        #      合成一个"一键安装"会让 AI 拉到什么就装什么；而第三方人设是要注入进系统提示的，
+        #      必须先让用户看清内容再决定（负责人拍板：导入必须人工确认）。
+        self._register(
+            name="preview_skill_import",
+            description=(
+                "预览一个放在 GitHub 上的 Skill / Agent 定义文件（manifest），**只读取不安装**。"
+                "当用户给你一个 GitHub 链接、说『把这个装进来/加到技能里』时，先用它看清楚是什么。"
+                "它会返回名称、用途、以及**完整的人设/技能正文**和一个校验值(sha256)。"
+                "⚠️ 拿到结果后你必须：① 把正文原样展示给用户；② 提示可能的风险；"
+                "③ 用 ask_user_choice 明确征求用户同意；用户同意后才可调 import_skill_from_url。"
+                "**绝不允许**跳过展示与确认直接安装。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "manifest 文件地址（GitHub 网页地址即可，如 .../blob/main/guduu-agent.json）。",
+                    },
+                },
+                "required": ["url"],
+            },
+            fn=self._tool_preview_skill_import,
+        )
+        self._register(
+            name="import_skill_from_url",
+            description=(
+                "把预览过的 Skill / Agent 安装到**当前用户自己**的工坊。"
+                "⚠️ 只有在你已经调过 preview_skill_import、把正文展示给用户、"
+                "并用 ask_user_choice 得到用户明确同意之后，才可以调用它。"
+                "sha256 必须用预览返回的那个值（服务端会重新拉取比对，防内容被掉包）。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "与预览时相同的地址。"},
+                    "sha256": {"type": "string", "description": "预览返回的校验值，原样填回。"},
+                },
+                "required": ["url", "sha256"],
+            },
+            fn=self._tool_import_skill_from_url,
         )
 
         # 10) 一键建专班（模块3.5 档3）：把"建频道+拉人+绑AI+装任务RULE/技能+派单"串成一个动作。
@@ -1695,6 +1745,29 @@ class Toolbox:
             return isinstance(level, int) and level >= 50
         except Exception:
             return False
+
+    def _tool_preview_skill_import(self, args: Dict[str, Any], ctx: ToolContext) -> str:
+        """预览 manifest（只读）。真正的取回与校验在 bot 一侧（复用工坊那套端点逻辑）。"""
+        if self.manifest_preview is None:
+            return "导入功能暂不可用（未接入）。"
+        url = str(args.get("url") or "").strip()
+        if not url:
+            return "请给出 manifest 文件的地址。"
+        return self.manifest_preview(url, ctx)
+
+    def _tool_import_skill_from_url(self, args: Dict[str, Any], ctx: ToolContext) -> str:
+        """确认安装。要求带上预览返回的 sha256——服务端会重新拉取并比对。
+
+        为什么非要 sha256：① 它只能从 preview 拿到，等于强制 AI 必须先看过内容；
+        ② 服务端重新拉取比对，挡住"预览时良性、安装时已被换成恶意版本"（TOCTOU）。
+        """
+        if self.manifest_import is None:
+            return "导入功能暂不可用（未接入）。"
+        url = str(args.get("url") or "").strip()
+        sha = str(args.get("sha256") or "").strip().lower()
+        if not url or not sha:
+            return "缺少地址或校验值；请先调 preview_skill_import 看过内容、并征得用户同意。"
+        return self.manifest_import(url, sha, ctx)
 
     def _tool_run_workflow(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         # #1/#2 越权防护：跑工作流触发外部/付费操作、用服务端共享凭据，必须授权。

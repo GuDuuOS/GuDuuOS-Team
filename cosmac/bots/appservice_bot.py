@@ -385,6 +385,9 @@ class CosmacBot:
         self.toolbox.kb_search = self._kb_search_for_tool
         # 能力名册（模块3.5 档1）：注入"列出可调配资源"的回调，让主AI 拆任务时知道找谁。
         self.toolbox.list_capabilities = self._list_capabilities_for_tool
+        # 从 GitHub 装 Skill/Agent：preview 只读、import 才落库(且要带预览的 sha256)
+        self.toolbox.manifest_preview = self._manifest_preview_for_tool
+        self.toolbox.manifest_import = self._manifest_import_for_tool
         # 频道清单可见范围：管理员/负责人可跨工作区看全部频道，普通用户只看自己在的（隐私边界）。
         self.toolbox.is_admin = self._is_platform_admin
         # 邀请前校验停用账号用：AI 拉人时跳过登不进来的停用账号（负责人实报）。
@@ -5451,7 +5454,7 @@ class CosmacBot:
             return False
 
     def handle_my_import_confirm(
-        self, access_token: str, body: Dict[str, Any]
+        self, access_token: str, body: Dict[str, Any], *, user_id: str = ""
     ) -> Tuple[int, Dict[str, Any]]:
         """用户确认后真正落库。
 
@@ -5459,7 +5462,9 @@ class CosmacBot:
           ① 防 TOCTOU——预览后仓库被换成恶意版本；
           ② 防前端被篡改后直接投喂任意内容（预览展示的和落库的必须是同一份）。
         """
-        user_id = self.client.whoami(access_token)
+        # user_id 显式传入 = 主 AI 工具调用路径（工具侧只有 ctx.sender，拿不到用户 token）；
+        # 否则走 HTTP 入口，用 access_token 反查。
+        user_id = user_id or self.client.whoami(access_token)
         if not user_id:
             return 401, {"error": "登录已失效，请重新登录"}
         from cosmac.manifest import fetch_manifest, parse_manifest
@@ -5487,12 +5492,63 @@ class CosmacBot:
                 # 所以即使 manifest 里写了一堆，也拿不到额外权限。
                 "workflow_slugs": item.get("workflow_slugs") or [],
                 "enabled": True,
-            })
+            }, user_id=user_id)
         return self.handle_my_skills_save(access_token, {
             "slug": item["slug"], "name": item["name"],
             "description": item["description"],
             "instructions": item["instructions"], "enabled": True,
-        })
+        }, user_id=user_id)
+
+    # ── 主 AI 侧的 manifest 导入（工具回调） ──────────────────────
+    # 与工坊界面走的是同一套 manifest 解析与落库逻辑，只是入口不同：
+    # 界面上是用户自己粘地址，这里是用户在对话里让 AI 代劳。
+    # ⚠️ 落库前的"人工确认"由工具描述强制 AI 先展示正文 + 调 ask_user_choice；
+    # 服务端这一侧则守住：必须带预览时的 sha256（等于强制看过内容）、内容变了就拒绝。
+
+    def _manifest_preview_for_tool(self, url: str, ctx: "ToolContext") -> str:
+        """给 preview_skill_import 用：取回并渲染成给模型读的文本。"""
+        from cosmac.manifest import fetch_manifest, parse_manifest, review_notes
+
+        data, digest, err = fetch_manifest(url)
+        if err:
+            return f"读取失败：{err}"
+        item, perr = parse_manifest(data or {})
+        if perr:
+            return f"这个文件不是有效的 GuDuu manifest：{perr}"
+        gate = "custom_agent" if item["kind"] == "agent" else "custom_skill"
+        if not self._gate_allows(ctx.sender, gate):
+            return self._gate_denied_text(gate, ui=False)
+        kind_cn = "智能体" if item["kind"] == "agent" else "技能"
+        body = item.get("system_prompt") or item.get("instructions") or ""
+        exists = self._my_item_exists(ctx.sender, item["kind"], item["slug"])
+        lines = [
+            f"读到一个{kind_cn}定义：{item['name']}（标识 {item['slug']}）",
+            f"用途：{item['description']}",
+            f"作者：{item.get('author') or '未标注'}；许可：{item.get('license') or '未标注'}",
+            f"校验值 sha256：{digest}",
+        ]
+        if exists:
+            lines.append(f"⚠️ 用户已有同标识的{kind_cn}，安装会覆盖它。")
+        for n in review_notes(item):
+            lines.append(f"提醒：{n}")
+        lines.append(f"—— 以下是完整{'人设' if item['kind'] == 'agent' else '正文'}，请原样展示给用户 ——")
+        lines.append(body)
+        lines.append(
+            "—— 以上 ——\n"
+            "接下来你**必须**：把上面的正文原样展示给用户、指出风险，"
+            "再用 ask_user_choice 征求同意；用户同意后才调 import_skill_from_url"
+            f"（url 与本次相同，sha256 填 {digest}）。"
+        )
+        return "\n".join(lines)
+
+    def _manifest_import_for_tool(self, url: str, sha256: str, ctx: "ToolContext") -> str:
+        """给 import_skill_from_url 用：复用 confirm 端点，保证与界面导入同一套规则。"""
+        code, payload = self.handle_my_import_confirm(
+            "", {"url": url, "sha256": sha256}, user_id=ctx.sender,
+        )
+        if code == 200:
+            return "已安装到该用户的工坊。请告诉用户：可在「我的AI工坊」查看或删除它。"
+        return f"安装失败：{payload.get('error') or code}"
 
     def handle_my_workflows_list(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """列出可绑定的工作流连接器（给工坊的「绑定工作流」勾选框用）。需登录。
@@ -5522,10 +5578,12 @@ class CosmacBot:
             return 500, {"error": "读取失败"}
 
     def handle_my_agents_save(
-        self, access_token: str, body: Dict[str, Any]
+        self, access_token: str, body: Dict[str, Any], *, user_id: str = ""
     ) -> Tuple[int, Dict[str, Any]]:
         """新建/更新本人自建智能体。校验:slug 规范、字段长度、每人 50 个、存储空间。"""
-        user_id = self.client.whoami(access_token)
+        # user_id 显式传入 = 主 AI 工具调用路径（工具侧只有 ctx.sender，拿不到用户 token）；
+        # 否则走 HTTP 入口，用 access_token 反查。
+        user_id = user_id or self.client.whoami(access_token)
         if not user_id:
             return 401, {"error": "登录已失效，请重新登录"}
         # 自建智能体是付费功能(custom_agent 门控,与自建技能 custom_skill 对称)——此前
@@ -5627,10 +5685,12 @@ class CosmacBot:
             return 500, {"error": "读取失败"}
 
     def handle_my_skills_save(
-        self, access_token: str, body: Dict[str, Any]
+        self, access_token: str, body: Dict[str, Any], *, user_id: str = ""
     ) -> Tuple[int, Dict[str, Any]]:
         """新建/更新本人自建技能。个人技能会注入本人每轮对话——单条与总量都有上限。"""
-        user_id = self.client.whoami(access_token)
+        # user_id 显式传入 = 主 AI 工具调用路径（工具侧只有 ctx.sender，拿不到用户 token）；
+        # 否则走 HTTP 入口，用 access_token 反查。
+        user_id = user_id or self.client.whoami(access_token)
         if not user_id:
             return 401, {"error": "登录已失效，请重新登录"}
         # 自建技能是付费功能（custom_skill 门控）：与聊天命令「技能」同一道闸、服务端强制——否则
@@ -7455,6 +7515,10 @@ class CosmacBot:
         "create_tasks": "task_board",      # AI 拆解任务到看板：独立门控（默认免费）
         "query_hr": "hr_data",             # 人事数据查询：敏感数据，默认仅管理员（见 GATE_CATALOG）
         "query_sales": "sales_data",       # 销售业绩查询：经营敏感数据，默认仅管理员
+        # 从 GitHub 装 Skill/Agent：与工坊里手动建同一道闸（custom_skill/custom_agent，
+        # 默认付费）。preview 不设门控——它只读、且回调里已按 kind 各查一次，
+        # 让用户能先看清是什么再决定要不要为此升级。
+        "import_skill_from_url": "custom_skill",
     }
 
     # —— 用量配额（变现第二步）——

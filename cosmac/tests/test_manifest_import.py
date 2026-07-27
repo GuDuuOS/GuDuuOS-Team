@@ -158,5 +158,72 @@ class ReviewNotesTest(unittest.TestCase):
         self.assertIn("每轮对话", " ".join(review_notes(item)))
 
 
+
+class AiImportToolTest(unittest.TestCase):
+    """主 AI 侧的导入工具：preview 只读、import 必须带预览返回的 sha256。"""
+
+    def _box(self):
+        from cosmac.ai.tools import Toolbox
+
+        class _C:
+            def resolve_alias(self, a):
+                return "!ctrl:h"
+
+            def get_state_event(self, *a, **k):
+                return None
+
+        return Toolbox(_C())
+
+    def test_both_tools_registered(self) -> None:
+        names = {s.name for s in self._box().specs()}
+        self.assertIn("preview_skill_import", names)
+        self.assertIn("import_skill_from_url", names)
+
+    def test_import_refuses_without_sha256(self) -> None:
+        """核心安全断言：拿不到 sha256 就装不了。
+
+        sha256 只能从 preview 拿到，所以这条等于**强制 AI 必须先看过内容**——
+        挡住"用户扔个链接、AI 直接装上"这种最危险的路径。
+        """
+        from cosmac.ai.tools import ToolCall, ToolContext
+
+        box = self._box()
+        called = []
+        box.manifest_import = lambda url, sha, ctx: called.append((url, sha)) or "已安装"
+        ctx = ToolContext(room_id="!r:h", sender="@u:h")
+
+        out = box.execute(ToolCall(
+            id="t", name="import_skill_from_url",
+            arguments={"url": "https://github.com/u/r/blob/main/a.json"},   # 无 sha256
+        ), ctx)
+        self.assertIn("先调 preview_skill_import", out)
+        self.assertEqual(called, [], "缺 sha256 时绝不能真的调到落库回调")
+
+    def test_import_passes_through_when_sha_present(self) -> None:
+        from cosmac.ai.tools import ToolCall, ToolContext
+
+        box = self._box()
+        seen = {}
+        box.manifest_import = lambda url, sha, ctx: seen.update(url=url, sha=sha) or "已安装"
+        box.execute(ToolCall(
+            id="t", name="import_skill_from_url",
+            arguments={"url": "https://github.com/u/r/blob/main/a.json", "sha256": "ABC123"},
+        ), ToolContext(room_id="!r:h", sender="@u:h"))
+        self.assertEqual(seen["sha"], "abc123")   # 统一小写后比对
+
+    def test_tools_degrade_gracefully_without_hook(self) -> None:
+        """未注入回调（单测/精简部署）时给一句人话，别抛异常把 Agent 循环打断。"""
+        from cosmac.ai.tools import ToolCall, ToolContext
+
+        box = self._box()
+        ctx = ToolContext(room_id="!r:h", sender="@u:h")
+        for name, args in (
+            ("preview_skill_import", {"url": "https://github.com/u/r/blob/main/a.json"}),
+            ("import_skill_from_url", {"url": "https://github.com/u/r/blob/main/a.json", "sha256": "x"}),
+        ):
+            out = box.execute(ToolCall(id="t", name=name, arguments=args), ctx)
+            self.assertIn("暂不可用", out)
+
+
 if __name__ == "__main__":
     unittest.main()
