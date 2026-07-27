@@ -1113,6 +1113,22 @@ class Toolbox:
                         break
         # 默认把发起人拉进新群，再并上模型额外指定的邀请人（去重）
         invitees = list(dict.fromkeys([ctx.sender, *(args.get("invitees") or [])]))
+        # 【过滤停用账号】停用的人登不进来,邀了只会在成员列表里挂一个永远"待接受"的死条目。
+        # assemble_team 早就过滤了,建群这条路径此前漏了(负责人实报:AI 邀请了停用账号)。
+        # 发起人永不过滤——他是群主,过滤掉会建出一个自己都不在的房。
+        skipped_inactive: List[str] = []
+        try:
+            _inactive = self.inactive_users() if self.inactive_users else None
+        except Exception:
+            _inactive = None       # 查不到就不过滤(fail-open),别因一次抖动建不成群
+        if _inactive:
+            kept = []
+            for u in invitees:
+                if u != ctx.sender and u in _inactive:
+                    skipped_inactive.append(u)
+                else:
+                    kept.append(u)
+            invitees = kept
         # 发起人 = 频道主人：建房时就提成 100 级管理员，否则他改不了房名/配置(403)。
         room_id = self.client.create_room(name, invitees=invitees, admins=[ctx.sender])
         if not room_id:
@@ -1174,6 +1190,12 @@ class Toolbox:
         return (
             f"已成功创建群「{name}」（room_id={room_id}），"
             f"并已邀请：{', '.join(invitees)}{bind_note}。"
+            + (
+                f"\n⚠️ 已跳过 {len(skipped_inactive)} 个**已停用**账号（登不进来，邀了也没用）："
+                + "、".join(skipped_inactive)
+                + "。需要的话请先让管理员恢复账号。"
+                if skipped_inactive else ""
+            )
         )
 
     def _room_kind(self, room_id: str) -> str:
@@ -1657,14 +1679,27 @@ class Toolbox:
             return f"房间 {room_id} 没查到成员（或查询失败）。"
         joined = [m for m in members if m.get("membership") != "invite"]
         invited = [m for m in members if m.get("membership") == "invite"]
-        lines = [f"- {m['display_name']}（{m['user_id']}）" for m in joined]
+        # 标注**已停用**账号:AI 常在自由回复里建议"要不要把某某拉进来协作",而那个人可能
+        # 早被停用(负责人实报)。工具层拦得住真正的邀请动作,但拦不住它嘴上乱建议——
+        # 把状态直接摆进它看得到的数据里,它才不会推荐一个登不进来的人。
+        try:
+            inactive = self.inactive_users() if self.inactive_users else None
+        except Exception:
+            inactive = None
+
+        def _tag(m: Dict[str, Any]) -> str:
+            uid = str(m.get("user_id") or "")
+            mark = "（**已停用**，登不进来）" if inactive and uid in inactive else ""
+            return f"- {m['display_name']}（{uid}）{mark}"
+
+        lines = [_tag(m) for m in joined]
         out = f"房间 {room_id} 已加入 {len(joined)} 人：\n" + "\n".join(lines)
         if invited:
             # 待接受的单独列,并明确告诉模型这些人**还没进来**,别当成可派活的在场成员
             out += (
                 f"\n\n另有 {len(invited)} 人**已邀请但尚未接受**（还没真正进入频道，"
                 "派活/统计在场人数时要区分对待，可提醒用户催一下）：\n"
-                + "\n".join(f"- {m['display_name']}（{m['user_id']}）· 待接受" for m in invited)
+                + "\n".join(_tag(m) + " · 待接受" for m in invited)
             )
         return out
 
