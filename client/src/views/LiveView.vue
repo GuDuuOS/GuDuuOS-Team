@@ -3018,7 +3018,9 @@ onBeforeUnmount(() => {
           <!-- 右栏（仅放大态）：进度=真实任务看板 / 项目文件=真实知识库文档 -->
           <div v-if="aiMax" class="ai-cw-right">
             <div class="ai-cw-sec">
-              <div class="ai-cw-sec-h with-meta"><span>进度</span><span class="ai-cw-meta">{{ doneCount }}/{{ convoTasks.length }}</span></div>
+              <!-- 计数**不隐藏**（负责人：哪怕只有 1 个任务也要看得到 1/1）；
+                   只是没任务时「0/0」这个数字没有意义、还显得像出错，换成「—」。 -->
+              <div class="ai-cw-sec-h with-meta"><span>进度</span><span class="ai-cw-meta">{{ convoTasks.length ? `${doneCount}/${convoTasks.length}` : '—' }}</span></div>
               <!-- 显示当前对话项目名,让"进度是哪个项目的"一目了然(与左侧流程图对应) -->
               <div v-if="convoGoal" class="ai-cw-proj" :title="convoGoal">{{ convoGoal }}</div>
               <ul v-if="convoTasks.length" class="ai-cw-progress">
