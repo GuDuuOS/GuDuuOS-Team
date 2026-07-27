@@ -1,5 +1,21 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-07-27 — GuDuu OS 1.6.21 (patch)
+
+- 修复：**SKILL.md 实际取不回来**（1.6.20 的功能在真实仓库上跑不通）。原因是
+  jsDelivr **只加速 JS/CSS 这类 web 资源**，对 `.md` 会 **301 跳回
+  `raw.githubusercontent.com`**——而那个域名国内正是不通的，于是 SKILL.md 永远取不到
+  （JSON 走 jsdelivr 没事，所以之前的验证漏掉了这个差异）。
+  - 改走 **GitHub 官方 Contents API**（`api.github.com`）：JSON 与 Markdown 都能取，
+    一条路径走到底，不必按扩展名分流。实测国内可达，55KB 的 SKILL.md 一次取回。
+  - 仓库首页地址不再写死 `@main`——API 缺省用仓库的**默认分支**，省得猜 main 还是 master。
+  - 响应是一层 JSON 信封（内容 base64），新增 `_unwrap_github_api` 剥开；
+    哈希按**真实文件内容**算，换取回路径不影响校验值。
+  - API 的 404 / 速率限制原因原样透出；仓库里没有 SKILL.md 时 API 会返回目录列表，
+    单独给一句能懂的提示。
+  - 代价：未认证 API 有 60 次/小时/IP 限制——对"偶尔装个技能"够用。
+- 测试：新增 3 条（base64 解包、错误原样透出、目录列表被清晰拒绝）；全套 857 通过。
+
 ## 2026-07-27 — GuDuu OS 1.6.20 (patch)
 
 - 新增：**支持 Claude Code 生态的 `SKILL.md`**。负责人拿 `op7418/guizang-ppt-skill`

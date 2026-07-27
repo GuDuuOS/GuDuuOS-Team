@@ -48,6 +48,12 @@ _ALLOWED_HOSTS = {
     # （2026-07-27 在 guduu-cn 实测）。所以下面把 github.com 的网页地址统一转成
     # jsdelivr 直链，否则这个功能在生产上根本用不了。
     "cdn.jsdelivr.net",
+    # GitHub 官方 Contents API。**Markdown 的唯一可行路径**：jsdelivr 只加速
+    # JS/CSS 这类 web 资源，对 .md 会 301 跳回 raw.githubusercontent.com（国内不通），
+    # 于是 SKILL.md 永远取不到。api.github.com 实测国内可达且支持任意文件
+    # （2026-07-27 在 guduu-cn 实测 55KB 的 SKILL.md 一次取回）。
+    # 代价：未认证有 60 次/小时/IP 的速率限制——对"偶尔装个技能"完全够用。
+    "api.github.com",
 }
 
 MANIFEST_MAX_BYTES = 256 * 1024   # 256KB：一份 JSON 定义绰绰有余，防超大响应打爆内存
@@ -102,7 +108,11 @@ def normalize_url(raw: str) -> Tuple[str, str]:
         m = re.match(r"^/([^/]+)/([^/]+)/blob/([^/]+)/(.+)$", u.path)
         if m:
             user, repo, ref, path = m.group(1), m.group(2), m.group(3), m.group(4)
-            return f"https://cdn.jsdelivr.net/gh/{user}/{repo}@{ref}/{path}", ""
+            # 统一走官方 Contents API：JSON 和 Markdown 都能取，不必按扩展名分流。
+            # （曾走 jsdelivr，但它对 .md 会 301 跳回 raw.githubusercontent.com，国内不通。）
+            return (
+                f"https://api.github.com/repos/{user}/{repo}/contents/{path}?ref={ref}", ""
+            )
         # 仓库根地址（github.com/<user>/<repo>）：直接指向根目录的 SKILL.md。
         # 这不是"猜文件名"——SKILL.md 放仓库根是 Claude Code 生态的固定约定，
         # 而用户从浏览器复制的多半就是仓库首页地址（负责人实报：粘了仓库根，
@@ -110,7 +120,8 @@ def normalize_url(raw: str) -> Tuple[str, str]:
         m2 = re.match(r"^/([^/]+)/([^/]+)/?$", u.path)
         if m2:
             user, repo = m2.group(1), m2.group(2).removesuffix(".git")
-            return f"https://cdn.jsdelivr.net/gh/{user}/{repo}@main/SKILL.md", ""
+            # 不写死 ref：API 缺省用仓库的**默认分支**，省得去猜 main 还是 master
+            return f"https://api.github.com/repos/{user}/{repo}/contents/SKILL.md", ""
         return "", "请给 manifest 或 SKILL.md 的地址，或直接给仓库首页地址"
     return url, ""
 
@@ -152,8 +163,15 @@ def fetch_manifest(url: str) -> Tuple[Optional[Dict[str, Any]], str, str]:
     if len(body) > MANIFEST_MAX_BYTES:
         return None, "", f"文件过大（上限 {MANIFEST_MAX_BYTES // 1024}KB）"
 
-    digest = hashlib.sha256(body).hexdigest()
     text = body.decode("utf-8", errors="replace")
+    # GitHub Contents API 返回的是一层 JSON 信封（内容 base64 在 content 字段里），
+    # 先剥掉它拿到真实文件内容；哈希也按**真实内容**算，这样换取回路径不影响校验值。
+    if "api.github.com" in norm:
+        text, err = _unwrap_github_api(text)
+        if err:
+            return None, "", err
+        body = text.encode("utf-8")
+    digest = hashlib.sha256(body).hexdigest()
 
     # 两种受支持的格式：
     #   ① GuDuu 自家的 JSON manifest；
@@ -176,6 +194,30 @@ def fetch_manifest(url: str) -> Tuple[Optional[Dict[str, Any]], str, str]:
         "无法识别的格式：需要 GuDuu 的 JSON manifest，"
         "或带 YAML frontmatter 的 SKILL.md"
     )
+
+
+def _unwrap_github_api(raw: str) -> Tuple[str, str]:
+    """把 GitHub Contents API 的 JSON 信封剥成文件真实内容。返回 (内容, 错误)。"""
+    try:
+        env = json.loads(raw)
+    except Exception:
+        return "", "GitHub 接口返回的不是合法 JSON"
+    if isinstance(env, list):
+        # 给的是目录而不是文件（例如仓库里没有 SKILL.md 时 API 会列出目录内容）
+        return "", "这个地址指向的是目录，不是文件；请给出具体的 SKILL.md 或 manifest 地址"
+    if not isinstance(env, dict):
+        return "", "GitHub 接口返回格式异常"
+    if env.get("message") and "content" not in env:
+        # 404 / rate limit 等都走这里，把原因原样透出去便于排查
+        return "", f"GitHub 接口：{str(env['message'])[:120]}"
+    if str(env.get("encoding") or "") != "base64":
+        return "", f"暂不支持的编码：{env.get('encoding')}"
+    try:
+        import base64
+
+        return base64.b64decode(env.get("content") or "").decode("utf-8", errors="replace"), ""
+    except Exception as exc:
+        return "", f"内容解码失败：{str(exc)[:80]}"
 
 
 def parse_skill_md(text: str) -> Tuple[Optional[Dict[str, Any]], str]:

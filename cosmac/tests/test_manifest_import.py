@@ -20,15 +20,17 @@ class NormalizeUrlTest(unittest.TestCase):
         self.assertEqual(err, "")
         self.assertTrue(u.startswith("https://raw.githubusercontent.com/"))
 
-    def test_converts_blob_url_to_jsdelivr(self) -> None:
-        """用户多半直接从浏览器地址栏复制 blob 地址，要能自动转直链。
+    def test_converts_blob_url_to_github_api(self) -> None:
+        """用户多半直接从浏览器地址栏复制 blob 地址，要能自动转成可取的直链。
 
-        转 jsDelivr 而非 raw.githubusercontent.com：实测国内服务器打 raw 直接读超时
-        （12s 无响应），jsdelivr 1 秒返回——不转的话这功能在生产上根本用不了。
+        为什么走官方 Contents API 而不是 raw / jsdelivr：
+          · raw.githubusercontent.com —— 国内服务器直接读超时（实测 12s 无响应）；
+          · jsdelivr —— 只加速 JS/CSS，对 .md 会 301 跳回 raw（于是 SKILL.md 永远取不到）。
+        API 两种格式都能取，一条路径走到底。
         """
         u, err = normalize_url("https://github.com/u/r/blob/main/skills/x.json")
         self.assertEqual(err, "")
-        self.assertEqual(u, "https://cdn.jsdelivr.net/gh/u/r@main/skills/x.json")
+        self.assertEqual(u, "https://api.github.com/repos/u/r/contents/skills/x.json?ref=main")
 
     def test_accepts_jsdelivr_directly(self) -> None:
         u, err = normalize_url("https://cdn.jsdelivr.net/gh/u/r@main/x.json")
@@ -406,6 +408,45 @@ class SkillMdTest(unittest.TestCase):
         self.assertEqual(err, "")
         self.assertTrue(u.endswith("/SKILL.md"), u)
         self.assertIn("op7418/guizang-ppt-skill", u)
+        # 不写死 ref：API 缺省取仓库默认分支，省得猜 main 还是 master
+        self.assertNotIn("@main", u)
+
+
+
+class GithubApiEnvelopeTest(unittest.TestCase):
+    """GitHub Contents API 的 JSON 信封解包（内容是 base64）。"""
+
+    def test_unwraps_base64_content(self) -> None:
+        import base64
+        import json as _json
+
+        from cosmac.manifest import _unwrap_github_api
+
+        raw = _json.dumps({
+            "encoding": "base64",
+            "content": base64.b64encode("---\nname: x\n---\n正文".encode()).decode(),
+        })
+        text, err = _unwrap_github_api(raw)
+        self.assertEqual(err, "")
+        self.assertIn("name: x", text)
+
+    def test_reports_api_errors_verbatim(self) -> None:
+        """404 / 速率限制等原因原样透出，便于排查（而不是笼统说"失败了"）。"""
+        import json as _json
+
+        from cosmac.manifest import _unwrap_github_api
+
+        _, err = _unwrap_github_api(_json.dumps({"message": "Not Found"}))
+        self.assertIn("Not Found", err)
+
+    def test_directory_listing_is_rejected_clearly(self) -> None:
+        """仓库里没有 SKILL.md 时 API 会返回目录列表——要给一句能懂的话。"""
+        import json as _json
+
+        from cosmac.manifest import _unwrap_github_api
+
+        _, err = _unwrap_github_api(_json.dumps([{"name": "a.md"}]))
+        self.assertIn("目录", err)
 
 
 if __name__ == "__main__":
