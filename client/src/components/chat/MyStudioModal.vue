@@ -77,7 +77,10 @@
               </div>
             </div>
           </template>
-          <div v-else class="cam-add"><button class="cam-add-btn" @click="newAgent">＋ 新建智能体</button></div>
+          <div v-else class="cam-add">
+            <button class="cam-add-btn" @click="newAgent">＋ 新建智能体</button>
+            <button class="cam-mini" @click="openImport('agent')">从链接导入</button>
+          </div>
         </template>
 
         <!-- ═══ 技能 ═══ -->
@@ -108,7 +111,10 @@
               </div>
             </div>
           </template>
-          <div v-else class="cam-add"><button class="cam-add-btn" @click="newSkill">＋ 新建技能</button></div>
+          <div v-else class="cam-add">
+            <button class="cam-add-btn" @click="newSkill">＋ 新建技能</button>
+            <button class="cam-mini" @click="openImport('skill')">从链接导入</button>
+          </div>
         </template>
 
         <!-- ═══ 上架·收益（创作者商城 P2/P3）═══ -->
@@ -256,7 +262,62 @@
         </div>
       </div>
     </div>
-  </div>
+  
+      <!-- ═══ 从链接导入(manifest) ═══
+           两步走:预览只取回不落库,让用户**读完人设/正文全文**再决定。
+           第三方人设会作为系统提示注入给 AI,而主 AI 手里有建群/发消息/查知识库等工具,
+           静默导入等于把一部分控制权交给素未谋面的作者。 -->
+      <div v-if="importOpen" class="ms-import-mask" @click.self="closeImport">
+        <div class="ms-import">
+          <div class="ms-import-h">
+            <strong>从链接导入{{ importKind === 'agent' ? '智能体' : '技能' }}</strong>
+            <button class="cam-mini" @click="closeImport">关闭</button>
+          </div>
+
+          <template v-if="!importPv">
+            <input v-model.trim="importUrl" class="cam-input"
+              placeholder="粘贴 manifest 地址，如 https://github.com/用户/仓库/blob/main/guduu-agent.json" />
+            <span class="ms-hint">
+              目前支持 GitHub / Gist 上的 JSON 定义文件。导入的是<b>定义</b>（人设、技能正文、
+              引用关系），不会下载或运行任何代码。
+            </span>
+            <p v-if="importErr" class="ms-import-err">{{ importErr }}</p>
+            <div class="ms-actions">
+              <button class="cam-add-btn" :disabled="importBusy || !importUrl" @click="doPreview">
+                {{ importBusy ? '读取中…' : '预览' }}
+              </button>
+            </div>
+          </template>
+
+          <template v-else>
+            <div class="ms-import-sum">
+              <div><b>{{ importPv.item.name }}</b><code class="ms-wf-slug">{{ importPv.item.slug }}</code></div>
+              <div class="ms-hint">{{ importPv.item.description }}</div>
+              <div v-if="importPv.item.author || importPv.item.license" class="ms-hint">
+                作者：{{ importPv.item.author || '未标注' }} · 许可：{{ importPv.item.license || '未标注' }}
+              </div>
+            </div>
+            <ul v-if="importPv.notes.length" class="ms-import-notes">
+              <li v-for="(n, i) in importPv.notes" :key="i">{{ n }}</li>
+            </ul>
+            <p v-if="importPv.exists" class="ms-import-err">
+              你已有同名 {{ importPv.item.slug }}，导入会<b>覆盖</b>它。
+            </p>
+            <div class="ms-persona-label">
+              {{ importPv.item.kind === 'agent' ? '人设全文（请通读后再确认）' : '技能正文（请通读后再确认）' }}
+            </div>
+            <pre class="ms-import-body">{{ importPv.item.system_prompt || importPv.item.instructions }}</pre>
+            <p v-if="importErr" class="ms-import-err">{{ importErr }}</p>
+            <div class="ms-actions">
+              <button class="cam-mini" @click="importPv = null">重新填地址</button>
+              <button class="cam-add-btn" :disabled="importBusy" @click="doConfirm">
+                {{ importBusy ? '导入中…' : '我已读过，确认导入' }}
+              </button>
+            </div>
+          </template>
+        </div>
+      </div>
+</div>
 </template>
 
 <script setup lang="ts">
@@ -265,6 +326,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import '@/styles/admin-modal.css'
 import {
   myAgentsList, myAgentSave, myAgentDelete, myWorkflowsList,
+  importPreview, importConfirm, type ImportPreview,
   mySkillsList, mySkillSave, mySkillDelete,
   fetchMarketAcquired, setMarketItemAcquired, getMyUsage,
   creatorListings, creatorPublish, creatorSetStatus, creatorEarnings,
@@ -287,6 +349,55 @@ const editing = ref(false)
 const busy = ref(false)
 const errText = ref('')
 const agForm = reactive<MyAgent & { _edit: boolean }>({ slug: '', name: '', description: '', system_prompt: '', model: '', workflow_slugs: [], enabled: true, _edit: false })
+// ── 从链接导入(manifest) ──
+// 刻意做成两步:预览(只取回不落库) → 用户读完全文 → 确认。
+// sha256 由预览返回、确认时回传:服务端会**重新拉取并比对**,防"预览时良性、
+// 确认时被换成恶意版本"(TOCTOU)。前端不做校验,也不该被信任。
+const importOpen = ref(false)
+const importKind = ref<'agent' | 'skill'>('agent')
+const importUrl = ref('')
+const importPv = ref<ImportPreview | null>(null)
+const importBusy = ref(false)
+const importErr = ref('')
+
+function openImport(kind: 'agent' | 'skill') {
+  importKind.value = kind
+  importUrl.value = ''
+  importPv.value = null
+  importErr.value = ''
+  importOpen.value = true
+}
+function closeImport() { importOpen.value = false; importPv.value = null; importErr.value = '' }
+
+async function doPreview() {
+  importBusy.value = true; importErr.value = ''
+  try {
+    const pv = await importPreview(importUrl.value)
+    // 类型对不上就别让用户在"技能"页装进来一个智能体(反之亦然),避免困惑
+    if (pv.item.kind !== importKind.value) {
+      importErr.value = `这个链接里是${pv.item.kind === 'agent' ? '智能体' : '技能'}定义，`
+        + `请到「我的${pv.item.kind === 'agent' ? '智能体' : '技能'}」页导入。`
+      return
+    }
+    importPv.value = pv
+  } catch (e: any) {
+    importErr.value = e?.message || '预览失败'
+  } finally { importBusy.value = false }
+}
+
+async function doConfirm() {
+  if (!importPv.value) return
+  importBusy.value = true; importErr.value = ''
+  try {
+    await importConfirm(importUrl.value, importPv.value.sha256)
+    importOpen.value = false
+    importPv.value = null
+    await load()
+  } catch (e: any) {
+    importErr.value = e?.message || '导入失败'
+  } finally { importBusy.value = false }
+}
+
 // 可绑定的工作流清单(服务端只下发 slug/name/输入提示,不含 url 与凭据名)
 const bindableWfs = ref<{ slug: string; name: string; input_hint?: string }[]>([])
 function toggleAgWorkflow(slug: string, on: boolean) {
@@ -500,6 +611,31 @@ async function delSkill(slug: string) {
 .ms-persona-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .ms-persona-label { font-size: 12px; color: var(--text-2, var(--text)); }
 .ms-persona { min-height: 220px; font-family: var(--mono, ui-monospace, "SF Mono", Menlo, monospace); font-size: 13px; line-height: 1.6; tab-size: 2; }
+.ms-import-mask {
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .28);
+}
+.ms-import {
+  display: flex; flex-direction: column; gap: 10px;
+  width: min(560px, 92%); max-height: 86%; overflow-y: auto;
+  padding: 16px; border-radius: 12px;
+  background: var(--panel, #fff); box-shadow: 0 18px 50px rgba(0, 0, 0, .18);
+}
+.ms-import-h { display: flex; align-items: center; justify-content: space-between; }
+.ms-import-sum { display: flex; flex-direction: column; gap: 4px; }
+.ms-import-notes {
+  margin: 0; padding: 10px 12px 10px 26px;
+  border-radius: 8px; background: var(--warn-bg, rgba(240, 170, 60, .12));
+  font-size: 12px; line-height: 1.6;
+}
+.ms-import-body {
+  max-height: 260px; overflow: auto; margin: 0;
+  padding: 10px 12px; border-radius: 8px;
+  background: var(--code-bg, rgba(0, 0, 0, .04));
+  font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+}
+.ms-import-err { margin: 0; font-size: 12px; color: var(--danger, #c0392b); }
 .ms-wf {
   display: flex;
   flex-direction: column;

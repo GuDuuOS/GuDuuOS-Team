@@ -5399,6 +5399,101 @@ class CosmacBot:
             logger.exception("列个人智能体失败")
             return 500, {"error": "读取失败"}
 
+    def handle_my_import_preview(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """从 GitHub 等处取回 manifest 并**只做预览**，绝不落库。
+
+        分两步（preview / confirm）而不是一步导入，是因为第三方人设会作为系统提示注入
+        给主 AI，而主 AI 手里有建群/发消息/查知识库等工具——静默导入等于把一部分控制权
+        交给素未谋面的作者。必须让用户先看到人设全文再决定。
+
+        返回的 sha256 是给 confirm 用的锁：预览与确认之间隔着用户读文本的几十秒，
+        攻击者可以在这中间把仓库文件换掉（TOCTOU），confirm 会重新拉取并比对。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        from cosmac.manifest import fetch_manifest, parse_manifest, review_notes
+
+        data, digest, err = fetch_manifest(str((body or {}).get("url") or ""))
+        if err:
+            return 400, {"error": err}
+        item, perr = parse_manifest(data or {})
+        if perr:
+            return 400, {"error": perr}
+        # 门控在**预览阶段**就查一次：让用户早点知道"这功能要付费"，
+        # 而不是读完长长的人设、点了确认才被拒。confirm 会再查一次（真正的闸）。
+        gate = "custom_agent" if item["kind"] == "agent" else "custom_skill"
+        if not self._gate_allows(user_id, gate):
+            return 403, {"error": self._gate_denied_text(gate, ui=True)}
+        return 200, {
+            "item": item,
+            "sha256": digest,
+            "notes": review_notes(item),
+            # 同 slug 已存在 → 前端提示"将覆盖"，避免用户误以为是新增
+            "exists": self._my_item_exists(user_id, item["kind"], item["slug"]),
+        }
+
+    def _my_item_exists(self, user_id: str, kind: str, slug: str) -> bool:
+        """本人名下是否已有同 slug 的技能/智能体（导入前提示"将覆盖"用）。"""
+        try:
+            from cosmac.db import session_scope
+            from cosmac.db.models import SCOPE_USER
+            from cosmac.db.repo import get_agent, get_skill
+
+            with session_scope() as s:
+                if kind == "agent":
+                    return get_agent(s, SCOPE_USER, user_id, slug) is not None
+                return get_skill(s, SCOPE_USER, user_id, slug) is not None
+        except Exception:
+            logger.debug("查重失败（忽略，按不存在处理）", exc_info=True)
+            return False
+
+    def handle_my_import_confirm(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """用户确认后真正落库。
+
+        ⚠️ **重新拉取并比对 sha256**，绝不采信前端回传的内容：
+          ① 防 TOCTOU——预览后仓库被换成恶意版本；
+          ② 防前端被篡改后直接投喂任意内容（预览展示的和落库的必须是同一份）。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        from cosmac.manifest import fetch_manifest, parse_manifest
+
+        expect = str((body or {}).get("sha256") or "").strip().lower()
+        if not expect:
+            return 400, {"error": "缺少校验值，请重新预览"}
+        data, digest, err = fetch_manifest(str((body or {}).get("url") or ""))
+        if err:
+            return 400, {"error": err}
+        if digest != expect:
+            return 409, {"error": "文件内容在你确认期间发生了变化，请重新预览并核对后再导入"}
+        item, perr = parse_manifest(data or {})
+        if perr:
+            return 400, {"error": perr}
+
+        # 复用工坊的保存端点：门控、条数上限、存储配额、字段清洗全都走同一套，
+        # 不另写一份规则——否则导入会成为绕过配额与门控的后门。
+        if item["kind"] == "agent":
+            return self.handle_my_agents_save(access_token, {
+                "slug": item["slug"], "name": item["name"],
+                "description": item["description"],
+                "system_prompt": item["system_prompt"], "model": item.get("model", ""),
+                # 引用的工作流照搬 slug；个人绑定本就不提权（见 handle_my_agents_save），
+                # 所以即使 manifest 里写了一堆，也拿不到额外权限。
+                "workflow_slugs": item.get("workflow_slugs") or [],
+                "enabled": True,
+            })
+        return self.handle_my_skills_save(access_token, {
+            "slug": item["slug"], "name": item["name"],
+            "description": item["description"],
+            "instructions": item["instructions"], "enabled": True,
+        })
+
     def handle_my_workflows_list(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """列出可绑定的工作流连接器（给工坊的「绑定工作流」勾选框用）。需登录。
 
@@ -8237,7 +8332,9 @@ class _Handler(BaseHTTPRequestHandler):
 
         # 用户自建 智能体/技能:保存/删除(归属=本人,天然越权隔离;存储配额硬管控)
         if path in ("/cosmac/my/agents/save", "/cosmac/my/agents/delete",
-                    "/cosmac/my/skills/save", "/cosmac/my/skills/delete"):
+                    "/cosmac/my/skills/save", "/cosmac/my/skills/delete",
+                    # 从 GitHub 导入 manifest：preview 只取回不落库，confirm 才写
+                    "/cosmac/my/import/preview", "/cosmac/my/import/confirm"):
             token = self._bearer()
             body = self._read_json_body(_MAX_CALLBACK_BODY)
             if body is None:
@@ -8248,6 +8345,8 @@ class _Handler(BaseHTTPRequestHandler):
                 "/cosmac/my/agents/delete": self.bot.handle_my_agents_delete,
                 "/cosmac/my/skills/save": self.bot.handle_my_skills_save,
                 "/cosmac/my/skills/delete": self.bot.handle_my_skills_delete,
+                "/cosmac/my/import/preview": self.bot.handle_my_import_preview,
+                "/cosmac/my/import/confirm": self.bot.handle_my_import_confirm,
             }[path]
             code, payload = fn(token, body)
             self._send_json(code, payload, cors=True)

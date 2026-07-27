@@ -1,4 +1,4 @@
-import{bm as s,ar as g,a4 as v,cJ as m,a0 as x,cq as w}from"./index-gCZbe-nb.js";function R1(){return String("http://localhost:5199").replace(/\/$/,"")}const T1="/assets/cosmac-logo-Bgg8S7cg.png",f=(a,t)=>{const h=a.__vccOpts||a;for(const[c,r]of t)h[c]=r;return h};/**
+import{bm as s,ar as g,a4 as v,cL as m,a0 as x,cs as w}from"./index-DhZL1Fqf.js";function R1(){return String("http://localhost:5199").replace(/\/$/,"")}const T1="/assets/cosmac-logo-Bgg8S7cg.png",f=(a,t)=>{const h=a.__vccOpts||a;for(const[c,r]of t)h[c]=r;return h};/**
  * @license lucide-vue-next v0.577.0 - ISC
  *
  * This source code is licensed under the ISC license.
@@ -148,17 +148,17 @@ import{bm as s,ar as g,a4 as v,cJ as m,a0 as x,cq as w}from"./index-gCZbe-nb.js"
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const J=e("eye",[["path",{d:"M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0",key:"1nclc0"}],["circle",{cx:"12",cy:"12",r:"3",key:"1v7zrd"}]]);/**
+ */const W=e("eye",[["path",{d:"M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0",key:"1nclc0"}],["circle",{cx:"12",cy:"12",r:"3",key:"1v7zrd"}]]);/**
  * @license lucide-vue-next v0.577.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const W=e("file-text",[["path",{d:"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z",key:"1oefj6"}],["path",{d:"M14 2v5a1 1 0 0 0 1 1h5",key:"wfsgrz"}],["path",{d:"M10 9H8",key:"b1mrlr"}],["path",{d:"M16 13H8",key:"t4e002"}],["path",{d:"M16 17H8",key:"z1uh3a"}]]);/**
+ */const X=e("file-text",[["path",{d:"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z",key:"1oefj6"}],["path",{d:"M14 2v5a1 1 0 0 0 1 1h5",key:"wfsgrz"}],["path",{d:"M10 9H8",key:"b1mrlr"}],["path",{d:"M16 13H8",key:"t4e002"}],["path",{d:"M16 17H8",key:"z1uh3a"}]]);/**
  * @license lucide-vue-next v0.577.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const X=e("flame",[["path",{d:"M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4",key:"1slcih"}]]);/**
+ */const J=e("flame",[["path",{d:"M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4",key:"1slcih"}]]);/**
  * @license lucide-vue-next v0.577.0 - ISC
  *
  * This source code is licensed under the ISC license.
@@ -368,4 +368,4 @@ import{bm as s,ar as g,a4 as v,cJ as m,a0 as x,cq as w}from"./index-gCZbe-nb.js"
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const I1=e("zap",[["path",{d:"M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z",key:"1xq2db"}]]),$1=g({__name:"Icon",props:{name:{},size:{default:18},strokeWidth:{default:2}},setup(a){const t={dashboard:c1,tasks:T,tutorial:p1,org:B1,people:S1,star:q1,film:R,search:x1,settings:w1,profile:D,studio:G,usage:j1,lock:d1,gating:f1,bell:j,logout:k1,plus:u1,bot:A,archive:V,skills:P1,rules:m1,workflow:_1,templates:r1,knowledge:y1,pages:W,plug:M1,puzzle:i,plan:N,wallet:F,members:O,marketplace:H1,web:Q,edit:C1,close:U1,pin:i1,memory:L,clock:Z,flame:X,zap:I1,music:s1,image:a1,video:A1,phone:b1,camera:_,sparkle:z1,check:U,refresh:g1,"chevron-right":$,"chevron-down":I,upload:L1,download:E,trash:V1,link:o1,folder:K,message:l1,data:P,key:h1,rocket:v1,hash:Y,building:S,palette:n1,eye:J,home:e1,calendar:B,inbox:t1},h=a,c=x(()=>t[h.name]||i);return(r,o)=>(w(),v(m(c.value),{size:Number(a.size),"stroke-width":Number(a.strokeWidth),class:"app-icon"},null,8,["size","stroke-width"]))}}),Z1=f($1,[["__scopeId","data-v-d266f328"]]);export{Z1 as I,f as _,R1 as d,T1 as l};
+ */const I1=e("zap",[["path",{d:"M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z",key:"1xq2db"}]]),$1=g({__name:"Icon",props:{name:{},size:{default:18},strokeWidth:{default:2}},setup(a){const t={dashboard:c1,tasks:T,tutorial:p1,org:B1,people:S1,star:q1,film:R,search:x1,settings:w1,profile:D,studio:G,usage:j1,lock:d1,gating:f1,bell:j,logout:k1,plus:u1,bot:A,archive:V,skills:P1,rules:m1,workflow:_1,templates:r1,knowledge:y1,pages:X,plug:M1,puzzle:i,plan:N,wallet:F,members:O,marketplace:H1,web:Q,edit:C1,close:U1,pin:i1,memory:L,clock:Z,flame:J,zap:I1,music:s1,image:a1,video:A1,phone:b1,camera:_,sparkle:z1,check:U,refresh:g1,"chevron-right":$,"chevron-down":I,upload:L1,download:E,trash:V1,link:o1,folder:K,message:l1,data:P,key:h1,rocket:v1,hash:Y,building:S,palette:n1,eye:W,home:e1,calendar:B,inbox:t1},h=a,c=x(()=>t[h.name]||i);return(r,o)=>(w(),v(m(c.value),{size:Number(a.size),"stroke-width":Number(a.strokeWidth),class:"app-icon"},null,8,["size","stroke-width"]))}}),Z1=f($1,[["__scopeId","data-v-d266f328"]]);export{Z1 as I,f as _,R1 as d,T1 as l};

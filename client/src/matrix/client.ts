@@ -2952,6 +2952,46 @@ async function _myPost(path: string, body: any): Promise<void> {
 export const myAgentsList = () => _myGet('/cosmac/my/agents', 'agents') as Promise<MyAgent[]>
 export const myAgentSave = (a: MyAgent) => _myPost('/cosmac/my/agents/save', a)
 export const myAgentDelete = (slug: string) => _myPost('/cosmac/my/agents/delete', { slug })
+/** manifest 导入：预览结果（只取回不落库）。 */
+export interface ImportPreview {
+  item: {
+    kind: 'skill' | 'agent'; slug: string; name: string; description: string
+    instructions?: string; system_prompt?: string; model?: string
+    skill_slugs?: string[]; workflow_slugs?: string[]
+    author?: string; homepage?: string; license?: string
+  }
+  sha256: string
+  notes: string[]
+  exists: boolean
+}
+
+/** 取回并预览 manifest（不落库）。抛错时带服务端的中文原因。 */
+export async function importPreview(url: string): Promise<ImportPreview> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) throw new Error('登录已失效，请重新登录')
+  const r = await fetch(`${payBase()}/cosmac/my/import/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ url }),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || '预览失败')
+  return j as ImportPreview
+}
+
+/** 确认导入。服务端会**重新拉取并比对 sha256**，防预览后文件被换掉。 */
+export async function importConfirm(url: string, sha256: string): Promise<void> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) throw new Error('登录已失效，请重新登录')
+  const r = await fetch(`${payBase()}/cosmac/my/import/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ url, sha256 }),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || '导入失败')
+}
+
 /** 可绑定的工作流清单（工坊勾选用）。失败返回 []，不阻断工坊其余功能。 */
 export const myWorkflowsList = () =>
   _myGet('/cosmac/my/workflows', 'workflows') as Promise<BindableWorkflow[]>
