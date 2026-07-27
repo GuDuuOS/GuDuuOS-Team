@@ -65,13 +65,33 @@ const codeCooldown = ref(0)        // 「发送验证码」倒计时（秒）
 const sendingCode = ref(false)
 const authMode = ref<'login' | 'register' | 'reset'>('login')
 const loginBy = ref<'account' | 'email'>('account')
-/** 切换 账号登录↔邮箱登录:两种方式共用密码框,切换时清掉——账号密码和邮箱对应的
- *  密码未必相同,残留会被误提交(QA:表单数据跨页残留)。报错提示也一并清。 */
+/** 切换 账号登录↔邮箱登录:清掉两个输入框 + 共用的密码框——账号密码和邮箱对应的
+ *  密码未必相同,残留会被误提交(QA:表单数据跨页残留)。报错提示也一并清。
+ *
+ *  ⚠️ 注意:清空**挡不住浏览器自动填充**。账号框带 autocomplete="username",而浏览器为本站
+ *  保存的"用户名"往往就是用户的邮箱(他一直用邮箱 tab 登录),于是新元素一渲染就被填回邮箱,
+ *  看起来像"没清干净"(负责人实报)。与其和自动填充对着干(那会连带弄坏密码管理器),
+ *  不如让账号登录**也认邮箱**——见 doLogin 里的 @ 判断。 */
 function switchLoginBy(by: 'account' | 'email') {
   if (loginBy.value === by) return
   loginBy.value = by
+  user.value = ''
+  email.value = ''
   password.value = ''
   error.value = ''
+}
+
+/** 本轮登录该走哪条路：账号 tab 里若填的是邮箱(含 @)，自动改走邮箱登录。
+ *
+ *  为什么这么做：浏览器会把保存的邮箱自动填进账号框(见 switchLoginBy 注释)，用户也常
+ *  记不清自己当初注册的是用户名还是邮箱。与其让他撞一句语义模糊的"用户名或密码错误"，
+ *  不如按内容自动判断——填什么都能登进去。返回 (是否走邮箱, 标识符)。 */
+function loginIdentity(): { byEmail: boolean; id: string } {
+  if (loginBy.value === 'email') return { byEmail: true, id: email.value.trim() }
+  const id = user.value.trim()
+  // ⚠️ 用 indexOf > 0 而不是 includes('@')：Matrix 用户 ID 本身就以 @ 开头
+  // （@duxiuzhen01:cosmac.cc），用 includes 会把粘贴完整 MXID 的人误判成邮箱登录。
+  return { byEmail: id.indexOf('@') > 0, id }
 }
 const error = ref('')
 const info = ref('')               // 成功/提示的内联反馈（替代原 toast，保持自包含）
@@ -261,15 +281,16 @@ async function doLogin() {
   if (loginBy.value === 'email') {
     if (!email.value.trim() || !password.value) { error.value = '请输入邮箱和密码'; return }
   } else {
-    if (!user.value.trim() || !password.value) { error.value = '请输入用户名和密码'; return }
+    if (!user.value.trim() || !password.value) { error.value = '请输入用户名或邮箱，以及密码'; return }
   }
   loading.value = true
   try {
     const code = stepUp.value ? stepUpCode.value.trim() : ''
     if (stepUp.value && !code) { error.value = '请输入邮件里的 6 位验证码'; loading.value = false; return }
-    const res = loginBy.value === 'email'
-      ? await loginWithEmailNoStart(HS, email.value.trim(), password.value, code)
-      : await loginNoStart(HS, user.value.trim(), password.value, code)
+    const { byEmail, id } = loginIdentity()
+    const res = byEmail
+      ? await loginWithEmailNoStart(HS, id, password.value, code)
+      : await loginNoStart(HS, id, password.value, code)
     if (res?.stepUp) {
       // 异地登录:后端已发验证码到绑定邮箱,切到"输码"状态,输完再点登录(带 code 重试)
       stepUp.value = true
@@ -292,9 +313,10 @@ async function resendStepUpCode() {
   error.value = ''; info.value = ''
   loading.value = true
   try {
-    const res = loginBy.value === 'email'
-      ? await loginWithEmailNoStart(HS, email.value.trim(), password.value, '')
-      : await loginNoStart(HS, user.value.trim(), password.value, '')
+    const { byEmail, id } = loginIdentity()
+    const res = byEmail
+      ? await loginWithEmailNoStart(HS, id, password.value, '')
+      : await loginNoStart(HS, id, password.value, '')
     if (res?.stepUp) {
       stepUpHint.value = res.emailHint || stepUpHint.value
       info.value = '验证码已重新发送，请查收邮箱。'
@@ -400,7 +422,7 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
           <!-- key 必须不同:账号框/邮箱框是同位置 v-if/v-else,不给 key 时 Vue 会复用同一个 DOM
                input,切 Tab 后上一个 Tab 的输入值残留在复用元素里刷不掉(负责人实报:切到账号登录
                仍回显邮箱)。加不同 key 强制各建独立 input。 -->
-          <input v-if="loginBy === 'account'" key="login-account" v-model="user" name="login-username" autocomplete="username" placeholder="用户名" @keyup.enter="doLogin" />
+          <input v-if="loginBy === 'account'" key="login-account" v-model="user" name="login-username" autocomplete="username" placeholder="用户名或邮箱" @keyup.enter="doLogin" />
           <input v-else key="login-email" v-model="email" type="email" name="login-email" autocomplete="email" placeholder="邮箱" @keyup.enter="doLogin" />
           <div class="pw-wrap">
             <input v-model="password" :type="showPwd ? 'text' : 'password'" autocomplete="current-password" placeholder="密码" @keyup.enter="doLogin" />
