@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from cosmac.db.models import (
     Agent,
+    Skill,
     Base,
     DocPage,
     KnowledgeChunk,
@@ -165,6 +166,17 @@ def _heal_business_schema(engine: Engine) -> None:
                         "ALTER TABLE cosmac_agent "
                         "ADD COLUMN workflow_slugs JSON NOT NULL DEFAULT '[]'"
                     ))
+        # 技能/智能体补列：source_url（从 GitHub 导入的来源，空=自建）。
+        # 与上面 workflow_slugs 同理——没上 alembic，旧库得靠这里补。
+        for _model in (Skill, Agent):
+            if insp.has_table(_model.__tablename__):
+                have = {c["name"] for c in insp.get_columns(_model.__tablename__)}
+                if "source_url" not in have:
+                    with engine.begin() as conn:
+                        conn.execute(text(
+                            f"ALTER TABLE {_model.__tablename__} "
+                            "ADD COLUMN source_url VARCHAR(500) NOT NULL DEFAULT ''"
+                        ))
         # 任务表补列：旧库的 cosmac_task 还没有类型化执行者两列（模块3.5 档2），补上
         # 否则拆任务带 executor_kind/ref 写入时报 UndefinedColumn。
         if insp.has_table(Task.__tablename__):

@@ -2913,6 +2913,8 @@ export async function storageCheck(addBytes: number): Promise<{ ok: boolean; err
 export interface MyAgent {
   slug: string; name: string; description: string; system_prompt: string
   model?: string
+  /** 来源地址。空=自建；非空=从该地址导入（工坊会标「导入」徽章，便于分清外来内容）。 */
+  source_url?: string
   /** 绑定的工作流 slug。⚠️ 个人智能体的绑定**不构成授权**——只让 AI 知道该用哪些，
    *  能不能跑仍受「工作流运行」权限门槛裁决（否则自建一个绑上去就是自助提权）。 */
   workflow_slugs?: string[]
@@ -2924,7 +2926,10 @@ export interface BindableWorkflow {
   slug: string; name: string; input_hint?: string
 }
 export interface MySkill {
-  slug: string; name: string; description: string; instructions: string; enabled: boolean
+  slug: string; name: string; description: string; instructions: string
+  /** 同 MyAgent.source_url。 */
+  source_url?: string
+  enabled: boolean
 }
 
 async function _myGet(path: string, key: string): Promise<any[]> {
@@ -4237,9 +4242,19 @@ export function listAiSessions(): AiSession[] {
     })
     .map((r: any) => {
       const msgs = listMessages(r.roomId)
-      // 标题取「我」发的第一句话的前 24 字（最能代表这段会话聊了啥）；没说过话就叫「新会话」
+      // 标题优先用 bot 首轮回复后写进会话标记的**AI 概括**（如「导入 PPT 技能」）——
+      // 纯截断首句在用户粘链接时会变成一串 URL，看不出这段在干嘛（负责人实报）。
+      // 拿不到（老会话、模型调用失败、bot 无权限）就回退原来的截断逻辑，绝不空着。
+      let aiTitle = ''
+      try {
+        aiTitle = String(
+          r.currentState?.getStateEvents?.(AI_SESSION_STATE, '')?.getContent?.()?.title || '',
+        ).trim()
+      } catch { /* 读不到就回退 */ }
       const firstMine = msgs.find((m) => m.sender === me && !m.card && (m.body || '').trim())
-      const title = (firstMine?.body || '').trim().replace(/\s+/g, ' ').slice(0, 24) || '新会话'
+      const title = aiTitle
+        || (firstMine?.body || '').trim().replace(/\s+/g, ' ').slice(0, 24)
+        || '新会话'
       const ts = r.getLastActiveTimestamp?.() || (msgs.length ? msgs[msgs.length - 1].ts : 0)
       return { roomId: r.roomId, title, ts }
     })

@@ -75,6 +75,7 @@ class Skill(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     instructions: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source_url: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     def __repr__(self) -> str:  # 方便日志/调试
@@ -93,6 +94,7 @@ class Agent(Base, TimestampMixin):
         model:          模型覆盖（空 = 跟随全局 AI 配置；非空 = 这个 Agent 单独用某模型）。
         skill_slugs:    绑定的技能 slug 列表（JSON）。先用列表简化，避免一上来就建多对多
                         关联表；以后真有「跨作用域共享技能」需求再升级成关联表。
+        source_url:     来源地址。空=用户自建；非空=从该地址导入（同 Skill.source_url）。
         workflow_slugs: 绑定的工作流连接器 slug 列表（JSON）——让这个 Agent 除了"会说话"
                         还能真的干活。⚠️ 与全局 Agent 不同，**个人（scope=user）Agent 的
                         绑定不构成授权**：它只让 AI 知道该用哪些工作流，跑不跑得动仍受
@@ -115,6 +117,7 @@ class Agent(Base, TimestampMixin):
     model: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     skill_slugs: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     workflow_slugs: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    source_url: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     def __repr__(self) -> str:

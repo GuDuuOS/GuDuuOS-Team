@@ -890,6 +890,9 @@ class CosmacBot:
                         room_id, reply,
                         txn_id=f"cosmac-ai-fb-{event_id}" if event_id else None,
                     )
+            # AI 会话房首轮结束 → 给这段会话起个能看懂的标题（只做一次，失败静默）。
+            # 放在回复发出之后：标题是附加价值，绝不该挡在用户看到回复的前面。
+            self._maybe_name_ai_session(room_id, text or user_text, reply)
             # L2：回复真正发出后才消费当日 AI 对话额度（失败走下面的 except 分支、不扣）。
             self._rate_quota_blocked(sender, "ai_msg_daily", consume=True)
             # Token 经济（模块4）：回复成功后结算。**二选一**（负责人定稿）：
@@ -5389,6 +5392,7 @@ class CosmacBot:
                     "slug": a.slug, "name": a.name, "description": a.description,
                     "system_prompt": a.system_prompt, "model": a.model,
                     "workflow_slugs": list(a.workflow_slugs or []),
+                    "source_url": a.source_url or "",
                     "enabled": a.enabled,
                 } for a in sorted(
                     list_agents(s, scope=SCOPE_USER, scope_id=user_id),
@@ -5480,6 +5484,9 @@ class CosmacBot:
         item, perr = parse_manifest(data or {})
         if perr:
             return 400, {"error": perr}
+        # 记来源：存用户给的原始地址（而非规整后的 CDN 直链）——用户认得出自己粘的是什么，
+        # 日后要核对/重装也是回 GitHub 那个页面，不是 jsdelivr。
+        src_url = str((body or {}).get("url") or "").strip()[:500]
 
         # 复用工坊的保存端点：门控、条数上限、存储配额、字段清洗全都走同一套，
         # 不另写一份规则——否则导入会成为绕过配额与门控的后门。
@@ -5491,13 +5498,55 @@ class CosmacBot:
                 # 引用的工作流照搬 slug；个人绑定本就不提权（见 handle_my_agents_save），
                 # 所以即使 manifest 里写了一堆，也拿不到额外权限。
                 "workflow_slugs": item.get("workflow_slugs") or [],
-                "enabled": True,
+                "enabled": True, "source_url": src_url,
             }, user_id=user_id)
         return self.handle_my_skills_save(access_token, {
             "slug": item["slug"], "name": item["name"],
             "description": item["description"],
             "instructions": item["instructions"], "enabled": True,
+            "source_url": src_url,
         }, user_id=user_id)
+
+    # ── AI 会话标题：让左侧会话列表显示「这段在聊什么」而不是首句原文 ──
+    # 此前标题是前端把首句砍前 24 字，用户粘个链接进来，列表里就是一串 URL
+    # （负责人实报「没有识别任务内容归类一个任务名」）。这里在**首轮回复之后**
+    # 让模型概括一句，写进会话标记 state，前端优先读它。
+    #
+    # 几个刻意的取舍：
+    #   · 只在首轮做一次（房里已有标题就跳过）——标题是"这段会话干嘛的"，
+    #     不该随聊天漂移，也避免每轮都多烧一次模型调用。
+    #   · 失败一律静默：标题是锦上添花，绝不能因为它拖慢或打断回复。
+    #   · 写的是 cosmac.ai_session 这个既有标记（加个 title 字段），不动 m.room.name
+    #     ——房名改了会影响 Element 等其它客户端的显示。
+
+    _SESSION_TITLE_MAX = 16
+
+    def _maybe_name_ai_session(self, room_id: str, user_text: str, reply_text: str) -> None:
+        """AI 会话房首轮结束后，生成并写入一个短标题（失败静默）。"""
+        try:
+            if not self._is_ai_session_room(room_id):
+                return
+            ev = self.client.get_state_event(room_id, "cosmac.ai_session") or {}
+            if str(ev.get("title") or "").strip():
+                return   # 已有标题：只在首轮定一次
+            prompt = (
+                "用一个不超过 12 个字的短语概括下面这段对话在做什么，作为会话标题。\n"
+                "要求：只输出标题本身，不要引号、句号、前缀或任何解释；"
+                "用中文；抓住用户的目的而不是复述他贴的链接或原文。\n\n"
+                f"用户说：{(user_text or '').strip()[:300]}\n"
+                f"助手答：{(reply_text or '').strip()[:300]}"
+            )
+            raw = self.llm.complete([Message(role="user", content=prompt)]) or ""
+            # 模型偶尔会加引号/句号/换行，统一清掉；太长再截断兜底
+            title = raw.strip().split("\n")[0].strip().strip("\"'“”「」。.：:")
+            title = title[: self._SESSION_TITLE_MAX]
+            if not title:
+                return
+            self.client.set_state_event(
+                room_id, "cosmac.ai_session", {**ev, "title": title},
+            )
+        except Exception:
+            logger.debug("生成会话标题失败（忽略，前端会回退到截断首句）", exc_info=True)
 
     # ── 主 AI 侧的 manifest 导入（工具回调） ──────────────────────
     # 与工坊界面走的是同一套 manifest 解析与落库逻辑，只是入口不同：
@@ -5631,6 +5680,9 @@ class CosmacBot:
                     s, SCOPE_USER, user_id, slug,
                     name=name, description=description, system_prompt=prompt,
                     model=model, workflow_slugs=wf_slugs, enabled=enabled,
+                    # 来源:只有导入路径会带,界面新建为空(=自建)。
+                    # 每次保存都写,这样"从导入改成手写"后标记会自然消失。
+                    source_url=str(body.get("source_url") or "").strip()[:500],
                 )
             self._storage_cache = {}  # 内容变了,存量缓存作废
             self._my_agents_cache.pop(user_id, None)  # 自建列表缓存失效,点名路由立即感知
@@ -5674,7 +5726,8 @@ class CosmacBot:
             with session_scope() as s:
                 out = [{
                     "slug": k.slug, "name": k.name, "description": k.description,
-                    "instructions": k.instructions, "enabled": k.enabled,
+                    "instructions": k.instructions, "source_url": k.source_url or "",
+                    "enabled": k.enabled,
                 } for k in sorted(
                     list_skills(s, scope=SCOPE_USER, scope_id=user_id),
                     key=lambda x: (x.created_at, x.id), reverse=True,  # 同上:新增在最前
@@ -5728,6 +5781,8 @@ class CosmacBot:
                     s, SCOPE_USER, user_id, slug,
                     name=name, description=description,
                     instructions=instructions, enabled=enabled,
+                    # 同 agent：只有导入路径会带，界面新建为空(=自建)
+                    source_url=str(body.get("source_url") or "").strip()[:500],
                 )
             self._storage_cache = {}
             return 200, {"ok": True}

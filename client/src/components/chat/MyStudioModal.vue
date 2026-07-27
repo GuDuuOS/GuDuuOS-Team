@@ -32,6 +32,7 @@
           <div v-for="a in agents" :key="a.slug" class="cam-row">
             <div class="cam-row-main">
               <div class="cam-row-label">我的·{{ a.name }} <code class="ms-slug">{{ a.slug }}</code>
+                <span v-if="a.source_url" class="cam-tag ms-src" :title="'从这里导入：' + a.source_url">导入</span>
                 <span v-if="!a.enabled" class="cam-tag" style="background:#eee;color:#888">停用</span>
               </div>
               <div class="cam-row-desc">{{ a.description }}</div>
@@ -89,6 +90,7 @@
           <div v-for="s in skills" :key="s.slug" class="cam-row">
             <div class="cam-row-main">
               <div class="cam-row-label">{{ s.name || s.slug }} <code class="ms-slug">{{ s.slug }}</code>
+                <span v-if="s.source_url" class="cam-tag ms-src" :title="'从这里导入：' + s.source_url">导入</span>
                 <span v-if="!s.enabled" class="cam-tag" style="background:#eee;color:#888">停用</span>
               </div>
               <div class="cam-row-desc">{{ s.description || (s.instructions || '').slice(0, 60) }}</div>
@@ -611,6 +613,7 @@ async function delSkill(slug: string) {
 .ms-persona-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .ms-persona-label { font-size: 12px; color: var(--text-2, var(--text)); }
 .ms-persona { min-height: 220px; font-family: var(--mono, ui-monospace, "SF Mono", Menlo, monospace); font-size: 13px; line-height: 1.6; tab-size: 2; }
+.ms-src { background: rgba(80, 130, 220, .14); color: #3a63a8; cursor: help; }
 .ms-import-mask {
   position: absolute; inset: 0; z-index: 5;
   display: flex; align-items: center; justify-content: center;

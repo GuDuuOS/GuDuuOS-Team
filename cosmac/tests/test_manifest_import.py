@@ -225,5 +225,38 @@ class AiImportToolTest(unittest.TestCase):
             self.assertIn("暂不可用", out)
 
 
+
+class SourceTrackingTest(unittest.TestCase):
+    """导入来源标记：装进来的东西要能一眼看出是外来的、并可追溯到出处。"""
+
+    def setUp(self) -> None:
+        from cosmac.db import init_engine
+        init_engine("sqlite://")
+
+    def test_source_url_roundtrip(self) -> None:
+        from cosmac.db import session_scope
+        from cosmac.db.models import SCOPE_USER
+        from cosmac.db.repo import get_agent, get_skill, upsert_agent, upsert_skill
+
+        src = "https://github.com/u/r/blob/main/a.json"
+        with session_scope() as s:
+            upsert_agent(s, SCOPE_USER, "@u:h", "imported", name="外来的", source_url=src)
+            upsert_skill(s, SCOPE_USER, "@u:h", "imp-skill", name="外来技能", source_url=src)
+        with session_scope() as s:
+            self.assertEqual(get_agent(s, SCOPE_USER, "@u:h", "imported").source_url, src)
+            self.assertEqual(get_skill(s, SCOPE_USER, "@u:h", "imp-skill").source_url, src)
+
+    def test_self_made_has_empty_source(self) -> None:
+        """界面手写的不带来源 → 空串（不是 None，前端可直接判真假）。"""
+        from cosmac.db import session_scope
+        from cosmac.db.models import SCOPE_USER
+        from cosmac.db.repo import get_agent, upsert_agent
+
+        with session_scope() as s:
+            upsert_agent(s, SCOPE_USER, "@u:h", "mine", name="自建")
+        with session_scope() as s:
+            self.assertEqual(get_agent(s, SCOPE_USER, "@u:h", "mine").source_url or "", "")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -20,9 +20,9 @@ from sqlalchemy.orm import Session
 from cosmac.db.models import Agent, Skill
 
 # 允许通过 upsert 修改的字段白名单（scope/scope_id/slug 是定位键、不在内；时间戳自动维护）
-_SKILL_EDITABLE = {"name", "description", "instructions", "enabled"}
+_SKILL_EDITABLE = {"name", "description", "instructions", "enabled", "source_url"}
 _AGENT_EDITABLE = {"name", "description", "system_prompt", "model", "skill_slugs",
-                   "workflow_slugs", "enabled"}
+                   "workflow_slugs", "source_url", "enabled"}
 
 
 # ───────────────────────── Skill ─────────────────────────
