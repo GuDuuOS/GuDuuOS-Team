@@ -22,6 +22,9 @@
 :80 {
 	encode zstd gzip
 
+	# 网站安全头统一放在独立片段，直出与反代模式保持完全一致。
+	import /etc/caddy/security-headers.caddy
+
 	# —— Matrix 协议层（🚫 路径一个字都不能改，见 CLAUDE.md §7）——
 	@matrix path /_matrix/* /_synapse/client/* /_synapse/admin/*
 	handle @matrix {

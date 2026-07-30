@@ -15,8 +15,43 @@ cd "$(dirname "$0")"
 echo "[GuDuu OS] 拉取最新版本……"
 git -C .. pull --ff-only
 
+# 1.6.24 以前安装生成的 Caddyfile 没有安全头 import。升级不能整份重渲染，
+# 因为 OEM 可能已经改过反代规则；这里只在明确识别到站点块时插入一行，
+# 并用固定 import 文本保证重复执行仍然幂等。
+SECURITY_IMPORT='    import /etc/caddy/security-headers.caddy'
+if ! grep -Fq 'import /etc/caddy/security-headers.caddy' data/caddy/Caddyfile; then
+  DOMAIN="$(sed -n 's/^DOMAIN=//p' .env | head -n 1)"
+  TARGET_BLOCK=''
+  if grep -Fqx ':80 {' data/caddy/Caddyfile; then
+    TARGET_BLOCK=':80 {'
+  elif [ -n "$DOMAIN" ] && grep -Fqx "$DOMAIN {" data/caddy/Caddyfile; then
+    TARGET_BLOCK="$DOMAIN {"
+  fi
+
+  if [ -z "$TARGET_BLOCK" ]; then
+    echo "[失败] 无法识别 Caddy 站点块，未敢自动修改；请检查 data/caddy/Caddyfile。" >&2
+    exit 1
+  fi
+
+  # awk 只在第一个精确匹配的站点块后插入，临时文件成功生成后再原子替换，
+  # 避免升级中断留下半份配置。
+  TEMP_CADDY="$(mktemp data/caddy/Caddyfile.XXXXXX)"
+  awk -v target="$TARGET_BLOCK" -v import_line="$SECURITY_IMPORT" '
+    { print }
+    !inserted && $0 == target { print import_line; inserted = 1 }
+    END { if (!inserted) exit 2 }
+  ' data/caddy/Caddyfile > "$TEMP_CADDY"
+  mv "$TEMP_CADDY" data/caddy/Caddyfile
+  echo "[GuDuu OS] 已为旧部署补入网站安全响应头。"
+fi
+
 echo "[GuDuu OS] 重建镜像（前端构建约需几分钟）……"
 docker compose build
+
+# 先用刚构建的 web 镜像完整解析 Caddyfile（包括上面挂载的安全头片段）。
+# 配置有误就在这里停下，不能先把仍在正常服务的旧 web 容器替换掉。
+echo "[GuDuu OS] 校验网站网关配置……"
+docker compose run --rm --no-deps web caddy validate --config /etc/caddy/Caddyfile
 
 echo "[GuDuu OS] 滚动重启……"
 docker compose up -d

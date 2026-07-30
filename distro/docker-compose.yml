@@ -145,5 +145,7 @@ services:
       - "${COSMAC_WEB_HTTPS_UDP:-443:443/udp}"   # HTTP/3
     volumes:
       - ./data/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # 安全响应头独立挂载：以后收紧 CSP 时无需覆盖 OEM 已生成的整份 Caddyfile。
+      - ./templates/security-headers.caddy:/etc/caddy/security-headers.caddy:ro
       - ./data/caddy/data:/data      # 证书存这里，删了会重新签（有频率限制，别乱删）
       - ./data/caddy/config:/config
