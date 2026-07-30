@@ -474,7 +474,9 @@ class CosmacBot:
         # —— 任务时效提醒（定时扫描）——扫描间隔 + "快到期"窗口，都可用 env 调；单实例内定时够用。
         # 【并发】AI 回复线程池:appservice 事务是串行等 ack 的,LLM 长任务若在事务线程
         # 同步跑会堵死全平台消息(负责人实报:一个账号执行中,另一账号问 AI 完全无响应)。
-        # 回复剥到工作线程,事务立即 ack;同房间加锁保序,不同房/不同账号并发。
+        # 回复剥到工作线程,事务立即 ack;同房间加锁保序,不同账号并发。
+        # 同一账号即使跨房间也必须串行：配额/钱包采用“回复前检查、回复后结算”，若只锁
+        # 房间，同一用户可在多个房间同时穿过前拦，形成免费多跑 LLM 的计费竞态。
         # None = 同步模式(单测/调试用,COSMAC_SYNC_REPLY=1 或测试里置 None)。
         from concurrent.futures import ThreadPoolExecutor
         self._reply_pool: Optional[ThreadPoolExecutor] = (
@@ -482,6 +484,10 @@ class CosmacBot:
             ThreadPoolExecutor(max_workers=4, thread_name_prefix="ai-reply")
         )
         self._room_reply_locks: Dict[str, threading.Lock] = {}
+        self._user_reply_locks: Dict[str, threading.Lock] = {}
+        # 锁字典本身也要受保护：两个线程若同时为同一新用户建锁，不能各拿到不同 Lock，
+        # 否则表面“加锁”实际仍会并行。这里只保护取/建锁的极短临界区，不包 LLM 调用。
+        self._reply_locks_guard = threading.Lock()
         self._reminder_interval_secs = _env_int("TASK_REMINDER_INTERVAL", 900)  # 默认每 15 分钟扫一次
         _soon_hours = _env_int("TASK_REMINDER_SOON_HOURS", 24)                  # 默认到期前 24h 提醒
         self._reminder_soon_secs = max(1, _soon_hours) * 3600
@@ -747,9 +753,16 @@ class CosmacBot:
         content: Dict[str, Any], is_dm: bool, event_id: str,
         mentioned_ids: List[str],
     ) -> None:
-        """AI 回复工作线程入口:同房间串行(锁)防乱序/重复,不同房并发。绝不抛异常。"""
-        lock = self._room_reply_locks.setdefault(room_id, threading.Lock())
-        with lock:
+        """AI 回复工作线程入口：同用户、同房间串行，不同用户并发；绝不抛异常。
+
+        用户锁覆盖“配额/余额前查 → LLM → 回复 → 结算”的完整周期，堵住同一账号跨房间
+        并发穿透计费；房间锁继续保证不同用户在同一房间的回复顺序。统一按“用户→房间”
+        顺序取锁，避免未来扩展时出现锁顺序倒置的死锁。
+        """
+        with self._reply_locks_guard:
+            user_lock = self._user_reply_locks.setdefault(sender, threading.Lock())
+            room_lock = self._room_reply_locks.setdefault(room_id, threading.Lock())
+        with user_lock, room_lock:
             try:
                 self._reply_to_message(
                     room_id, sender, user_text, text, content, is_dm,
@@ -7675,10 +7688,18 @@ class CosmacBot:
         label = str(meta.get("label") or metric)
         try:
             from cosmac.db import session_scope
-            from cosmac.db.quota_repo import get_count, incr, period_key
+            from cosmac.db.quota_repo import consume_if_below, get_count, period_key
 
             pkey = period_key(period)
             with session_scope() as s:
+                if consume:
+                    # “判断还有额度 +1”必须是一条带上限守卫的原子 UPDATE；否则并发线程
+                    # 都可能读到最后 1 次并一同放行。None 表示本次没有拿到额度。
+                    consumed = consume_if_below(
+                        s, user_id, metric, pkey, limit, by=1,
+                    )
+                    if consumed is not None:
+                        return None
                 used = get_count(s, user_id, metric, pkey)
                 if used >= limit:
                     span = "今天" if period == "day" else ("本月" if period == "month" else "")
@@ -7686,8 +7707,6 @@ class CosmacBot:
                         f"你{span}的「{label}」额度已用完（{used}/{limit}）。"
                         "升级会员可解锁更多 —— 私聊发「会员」查看，或在「升级会员」里订阅。"
                     )
-                if consume:
-                    incr(s, user_id, metric, pkey)
         except Exception:
             logger.debug("配额计数失败（放行）：metric=%s", metric, exc_info=True)
         return None
@@ -7761,7 +7780,8 @@ class CosmacBot:
         """工具配额**消费**钩子（注入 Toolbox.quota_consume）：计数 +1，绝不抛异常。
 
         与 _tool_quota_check 配对：check 在执行前拦超额，consume 在工具**做成事**后扣。
-        检查与消费之间有并发窗口（可能偶发超放 1 次）——与配额计数既有的"够用即止"口径一致。
+        消费本身使用数据库原子上限守卫；AI 回复路径另有用户级锁，保证同一用户从检查到
+        工具成功消费之间不会被另一条回复插队。
         """
         metric = self._TOOL_QUOTA_MAP.get(tool_name)
         if not metric:
@@ -7770,7 +7790,7 @@ class CosmacBot:
             from cosmac.quotas import metric_meta
 
             from cosmac.db import session_scope
-            from cosmac.db.quota_repo import incr, period_key
+            from cosmac.db.quota_repo import consume_if_below, period_key
 
             limit = self._quota_limit(sender, metric)
             if limit < 0:
@@ -7778,7 +7798,15 @@ class CosmacBot:
             meta = metric_meta(metric) or {}
             pkey = period_key(str(meta.get("period") or "day"))
             with session_scope() as s:
-                incr(s, sender, metric, pkey)
+                consumed = consume_if_below(s, sender, metric, pkey, limit, by=1)
+                if consumed is None:
+                    # 正常单 bot 路径受用户锁保护，不应走到这里；若未来多实例部署且发生
+                    # 跨进程竞争，至少数据库不会把计数写穿，并留下清晰告警供架构升级。
+                    logger.warning(
+                        "工具完成后未拿到配额（疑似跨实例竞态）：user=%s metric=%s",
+                        sender,
+                        metric,
+                    )
         except Exception:
             logger.debug("配额消费失败（忽略）：metric=%s", metric, exc_info=True)
 

@@ -30,6 +30,8 @@ class _FakeUpstream(BaseHTTPRequestHandler):
     """假原厂：记录收到的鉴权头，按路径/body 回 JSON 或 SSE。"""
 
     seen_headers: list = []  # 类变量：测试断言网关换了真 key
+    hold_started = threading.Event()  # 并发测试：第一条请求已进入原厂
+    hold_release = threading.Event()  # 并发测试：允许第一条请求返回
 
     def do_POST(self):  # noqa: N802
         n = int(self.headers.get("Content-Length") or 0)
@@ -42,6 +44,10 @@ class _FakeUpstream(BaseHTTPRequestHandler):
             }
         )
         if self.path == "/v1/chat/completions":
+            if body.get("model") == "hold":
+                # 故意把第一条模型请求悬住，给第二条同实例请求制造稳定的并发窗口。
+                _FakeUpstream.hold_started.set()
+                _FakeUpstream.hold_release.wait(timeout=5)
             payload = json.dumps(
                 {
                     "choices": [{"message": {"content": "hi"}}],
@@ -188,6 +194,43 @@ class GatewayTest(unittest.TestCase):
             _FakeUpstream.seen_headers[-1]["x-api-key"], "vk-anth-real"
         )
         self.assertEqual(self._balance(key), 985)  # 1000 - (10+5)
+
+    def test_same_instance_concurrent_request_is_rejected(self):
+        """同一实例已有在途模型调用时，第二条必须 429，且只产生一次原厂扣费。"""
+        key = self._new_instance(grant=100)
+        _FakeUpstream.hold_started.clear()
+        _FakeUpstream.hold_release.clear()
+        first_result = {}
+
+        def first_request() -> None:
+            """发起会被假原厂悬住的第一条请求。"""
+            first_result["response"] = requests.post(
+                f"{self.base}/gw/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={"model": "hold", "messages": []},
+                timeout=10,
+            )
+
+        worker = threading.Thread(target=first_request)
+        worker.start()
+        self.assertTrue(_FakeUpstream.hold_started.wait(timeout=3))
+        try:
+            second = requests.post(
+                f"{self.base}/gw/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={"model": "gpt-4o", "messages": []},
+                timeout=3,
+            )
+            self.assertEqual(second.status_code, 429)
+            self.assertEqual(second.json()["errcode"], "NEXUS_GW_CONCURRENT")
+        finally:
+            _FakeUpstream.hold_release.set()
+            worker.join(timeout=5)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(first_result["response"].status_code, 200)
+        # 第一单用量 150，可按既定后付语义把 100 扣到 -50；第二单没有打到原厂、没有扣费。
+        self.assertEqual(self._balance(key), -50)
 
     # ---- 拒绝矩阵 ----
 

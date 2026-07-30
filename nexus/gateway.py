@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from typing import Any, Dict, Tuple
 
@@ -38,6 +39,23 @@ from nexus.db import NexusInstance, NexusKey, NexusWallet
 from nexus.keys import hash_key, looks_like_key
 
 logger = logging.getLogger("nexus.gateway")
+
+# 同一 OEM 实例的网关请求必须覆盖“余额检查→上游调用→事后扣账”全程串行。
+# 若只靠数据库扣款原子性，多个长请求仍能同时在旧余额为正时通过鉴权，随后一起调用原厂，
+# 造成余额被一次性透支很多。这里用进程内实例锁把最大透支约束回产品允许的“最后一单”。
+_INSTANCE_GATES: Dict[int, threading.Lock] = {}
+_INSTANCE_GATES_GUARD = threading.Lock()
+
+
+def _instance_gate(instance_id: int) -> threading.Lock:
+    """取某 OEM 实例唯一的请求闸门；并发首次访问也只会创建一个 Lock。
+
+    字典只为已经通过鉴权的真实实例建项，实例量级有限；不按外部传入的 KEY 字符串建锁，
+    避免攻击者用随机无效 KEY 把内存字典无限撑大。
+    """
+    iid = int(instance_id)
+    with _INSTANCE_GATES_GUARD:
+        return _INSTANCE_GATES.setdefault(iid, threading.Lock())
 
 # ---------- 厂商表 ----------
 # base 可用 env NEXUS_GW_<名>_BASE 覆盖（测试指向假上游/换区域）；
@@ -255,6 +273,30 @@ def handle_post(handler, provider: str, suffix: str) -> None:
     finally:
         s.close()
 
+    # 同一实例一次只允许一个在途模型请求。采用非阻塞 429，不让第二条连接占线程排队
+    # 几分钟；客户端可稍后重试，届时会重新鉴权并看到第一条请求结算后的真实余额。
+    gate = _instance_gate(instance_id)
+    if not gate.acquire(blocking=False):
+        handler._err(
+            429,
+            "NEXUS_GW_CONCURRENT",
+            "同一实例已有 AI 请求处理中，请等待完成后再试",
+        )
+        return
+    try:
+        _forward_authorized(handler, provider, suffix, body, instance_id)
+    finally:
+        # 无论上游超时、客户端断线还是扣账异常，都必须放锁，避免实例被永久卡死。
+        gate.release()
+
+
+def _forward_authorized(
+    handler, provider: str, suffix: str, body: bytes, instance_id: int
+) -> None:
+    """转发一条已鉴权且已拿到实例闸门的请求，并在响应后完成统计与扣账。
+
+    调用方负责持有实例级闸门；本函数保持“上游等待期间不占数据库连接”的既有设计。
+    """
     # ② 组装转发
     try:
         url, auth_headers = resolve_upstream(provider, suffix)

@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 from nexus import db, fleet
 from nexus.db import NexusLedger, NexusWallet
@@ -155,6 +157,40 @@ class FleetTest(unittest.TestCase):
             fleet.debit(self.s, inst, -5)
         with self.assertRaises(FleetError):
             fleet.topup(self.s, 9999, 10)
+
+    def test_concurrent_debits_do_not_lose_updates(self):
+        """两个独立事务同时扣费时，两笔减法与两条流水都必须完整保留。"""
+        k = self._one_key(grant=100)
+        inst = fleet.redeem(self.s, k, "im.concurrent.test")["instance_id"]
+        self.s.commit()
+        ready = threading.Barrier(2)
+
+        def debit_once(index: int) -> int:
+            """用独立 Session 模拟两个网关线程在同一时刻结算。"""
+            worker_session = db.session()
+            try:
+                ready.wait(timeout=3)
+                balance = fleet.debit(
+                    worker_session, inst, 10, note=f"concurrent-{index}"
+                )
+                worker_session.commit()
+                return balance
+            finally:
+                worker_session.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(debit_once, range(2)))
+
+        self.s.expire_all()
+        self.assertEqual(self.s.get(NexusWallet, inst).balance_tokens, 80)
+        usage_rows = self.s.execute(
+            select(NexusLedger).where(
+                NexusLedger.instance_id == inst,
+                NexusLedger.kind == "usage",
+            )
+        ).scalars().all()
+        self.assertEqual(len(usage_rows), 2)
+        self.assertEqual(sum(int(row.delta_tokens) for row in usage_rows), -20)
 
     # ---- 大屏聚合 ----
 

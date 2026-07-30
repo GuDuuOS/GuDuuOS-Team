@@ -334,23 +334,39 @@ def _geo_of(s, instance_id: int) -> Dict[str, Any]:
 # ---------- 钱包（充值 / 扣费）----------
 
 def topup(s, instance_id: int, tokens: int, note: str = "") -> int:
-    """人工充值（P1 手动记账；P3 接支付后由订单回调调用）。返回新余额。"""
+    """人工充值（P1 手动记账；P3 接支付后由订单回调调用）。返回新余额。
+
+    余额用数据库原子 ``balance = balance + tokens`` 更新，避免支付回调与网关扣费并发时
+    双方都基于旧余额回写，造成充值或扣费其中一笔凭空丢失。
+    """
     if tokens <= 0:
         raise FleetError("NEXUS_BAD_TOPUP", "充值额度必须为正")
-    wallet = s.get(NexusWallet, int(instance_id))
-    if wallet is None:
+    iid = int(instance_id)
+    amount = int(tokens)
+    result = s.execute(
+        update(NexusWallet)
+        .where(NexusWallet.instance_id == iid)
+        .values(
+            balance_tokens=NexusWallet.balance_tokens + amount,
+            updated_ts=_now_ms(),
+        )
+    )
+    if (result.rowcount or 0) < 1:
         raise FleetError("NEXUS_INSTANCE_MISSING", "实例不存在", 404)
-    wallet.balance_tokens = int(wallet.balance_tokens) + int(tokens)
-    wallet.updated_ts = _now_ms()
+    new_balance = int(
+        s.execute(
+            select(NexusWallet.balance_tokens).where(NexusWallet.instance_id == iid)
+        ).scalar_one()
+    )
     s.add(
         NexusLedger(
-            instance_id=int(instance_id),
-            delta_tokens=int(tokens),
+            instance_id=iid,
+            delta_tokens=amount,
             kind="topup",
             note=note,
         )
     )
-    return int(wallet.balance_tokens)
+    return new_balance
 
 
 def debit(s, instance_id: int, tokens: int, note: str = "") -> int:
@@ -362,20 +378,34 @@ def debit(s, instance_id: int, tokens: int, note: str = "") -> int:
     """
     if tokens <= 0:
         raise FleetError("NEXUS_BAD_DEBIT", "扣费额度必须为正")
-    wallet = s.get(NexusWallet, int(instance_id))
-    if wallet is None:
+    iid = int(instance_id)
+    amount = int(tokens)
+    # 允许扣成负数是既定的“最后一单后付”语义；但减法必须由数据库原子执行，不能先读
+    # 再回写，否则与充值/其他扣费并发时会丢更新。网关实例闸门负责限制同实例在途请求。
+    result = s.execute(
+        update(NexusWallet)
+        .where(NexusWallet.instance_id == iid)
+        .values(
+            balance_tokens=NexusWallet.balance_tokens - amount,
+            updated_ts=_now_ms(),
+        )
+    )
+    if (result.rowcount or 0) < 1:
         raise FleetError("NEXUS_INSTANCE_MISSING", "实例不存在", 404)
-    wallet.balance_tokens = int(wallet.balance_tokens) - int(tokens)
-    wallet.updated_ts = _now_ms()
+    new_balance = int(
+        s.execute(
+            select(NexusWallet.balance_tokens).where(NexusWallet.instance_id == iid)
+        ).scalar_one()
+    )
     s.add(
         NexusLedger(
-            instance_id=int(instance_id),
-            delta_tokens=-int(tokens),
+            instance_id=iid,
+            delta_tokens=-amount,
             kind="usage",
             note=note,
         )
     )
-    return int(wallet.balance_tokens)
+    return new_balance
 
 
 # ---------- 列表（console 用）----------

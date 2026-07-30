@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 from cosmac.db import init_engine, session_scope
-from cosmac.db.quota_repo import get_count, incr, period_key
+from cosmac.db.quota_repo import consume_if_below, get_count, incr, period_key
 from cosmac.quotas import QuotaStore, parse_quota_limits
 
 
@@ -27,6 +31,34 @@ class TestQuotaRepo(unittest.TestCase):
         self.assertEqual(len(period_key("day")), 10)   # YYYY-MM-DD
         self.assertEqual(len(period_key("month")), 7)  # YYYY-MM
         self.assertEqual(period_key("total"), "")
+
+    def test_concurrent_last_quota_only_one_consumer_wins(self) -> None:
+        """两个线程同时争最后一次额度时，只允许一个成功，数据库计数不能写穿上限。"""
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            init_engine("sqlite:///" + tmp.name, create_all=True)
+            ready = threading.Barrier(2)
+
+            def consume() -> object:
+                """在独立事务里同时消费，模拟两个跨房间 AI 回复线程。"""
+                ready.wait(timeout=3)
+                with session_scope() as s:
+                    return consume_if_below(
+                        s, "@race:h", "ai_msg_daily", "2026-07-31", 1,
+                    )
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(lambda _: consume(), range(2)))
+
+            self.assertEqual(sum(value is not None for value in results), 1)
+            with session_scope() as s:
+                self.assertEqual(
+                    get_count(s, "@race:h", "ai_msg_daily", "2026-07-31"),
+                    1,
+                )
+        finally:
+            os.unlink(tmp.name)
 
 
 class TestQuotaStore(unittest.TestCase):
