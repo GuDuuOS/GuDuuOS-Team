@@ -50,9 +50,27 @@ else bad "HTTPS 访问异常（HTTP ${code:-超时}）——证书未签出？�
 code="$(curl -so /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/_matrix/client/versions" 2>/dev/null || true)"
 [ "$code" = "200" ] && ok "Matrix API 正常" || bad "Matrix API 异常（HTTP ${code:-超时}）——看日志：docker compose logs synapse"
 
-# ---------- 联邦服务发现 ----------
-code="$(curl -so /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/.well-known/matrix/server" 2>/dev/null || true)"
-[ "$code" = "200" ] && ok "联邦服务发现正常" || bad "well-known 异常（HTTP ${code:-超时}）"
+# ---------- Matrix 服务发现 ----------
+# 不能只看 HTTP 200：面板的静态兜底页也可能返回 200 HTML。客户端发现还必须带 CORS，
+# 否则浏览器从其它域名登录时会拿到 JSON 却被同源策略拦住，表面仍是“找不到服务器”。
+client_doc="$(curl -fsS --max-time 10 "https://$DOMAIN/.well-known/matrix/client" 2>/dev/null || true)"
+client_headers="$(curl -fsSI --max-time 10 "https://$DOMAIN/.well-known/matrix/client" 2>/dev/null || true)"
+if printf '%s' "$client_doc" | grep -Fq '"m.homeserver"' \
+    && printf '%s' "$client_doc" | grep -Fq '"base_url"' \
+    && printf '%s\n' "$client_headers" | tr -d '\r' \
+      | grep -Eiq '^access-control-allow-origin:[[:space:]]*\*'; then
+  ok "客户端服务发现正常（JSON + CORS）"
+else
+  bad "客户端 well-known 异常——应返回 m.homeserver/base_url JSON，并带 Access-Control-Allow-Origin: *"
+fi
+
+# 联邦发现同样核对关键 JSON 字段，避免把 nginx/面板的 HTML 成功页误判为正常。
+server_doc="$(curl -fsS --max-time 10 "https://$DOMAIN/.well-known/matrix/server" 2>/dev/null || true)"
+if printf '%s' "$server_doc" | grep -Fq '"m.server"'; then
+  ok "联邦服务发现正常（m.server）"
+else
+  bad "联邦 well-known 异常——应返回 m.server JSON"
+fi
 
 # ---------- GuDuu OS bot ----------
 # 任何非 502/超时的响应（含 401/404）都说明 bot 进程活着且路由通

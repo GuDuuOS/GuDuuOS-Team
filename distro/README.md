@@ -41,6 +41,20 @@ git clone <发行版仓库地址> cosmac && cd cosmac/distro
 | 重启全栈 | `docker compose restart` |
 | 备份 | 停机备份 `distro/data/` 整个目录 + `distro/.env` |
 
+## 宿主反代与 Matrix 服务发现
+
+使用 `install.sh --behind-proxy` 时，宿主 nginx/Caddy 应把整个域名反代到安装时指定的
+本地端口，`/.well-known/matrix/client` 和 `/.well-known/matrix/server` 也必须到达容器。
+
+宝塔等面板经常自动生成 `location /.well-known/`，把这段路径当成本地静态目录；目录里
+没有 Matrix JSON 时就会返回 404，导致标准客户端无法通过域名发现登录服务器。处理方式：
+
+- 实例公开域名与 Synapse `server_name` 相同：删除该静态拦截，让请求继续反代到容器；
+- 公开域名是实例别名：渲染并 include
+  `templates/nginx-matrix-well-known.conf.tpl`，分别填写公开域名和真实 `server_name`；
+- 改完先执行 `nginx -t`，成功后再 reload，最后运行 `./doctor.sh`。体检会同时校验
+  客户端 JSON、CORS 和联邦 `m.server`，不再只凭 HTTP 200 判断。
+
 ## 目录结构（装完后）
 
 ```

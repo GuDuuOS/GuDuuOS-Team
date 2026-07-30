@@ -249,6 +249,7 @@ say "=============================================="
 say "安装完成 ✅"
 if [ "$BEHIND_PROXY" -eq 1 ]; then
   say "  共存模式：请在宿主反代加一条  $DOMAIN → 127.0.0.1:$PROXY_HTTP_PORT"
+  say "  若宿主 nginx/面板拦截 /.well-known/，请按 templates/nginx-matrix-well-known.conf.tpl 配精确路由"
 fi
 say "  访问地址： https://$DOMAIN"
 say "  管理员账号/初始密码见上方 bootstrap 输出（仅显示一次，登录后请修改）"
