@@ -3334,7 +3334,7 @@ export interface DocPage {
   id: number
   parent_id: number | null
   title: string
-  cover?: string        // 封面图(mxc:// 或 http(s) URL)；空=无封面
+  cover?: string        // 封面图只接受 Matrix 媒体 mxc://；空=无封面
   published?: boolean   // 是否已发布(草稿=false，仅后台可见)
   sort: number
   updated_by: string
@@ -3343,10 +3343,16 @@ export interface DocPage {
   content_md?: string
 }
 
-/** 把封面值解析成可显示的 http 地址（mxc:// 走媒体代理；http(s) 原样）。 */
+/**
+ * 把可信的 Matrix 封面解析成可显示地址。
+ *
+ * 历史接口允许直接保存 http(s) URL，阅读页面会因此自动请求任意第三方图片，泄露读者
+ * IP、访问时间与浏览器信息。现在只显示由上传流程产生的 mxc://；旧外链数据保留在库中
+ * 但不再加载，管理员可在编辑页重新上传为 Matrix 媒体。
+ */
 export function docCoverUrl(cover?: string, size = 600): string {
   if (!cover) return ''
-  return cover.startsWith('mxc://') ? mxcToHttp(cover, size) : cover
+  return cover.startsWith('mxc://') ? mxcToHttp(cover, size) : ''
 }
 
 function authHeaders(json = false): Record<string, string> {

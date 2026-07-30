@@ -4,8 +4,10 @@
  * 安全模型（与聊天气泡那版同源、同样加固）：
  *  1) 先整体 HTML 转义（含 " 和 '），任何 <script>/属性击穿都失效；
  *  2) 先把代码块/行内代码"抠出来"存进 stash 占位，避免里面的符号被二次处理；
- *  3) 链接/图片 URL 只允许 http(s)（mailto 仅链接），且 URL 已被转义（引号→&quot;）不会击穿属性；
- *  4) 渲染前剥掉占位哨兵 \x00，防用户原文污染还原逻辑。
+ *  3) 普通链接只允许 http(s)/mailto，生成后立即存进 stash，避免后续 Markdown 规则改写属性；
+ *  4) 外部图片默认只显示保护提示，不创建 <img>、不向第三方泄露阅读者 IP；
+ *     用户明确允许后也只加载 HTTPS 图片，并通过 referrerpolicy 隐藏当前文档地址；
+ *  5) 渲染前剥掉占位哨兵 \x00，防用户原文污染还原逻辑。
  *
  * 比聊天版多支持：标题(#/##/###)、无序/有序列表、引用块、图片 ![]()——教学文档要用。
  * 返回的 HTML 仅含我们自己拼的白名单标签，可安全用于 v-html。
@@ -20,19 +22,49 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;')
 }
 
-/** 行内格式：加粗/斜体/删除线/图片/链接/@提及。传入的文本必须已 escapeHtml 过。 */
-function inline(s: string): string {
-  // 图片要在链接之前处理（语法 ![]() 是 []() 的超集）
+/** 判断正文里是否包含用户可显式加载的 HTTPS Markdown 图片。HTTP 图片始终禁止加载。 */
+export function hasLoadableExternalMarkdownImage(raw: string): boolean {
+  return /!\[[^\]\n]*\]\(https:\/\/[^\s)]+\)/i.test(raw || '')
+}
+
+/**
+ * 渲染行内格式。传入文本必须已 escapeHtml 过。
+ *
+ * keep 会把已经生成的安全 HTML 暂存起来，避免后面的加粗/链接等正则再次扫描标签属性。
+ * allowExternalImages 只能由页面上的明确用户操作打开，绝不能对服务端内容默认设为 true。
+ */
+function inline(
+  s: string,
+  keep: (html: string) => string,
+  allowExternalImages: boolean,
+): string {
+  // 图片语法是链接语法的超集，必须先处理。默认不输出 <img>，否则仅阅读一篇文档
+  // 就会让图片站点拿到读者 IP、时间与浏览器信息，可被做成不可见的追踪像素。
   s = s.replace(
     /!\[([^\]\n]*)\]\((https?:\/\/[^\s)]+)\)/g,
-    '<img alt="$1" src="$2" class="md-img" loading="lazy">',
+    (_match, alt: string, url: string) => {
+      if (allowExternalImages && url.toLowerCase().startsWith('https://')) {
+        return keep(
+          `<img alt="${alt}" src="${url}" class="md-img" loading="lazy" decoding="async" referrerpolicy="no-referrer">`,
+        )
+      }
+      const reason = url.toLowerCase().startsWith('http://')
+        ? '不安全的 HTTP 图片已屏蔽'
+        : '外部图片已屏蔽，防止泄露 IP'
+      const label = alt || '未命名图片'
+      return keep(
+        `<span class="md-img-blocked" title="${reason}，页面不会自动连接图片站点">🛡️ ${label}（${reason}）</span>`,
+      )
+    },
   )
   s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
   s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
   s = s.replace(/~~([^~\n]+)~~/g, '<del>$1</del>')
   s = s.replace(
     /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>',
+    (_match, text: string, url: string) => keep(
+      `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`,
+    ),
   )
   s = s.replace(
     /(^|[\s(])@([a-zA-Z0-9_.\-]+(?::[a-zA-Z0-9_.\-]+)?)/g,
@@ -41,7 +73,7 @@ function inline(s: string): string {
   return s
 }
 
-export function renderMarkdown(raw: string): string {
+export function renderMarkdown(raw: string, allowExternalImages = false): string {
   const stash: string[] = []
   const keep = (html: string) => `\x00${stash.push(html) - 1}\x00`
   // 1) 转义 + 剥哨兵
@@ -60,14 +92,17 @@ export function renderMarkdown(raw: string): string {
   let quote: string[] = []
 
   const flushPara = () => {
-    if (para.length) { out.push(`<p>${inline(para.join('<br>'))}</p>`); para = [] }
+    if (para.length) {
+      out.push(`<p>${inline(para.join('<br>'), keep, allowExternalImages)}</p>`)
+      para = []
+    }
   }
   const flushList = () => {
     if (listType) { out.push(`</${listType}>`); listType = null }
   }
   const flushQuote = () => {
     if (quote.length) {
-      out.push(`<blockquote>${inline(quote.join('<br>'))}</blockquote>`)
+      out.push(`<blockquote>${inline(quote.join('<br>'), keep, allowExternalImages)}</blockquote>`)
       quote = []
     }
   }
@@ -81,7 +116,12 @@ export function renderMarkdown(raw: string): string {
       continue
     }
     const h = line.match(/^(#{1,3})\s+(.*)$/)
-    if (h) { flushAll(); const n = h[1].length; out.push(`<h${n}>${inline(h[2])}</h${n}>`); continue }
+    if (h) {
+      flushAll()
+      const n = h[1].length
+      out.push(`<h${n}>${inline(h[2], keep, allowExternalImages)}</h${n}>`)
+      continue
+    }
 
     const ul = line.match(/^[-*]\s+(.*)$/)
     const ol = line.match(/^\d+\.\s+(.*)$/)
@@ -89,7 +129,9 @@ export function renderMarkdown(raw: string): string {
       flushPara(); flushQuote()
       const want: 'ul' | 'ol' = ul ? 'ul' : 'ol'
       if (listType !== want) { flushList(); out.push(`<${want}>`); listType = want }
-      out.push(`<li>${inline((ul ? ul[1] : (ol as RegExpMatchArray)[1]))}</li>`)
+      out.push(
+        `<li>${inline((ul ? ul[1] : (ol as RegExpMatchArray)[1]), keep, allowExternalImages)}</li>`,
+      )
       continue
     }
 

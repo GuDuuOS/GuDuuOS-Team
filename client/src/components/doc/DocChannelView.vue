@@ -41,14 +41,21 @@
             v-if="editing" v-model="editTitle" class="doc-title-input" placeholder="页面标题"
           />
           <h1 v-else class="doc-title">{{ current?.title || '未命名页面' }}</h1>
-          <div class="doc-head-ops" v-if="canWrite">
-            <template v-if="editing">
+          <div class="doc-head-ops">
+            <button
+              v-if="currentHasLoadableImages"
+              class="doc-btn external-img"
+              :class="{ on: allowExternalImages }"
+              :title="allowExternalImages ? '停止向外部图片站点发起请求' : '加载后，图片站点将看到你的 IP 和浏览器信息'"
+              @click="allowExternalImages = !allowExternalImages"
+            >{{ allowExternalImages ? '隐藏外部图片' : '加载外部图片（将连接外站）' }}</button>
+            <template v-if="canWrite && editing">
               <button class="doc-btn ghost" :disabled="aiBusy || saving" @click="aiWrite"><Icon name="sparkle" :size="13" /> {{ aiBusy ? 'AI 写作中…' : 'AI 写' }}</button>
               <button class="doc-btn ghost" :class="{ pubon: editPublished }" :disabled="saving" @click="editPublished = !editPublished" :title="editPublished ? '点此改为草稿' : '点此设为发布'">{{ editPublished ? '已发布 ●' : '草稿 ○' }}</button>
               <button class="doc-btn" :disabled="saving || aiBusy" @click="save">{{ saving ? '保存中…' : '保存' }}</button>
               <button class="doc-btn ghost" :disabled="saving" @click="cancelEdit">取消</button>
             </template>
-            <template v-else>
+            <template v-else-if="canWrite">
               <span class="doc-status" :class="{ on: current?.published }">{{ current?.published ? '已发布' : '草稿' }}</span>
               <button class="doc-btn ghost" @click="startEdit">编辑</button>
             </template>
@@ -57,11 +64,11 @@
         <div v-if="err" class="doc-err">{{ err }}</div>
         <!-- 编辑态：封面上传 -->
         <div v-if="editing" class="doc-cover-row">
-          <img v-if="editCover" class="doc-cover-thumb" :src="coverUrl(editCover)" alt="封面" />
+          <img v-if="coverUrl(editCover)" class="doc-cover-thumb" :src="coverUrl(editCover)" alt="封面" />
           <div v-else class="doc-cover-ph">无封面</div>
           <div class="doc-cover-ops">
             <label class="doc-btn ghost sm">
-              {{ coverUploading ? '上传中…' : (editCover ? '更换封面' : '上传封面') }}
+              {{ coverUploading ? '上传中…' : (coverUrl(editCover) ? '更换封面' : '上传封面') }}
               <input type="file" accept="image/*" hidden :disabled="coverUploading" @change="onPickCover" />
             </label>
             <button v-if="editCover" class="doc-btn ghost sm" :disabled="coverUploading" @click="editCover = ''">移除</button>
@@ -69,15 +76,15 @@
         </div>
         <!-- 编辑态：左写 Markdown 右实时预览 -->
         <div v-if="editing" class="doc-editor">
-          <textarea v-model="editBody" class="doc-textarea" placeholder="用 Markdown 写教程…&#10;# 标题  - 列表  **加粗**  `代码`  ![图](http url)"></textarea>
+          <textarea v-model="editBody" class="doc-textarea" placeholder="用 Markdown 写教程…&#10;# 标题  - 列表  **加粗**  `代码`&#10;外部图片默认保护性屏蔽，可用右上角按钮预览"></textarea>
           <!-- eslint-disable-next-line vue/no-v-html -->
-          <div class="doc-preview md" v-html="renderMarkdown(editBody)"></div>
+          <div class="doc-preview md" v-html="renderMarkdown(editBody, allowExternalImages)"></div>
         </div>
         <!-- 阅读态 -->
         <template v-else>
-          <img v-if="current?.cover" class="doc-cover-banner" :src="coverUrl(current.cover)" alt="封面" />
+          <img v-if="coverUrl(current?.cover)" class="doc-cover-banner" :src="coverUrl(current?.cover)" alt="封面" />
           <!-- eslint-disable-next-line vue/no-v-html -->
-          <article class="doc-body md" v-html="renderMarkdown(current?.content_md || '')"></article>
+          <article class="doc-body md" v-html="renderMarkdown(current?.content_md || '', allowExternalImages)"></article>
         </template>
       </template>
     </section>
@@ -86,13 +93,13 @@
 
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
   docTree, docGetPage, docCreatePage, docUpdatePage, docDeletePage, docMovePage,
   docCoverUrl, uploadMedia, docDraft,
   type DocPage,
 } from '@/matrix/client'
-import { renderMarkdown } from '@/utils/md'
+import { hasLoadableExternalMarkdownImage, renderMarkdown } from '@/utils/md'
 
 const coverUrl = docCoverUrl
 
@@ -107,10 +114,15 @@ const editing = ref(false)
 const saving = ref(false)
 const editTitle = ref('')
 const editBody = ref('')
-const editCover = ref('')        // 封面(mxc:// 或 url)
+const editCover = ref('')        // 封面仅使用上传流程返回的 mxc://，不接受会追踪读者的外链
 const coverUploading = ref(false)
 const aiBusy = ref(false)        // AI 写作中
 const editPublished = ref(false) // 编辑中的发布状态(草稿/已发布)
+// 文档内容来自服务端，外部图片必须每次进入页面都由用户明确允许，不能继承上一页选择。
+const allowExternalImages = ref(false)
+const currentHasLoadableImages = computed(() => hasLoadableExternalMarkdownImage(
+  editing.value ? editBody.value : (current.value?.content_md || ''),
+))
 
 // 扁平化成「带层级深度」的有序列表（按 parent + sort 组织），避免递归组件。
 interface FlatNode extends DocPage { depth: number }
@@ -157,6 +169,7 @@ async function select(id: number) {
   if (editing.value) return  // 编辑中不切页，避免丢未保存内容
   currentId.value = id
   current.value = await docGetPage(id)
+  allowExternalImages.value = false
 }
 
 async function createPage(parentId: number | null) {
@@ -217,9 +230,14 @@ function startEdit() {
   editBody.value = current.value.content_md || ''
   editCover.value = current.value.cover || ''
   editPublished.value = current.value.published ?? false
+  allowExternalImages.value = false
   editing.value = true
 }
-function cancelEdit() { editing.value = false; err.value = '' }
+function cancelEdit() {
+  editing.value = false
+  allowExternalImages.value = false
+  err.value = ''
+}
 
 async function onPickCover(e: Event) {
   const file = (e.target as HTMLInputElement)?.files?.[0]
@@ -266,6 +284,7 @@ async function save() {
     })
     current.value = updated
     editing.value = false
+    allowExternalImages.value = false
     await loadTree(false)  // 标题/封面可能变，刷新树
   } catch (e: any) {
     err.value = e?.message || '保存失败'
@@ -327,6 +346,8 @@ onMounted(loadTree)
 }
 .doc-btn.ghost { background: #fff; color: #6b665e; border-color: #d8d2c8; }
 .doc-btn.ghost.pubon { color: #3a7a3a; border-color: #bcdcbc; background: #f0f7f0; }
+.doc-btn.external-img { background: #fff; color: #8a8378; border-color: #d8d2c8; }
+.doc-btn.external-img.on { border-color: #d5a08e; background: #faece7; color: #993c1d; }
 .doc-status { font-size: 12px; color: #b58932; align-self: center; }
 .doc-status.on { color: #3a7a3a; }
 .doc-draft-tag {
@@ -376,6 +397,10 @@ onMounted(loadTree)
   background: #f1efe9; border-radius: 4px; padding: 1px 5px; font-size: 13px;
 }
 .md :deep(.md-img) { max-width: 100%; border-radius: 8px; margin: 8px 0; }
+.md :deep(.md-img-blocked) {
+  display: inline-block; margin: 8px 0; padding: 7px 10px; border: 1px solid #e0dacd;
+  border-radius: 7px; background: #faf9f6; color: #8a8378; font-size: 13px;
+}
 .md :deep(a) { color: #c96442; }
 .md :deep(.mention) { color: #4a7a8c; font-weight: 600; }
 </style>

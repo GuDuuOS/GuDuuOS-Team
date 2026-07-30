@@ -6,17 +6,26 @@
         <div class="dr-detail-bar">
           <button class="dr-back" @click="current = null">← 返回列表</button>
           <!-- 视图切换：图文(HTML 渲染) / Markdown 原文(AI 知识库用的就是这份, 可复制) -->
-          <div class="dr-viewtoggle">
-            <button :class="{ on: !showMd }" @click="showMd = false">图文</button>
-            <button :class="{ on: showMd }" @click="showMd = true">Markdown</button>
+          <div class="dr-detail-actions">
+            <button
+              v-if="currentHasLoadableImages && !showMd"
+              class="dr-external-img"
+              :class="{ on: allowExternalImages }"
+              :title="allowExternalImages ? '停止向外部图片站点发起请求' : '加载后，图片站点将看到你的 IP 和浏览器信息'"
+              @click="allowExternalImages = !allowExternalImages"
+            >{{ allowExternalImages ? '隐藏外部图片' : '加载外部图片（将连接外站）' }}</button>
+            <div class="dr-viewtoggle">
+              <button :class="{ on: !showMd }" @click="showMd = false">图文</button>
+              <button :class="{ on: showMd }" @click="showMd = true">Markdown</button>
+            </div>
           </div>
         </div>
         <h1 class="dr-title">{{ current.title || '未命名' }}</h1>
         <div class="dr-meta">{{ fmtTime(current.updated_ts) }}<span v-if="current.updated_by"> · {{ shortId(current.updated_by) }}</span></div>
-        <img v-if="current.cover && !showMd" class="dr-cover-banner" :src="coverUrl(current.cover)" alt="封面" />
+        <img v-if="coverUrl(current.cover) && !showMd" class="dr-cover-banner" :src="coverUrl(current.cover)" alt="封面" />
         <!-- 图文(HTML)态 -->
         <!-- eslint-disable-next-line vue/no-v-html -->
-        <article v-if="!showMd" class="dr-body md" v-html="renderMarkdown(current.content_md || '')"></article>
+        <article v-if="!showMd" class="dr-body md" v-html="renderMarkdown(current.content_md || '', allowExternalImages)"></article>
         <!-- Markdown 原文态：AI 答疑用的就是这份内容；可一键复制喂给别的 AI -->
         <div v-else class="dr-mdwrap">
           <button class="dr-copy" @click="copyMd">{{ copied ? '已复制 ✓' : '复制 Markdown' }}</button>
@@ -46,7 +55,7 @@
             <div v-if="a.excerpt" class="dr-card-ex">{{ a.excerpt }}</div>
             <div class="dr-card-meta">{{ fmtTime(a.updated_ts) }}</div>
           </div>
-          <img v-if="a.cover" class="dr-card-cover" :src="coverUrl(a.cover, 200)" alt="" />
+          <img v-if="coverUrl(a.cover, 200)" class="dr-card-cover" :src="coverUrl(a.cover, 200)" alt="" />
         </button>
       </div>
     </template>
@@ -55,9 +64,9 @@
 
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { docTree, docGetPage, docCoverUrl, type DocPage } from '@/matrix/client'
-import { renderMarkdown } from '@/utils/md'
+import { hasLoadableExternalMarkdownImage, renderMarkdown } from '@/utils/md'
 
 const coverUrl = docCoverUrl
 
@@ -67,6 +76,11 @@ const loading = ref(false)
 const locked = ref(false)   // 被付费门控拦下(非付费会员)
 const showMd = ref(false)   // 详情视图：false=图文(HTML) / true=Markdown 原文
 const copied = ref(false)
+// 外部图片永远按文档会话默认关闭；只有读者看过风险提示并主动点按钮才允许加载。
+const allowExternalImages = ref(false)
+const currentHasLoadableImages = computed(() =>
+  hasLoadableExternalMarkdownImage(current.value?.content_md || ''),
+)
 
 async function load() {
   loading.value = true
@@ -82,7 +96,12 @@ async function load() {
 
 async function open(id: number) {
   const p = await docGetPage(id)
-  if (p) { current.value = p; showMd.value = false; copied.value = false }
+  if (p) {
+    current.value = p
+    showMd.value = false
+    copied.value = false
+    allowExternalImages.value = false
+  }
 }
 
 async function copyMd() {
@@ -133,6 +152,12 @@ onMounted(load)
 
 .dr-detail { padding: 20px 32px 48px; max-width: 760px; }
 .dr-detail-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.dr-detail-actions { display: flex; align-items: center; gap: 8px; }
+.dr-external-img {
+  border: 1px solid #d8d2c8; background: #fff; color: #8a8378; border-radius: 8px;
+  padding: 4px 10px; font-size: 12px; cursor: pointer;
+}
+.dr-external-img.on { border-color: #d5a08e; background: #faece7; color: #993c1d; }
 .dr-back {
   border: none; background: transparent; color: #c96442; cursor: pointer;
   font-size: 13px; padding: 4px 0;
@@ -170,6 +195,10 @@ onMounted(load)
 .md :deep(.md-pre) { background: #2c2a26; color: #f1efe9; border-radius: 8px; padding: 12px 14px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
 .md :deep(.md-code) { background: #f1efe9; border-radius: 4px; padding: 1px 5px; font-size: 13px; }
 .md :deep(.md-img) { max-width: 100%; border-radius: 8px; margin: 10px 0; }
+.md :deep(.md-img-blocked) {
+  display: inline-block; margin: 8px 0; padding: 7px 10px; border: 1px solid #e0dacd;
+  border-radius: 7px; background: #faf9f6; color: #8a8378; font-size: 13px;
+}
 .md :deep(a) { color: #c96442; }
 .md :deep(.mention) { color: #4a7a8c; font-weight: 600; }
 </style>
