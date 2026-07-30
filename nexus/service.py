@@ -76,6 +76,15 @@ def _admin_token() -> str:
     return os.environ.get("NEXUS_ADMIN_TOKEN", "").strip()
 
 
+def _dash_token() -> str:
+    """读取只读大屏令牌。
+
+    独立函数让大屏鉴权与管理员鉴权保持清晰边界，避免以后为了“方便”再次把
+    ``NEXUS_ADMIN_TOKEN`` 当成大屏令牌使用。
+    """
+    return os.environ.get("NEXUS_DASH_TOKEN", "").strip()
+
+
 class NexusHandler(BaseHTTPRequestHandler):
     """所有 /nexus/（fleet）与 /gw/（LLM 网关）端点的处理器。
 
@@ -96,6 +105,9 @@ class NexusHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        # API 响应可能包含会话令牌、余额等敏感数据，任何层级都不应缓存。
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
 
@@ -145,18 +157,19 @@ class NexusHandler(BaseHTTPRequestHandler):
         return oem
 
     def _check_dash(self) -> bool:
-        """大屏端点鉴权：只读令牌 NEXUS_DASH_TOKEN（大屏挂墙上，权限与管理
-        令牌分开——泄露只读令牌看得到数据、动不了 KEY 和钱包）；admin 令牌也放行。"""
+        """大屏端点只接受只读令牌 ``NEXUS_DASH_TOKEN``。
+
+        管理令牌绝不能在大屏页面里使用：大屏展示的数据面更大、运行时间更长，一旦页面
+        再出现 XSS，泄露管理员令牌会直接危及 KEY 与钱包。管理员进入大屏时先经受保护的
+        兑换端点取得只读令牌，权限始终保持最小化。
+        """
         got = self.headers.get("Authorization") or ""
         token = got[7:] if got.startswith("Bearer ") else ""
-        dash = os.environ.get("NEXUS_DASH_TOKEN", "").strip()
-        admin = _admin_token()
+        dash = _dash_token()
         if dash and token and hmac.compare_digest(token, dash):
             return True
-        if admin and token and hmac.compare_digest(token, admin):
-            return True
-        if not dash and not admin:
-            self._err(503, "NEXUS_ADMIN_DISABLED", "NEXUS_DASH_TOKEN 未配置")
+        if not dash:
+            self._err(503, "NEXUS_DASH_DISABLED", "NEXUS_DASH_TOKEN 未配置")
         else:
             self._err(401, "NEXUS_FORBIDDEN", "大屏令牌无效")
         return False
@@ -192,6 +205,20 @@ class NexusHandler(BaseHTTPRequestHandler):
                 self._with_session(
                     lambda s: self._json(200, {"oems": oem_svc.list_oems(s)})
                 )
+            return
+        if path == "/nexus/admin/dashboard-token":
+            # 管理员控制台只在用户进入大屏时兑换“只读”凭据。前端从此不会把具有
+            # KEY/钱包写权限的管理员令牌传给大屏，避免一个展示层 XSS 升级成接管后台。
+            if self._check_admin():
+                token = _dash_token()
+                if token:
+                    self._json(200, {"token": token})
+                else:
+                    self._err(
+                        503,
+                        "NEXUS_DASH_DISABLED",
+                        "NEXUS_DASH_TOKEN 未配置",
+                    )
             return
         if path == "/nexus/dash/summary":
             if self._check_dash():
@@ -353,6 +380,26 @@ class NexusHandler(BaseHTTPRequestHandler):
             "Cache-Control",
             "public, max-age=86400" if ext == ".json" else "no-cache",
         )
+        # 静态控制台与大屏都承载敏感运营数据，先给所有页面补齐基础浏览器边界。
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        self.send_header(
+            "Permissions-Policy",
+            "camera=(), microphone=(), geolocation=(), payment=()",
+        )
+        if base_dir == self._DASH_DIR:
+            # 大屏没有内联脚本，脚本来源可严格锁死到同源。样式保留 unsafe-inline 是因为
+            # 地图坐标、颜色、柱高都通过 style 属性动态设置；它不放宽 JavaScript 执行。
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'self'; script-src 'self'; "
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                "font-src 'self' data:; connect-src 'self'; object-src 'none'; "
+                "base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+            )
         self.end_headers()
         self.wfile.write(data)
         return True

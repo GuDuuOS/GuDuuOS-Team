@@ -126,7 +126,7 @@ DASH_TOKEN=$(grep '^NEXUS_DASH_TOKEN=' "$ENVF" | cut -d= -f2)
 say "=============================================="
 say "部署完成 ✅"
 say "  数据大屏： https://$DOMAIN/#token=$DASH_TOKEN"
-say "  （首次打开后令牌记入浏览器，之后直接访问 https://$DOMAIN 即可）"
+say "  （令牌仅保留在当前标签页，刷新不丢；关闭后需重新使用上方安全链接）"
 say "  管理令牌见 $ENVF（NEXUS_ADMIN_TOKEN，发 KEY/充值用）"
 say "  升级：     cd $APP && git pull && systemctl restart nexus"
 say "  日志：     journalctl -u nexus -f"

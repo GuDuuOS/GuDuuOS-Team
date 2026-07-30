@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "generate:map": "node scripts/generate-world-hexes.mjs",
+    "test:security": "node scripts/check-security.mjs",
     "start": "node server.mjs"
   }
 }

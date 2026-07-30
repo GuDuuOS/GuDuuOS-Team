@@ -17,6 +17,17 @@ const mimeTypes = {
   ".webp": "image/webp",
 };
 
+// 本地预览与生产 Nexus 服务保持同一套浏览器安全边界，避免开发验证正常、上线策略缺失。
+const securityHeaders = {
+  "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "Cross-Origin-Resource-Policy": "same-origin",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+  "Referrer-Policy": "no-referrer",
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+};
+
 const server = createServer((request, response) => {
   const pathname = decodeURIComponent(new URL(request.url, `http://${request.headers.host}`).pathname);
   const requestedPath = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
@@ -36,6 +47,7 @@ const server = createServer((request, response) => {
   response.writeHead(200, {
     "Content-Type": mimeTypes[extname(filePath).toLowerCase()] || "application/octet-stream",
     "Cache-Control": "no-store",
+    ...securityHeaders,
   });
   createReadStream(filePath).pipe(response);
 });

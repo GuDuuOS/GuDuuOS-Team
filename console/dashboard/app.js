@@ -388,17 +388,54 @@
 
   // ══════════ GuDuu Nexus 真实数据适配层 ══════════
   // 起屏时从 Nexus fleet 服务拉真实舰队数据（GET /nexus/dash/summary）。
-  // 鉴权：只读大屏令牌经 URL 井号参数传入一次（https://<域名>/#token=xxx），
-  // 记入 localStorage 后地址栏可清掉。拉不到数据 = 静默保持演示数据（原型模式）。
+  // 鉴权：只读大屏令牌经 URL 井号参数传入一次（https://<域名>/#token=xxx）。
+  // 令牌只放 sessionStorage，关闭当前标签页即失效；同时立刻从地址栏移除，避免截屏、
+  // 复制链接或浏览器崩溃恢复时继续暴露。拉不到数据 = 静默保持演示数据（原型模式）。
   const TOKEN_UNIT = { div: 1e9, label: "B" }; // 演示默认 B；真实模式按量级自适应
+  const DASH_TOKEN_KEY = "nexus_dash_token";
+  let volatileDashToken = ""; // 浏览器禁用 Storage 时，仅在当前页面内存中保留
 
   function dashToken() {
-    const fromHash = (window.location.hash.match(/token=([^&]+)/) || [])[1] || "";
-    if (fromHash) {
-      try { window.localStorage.setItem("nexus_dash_token", fromHash); } catch { /* 隐私模式忽略 */ }
-      return fromHash;
+    const encoded = (window.location.hash.match(/(?:^#|[&#])token=([^&]+)/) || [])[1] || "";
+    if (encoded) {
+      let fromHash = "";
+      try {
+        fromHash = decodeURIComponent(encoded);
+      } catch {
+        // 非法百分号编码绝不能原样当凭据发送，直接视作无令牌。
+      }
+      if (fromHash) {
+        volatileDashToken = fromHash;
+        try { window.sessionStorage.setItem(DASH_TOKEN_KEY, fromHash); } catch { /* 隐私模式忽略 */ }
+        // 清掉旧版本留下的长期凭据；即使用户升级前访问过，大屏令牌也不再跨会话保留。
+        try { window.localStorage.removeItem(DASH_TOKEN_KEY); } catch { /* 隐私模式忽略 */ }
+        try {
+          window.history.replaceState(null, document.title, `${window.location.pathname}${window.location.search}`);
+        } catch { /* 嵌入式预览可能禁止改地址栏，不影响鉴权 */ }
+        return fromHash;
+      }
     }
-    try { return window.localStorage.getItem("nexus_dash_token") || ""; } catch { return ""; }
+    try {
+      const current = window.sessionStorage.getItem(DASH_TOKEN_KEY) || "";
+      if (current) {
+        volatileDashToken = current;
+        return current;
+      }
+    } catch { /* 隐私模式忽略 */ }
+    if (volatileDashToken) return volatileDashToken;
+
+    // 兼容一次旧版本：把 localStorage 里的令牌迁到本标签页后立即删除。这样已登录用户
+    // 不会在升级瞬间掉线，同时永久消除可被同源页面长期读取的历史副本。
+    try {
+      const legacy = window.localStorage.getItem(DASH_TOKEN_KEY) || "";
+      if (!legacy) return "";
+      volatileDashToken = legacy;
+      try { window.sessionStorage.setItem(DASH_TOKEN_KEY, legacy); } catch { /* 隐私模式忽略 */ }
+      window.localStorage.removeItem(DASH_TOKEN_KEY);
+      return legacy;
+    } catch {
+      return "";
+    }
   }
 
   // djb2 哈希：域名 → 确定性视觉参数（颜色/星球坐标每次打开都一致，不乱跳）
@@ -572,53 +609,106 @@
     const totalEl = $("#model-total");
     if (!donut || !legend || !totalEl) return;
     const totalTxt = fmtTokens(todayTotal);
-    totalEl.innerHTML = /[KMB]$/.test(totalTxt)
-      ? `${totalTxt.slice(0, -1)}<em>${totalTxt.slice(-1)}</em>`
-      : totalTxt;
-    if (!models.length) {
+    totalEl.replaceChildren(document.createTextNode(/[KMB]$/.test(totalTxt) ? totalTxt.slice(0, -1) : totalTxt));
+    if (/[KMB]$/.test(totalTxt)) {
+      const unit = document.createElement("em");
+      unit.textContent = totalTxt.slice(-1);
+      totalEl.appendChild(unit);
+    }
+
+    const safeModels = Array.isArray(models) ? models : [];
+    if (!safeModels.length) {
       donut.style.background = "conic-gradient(rgba(139,124,255,0.16) 0 100%)";
-      legend.innerHTML =
-        '<div><i style="--dot-color:#8b7cff"></i><span>今日暂无 AI 调用</span><strong>—</strong></div>';
+      const row = document.createElement("div");
+      const dot = document.createElement("i");
+      const label = document.createElement("span");
+      const value = document.createElement("strong");
+      dot.style.setProperty("--dot-color", "#8b7cff");
+      label.textContent = "今日暂无 AI 调用";
+      value.textContent = "—";
+      row.append(dot, label, value);
+      legend.replaceChildren(row);
       return;
     }
     const palette = ["#8b7cff", "#35d9ff", "#57e6a5", "#ffb65c", "#ff7aa5", "#5ca8ff", "#c0b7ff", "#abf2ff"];
-    const sum = models.reduce((s, m) => s + (m.tokens || 0), 0) || 1;
+    const sum = safeModels.reduce((s, m) => s + Math.max(0, Number(m.tokens) || 0), 0) || 1;
     let acc = 0;
     const stops = [];
-    legend.innerHTML = models
-      .map((m, i) => {
-        const pct = ((m.tokens || 0) / sum) * 100;
-        const color = palette[i % palette.length];
-        stops.push(`${color} ${acc.toFixed(2)}% ${(acc + pct).toFixed(2)}%`);
-        acc += pct;
-        const name = String(m.model || "").split("/").pop() || m.model;
-        return `<div><i style="--dot-color:${color}"></i><span>${name}</span><strong>${pct.toFixed(1)}%</strong></div>`;
-      })
-      .join("");
+    const fragment = document.createDocumentFragment();
+    safeModels.forEach((model, index) => {
+      const pct = (Math.max(0, Number(model.tokens) || 0) / sum) * 100;
+      const color = palette[index % palette.length];
+      stops.push(`${color} ${acc.toFixed(2)}% ${(acc + pct).toFixed(2)}%`);
+      acc += pct;
+
+      // 模型名来自服务端，必须通过 textContent 写入；不能重新拼回 HTML 字符串。
+      const row = document.createElement("div");
+      const dot = document.createElement("i");
+      const label = document.createElement("span");
+      const value = document.createElement("strong");
+      const rawName = String(model.model || "");
+      dot.style.setProperty("--dot-color", color);
+      label.textContent = rawName.split("/").pop() || rawName || "未知模型";
+      value.textContent = `${pct.toFixed(1)}%`;
+      row.append(dot, label, value);
+      fragment.appendChild(row);
+    });
+    legend.replaceChildren(fragment);
     donut.style.background = `conic-gradient(${stops.join(",")})`;
+  }
+
+  /** 创建“实时动态”左侧的固定 SVG 图标。
+   *
+   * 图标路径完全由本地代码定义；仍使用 SVG DOM API 创建，而不使用 innerHTML，确保这块
+   * 将来增加服务端字段时不会无意间把动态内容混入 HTML 模板。 */
+  function createActivityIcon() {
+    const namespace = "http://www.w3.org/2000/svg";
+    const wrapper = document.createElement("span");
+    const svg = document.createElementNS(namespace, "svg");
+    const path = document.createElementNS(namespace, "path");
+    wrapper.className = "activity-icon activity-icon--success";
+    svg.setAttribute("viewBox", "0 0 20 20");
+    path.setAttribute("d", "M10 4v12M4 10h12");
+    svg.appendChild(path);
+    wrapper.appendChild(svg);
+    return wrapper;
   }
 
   // 实时动态：母舰最近流水（消耗/充值/开通）
   function renderRecent(recent) {
     const list = $("#activity-list");
-    if (!list || !recent.length) return;
-    list.innerHTML = recent
-      .slice(0, 4)
-      .map((r) => {
-        const name = String(r.domain || "").split(".")[0] || r.domain || "?";
-        const amount = fmtTokens(r.tokens);
-        const what =
-          r.kind === "usage" ? `消耗 ${amount} tokens`
-          : r.kind === "topup" ? `充值 ${amount} tokens`
-          : r.kind === "grant" ? `开通并获赠 ${amount} tokens`
-          : r.kind;
-        const model =
-          r.kind === "usage" && r.note
-            ? ` · ${String(r.note).split(" ")[0].split("/").pop()}`
-            : "";
-        return `<article><span class="activity-icon activity-icon--success"><svg viewBox="0 0 20 20"><path d="M10 4v12M4 10h12"></path></svg></span><div><p><strong>${name}</strong> ${what}</p><small>${relTime(r.ts)}${model}</small></div></article>`;
-      })
-      .join("");
+    const safeRecent = Array.isArray(recent) ? recent : [];
+    if (!list || !safeRecent.length) return;
+
+    const fragment = document.createDocumentFragment();
+    safeRecent.slice(0, 4).forEach((record) => {
+      const rawDomain = String(record.domain || "");
+      const name = rawDomain.split(".")[0] || rawDomain || "?";
+      const amount = fmtTokens(record.tokens);
+      const what =
+        record.kind === "usage" ? `消耗 ${amount} tokens`
+        : record.kind === "topup" ? `充值 ${amount} tokens`
+        : record.kind === "grant" ? `开通并获赠 ${amount} tokens`
+        : String(record.kind || "未知事件");
+      const model =
+        record.kind === "usage" && record.note
+          ? ` · ${String(record.note).split(" ")[0].split("/").pop()}`
+          : "";
+
+      // domain/kind/note 都来自数据库，全部走 textContent，恶意标签只会显示成文字。
+      const article = document.createElement("article");
+      const content = document.createElement("div");
+      const description = document.createElement("p");
+      const nameElement = document.createElement("strong");
+      const time = document.createElement("small");
+      nameElement.textContent = name;
+      description.append(nameElement, document.createTextNode(` ${what}`));
+      time.textContent = `${relTime(record.ts)}${model}`;
+      content.append(description, time);
+      article.append(createActivityIcon(), content);
+      fragment.appendChild(article);
+    });
+    list.replaceChildren(fragment);
   }
 
   // 按可见文本换标签（演示文案→真实口径；只在真实模式调用）
@@ -626,6 +716,17 @@
     $$(".overview-carousel span, .overview-carousel small, .overview-carousel p").forEach((el) => {
       if (el.childElementCount === 0 && el.textContent.trim() === from) el.textContent = to;
     });
+  }
+
+  /** 用纯 DOM 更新地图角标，避免把接口数值重新拼入 innerHTML。
+   *
+   * 即使服务端异常地返回字符串，这里也只会把它显示为文本，不会被浏览器解释为标签。 */
+  function setMapMetric(container, label, valueId, value) {
+    if (!container) return;
+    const strong = document.createElement("strong");
+    strong.id = valueId;
+    strong.textContent = String(value);
+    container.replaceChildren(document.createTextNode(label), strong);
   }
 
   function applyRealPanels(data) {
@@ -655,13 +756,23 @@
     renderModelDist(data.models || [], tt.tokens_today || 0);
     renderRecent(data.recent || []);
     // ⑥ 地图三角标：接入实例 / 今日调用 / 实例在线率
-    const region = $("#map-region-label");
-    if (region) region.innerHTML = `接入实例<strong id="map-region-value">${tt.instances || 0}</strong>`;
-    const rps = $("#map-rps-label");
-    if (rps) rps.innerHTML = `今日调用<strong id="map-rps-value">${(tt.requests_today || 0).toLocaleString("en-US")}</strong>`;
-    const avail = $("#map-availability-label");
-    const onlinePct = tt.instances ? (tt.online / tt.instances) * 100 : 0;
-    if (avail) avail.innerHTML = `实例在线率<strong id="map-availability-value">${onlinePct.toFixed(1)}%</strong>`;
+    const instanceCount = Math.max(0, Number(tt.instances) || 0);
+    const requestCount = Math.max(0, Number(tt.requests_today) || 0);
+    const onlineCount = Math.max(0, Number(tt.online) || 0);
+    const onlinePct = instanceCount ? (onlineCount / instanceCount) * 100 : 0;
+    setMapMetric($("#map-region-label"), "接入实例", "map-region-value", instanceCount);
+    setMapMetric(
+      $("#map-rps-label"),
+      "今日调用",
+      "map-rps-value",
+      requestCount.toLocaleString("en-US"),
+    );
+    setMapMetric(
+      $("#map-availability-label"),
+      "实例在线率",
+      "map-availability-value",
+      `${onlinePct.toFixed(1)}%`,
+    );
     // ⑦ 底部流量条数字 → 今日网关调用
     const tl = $("#map-traffic-label"); if (tl) tl.textContent = "GATEWAY CALLS";
     const tv = $("#map-traffic-value");
@@ -743,6 +854,15 @@
     return Math.min(max, Math.max(min, value));
   }
 
+  /** 只允许大屏设计系统使用的六位十六进制颜色。
+   *
+   * CSS 自定义属性也属于输出上下文，不能把未来可能来自接口的任意字符串原样写进去；
+   * 无效值统一回落品牌紫，既消除 CSS 注入/外链 url()，也保证画布颜色解析不会报错。 */
+  function safeHexColor(value, fallback = "#6e7cf6") {
+    const color = String(value || "").trim();
+    return /^#[0-9a-f]{6}$/i.test(color) ? color : fallback;
+  }
+
   // ══════════ 品牌色 → 文字安全色 ══════════
   // OEM 的品牌色(青/橙/紫/绿…)用作**色块**时——球体、图标渐变、地图格子、
   // 光晕——鲜艳是对的,不能动。但同一个色值直接拿去写**文字**,在接近白的
@@ -760,12 +880,13 @@
   // 的解,会稳定落在略低于 target 的位置;二是卡片底色常比纯白略暗一点点。
   // 不留余量就会出现 4.49 这种擦线不过的结果。
   function textSafeColor(hex, target = 4.6) {
-    const matched = /^#?([0-9a-f]{6})$/i.exec(String(hex || "").trim());
-    if (!matched) return hex;   // 认不出的格式原样返回,绝不因为配色问题把界面搞崩
+    const normalized = safeHexColor(hex);
+    const matched = /^#([0-9a-f]{6})$/i.exec(normalized);
+    if (!matched) return "#6e7cf6";
     const rgb = [0, 2, 4].map((i) => Number.parseInt(matched[1].slice(i, i + 2), 16));
     // 标注卡片是接近纯白的浅底,按纯白算最严格 —— 在白底上达标,在其它浅底上必然也达标
     const contrastOnWhite = (c) => 1.05 / (relLuminance(c) + 0.05);
-    if (contrastOnWhite(rgb) >= target) return hex;
+    if (contrastOnWhite(rgb) >= target) return normalized;
     // 二分找**最大**的缩放系数(即改动最小的那个),三分量等比缩放 → 色相基本不变,
     // 仍看得出是青/橙/紫,只是更深。比直接调成灰褐色保留了品牌辨识度。
     let low = 0;
@@ -1212,7 +1333,7 @@
         if (regionCells) {
           const group = regionCells.get(cellIndex);
           if (group) {
-            fill = group.color || "#6e7cf6";
+            fill = safeHexColor(group.color);
             stroke = "rgba(255,255,255,0.55)";
             opacity = 1;
             hotClass = " is-hot";
@@ -1409,7 +1530,7 @@
       btn.className = "geo-node";
       btn.type = "button";
       btn.dataset.nodeId = group.id;
-      const geoColor = node.color || "#6e7cf6";
+      const geoColor = safeHexColor(node.color);
       btn.style.setProperty("--geo-color", geoColor);            // 色块用:图标渐变/阴影/边框/描边
       btn.style.setProperty("--geo-color-text", textSafeColor(geoColor));  // 文字用:压到浅底上可读
       // 具体像素位置由 positionMapCallouts() 按投影算；这里先给个占位百分比避免闪到左上角
@@ -1761,29 +1882,46 @@
 
   function renderRanking() {
     const list = $("#ranking-list");
+    if (!list) return;
     const sorted = [...state.nodes].sort((a, b) => b.token - a.token);
-    list.innerHTML = sorted
-      .map(
-        (node, index) => `
-          <button class="ranking-item ${node.id === state.selectedId ? "is-active" : ""}" type="button" data-node-id="${node.id}">
-            <span class="ranking-item__index">${String(index + 1).padStart(2, "0")}</span>
-            <span class="ranking-item__planet" style="--planet: ${node.color}"></span>
-            <span class="ranking-item__info">
-              <strong>${node.name}</strong>
-              <small>${node.code} · ${statusText(node.status)}</small>
-            </span>
-            <span class="ranking-item__value">
-              <strong>${node.token.toFixed(2)}${TOKEN_UNIT.label}</strong>
-              <small class="${node.delta < 0 ? "negative" : ""}">${node.delta >= 0 ? "+" : ""}${node.delta.toFixed(1)}%</small>
-            </span>
-          </button>
-        `,
-      )
-      .join("");
+    const fragment = document.createDocumentFragment();
 
-    $$(".ranking-item", list).forEach((item) => {
+    sorted.forEach((node, index) => {
+      const token = Number(node.token) || 0;
+      const delta = Number(node.delta) || 0;
+      const item = document.createElement("button");
+      const order = document.createElement("span");
+      const planet = document.createElement("span");
+      const info = document.createElement("span");
+      const name = document.createElement("strong");
+      const meta = document.createElement("small");
+      const value = document.createElement("span");
+      const tokenValue = document.createElement("strong");
+      const deltaValue = document.createElement("small");
+
+      item.className = `ranking-item${node.id === state.selectedId ? " is-active" : ""}`;
+      item.type = "button";
+      // dataset 属性由 DOM API 设置，不经过 HTML 解析；实例 id 即使包含引号也无法逃逸。
+      item.dataset.nodeId = String(node.id ?? "");
+      order.className = "ranking-item__index";
+      order.textContent = String(index + 1).padStart(2, "0");
+      planet.className = "ranking-item__planet";
+      planet.style.setProperty("--planet", safeHexColor(node.color));
+      info.className = "ranking-item__info";
+      // 域名派生出的 name/code 是本次漏洞入口，必须使用 textContent，绝不拼 innerHTML。
+      name.textContent = String(node.name ?? "");
+      meta.textContent = `${String(node.code ?? "")} · ${statusText(node.status)}`;
+      info.append(name, meta);
+      value.className = "ranking-item__value";
+      tokenValue.textContent = `${token.toFixed(2)}${TOKEN_UNIT.label}`;
+      deltaValue.classList.toggle("negative", delta < 0);
+      deltaValue.textContent = `${delta >= 0 ? "+" : ""}${delta.toFixed(1)}%`;
+      value.append(tokenValue, deltaValue);
+      item.append(order, planet, info, value);
       item.addEventListener("click", () => selectNode(item.dataset.nodeId));
+      fragment.appendChild(item);
     });
+    list.replaceChildren(fragment);
     window.requestAnimationFrame(updateRankingScrollControls);
   }
 
@@ -1815,7 +1953,7 @@
 
     const update = () => {
       $("#selected-avatar").textContent = node.initials;
-      $("#selected-avatar").style.setProperty("--avatar", node.color);
+      $("#selected-avatar").style.setProperty("--avatar", safeHexColor(node.color));
       $("#selected-code").textContent = `OEM · ${node.code}`;
       $("#selected-name").textContent = node.name;
       // 单位跟全局自适应单位走;此前写死 "B" 会把 100M 显示成 100.00B(差 1000 倍)
@@ -1963,7 +2101,7 @@
       : "P95 —";
     const total = state.nodes.reduce((sum, item) => sum + item.token, 0);
     $("#drawer-share").textContent = `全局占比 ${((node.token / total) * 100).toFixed(1)}%`;
-    $("#drawer-planet").style.setProperty("--drawer-color", node.color);
+    $("#drawer-planet").style.setProperty("--drawer-color", safeHexColor(node.color));
     showDrawer(trigger);
   }
 
@@ -2769,16 +2907,17 @@
 
   function addActivity(node) {
     const list = $("#activity-list");
+    if (!list) return;
     const article = document.createElement("article");
-    article.innerHTML = `
-      <span class="activity-icon activity-icon--success">
-        <svg viewBox="0 0 20 20"><path d="M10 4v12M4 10h12"></path></svg>
-      </span>
-      <div>
-        <p><strong>${node.name}</strong> 新节点完成接入</p>
-        <small>刚刚 · ${node.region}</small>
-      </div>
-    `;
+    const content = document.createElement("div");
+    const description = document.createElement("p");
+    const name = document.createElement("strong");
+    const time = document.createElement("small");
+    name.textContent = String(node.name ?? "");
+    description.append(name, document.createTextNode(" 新节点完成接入"));
+    time.textContent = `刚刚 · ${String(node.region ?? "")}`;
+    content.append(description, time);
+    article.append(createActivityIcon(), content);
     list.prepend(article);
     while (list.children.length > 3) list.lastElementChild.remove();
   }

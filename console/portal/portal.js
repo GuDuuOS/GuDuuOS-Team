@@ -1,6 +1,6 @@
 /* GuDuu Nexus 控制台逻辑（vanilla，无构建）
  * ------------------------------------------------
- * 身份两种（登录后存 localStorage，刷新不丢）：
+ * 身份两种（登录后只存当前标签页 sessionStorage，刷新不丢、关页即清）：
  *   admin —— NEXUS_ADMIN_TOKEN，走 /nexus/admin/*（看全部/签发/充值）
  *   oem   —— 会话令牌（邮箱登录签发），走 /nexus/oem/*（只见自己）
  * 所有权限由服务端强制；任何 401 一律清会话回登录页。
@@ -8,8 +8,9 @@
 (function () {
   "use strict";
 
-  var LS_KEY = "nexus_portal_auth"; // {mode:'admin'|'oem', token:'...'}
+  var AUTH_KEY = "nexus_portal_auth"; // {mode:'admin'|'oem', token:'...'}
   var THEME_KEY = "nexus_portal_theme"; // 'dark'(默认,与大屏一致) | 'light'(白色风格)
+  var volatileAuth = null; // 浏览器禁用 Storage 时的当前页面兜底，绝不回落长期存储
 
   // ---------- 主题（白色/暗色双风格,同一设计语言,只换明暗;选择持久化） ----------
   function applyTheme(theme) {
@@ -94,10 +95,37 @@
 
   // ---------- 会话 ----------
   function getAuth() {
-    try { return JSON.parse(localStorage.getItem(LS_KEY) || "null"); } catch (e) { return null; }
+    if (volatileAuth) return volatileAuth;
+    var raw = "";
+    try { raw = sessionStorage.getItem(AUTH_KEY) || ""; } catch (e) { /* 隐私模式忽略 */ }
+    if (!raw) {
+      // 只迁移一次旧版 localStorage 登录态，随后立即删除长期副本，避免同源大屏页面
+      // 将来再发生 XSS 时跨标签、跨重启读取管理员令牌。
+      try { raw = localStorage.getItem(AUTH_KEY) || ""; } catch (e) { /* 隐私模式忽略 */ }
+      if (raw) {
+        try { sessionStorage.setItem(AUTH_KEY, raw); } catch (e) { /* 当前页仍用内存态 */ }
+      }
+      // 删除长期副本必须独立执行：即使 sessionStorage 被浏览器禁用，也不能因前一步
+      // 抛错而把管理员令牌继续留在 localStorage。
+      try { localStorage.removeItem(AUTH_KEY); } catch (e) { /* 隐私模式忽略 */ }
+    }
+    try {
+      volatileAuth = JSON.parse(raw || "null");
+      return volatileAuth;
+    } catch (e) {
+      return null;
+    }
   }
-  function setAuth(a) { localStorage.setItem(LS_KEY, JSON.stringify(a)); }
-  function clearAuth() { localStorage.removeItem(LS_KEY); }
+  function setAuth(auth) {
+    volatileAuth = auth;
+    try { sessionStorage.setItem(AUTH_KEY, JSON.stringify(auth)); } catch (e) { /* 隐私模式忽略 */ }
+    try { localStorage.removeItem(AUTH_KEY); } catch (e) { /* 隐私模式忽略 */ }
+  }
+  function clearAuth() {
+    volatileAuth = null;
+    try { sessionStorage.removeItem(AUTH_KEY); } catch (e) { /* 隐私模式忽略 */ }
+    try { localStorage.removeItem(AUTH_KEY); } catch (e) { /* 清理旧版遗留 */ }
+  }
 
   // ---------- API ----------
   function api(path, opts) {
@@ -666,9 +694,27 @@
     }
   });
 
-  // ---------- 大屏链接带上 dash token（超管令牌也能看大屏） ----------
+  // ---------- 大屏只使用只读令牌 ----------
+  // 管理令牌具有签 KEY、充值等写权限，绝不能再直接塞进大屏 URL。控制台先在服务端完成
+  // 管理员鉴权，再兑换 NEXUS_DASH_TOKEN；即使展示页日后再出现漏洞，损失面也只到只读数据。
   var auth0 = getAuth();
-  if (auth0 && auth0.mode === "admin") $("#nav-dash").href = "/#token=" + encodeURIComponent(auth0.token);
+  var dashboardLink = $("#nav-dash");
+  if (auth0 && auth0.mode === "admin" && dashboardLink) {
+    dashboardLink.dataset.ready = "false";
+    dashboardLink.addEventListener("click", function (event) {
+      if (dashboardLink.dataset.ready !== "true") {
+        event.preventDefault();
+        toast("只读大屏令牌尚未就绪，请稍后重试", true);
+      }
+    });
+    api("/nexus/admin/dashboard-token")
+      .then(function (result) {
+        if (!result || !result.token) throw new Error("服务端未返回只读大屏令牌");
+        dashboardLink.href = "/#token=" + encodeURIComponent(result.token);
+        dashboardLink.dataset.ready = "true";
+      })
+      .catch(function (error) { toast(error.message, true); });
+  }
 
   route();
 })();
