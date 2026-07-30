@@ -4,7 +4,10 @@
   const $ = (selector, scope = document) => scope.querySelector(selector);
   const $$ = (selector, scope = document) => [...scope.querySelectorAll(selector)];
 
-  const OEMS = [
+  // 演示舰队只能在地址显式带 ``?demo=1`` 时启用。生产默认绝不能把这组虚构客户
+  // 当成真实运营数据；否则令牌失效、网络故障或零客户时都会误导管理员。
+  const DEMO_MODE = new URLSearchParams(window.location.search).get("demo") === "1";
+  const DEMO_OEMS = [
     {
       id: "sg",
       name: "星河智算",
@@ -175,6 +178,8 @@
     },
   ];
 
+  const OEMS = DEMO_MODE ? DEMO_OEMS.map((node) => ({ ...node })) : [];
+
   const BIRTH_CANDIDATES = [
     {
       name: "Aurora Labs",
@@ -335,7 +340,7 @@
 
   const state = {
     nodes: OEMS.map((node) => ({ ...node })),
-    selectedId: "sg",
+    selectedId: OEMS[0] ? OEMS[0].id : null,
     drawerTrigger: null,
     hoveredId: null,
     filter: "all",
@@ -390,10 +395,12 @@
   // 起屏时从 Nexus fleet 服务拉真实舰队数据（GET /nexus/dash/summary）。
   // 鉴权：只读大屏令牌经 URL 井号参数传入一次（https://<域名>/#token=xxx）。
   // 令牌只放 sessionStorage，关闭当前标签页即失效；同时立刻从地址栏移除，避免截屏、
-  // 复制链接或浏览器崩溃恢复时继续暴露。拉不到数据 = 静默保持演示数据（原型模式）。
+  // 复制链接或浏览器崩溃恢复时继续暴露。无令牌、接口失败、真实空数据必须分别展示
+  // 明确状态；只有显式 ``?demo=1`` 才能进入带虚构数据的演示模式。
   const TOKEN_UNIT = { div: 1e9, label: "B" }; // 演示默认 B；真实模式按量级自适应
   const DASH_TOKEN_KEY = "nexus_dash_token";
   let volatileDashToken = ""; // 浏览器禁用 Storage 时，仅在当前页面内存中保留
+  let lastDataUpdatedAt = 0;   // 刷新失败时告诉管理员最后一次真实数据更新时间
 
   function dashToken() {
     const encoded = (window.location.hash.match(/(?:^#|[&#])token=([^&]+)/) || [])[1] || "";
@@ -534,52 +541,158 @@
     return true;
   }
 
-  async function fetchSummary() {
-    const token = dashToken();
-    if (!token) return null;
-    const res = await fetch("/nexus/dash/summary", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return null;
-    return res.json();
+  /** 删除本标签页里的失效只读令牌，避免每次刷新都拿同一份坏凭据重复请求。 */
+  function clearDashToken() {
+    volatileDashToken = "";
+    try { window.sessionStorage.removeItem(DASH_TOKEN_KEY); } catch { /* 隐私模式忽略 */ }
+    try { window.localStorage.removeItem(DASH_TOKEN_KEY); } catch { /* 清旧版本残留 */ }
   }
 
-  async function loadFleetData() {
+  /** 把最近一次真实数据更新时间格式化给错误页；从未成功过就明确写“尚未取得”。 */
+  function lastUpdateText() {
+    if (!lastDataUpdatedAt) return "尚未取得任何真实运营数据。";
+    return `最近一次成功更新：${new Date(lastDataUpdatedAt).toLocaleString("zh-CN", {
+      hour12: false,
+    })}`;
+  }
+
+  /** 切换到授权/错误/空数据状态页，并把含静态演示占位的主大屏从视觉和辅助技术树隐藏。 */
+  function showDashboardState(kind, detail = "") {
+    const presets = {
+      loading: {
+        eyebrow: "CONNECTING TO NEXUS",
+        title: "正在读取真实运营数据",
+        message: "正在连接 GuDuu Nexus，请稍候…",
+        portal: false,
+        retry: false,
+      },
+      auth: {
+        eyebrow: "AUTHORIZATION REQUIRED",
+        title: "需要从控制台进入数据大屏",
+        message: "当前没有有效的只读大屏授权。请登录 Nexus 控制台后点击“数据大屏”。",
+        portal: true,
+        retry: false,
+      },
+      empty: {
+        eyebrow: "NO LIVE OEM DATA",
+        title: "暂无已开通的 OEM 实例",
+        message: "真实运营数据当前为空。完成授权码认领和实例开通后，这里会自动出现节点。",
+        portal: true,
+        retry: true,
+      },
+      error: {
+        eyebrow: "LIVE DATA UNAVAILABLE",
+        title: "真实数据暂时不可用",
+        message: "Nexus 数据接口暂时无法读取。页面不会使用演示数据代替，请稍后重试。",
+        portal: false,
+        retry: true,
+      },
+    };
+    const preset = presets[kind] || presets.error;
+    const shell = $(".app-shell");
+    const panel = $("#dashboard-data-state");
+    document.body.classList.add("dashboard-pending");
+    if (shell) shell.setAttribute("aria-hidden", "true");
+    if (panel) panel.hidden = false;
+    $("#dashboard-state-eyebrow").textContent = preset.eyebrow;
+    $("#dashboard-state-title").textContent = preset.title;
+    $("#dashboard-state-message").textContent = preset.message;
+    $("#dashboard-state-detail").textContent = detail || (kind === "error" ? lastUpdateText() : "");
+    $("#dashboard-state-portal").hidden = !preset.portal;
+    $("#dashboard-state-retry").hidden = !preset.retry;
+    $("#dashboard-state-spinner").hidden = kind !== "loading";
+  }
+
+  /** 真实数据或显式 Demo 准备好后才显示主大屏；Demo 额外保留醒目标识防误认。 */
+  function revealDashboard(mode) {
+    const shell = $(".app-shell");
+    const panel = $("#dashboard-data-state");
+    document.body.classList.remove("dashboard-pending");
+    if (shell) shell.setAttribute("aria-hidden", "false");
+    if (panel) panel.hidden = true;
+    $("#dashboard-demo-badge").hidden = mode !== "demo";
+  }
+
+  /** 拉取一次真实大屏摘要，返回带状态的结果，禁止再用 null 混淆无授权/故障/空数据。 */
+  async function fetchSummary() {
+    const token = dashToken();
+    if (!token) return { kind: "auth" };
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12000);
     try {
-      const data = await fetchSummary();
-      return data ? applySummary(data) : false;
-    } catch {
-      return false;
+      const res = await fetch("/nexus/dash/summary", {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
+      if (res.status === 401 || res.status === 403) {
+        clearDashToken();
+        return { kind: "auth" };
+      }
+      if (!res.ok) return { kind: "error", detail: `接口返回 HTTP ${res.status}。${lastUpdateText()}` };
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        return { kind: "error", detail: `接口返回了无法解析的数据。${lastUpdateText()}` };
+      }
+      if (!data || !Array.isArray(data.oems)) {
+        return { kind: "error", detail: `接口响应缺少 OEM 数据。${lastUpdateText()}` };
+      }
+      if (data.oems.length === 0) return { kind: "empty", data };
+      return { kind: "ready", data };
+    } catch (error) {
+      const reason = error && error.name === "AbortError" ? "请求超时。" : "网络连接失败。";
+      return { kind: "error", detail: `${reason}${lastUpdateText()}` };
+    } finally {
+      window.clearTimeout(timeout);
     }
   }
 
-  // 真实模式下每 30 秒静默刷新数字（不重建场景防闪烁）；节点数变了才整页重载
+  async function loadFleetData() {
+    if (DEMO_MODE) return { kind: "demo" };
+    const result = await fetchSummary();
+    if (result.kind !== "ready") return result;
+    if (!applySummary(result.data)) return { kind: "empty", data: result.data };
+    lastDataUpdatedAt = Date.now();
+    return result;
+  }
+
+  // 真实模式下每 30 秒刷新数字。故障/授权失效/空数据时立即盖住旧画面并说明原因，
+  // 不再让管理员把上一批数据（更不能把演示数据）误认为仍在实时更新。
   function startFleetRefresh() {
     window.setInterval(async () => {
-      try {
-        const data = await fetchSummary();
-        const list = Array.isArray(data && data.oems) ? data.oems : [];
-        if (!list.length) return;
-        if (list.length !== state.nodes.length) {
-          window.location.reload();
-          return;
-        }
-        list.forEach((o, i) => {
-          const fresh = adaptOem(o, i);
-          const node = state.nodes.find((n) => n.id === fresh.id);
-          if (!node) return;
-          Object.assign(node, {
-            token: fresh.token, today: fresh.today, requests: fresh.requests,
-            delta: fresh.delta, status: fresh.status, models: fresh.models,
-            balance: fresh.balance, users: fresh.users,
-          });
-          const base = OEMS.find((n) => n.id === node.id);
-          if (base) Object.assign(base, node);
+      const result = await fetchSummary();
+      if (result.kind !== "ready") {
+        showDashboardState(result.kind, result.detail || "");
+        return;
+      }
+      // 若大屏曾因短暂故障被状态页盖住，直接重载走完整初始化，避免恢复一半的面板。
+      if (document.body.classList.contains("dashboard-pending")) {
+        window.location.reload();
+        return;
+      }
+      const data = result.data;
+      const list = data.oems;
+      if (list.length !== state.nodes.length) {
+        window.location.reload();
+        return;
+      }
+      list.forEach((o, i) => {
+        const fresh = adaptOem(o, i);
+        const node = state.nodes.find((n) => n.id === fresh.id);
+        if (!node) return;
+        Object.assign(node, {
+          token: fresh.token, today: fresh.today, requests: fresh.requests,
+          delta: fresh.delta, status: fresh.status, models: fresh.models,
+          balance: fresh.balance, users: fresh.users,
         });
-        refreshTotals();
-        renderRanking();
-        applyRealPanels(data);
-      } catch { /* 网络抖动静默,下轮再试 */ }
+        const base = OEMS.find((n) => n.id === node.id);
+        if (base) Object.assign(base, node);
+      });
+      lastDataUpdatedAt = Date.now();
+      refreshTotals();
+      renderRanking();
+      applyRealPanels(data);
     }, 30000);
   }
   // —— 真实模式的面板接管：把演示件逐个换成母舰数据 / 无数据源的演示件隐藏 ——
@@ -3269,9 +3382,19 @@
     // 标注定位）都要基于缩放后的最终尺寸，否则首屏会按未缩放尺寸算错一次
     applyDisplayScale();
     initClock();
-    // 先尝试接入真实舰队数据（GuDuu Nexus）；成功则本页进入真实模式并定时刷新
-    const usingRealData = await loadFleetData();
-    if (usingRealData) startFleetRefresh();
+    $("#dashboard-state-retry").addEventListener("click", () => window.location.reload());
+    showDashboardState("loading");
+    // 生产默认必须拿到真实舰队数据才展示大屏；授权、故障、空数据均停在诚实状态页。
+    // 只有地址显式带 ?demo=1 时才使用 DEMO_OEMS，并在主界面永久显示“演示数据”角标。
+    const fleetResult = await loadFleetData();
+    if (fleetResult.kind !== "ready" && fleetResult.kind !== "demo") {
+      showDashboardState(fleetResult.kind, fleetResult.detail || "");
+      return;
+    }
+    revealDashboard(fleetResult.kind);
+    // pending 期间主大屏是 display:none，揭开后重新计算整体缩放，避免用到隐藏态的零尺寸。
+    applyDisplayScale();
+    if (fleetResult.kind === "ready") startFleetRefresh();
     await renderMapDecorations();
     renderRealGeoMarkers();   // 真实实例接管地图标记（演示件在此被替换掉）
     ensureGeoTextColors();    // 补齐标记的文字安全色（演示节点走这里，真实节点创建时已设）

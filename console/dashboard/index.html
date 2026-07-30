@@ -8,10 +8,39 @@
       content="GuDuu Nexus OEM 智能运营中心，展示 OEM 节点、Token 消耗与系统运行状态。"
     />
     <title>GuDuu Nexus · OEM 智能运营中心</title>
-    <link rel="stylesheet" href="./styles.css?v=20260719" />
+    <link rel="stylesheet" href="./styles.css?v=20260731" />
   </head>
-  <body>
-    <div class="app-shell">
+  <body class="dashboard-pending">
+    <!-- 生产大屏只有拿到真实数据后才揭开主界面。无授权、接口失败、零实例分别在这里
+         给出诚实状态，绝不让下方静态演示占位在加载失败时冒充线上数据。 -->
+    <section
+      class="dashboard-data-state"
+      id="dashboard-data-state"
+      role="status"
+      aria-live="polite"
+      aria-labelledby="dashboard-state-title"
+    >
+      <div class="dashboard-data-state__card">
+        <span class="dashboard-data-state__mark" aria-hidden="true">
+          <i></i><b></b>
+        </span>
+        <span class="eyebrow" id="dashboard-state-eyebrow">CONNECTING TO NEXUS</span>
+        <h1 id="dashboard-state-title">正在读取真实运营数据</h1>
+        <p id="dashboard-state-message">正在连接 GuDuu Nexus，请稍候…</p>
+        <small id="dashboard-state-detail"></small>
+        <span class="dashboard-data-state__spinner" id="dashboard-state-spinner" aria-hidden="true"></span>
+        <div class="dashboard-data-state__actions">
+          <a id="dashboard-state-portal" href="/portal" hidden>进入 Nexus 控制台</a>
+          <button id="dashboard-state-retry" type="button" hidden>重新读取真实数据</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="dashboard-demo-badge" id="dashboard-demo-badge" role="note" hidden>
+      演示数据 · 非生产
+    </div>
+
+    <div class="app-shell" aria-hidden="true">
       <header class="topbar">
         <a class="brand" href="#" aria-label="GuDuu Nexus 首页">
           <span class="brand__mark" aria-hidden="true">
@@ -862,7 +891,7 @@
           <i></i>
           <span>Region <strong id="footer-region">CN-East-01</strong></span>
         </div>
-        <div>VERSION 2.6.0</div>
+        <div>VERSION 1.6.29</div>
       </footer>
     </div>
 
@@ -964,6 +993,6 @@
       </aside>
     </div>
 
-    <script src="./app.js?v=20260730"></script>
+    <script src="./app.js?v=20260731"></script>
   </body>
 </html>

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const dashboardRoot = fileURLToPath(new URL("..", import.meta.url));
 const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+const pageSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
 function functionSource(name) {
   const marker = `function ${name}(`;
@@ -44,6 +45,31 @@ assert(
   "大屏令牌禁止写入可跨会话持久化的 localStorage",
 );
 assert(tokenSource.includes("history.replaceState"), "读取令牌后必须从地址栏移除 token hash");
+
+// 运营数据真实性回归：生产默认节点数组必须为空；虚构舰队只能由显式 ?demo=1 启用。
+assert(
+  appSource.includes('const DEMO_MODE = new URLSearchParams(window.location.search).get("demo") === "1"'),
+  "演示数据必须由显式 ?demo=1 开关控制",
+);
+assert(
+  appSource.includes("const OEMS = DEMO_MODE ? DEMO_OEMS.map") && appSource.includes(": [];"),
+  "生产默认 OEMS 必须为空，禁止把 DEMO_OEMS 作为接口失败回退",
+);
+const fetchSource = functionSource("fetchSummary");
+for (const state of ['kind: "auth"', 'kind: "error"', 'kind: "empty"', 'kind: "ready"']) {
+  assert(fetchSource.includes(state), `fetchSummary 必须区分数据状态 ${state}`);
+}
+const initSource = functionSource("init");
+assert(
+  initSource.includes('showDashboardState(fleetResult.kind'),
+  "初始化失败/空数据时必须展示明确状态页",
+);
+assert(
+  pageSource.includes('class="dashboard-pending"')
+    && pageSource.includes('id="dashboard-data-state"')
+    && pageSource.includes('id="dashboard-demo-badge"'),
+  "HTML 必须默认隐藏演示占位，并提供真实数据状态页与 Demo 标识",
+);
 
 // 让成功输出可被本地验证和 CI 日志明确识别。
 console.log(`Nexus dashboard security checks passed (${dashboardRoot})`);

@@ -72,6 +72,179 @@ a:focus-visible {
   border: 0;
 }
 
+/* ══════════ 真实数据加载 / 授权 / 空状态 ══════════
+   index.html 内保留了一些演示布局占位，生产默认先把整张大屏隐藏；只有 app.js 明确确认
+   “真实数据可用”或地址显式 ?demo=1 后才揭开，杜绝故障时闪现或停留在虚构数据。 */
+.dashboard-pending .app-shell,
+.dashboard-pending .region-modal,
+.dashboard-pending .detail-drawer,
+.dashboard-pending .dashboard-demo-badge {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.dashboard-pending .app-shell {
+  display: none;
+}
+
+.dashboard-data-state {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  min-width: 1180px;
+  min-height: 760px;
+  padding: 48px;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(89, 70, 210, 0.18), transparent 28%),
+    linear-gradient(rgba(5, 6, 12, 0.74), rgba(5, 6, 12, 0.96));
+}
+
+.dashboard-data-state[hidden],
+.dashboard-demo-badge[hidden],
+.dashboard-data-state [hidden] {
+  display: none !important;
+}
+
+.dashboard-data-state__card {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  width: min(560px, 70vw);
+  padding: 56px 64px 52px;
+  border: 1px solid rgba(166, 175, 255, 0.17);
+  border-radius: 24px;
+  background: rgba(11, 13, 27, 0.9);
+  box-shadow: 0 30px 100px rgba(0, 0, 0, 0.46), inset 0 1px rgba(255, 255, 255, 0.035);
+  text-align: center;
+}
+
+.dashboard-data-state__mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 24px;
+  border: 1px solid rgba(139, 124, 255, 0.45);
+  border-radius: 50%;
+  box-shadow: 0 0 36px rgba(139, 124, 255, 0.18);
+}
+
+.dashboard-data-state__mark::before,
+.dashboard-data-state__mark::after {
+  position: absolute;
+  inset: 9px -5px;
+  border: 1px solid rgba(53, 217, 255, 0.26);
+  border-radius: 50%;
+  content: "";
+  transform: rotate(-28deg);
+}
+
+.dashboard-data-state__mark::after {
+  inset: -5px 13px;
+  border-color: rgba(139, 124, 255, 0.22);
+  transform: rotate(31deg);
+}
+
+.dashboard-data-state__mark i {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 28%, #fff, #8b7cff 35%, #382d8a 78%);
+  box-shadow: 0 0 22px rgba(139, 124, 255, 0.75);
+}
+
+.dashboard-data-state__mark b {
+  position: absolute;
+  top: 11px;
+  right: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 10px var(--cyan);
+}
+
+.dashboard-data-state h1 {
+  margin: 12px 0 12px;
+  font-size: 27px;
+  font-weight: 620;
+  letter-spacing: 0.01em;
+}
+
+.dashboard-data-state p {
+  max-width: 430px;
+  margin: 0;
+  color: var(--muted-light);
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.dashboard-data-state small {
+  min-height: 20px;
+  margin-top: 10px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.dashboard-data-state__spinner {
+  display: block;
+  width: 28px;
+  height: 28px;
+  margin-top: 24px;
+  border: 2px solid rgba(139, 124, 255, 0.18);
+  border-top-color: var(--cyan);
+  border-radius: 50%;
+  animation: dashboard-state-spin 0.9s linear infinite;
+}
+
+.dashboard-data-state__actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 26px;
+}
+
+.dashboard-data-state__actions a,
+.dashboard-data-state__actions button {
+  min-width: 150px;
+  padding: 11px 18px;
+  border: 1px solid rgba(139, 124, 255, 0.35);
+  border-radius: 10px;
+  background: rgba(139, 124, 255, 0.11);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: none;
+}
+
+.dashboard-data-state__actions a:hover,
+.dashboard-data-state__actions button:hover {
+  border-color: rgba(53, 217, 255, 0.5);
+  background: rgba(53, 217, 255, 0.09);
+}
+
+.dashboard-demo-badge {
+  position: fixed;
+  z-index: 50;
+  top: 14px;
+  left: 50%;
+  padding: 7px 14px;
+  border: 1px solid rgba(255, 182, 92, 0.48);
+  border-radius: 999px;
+  background: rgba(44, 29, 13, 0.92);
+  color: #ffd39c;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+@keyframes dashboard-state-spin {
+  to { transform: rotate(360deg); }
+}
+
 .app-shell {
   position: relative;
   z-index: 1;
