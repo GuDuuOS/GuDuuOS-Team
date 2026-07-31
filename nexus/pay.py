@@ -28,7 +28,7 @@ import secrets
 import time
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 
 from nexus.db import NexusOrder, NexusSetting
 from nexus.fleet import FleetError
@@ -344,6 +344,63 @@ def list_orders(s) -> List[Dict[str, Any]]:
         select(NexusOrder).order_by(NexusOrder.id.desc()).limit(200)
     ).scalars().all()
     return [public_order(r) for r in rows]
+
+
+def finance_summary(s) -> Dict[str, Any]:
+    """汇总超级管理员舰队总览需要的真实订单资金数据。
+
+    金额单位全部为人民币分。只有 ``status=paid`` 且已经完成履约的订单才计入收入；
+    ``pending`` 单独作为待支付展示，绝不能把“有人下单但没付款”包装成营收。这里直接
+    在数据库聚合全部历史订单，不复用控制台近 200 单列表，避免订单多起来后总额失真。
+
+    Returns:
+        累计/近 30 天已支付金额、待支付金额与数量、授权码和 Token 充值收入构成，
+        以及已交付的充值 Token 数量。
+    """
+    paid = NexusOrder.status == "paid"
+    pending = NexusOrder.status == "pending"
+    key_paid = paid & (NexusOrder.kind == "key")
+    topup_paid = paid & (NexusOrder.kind == "topup")
+    since_30d = int(time.time() * 1000) - 30 * 24 * 3600 * 1000
+    recent_paid = paid & (NexusOrder.paid_ts >= since_30d)
+    row = s.execute(
+        select(
+            func.coalesce(
+                func.sum(case((paid, NexusOrder.amount_cents), else_=0)), 0
+            ),
+            func.coalesce(
+                func.sum(case((recent_paid, NexusOrder.amount_cents), else_=0)), 0
+            ),
+            func.coalesce(
+                func.sum(case((pending, NexusOrder.amount_cents), else_=0)), 0
+            ),
+            func.coalesce(func.sum(case((paid, 1), else_=0)), 0),
+            func.coalesce(func.sum(case((pending, 1), else_=0)), 0),
+            func.coalesce(
+                func.sum(case((key_paid, NexusOrder.amount_cents), else_=0)), 0
+            ),
+            func.coalesce(
+                func.sum(case((topup_paid, NexusOrder.amount_cents), else_=0)), 0
+            ),
+            func.coalesce(func.sum(case((key_paid, 1), else_=0)), 0),
+            func.coalesce(func.sum(case((topup_paid, 1), else_=0)), 0),
+            func.coalesce(
+                func.sum(case((topup_paid, NexusOrder.tokens), else_=0)), 0
+            ),
+        )
+    ).one()
+    return {
+        "paid_revenue_cents": int(row[0] or 0),
+        "paid_revenue_30d_cents": int(row[1] or 0),
+        "pending_amount_cents": int(row[2] or 0),
+        "paid_order_count": int(row[3] or 0),
+        "pending_order_count": int(row[4] or 0),
+        "key_revenue_cents": int(row[5] or 0),
+        "topup_revenue_cents": int(row[6] or 0),
+        "key_paid_count": int(row[7] or 0),
+        "topup_paid_count": int(row[8] or 0),
+        "topup_tokens": int(row[9] or 0),
+    }
 
 
 def get_order_for(s, oem_id: int, order_no: str) -> NexusOrder:

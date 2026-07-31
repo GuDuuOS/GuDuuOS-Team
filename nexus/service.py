@@ -16,6 +16,7 @@
         GET  /nexus/admin/keys                                 KEY 列表
         GET  /nexus/admin/instances                            实例列表（含余额）
         POST /nexus/admin/topup      {instance_id,tokens,note} 手动充值
+        GET  /nexus/admin/finance_summary                      资金经营汇总
         GET/POST /nexus/admin/releases                         版本发布中心
         GET  /nexus/admin/release_draft                        从 DEVLOG 自动生成版本草稿
         POST /nexus/admin/release_action                       灰度/全量/回撤/暂停/重试
@@ -283,6 +284,20 @@ class NexusHandler(BaseHTTPRequestHandler):
             if self._check_admin():
                 self._with_session(
                     lambda s: self._json(200, {"orders": pay.list_orders(s)})
+                )
+            return
+        if path == "/nexus/admin/finance_summary":
+            # 资金汇总与订单列表分开：列表只取最近 200 单，汇总必须覆盖全部历史订单。
+            # 渠道状态只返回布尔值，不暴露任何支付宝/微信凭据内容。
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "finance": pay.finance_summary(s),
+                            "channels": pay.channels(s),
+                        },
+                    )
                 )
             return
         if path == "/nexus/admin/pricing":

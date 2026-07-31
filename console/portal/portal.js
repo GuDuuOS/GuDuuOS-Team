@@ -385,6 +385,46 @@
     }).join("");
   }
 
+  function renderFinanceOverview(payload) {
+    // 所有金额都来自服务端全历史聚合；前端只负责格式化，不能从受限的近 200 单列表
+    // 再次求和，否则业务增长后会悄悄少算收入。
+    var f = payload.finance || {};
+    var channels = payload.channels || {};
+    var readyCount = (channels.alipay ? 1 : 0) + (channels.wechat ? 1 : 0);
+    var apiStatus = $("#finance-api-status");
+    apiStatus.className = "badge " + (readyCount === 2 ? "active" : "warning");
+    apiStatus.textContent = readyCount === 2 ? "支付 API 已接入" :
+      (readyCount === 1 ? "部分渠道待接" : "支付 API 待接");
+    $("#admin-finance-stats").innerHTML =
+      '<div class="stat"><small>累计已支付</small><b>' + fmtYuan(f.paid_revenue_cents) +
+      '</b><span class="stat-note">' + (f.paid_order_count || 0) + ' 笔已履约订单</span></div>' +
+      '<div class="stat"><small>近 30 天已支付</small><b>' + fmtYuan(f.paid_revenue_30d_cents) +
+      '</b><span class="stat-note">按支付成功时间统计</span></div>' +
+      '<div class="stat"><small>待支付金额</small><b class="plain">' + fmtYuan(f.pending_amount_cents) +
+      '</b><span class="stat-note">' + (f.pending_order_count || 0) + ' 笔，不计入收入</span></div>' +
+      '<div class="stat"><small>Token 充值收入</small><b>' + fmtYuan(f.topup_revenue_cents) +
+      '</b><span class="stat-note">已交付 ' + fmtTokens(f.topup_tokens) + ' Token</span></div>';
+
+    $("#admin-finance-breakdown").innerHTML =
+      '<div class="finance-row"><span>授权码买断</span><b>' + fmtYuan(f.key_revenue_cents) +
+      ' · ' + (f.key_paid_count || 0) + ' 单</b></div>' +
+      '<div class="finance-row"><span>Token 在线充值</span><b>' + fmtYuan(f.topup_revenue_cents) +
+      ' · ' + (f.topup_paid_count || 0) + ' 单</b></div>' +
+      '<div class="finance-row"><span>当前全舰队 Token 余额</span><b id="finance-wallet-balance">—</b></div>';
+
+    function channelRow(label, enabled) {
+      var badgeClass = enabled ? "active" : "idle";
+      var badgeText = enabled ? "已配置" : "待接 API";
+      return '<div class="finance-row"><span>' + label +
+        '</span><b class="channel-status"><span class="badge ' + badgeClass + '">' + badgeText +
+        '</span></b></div>';
+    }
+    $("#admin-payment-channels").innerHTML =
+      channelRow("支付宝", !!channels.alipay) +
+      channelRow("微信支付", !!channels.wechat) +
+      '<div class="finance-row"><span>收入确认规则</span><b class="channel-status">支付回调成功后计入</b></div>';
+  }
+
   // 更新公告只来自 Nexus 已确认成功的逐节点投放记录。前端不根据“节点当前版本”猜测，
   // 这样人工安装、未完成更新都不会被误写成官方公告。
   function renderAnnouncements(announcements) {
@@ -617,11 +657,14 @@
       api("/nexus/admin/pricing"),
       api("/nexus/admin/orders"),
       api("/nexus/admin/releases"),
+      api("/nexus/admin/finance_summary"),
     ]).then(function (rs) {
       var insts = rs[0].instances, keys = rs[1].keys, oems = rs[2].oems;
       var reqs = rs[3].requests || [];
       var pricing = rs[4].pricing, orders = rs[5].orders || [];
       var releases = rs[6].releases || [];
+      var finance = rs[7] || {};
+      renderFinanceOverview(finance);
 
       // 灰度节点选择器随实例列表更新，但保留管理员当前已选值。
       var canarySelect = $("#release-canary");
@@ -681,6 +724,7 @@
       // 统计条
       var online = insts.filter(function (i) { return hbStatus(i) !== "offline"; }).length;
       var balSum = insts.reduce(function (a, i) { return a + (i.balance_tokens || 0); }, 0);
+      $("#finance-wallet-balance").textContent = fmtTokens(balSum);
       $("#admin-stats").innerHTML =
         '<div class="stat"><small>实例总数</small><b class="plain">' + insts.length + "</b></div>" +
         '<div class="stat"><small>在线</small><b>' + online + "</b></div>" +

@@ -103,6 +103,51 @@ class PayTest(unittest.TestCase):
         insts = oem.my_instances(self.s, self.buyer)
         self.assertEqual(insts[0]["balance_tokens"], 1000 + 50_000_000)
 
+    def test_finance_summary_only_counts_paid_orders(self):
+        """资金总览只把已支付订单算收入，并正确拆分授权码与充值。"""
+        empty = pay.finance_summary(self.s)
+        self.assertEqual(empty["paid_revenue_cents"], 0)
+        self.assertEqual(empty["pending_amount_cents"], 0)
+
+        pay.set_pricing(
+            self.s,
+            {
+                "key_price_cents": 19_900,
+                "key_token_grant": 1_000,
+                "topup_packs": [{"cents": 9_900, "tokens": 50_000_000}],
+            },
+        )
+        key_order = pay.create_order(self.s, self.buyer, "key", "mock")["order"]
+        pending = pay.finance_summary(self.s)
+        self.assertEqual(pending["paid_revenue_cents"], 0)
+        self.assertEqual(pending["pending_amount_cents"], 19_900)
+        self.assertEqual(pending["pending_order_count"], 1)
+
+        paid_key = pay.mark_paid(self.s, key_order["order_no"], "TXN-FIN-KEY")
+        instance_id = fleet.redeem(
+            self.s, paid_key["key"], "finance-site.com"
+        )["instance_id"]
+        topup_order = pay.create_order(
+            self.s,
+            self.buyer,
+            "topup",
+            "mock",
+            instance_id=instance_id,
+            pack_index=0,
+        )["order"]
+        pay.mark_paid(self.s, topup_order["order_no"], "TXN-FIN-TOPUP")
+
+        summary = pay.finance_summary(self.s)
+        self.assertEqual(summary["paid_revenue_cents"], 29_800)
+        self.assertEqual(summary["paid_revenue_30d_cents"], 29_800)
+        self.assertEqual(summary["pending_amount_cents"], 0)
+        self.assertEqual(summary["paid_order_count"], 2)
+        self.assertEqual(summary["key_revenue_cents"], 19_900)
+        self.assertEqual(summary["topup_revenue_cents"], 9_900)
+        self.assertEqual(summary["key_paid_count"], 1)
+        self.assertEqual(summary["topup_paid_count"], 1)
+        self.assertEqual(summary["topup_tokens"], 50_000_000)
+
     # ---- 渠道占位 ----
 
     def test_placeholder_channels_rejected(self):

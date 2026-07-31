@@ -281,6 +281,29 @@ label input { margin-top: 5px; }
 .stat small { display: block; color: var(--muted); font-size: 12px; }
 .stat b { font-size: 21px; font-family: var(--mono); color: var(--orange); }
 .stat b.plain { color: var(--ink); }
+.stat-note { display: block; margin-top: 3px; color: var(--muted); font-size: 11.5px; }
+
+/* —— 舰队总览：资金经营区 —— */
+.finance-panel-head { align-items: flex-start; }
+.finance-panel-head .hint { margin-top: 3px; }
+.finance-stats { margin: 4px 0 14px; }
+.finance-details { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.finance-block {
+  padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--card);
+}
+.finance-block h3 { margin-bottom: 8px; font-size: 13px; }
+.finance-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 7px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12.5px;
+}
+.finance-row:last-child { border-bottom: 0; }
+.finance-row b { color: var(--ink); font-family: var(--mono); font-weight: 600; }
+.finance-row .channel-status { font-family: inherit; }
+
+@media (max-width: 720px) {
+  .finance-details { grid-template-columns: 1fr; }
+}
 
 /* —— 表格 —— */
 .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }

@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
 <script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=8" />
+<link rel="stylesheet" href="/portal/portal.css?v=9" />
 </head>
 <body>
 <!--
@@ -197,6 +197,26 @@
 
     <div class="admin-page" data-admin-view="overview">
       <section id="admin-stats" class="stats"></section>
+      <section class="panel finance-panel">
+        <div class="panel-head finance-panel-head">
+          <div>
+            <h2>资金与经营概览</h2>
+            <p class="hint">仅已确认支付成功的订单计入收入；待支付订单单独展示，不作为营收。</p>
+          </div>
+          <span id="finance-api-status" class="badge warning">支付 API 待接</span>
+        </div>
+        <div id="admin-finance-stats" class="stats finance-stats"></div>
+        <div class="finance-details">
+          <div class="finance-block">
+            <h3>收入构成</h3>
+            <div id="admin-finance-breakdown"></div>
+          </div>
+          <div class="finance-block">
+            <h3>支付渠道状态</h3>
+            <div id="admin-payment-channels"></div>
+          </div>
+        </div>
+      </section>
       <section class="panel dashboard-entry">
         <div>
           <h2>OEM 数据大屏</h2>
@@ -342,6 +362,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=15"></script>
+<script src="/portal/portal.js?v=16"></script>
 </body>
 </html>
