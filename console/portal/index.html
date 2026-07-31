@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
 <script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=12" />
+<link rel="stylesheet" href="/portal/portal.css?v=13" />
 </head>
 <body>
 <!--
@@ -110,7 +110,7 @@
 
   <section class="panel" id="panel-announcements" hidden>
     <div class="panel-head">
-      <div><h2>版本更新公告</h2><p class="hint">仅展示你名下节点已经完成安装的版本。</p></div>
+      <div><h2>版本更新公告</h2><p class="hint">包含 Nexus 平台已上线内容，以及你名下节点已经完成安装的版本。</p></div>
     </div>
     <div id="oem-announcements" class="announcement-list"></div>
   </section>
@@ -267,10 +267,16 @@
           </div>
         </div>
         <form id="form-release" class="release-form">
+          <label class="release-target-field">更新对象
+            <select name="target" required>
+              <option value="nexus" selected>Nexus 平台（集中后台）</option>
+              <option value="node">OEM 节点（客户服务器）</option>
+            </select>
+          </label>
           <label>版本号<input name="version" required placeholder="1.7.0" /></label>
           <label>Git tag<input name="git_ref" required placeholder="v1.7.0" /></label>
           <label class="release-title-field">版本标题<input name="title" required placeholder="例：OEM 节点自动更新" /></label>
-          <label class="release-canary-field">灰度节点
+          <label class="release-canary-field" id="release-canary-field">灰度节点
             <select id="release-canary" name="canary_instance_id"></select>
           </label>
           <label class="release-notes-field">更新说明
@@ -279,7 +285,7 @@
           <div class="release-submit"><button class="primary" type="submit">保存为未发布</button></div>
         </form>
         <p id="release-draft-status" class="hint">版本信息会根据当前产品版本与 DEVLOG.md 自动生成，你可以审阅和修改后再保存。</p>
-        <p class="hint">新版本默认未发布。流程：保存 → 推送灰度节点并监测 → 确认成功后推送全部节点；历史列表永久保留，可选择已发布旧版本发起全节点回撤。失败节点不会无限重试，需由超管明确安排。</p>
+        <p id="release-flow-hint" class="hint">Nexus 平台由我们集中部署；发布这里只向全部 OEM 后台展示公告，不更新客户服务器。</p>
         <div id="admin-releases" class="release-list"></div>
       </section>
     </div>
@@ -474,6 +480,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=20"></script>
+<script src="/portal/portal.js?v=22"></script>
 </body>
 </html>

@@ -21,6 +21,7 @@ from nexus.db import (
     NexusKeyClaim,
     NexusRelease,
     NexusReleaseDeployment,
+    NexusReleaseTrack,
 )
 from nexus.fleet import FleetError
 
@@ -32,6 +33,7 @@ _DEVLOG_HEADER_RE = re.compile(
 )
 _REPORT_STATES = {"downloading", "installing", "success", "failed"}
 _ACTIVE_RELEASE_STATES = {"canary", "published", "rollback"}
+_RELEASE_TARGETS = {"nexus", "node"}
 # 下载/构建被强制中断时，任务不能永久卡在 installing。超过一小时后允许同一节点
 # 再次领取；正常升级一般远低于一小时，这个阈值不会制造并发执行。
 _STALE_INSTALL_MS = 60 * 60 * 1000
@@ -64,6 +66,23 @@ def _release(s, release_id: int) -> NexusRelease:
     if row is None:
         raise FleetError("NEXUS_RELEASE_NOT_FOUND", "版本记录不存在", 404)
     return row
+
+
+def _release_target(s, release: NexusRelease) -> str:
+    """读取发布对象；没有扩展记录的历史数据按 OEM 节点版本兼容处理。"""
+    track = s.get(NexusReleaseTrack, int(release.id))
+    if track is None or track.target not in _RELEASE_TARGETS:
+        return "node"
+    return str(track.target)
+
+
+def _require_node_target(s, release: NexusRelease, action: str) -> None:
+    """阻止 Nexus 平台公告误进入节点安装、灰度或回撤状态机。"""
+    if _release_target(s, release) != "node":
+        raise FleetError(
+            "NEXUS_RELEASE_TARGET",
+            f"Nexus 平台更新不能执行{action}；它只需发布到 OEM 后台",
+        )
 
 
 def _merge_wrapped(chunks: List[str]) -> str:
@@ -196,30 +215,41 @@ def _ensure_deployment(
 
 
 def _pause_other_active(s, keep_id: int) -> None:
-    """激活一个版本时暂停其他活动版本，确保节点一次只面对一个目标。"""
+    """激活节点版本时只暂停其他节点轨道，绝不撤下 Nexus 平台公告。"""
     rows = s.execute(
         select(NexusRelease).where(NexusRelease.status.in_(_ACTIVE_RELEASE_STATES))
     ).scalars()
     now = _now_ms()
     for row in rows:
-        if row.id != keep_id:
+        if row.id != keep_id and _release_target(s, row) == "node":
             row.status = "paused"
             row.updated_ts = now
 
 
 def create_release(
-    s, *, version: str, title: str, notes: str, git_ref: str
+    s,
+    *,
+    version: str,
+    title: str,
+    notes: str,
+    git_ref: str,
+    target: str = "node",
 ) -> Dict[str, Any]:
-    """创建草稿版本。
+    """创建带明确发布对象的草稿版本。
 
     自动更新只接受与版本号一致的 ``vX.Y.Z`` Git tag，避免超级管理员输入被传成
     任意 git 参数。新版本必须高于历史版本，防止错误回退覆盖整批 OEM 节点。
     """
     version = (version or "").strip()
-    target = _version_tuple(version)
+    version_order = _version_tuple(version)
     title = (title or "").strip()
     notes = (notes or "").strip()
     git_ref = (git_ref or "").strip()
+    target = (target or "").strip().lower()
+    if target not in _RELEASE_TARGETS:
+        raise FleetError(
+            "NEXUS_BAD_RELEASE_TARGET", "更新对象必须是 Nexus 平台或 OEM 节点"
+        )
     if not title:
         raise FleetError("NEXUS_BAD_RELEASE", "版本标题不能为空")
     if not notes:
@@ -230,7 +260,9 @@ def create_release(
     existing = s.execute(select(NexusRelease)).scalars().all()
     if any(row.version == version for row in existing):
         raise FleetError("NEXUS_RELEASE_EXISTS", "该版本已存在", 409)
-    if existing and target <= max(_version_tuple(row.version) for row in existing):
+    if existing and version_order <= max(
+        _version_tuple(row.version) for row in existing
+    ):
         raise FleetError("NEXUS_VERSION_NOT_NEWER", "新版本必须高于已有版本")
 
     row = NexusRelease(
@@ -241,12 +273,15 @@ def create_release(
     )
     s.add(row)
     s.flush()
-    return _release_dict(row, [])
+    s.add(NexusReleaseTrack(release_id=row.id, target=target))
+    s.flush()
+    return _release_dict(row, [], target)
 
 
 def start_canary(s, release_id: int, instance_id: int) -> Dict[str, Any]:
     """把草稿推送给一个灰度节点，开始真实环境监测。"""
     release = _release(s, release_id)
+    _require_node_target(s, release, "节点灰度")
     if release.status not in {"draft", "paused", "canary"}:
         raise FleetError("NEXUS_RELEASE_STATE", "当前版本状态不能重新开始灰度")
     instance = s.get(NexusInstance, int(instance_id))
@@ -265,8 +300,20 @@ def start_canary(s, release_id: int, instance_id: int) -> Dict[str, Any]:
 
 
 def publish(s, release_id: int) -> Dict[str, Any]:
-    """把版本发布给全部处于授权有效状态的 OEM 实例。"""
+    """按发布轨道上线公告，或给全部有效 OEM 实例创建安装任务。"""
     release = _release(s, release_id)
+    target = _release_target(s, release)
+    if target == "nexus":
+        if release.status not in {"draft", "paused", "published"}:
+            raise FleetError("NEXUS_RELEASE_STATE", "当前 Nexus 更新不能发布公告")
+        now = _now_ms()
+        release.status = "published"
+        release.updated_ts = now
+        if release.published_ts is None:
+            release.published_ts = now
+        s.flush()
+        return get_release(s, release.id)
+
     if release.status not in {"draft", "canary", "paused", "published"}:
         raise FleetError("NEXUS_RELEASE_STATE", "当前版本状态不能全量发布")
     _pause_other_active(s, release.id)
@@ -302,6 +349,7 @@ def rollback(s, release_id: int) -> Dict[str, Any]:
     “回撤”名义推向全舰队。
     """
     release = _release(s, release_id)
+    _require_node_target(s, release, "节点回撤")
     if release.published_ts is None:
         raise FleetError(
             "NEXUS_RELEASE_NOT_PUBLISHED",
@@ -345,8 +393,16 @@ def rollback(s, release_id: int) -> Dict[str, Any]:
 
 
 def pause(s, release_id: int) -> Dict[str, Any]:
-    """暂停尚未被节点领取的版本；已在执行的节点不会被粗暴终止。"""
+    """暂停节点投放；Nexus 轨道则撤下仍保留在历史列表中的公告。"""
     release = _release(s, release_id)
+    target = _release_target(s, release)
+    if target == "nexus":
+        if release.status != "published":
+            raise FleetError("NEXUS_RELEASE_STATE", "只有已发布的平台公告可以撤下")
+        release.status = "paused"
+        release.updated_ts = _now_ms()
+        s.flush()
+        return get_release(s, release.id)
     if release.status not in _ACTIVE_RELEASE_STATES:
         raise FleetError("NEXUS_RELEASE_STATE", "只有灰度或全量发布中的版本可以暂停")
     release.status = "paused"
@@ -358,6 +414,7 @@ def pause(s, release_id: int) -> Dict[str, Any]:
 def retry_failed(s, release_id: int) -> Dict[str, Any]:
     """把指定版本的失败节点明确重置为待处理。"""
     release = _release(s, release_id)
+    _require_node_target(s, release, "节点重试")
     rows = s.execute(
         select(NexusReleaseDeployment).where(
             NexusReleaseDeployment.release_id == release.id,
@@ -393,7 +450,7 @@ def _deployment_dict(
 
 
 def _release_dict(
-    row: NexusRelease, deployments: List[Dict[str, Any]]
+    row: NexusRelease, deployments: List[Dict[str, Any]], target: str
 ) -> Dict[str, Any]:
     """组装版本详情及各状态数量，供超级管理员列表一次渲染。"""
     counts = {
@@ -406,6 +463,7 @@ def _release_dict(
         "title": row.title,
         "notes": row.notes,
         "git_ref": row.git_ref,
+        "target": target,
         "status": row.status,
         "canary_instance_id": row.canary_instance_id,
         "created_ts": row.created_ts,
@@ -432,7 +490,9 @@ def get_release(s, release_id: int) -> Dict[str, Any]:
         ).scalars()
     } if instance_ids else {}
     return _release_dict(
-        release, [_deployment_dict(row, instances) for row in rows]
+        release,
+        [_deployment_dict(row, instances) for row in rows],
+        _release_target(s, release),
     )
 
 
@@ -443,37 +503,63 @@ def list_releases(s) -> List[Dict[str, Any]]:
 
 
 def list_oem_announcements(s, oem_id: int) -> List[Dict[str, Any]]:
-    """列出一个 OEM 名下节点已经安装成功的版本公告。
+    """合并全租户 Nexus 公告与当前 OEM 节点安装成功公告。
 
-    公告不另建可漂移的数据副本，而是从“版本说明 + 成功投放记录”实时组合：节点没有
-    上报成功前不会出现；同一版本同一节点受复合主键约束只出现一次；查询先经 KEY
-    归属边收窄实例，服务端不会把其他 OEM 的版本或域名泄露出去。
+    Nexus 是集中式多租户后台，所以平台更新发布后所有 OEM 立即看到同一条公告，
+    不需要也不存在“每个客户安装 Nexus”的投放记录。节点更新仍从“版本说明 + 成功
+    投放记录”实时组合，并先经 KEY 归属边收窄实例，不能泄露其他 OEM 的域名。
 
     Args:
         s: Nexus SQLAlchemy Session。
         oem_id: 当前已登录 OEM 账号编号。
 
     Returns:
-        最新完成在前的公告列表，包含节点域名、版本、标题、正文和完成时间。
+        最新完成在前的公告列表；``target`` 区分 Nexus 平台与 OEM 节点。
     """
+    announcements: List[Dict[str, Any]] = []
+
+    # 平台公告面向所有已登录 OEM。只取当前仍为 published 的 Nexus 轨道；撤下公告
+    # 会保留历史记录和 published_ts，但不会继续出现在客户门户。
+    platform_rows = s.execute(
+        select(NexusRelease)
+        .where(NexusRelease.status == "published")
+        .order_by(NexusRelease.published_ts.desc())
+    ).scalars()
+    for release in platform_rows:
+        if _release_target(s, release) != "nexus":
+            continue
+        announcements.append(
+            {
+                "id": f"nexus:{release.id}",
+                "release_id": release.id,
+                "instance_id": None,
+                "domain": "",
+                "target": "nexus",
+                "version": release.version,
+                "title": release.title,
+                "notes": release.notes,
+                "finished_ts": release.published_ts,
+            }
+        )
+
     owned_key_ids = select(NexusKeyClaim.key_id).where(
         NexusKeyClaim.oem_id == int(oem_id)
     )
     instances = s.execute(
         select(NexusInstance).where(NexusInstance.key_id.in_(owned_key_ids))
     ).scalars().all()
-    if not instances:
-        return []
     instance_by_id = {row.id: row for row in instances}
-    rows = s.execute(
-        select(NexusReleaseDeployment)
-        .where(
-            NexusReleaseDeployment.instance_id.in_(instance_by_id),
-            NexusReleaseDeployment.status == "success",
-        )
-        .order_by(NexusReleaseDeployment.finished_ts.desc())
-        .limit(30)
-    ).scalars().all()
+    rows: List[NexusReleaseDeployment] = []
+    if instance_by_id:
+        rows = s.execute(
+            select(NexusReleaseDeployment)
+            .where(
+                NexusReleaseDeployment.instance_id.in_(instance_by_id),
+                NexusReleaseDeployment.status == "success",
+            )
+            .order_by(NexusReleaseDeployment.finished_ts.desc())
+            .limit(30)
+        ).scalars().all()
     release_ids = {row.release_id for row in rows}
     release_by_id = {
         row.id: row
@@ -481,11 +567,14 @@ def list_oem_announcements(s, oem_id: int) -> List[Dict[str, Any]]:
             select(NexusRelease).where(NexusRelease.id.in_(release_ids))
         ).scalars()
     } if release_ids else {}
-    announcements: List[Dict[str, Any]] = []
     for row in rows:
         release = release_by_id.get(row.release_id)
         instance = instance_by_id.get(row.instance_id)
-        if release is None or instance is None:
+        if (
+            release is None
+            or instance is None
+            or _release_target(s, release) != "node"
+        ):
             continue
         announcements.append(
             {
@@ -493,13 +582,17 @@ def list_oem_announcements(s, oem_id: int) -> List[Dict[str, Any]]:
                 "release_id": row.release_id,
                 "instance_id": row.instance_id,
                 "domain": instance.domain,
+                "target": "node",
                 "version": release.version,
                 "title": release.title,
                 "notes": release.notes,
                 "finished_ts": row.finished_ts,
             }
         )
-    return announcements
+    announcements.sort(
+        key=lambda item: int(item.get("finished_ts") or 0), reverse=True
+    )
+    return announcements[:30]
 
 
 def check_update(s, raw_key: str, current_version: str) -> Optional[Dict[str, Any]]:
@@ -524,6 +617,8 @@ def check_update(s, raw_key: str, current_version: str) -> Optional[Dict[str, An
     for deployment in deployments:
         release = s.get(NexusRelease, deployment.release_id)
         if release is None or release.status not in _ACTIVE_RELEASE_STATES:
+            continue
+        if _release_target(s, release) != "node":
             continue
         if release.status == "canary" and release.canary_instance_id != instance.id:
             continue
@@ -584,6 +679,7 @@ def report_update(
     if deployment is None:
         raise FleetError("NEXUS_UPDATE_NOT_ASSIGNED", "该更新未分配给此实例", 403)
     release = _release(s, release_id)
+    _require_node_target(s, release, "节点状态上报")
 
     # 成功状态不可倒退；失败也只能由管理员显式重置，杜绝节点自己形成重试风暴。
     if deployment.status == "success" and status != "success":

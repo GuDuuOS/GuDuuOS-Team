@@ -205,7 +205,7 @@ label input { margin-top: 5px; }
 
 /* —— 版本发布中心 —— */
 .release-form {
-  display: grid; grid-template-columns: 130px 150px 1fr 190px; gap: 10px;
+  display: grid; grid-template-columns: 160px 110px 140px 1fr 180px; gap: 10px;
   padding-bottom: 14px; border-bottom: 1px solid var(--line);
 }
 .release-form label { margin: 0; }
@@ -229,8 +229,8 @@ label input { margin-top: 5px; }
 .release-deployments { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line); }
 .release-deployments summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 
-/* OEM 更新公告直接复用版本发布正文，只在节点成功回报后出现。公告正文保留换行，
- * 让新增/修复条目在窄屏上仍能快速扫读。 */
+/* OEM 更新公告直接复用版本发布正文：Nexus 平台公告发布后全租户可见，节点公告仍须
+ * 对应实例成功回报。公告正文保留换行，让新增/修复条目在窄屏上仍能快速扫读。 */
 .announcement-list { display: grid; gap: 12px; }
 .announcement-card {
   padding: 15px 17px; border: 1px solid var(--line); border-radius: 12px;

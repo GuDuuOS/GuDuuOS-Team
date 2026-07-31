@@ -464,6 +464,22 @@ class NexusRelease(Base):
     published_ts = Column(BigInteger, nullable=True, default=None)
 
 
+class NexusReleaseTrack(Base):
+    """版本所属发布轨道的一对一扩展记录。
+
+    这个信息故意放在新表而不是给 ``nexus_release`` 直接加列：生产已经有历史版本表，
+    SQLAlchemy ``create_all`` 不会替旧表执行 ``ALTER TABLE``。独立表能在服务重启时
+    安全创建；没有对应记录的历史版本一律解释为 ``node``，保持原来的节点投放语义。
+    """
+
+    __tablename__ = "nexus_release_track"
+
+    release_id = Column(Integer, primary_key=True)
+    # nexus=集中式平台公告；node=OEM 实例真实安装任务。
+    target = Column(String(16), nullable=False, default="node", index=True)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
 class NexusReleaseDeployment(Base):
     """一个发行版本在一个 OEM 实例上的投放与安装状态。
 

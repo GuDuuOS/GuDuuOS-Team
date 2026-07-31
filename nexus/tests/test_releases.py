@@ -35,7 +35,7 @@ class ReleaseTest(unittest.TestCase):
         self.s.close()
         os.unlink(self._tmp.name)
 
-    def _create(self, version: str = "1.7.0"):
+    def _create(self, version: str = "1.7.0", target: str = "node"):
         """创建一条合法草稿，减少各测试的样板参数。"""
         return releases.create_release(
             self.s,
@@ -43,12 +43,14 @@ class ReleaseTest(unittest.TestCase):
             title="自动更新中心",
             notes="新增版本灰度、发布和结果监测。",
             git_ref="v" + version,
+            target=target,
         )
 
     def test_create_requires_semver_and_matching_tag(self):
         """版本号和 tag 必须严格一致，且不能创建倒序版本。"""
         row = self._create()
         self.assertEqual(row["status"], "draft")
+        self.assertEqual(row["target"], "node")
         with self.assertRaises(FleetError):
             releases.create_release(
                 self.s,
@@ -73,6 +75,55 @@ class ReleaseTest(unittest.TestCase):
                 notes="说明",
                 git_ref="v1.6.99",
             )
+        with self.assertRaises(FleetError):
+            releases.create_release(
+                self.s,
+                version="1.7.2",
+                title="错误对象",
+                notes="说明",
+                git_ref="v1.7.2",
+                target="all",
+            )
+
+    def test_nexus_release_is_global_announcement_without_node_task(self):
+        """平台更新只向所有 OEM 门户发公告，绝不能进入节点安装状态机。"""
+        release = self._create(target="nexus")
+        published = releases.publish(self.s, release["id"])
+        self.assertEqual(published["target"], "nexus")
+        self.assertEqual(published["status"], "published")
+        self.assertEqual(published["deployments"], [])
+        self.assertIsNone(releases.check_update(self.s, self.key_a, "1.6.32"))
+
+        # 即使这个 OEM 暂时没有认领任何节点，也应看到共享 Nexus 已上线公告。
+        announcements = releases.list_oem_announcements(self.s, 999)
+        self.assertEqual(len(announcements), 1)
+        self.assertEqual(announcements[0]["target"], "nexus")
+        self.assertEqual(announcements[0]["domain"], "")
+
+        with self.assertRaises(FleetError) as canary_error:
+            releases.start_canary(self.s, release["id"], self.inst_a)
+        self.assertEqual(canary_error.exception.code, "NEXUS_RELEASE_TARGET")
+        with self.assertRaises(FleetError) as rollback_error:
+            releases.rollback(self.s, release["id"])
+        self.assertEqual(rollback_error.exception.code, "NEXUS_RELEASE_TARGET")
+
+        # “暂停”在平台轨道代表撤下公告，历史版本和发布时间仍保留。
+        paused = releases.pause(self.s, release["id"])
+        self.assertEqual(paused["status"], "paused")
+        self.assertEqual(releases.list_oem_announcements(self.s, 999), [])
+
+    def test_nexus_and_node_tracks_do_not_pause_each_other(self):
+        """平台公告与节点投放可以同时有效，任一轨道发布都不能覆盖另一条。"""
+        platform_id = self._create("1.7.0", "nexus")["id"]
+        releases.publish(self.s, platform_id)
+        node_id = self._create("1.7.1", "node")["id"]
+        releases.publish(self.s, node_id)
+        self.assertEqual(releases.get_release(self.s, platform_id)["status"], "published")
+        self.assertEqual(releases.get_release(self.s, node_id)["status"], "published")
+
+        platform_two_id = self._create("1.7.2", "nexus")["id"]
+        releases.publish(self.s, platform_two_id)
+        self.assertEqual(releases.get_release(self.s, node_id)["status"], "published")
 
     def test_build_release_draft_from_devlog(self):
         """当前版本、标题和 OEM 公告正文应从 DEVLOG 稳定生成。"""

@@ -941,6 +941,9 @@ class NexusHandler(BaseHTTPRequestHandler):
                                 title=str(body.get("title", "")),
                                 notes=str(body.get("notes", "")),
                                 git_ref=str(body.get("git_ref", "")),
+                                # 旧版控制台没有 target 字段，继续按节点版本处理，避免
+                                # 发布中心升级瞬间把历史操作语义改成平台公告。
+                                target=str(body.get("target") or "node"),
                             )
                         },
                     )

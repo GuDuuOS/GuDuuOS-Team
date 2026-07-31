@@ -785,15 +785,19 @@
     });
   });
 
-  // 更新公告只来自 Nexus 已确认成功的逐节点投放记录。前端不根据“节点当前版本”猜测，
-  // 这样人工安装、未完成更新都不会被误写成官方公告。
+  // Nexus 平台公告来自集中后台的已发布记录；节点公告只来自成功投放。两者都由服务端
+  // 明确给出 target，前端不根据标题或版本号猜测，避免把平台上线误写成节点已安装。
   function renderAnnouncements(announcements) {
     var panel = $("#panel-announcements");
     panel.hidden = announcements.length === 0;
     $("#oem-announcements").innerHTML = announcements.map(function (a) {
+      var platform = a.target === "nexus";
+      var meta = platform
+        ? "Nexus 平台 · 已向全部 OEM 后台上线 · " + fmtTime(a.finished_ts)
+        : esc(a.domain) + " · 节点已运行 v" + esc(a.version) + " · " + fmtTime(a.finished_ts);
       return '<article class="announcement-card"><div class="announcement-head"><h3>' +
         esc(a.title || ("GuDuu OS " + a.version + " 更新")) + '</h3><div class="announcement-meta">' +
-        esc(a.domain) + " · 已运行 v" + esc(a.version) + " · " + fmtTime(a.finished_ts) +
+        meta +
         '</div></div><div class="announcement-notes">' + esc(a.notes) + "</div></article>";
     }).join("");
   }
@@ -894,6 +898,11 @@
     rollback: ["warning", "回撤发布中"],
     paused: ["offline", "已暂停"],
   };
+  var PLATFORM_RELEASE_STATUS = {
+    draft: ["idle", "未发布"],
+    published: ["active", "公告已发布"],
+    paused: ["offline", "公告已撤下"],
+  };
   var DEPLOY_STATUS = {
     pending: ["idle", "待领取"],
     downloading: ["warning", "下载中"],
@@ -916,28 +925,45 @@
     var box = $("#admin-releases");
     box.innerHTML = releases.map(function (r) {
       var c = r.counts || {};
-      var countText = "待领取 " + (c.pending || 0) + " · 安装中 " +
-        ((c.downloading || 0) + (c.installing || 0)) + " · 成功 " +
-        (c.success || 0) + " · 失败 " + (c.failed || 0);
+      var target = r.target || "node";
+      var platform = target === "nexus";
+      var targetBadge = platform
+        ? '<span class="badge manual">Nexus 平台</span>'
+        : '<span class="badge idle">OEM 节点</span>';
+      var statusBadge = releaseBadge(
+        r.status,
+        platform ? PLATFORM_RELEASE_STATUS : RELEASE_STATUS
+      );
+      var countText = platform
+        ? (r.status === "published" ? "已向全部 OEM 后台展示公告；不创建节点安装任务。" : "平台公告尚未展示给 OEM 客户。")
+        : "待领取 " + (c.pending || 0) + " · 安装中 " +
+          ((c.downloading || 0) + (c.installing || 0)) + " · 成功 " +
+          (c.success || 0) + " · 失败 " + (c.failed || 0);
       var actions = [];
-      if (["draft", "paused", "canary"].indexOf(r.status) >= 0) {
+      if (platform && ["draft", "paused"].indexOf(r.status) >= 0) {
+        actions.push('<button class="primary small" data-release-action="publish" data-release-target="nexus" data-release-id="' + r.id + '">发布到全部 OEM 后台</button>');
+      }
+      if (platform && r.status === "published") {
+        actions.push('<button class="ghost small" data-release-action="pause" data-release-target="nexus" data-release-id="' + r.id + '">撤下公告</button>');
+      }
+      if (!platform && ["draft", "paused", "canary"].indexOf(r.status) >= 0) {
         actions.push('<button class="ghost small" data-release-action="canary" data-release-id="' + r.id + '">推送灰度节点</button>');
       }
-      if (["draft", "canary", "paused"].indexOf(r.status) >= 0) {
+      if (!platform && ["draft", "canary", "paused"].indexOf(r.status) >= 0) {
         actions.push('<button class="primary small" data-release-action="publish" data-release-id="' + r.id + '">推送全部节点</button>');
       }
-      if (r.status === "canary" || r.status === "published") {
+      if (!platform && (r.status === "canary" || r.status === "published")) {
         actions.push('<button class="ghost small" data-release-action="pause" data-release-id="' + r.id + '">暂停发布</button>');
       }
-      if (r.status === "rollback") {
+      if (!platform && r.status === "rollback") {
         actions.push('<button class="ghost small" data-release-action="pause" data-release-id="' + r.id + '">暂停回撤</button>');
       }
       // 只有真正全量发布过、且当前不再活动的历史版本才可作为回撤目标；草稿和仅灰度
       // 版本没有经过全量验证，不能通过“回撤”绕过发布门禁。
-      if (r.published_ts && ["canary", "published", "rollback"].indexOf(r.status) < 0) {
+      if (!platform && r.published_ts && ["canary", "published", "rollback"].indexOf(r.status) < 0) {
         actions.push('<button class="ghost small" data-release-action="rollback" data-release-id="' + r.id + '" data-release-version="' + esc(r.version) + '">回撤到此版本</button>');
       }
-      if ((c.failed || 0) > 0) {
+      if (!platform && (c.failed || 0) > 0) {
         actions.push('<button class="ghost small" data-release-action="retry" data-release-id="' + r.id + '">重试失败节点</button>');
       }
       var deployments = (r.deployments || []).map(function (d) {
@@ -946,14 +972,16 @@
           releaseBadge(d.status, DEPLOY_STATUS) + "</td><td>" + esc(d.from_version || "—") + " → " +
           esc(d.to_version || "—") + "</td><td>" + fmtTime(d.updated_ts) + detail + "</td></tr>";
       }).join("");
-      var detailBlock = deployments
+      var detailBlock = platform
+        ? '<p class="hint">Nexus 由平台集中部署，OEM 客户无需单独安装后台。</p>'
+        : deployments
         ? '<details class="release-deployments"><summary>查看 ' + r.deployments.length +
           ' 个节点的安装明细</summary><table class="tbl"><thead><tr><th>#</th><th>节点</th><th>状态</th><th>版本</th><th>更新时间 / 说明</th></tr></thead><tbody>' +
           deployments + "</tbody></table></details>"
         : '<p class="hint">尚未推送到任何节点。</p>';
       return '<article class="release-card"><div class="release-card-head"><div>' +
         '<div class="release-card-title"><b>v' + esc(r.version) + "</b>" +
-        releaseBadge(r.status, RELEASE_STATUS) + "<strong>" + esc(r.title) + "</strong></div>" +
+        targetBadge + statusBadge + "<strong>" + esc(r.title) + "</strong></div>" +
         '<div class="release-meta">Git ' + esc(r.git_ref) + " · 创建 " + fmtTime(r.created_ts) + "</div></div>" +
         '<div class="release-actions">' + actions.join("") + "</div></div>" +
         '<div class="release-notes">' + esc(r.notes) + '</div><div class="release-counts">' + countText + "</div>" +
@@ -971,6 +999,20 @@
     submit.disabled = alreadySaved;
     submit.textContent = alreadySaved ? "当前版本已保存" : "保存为未发布";
   }
+
+  function syncReleaseTargetUi() {
+    // 平台轨道没有客户节点灰度；隐藏选择器并把流程说明改成“公告发布”，避免超管
+    // 看到同一个“发布”按钮时误以为会连接或重启 OEM 客户服务器。
+    var form = $("#form-release");
+    var platform = form.elements.target.value === "nexus";
+    $("#release-canary-field").hidden = platform;
+    $("#release-flow-hint").textContent = platform
+      ? "Nexus 平台由我们集中部署；发布这里只向全部 OEM 后台展示公告，不更新客户服务器。"
+      : "OEM 节点版本流程：保存 → 灰度监测 → 推送全部节点；支持暂停、失败重试和历史版本回撤。";
+  }
+
+  $("#form-release").elements.target.addEventListener("change", syncReleaseTargetUi);
+  syncReleaseTargetUi();
 
   function loadReleaseDraft(force) {
     if (!force && releaseDraftChecked) return Promise.resolve();
@@ -1159,16 +1201,21 @@
   $("#form-release").addEventListener("submit", function (e) {
     e.preventDefault();
     var form = e.target;
+    var releaseTarget = form.elements.target.value;
     api("/nexus/admin/releases", {
       body: {
+        target: releaseTarget,
         version: form.version.value,
         git_ref: form.git_ref.value,
         title: form.title.value,
         notes: form.notes.value,
       },
     }).then(function () {
-      toast("版本已保存为未发布，可先推送灰度节点监测");
+      toast(releaseTarget === "nexus"
+        ? "Nexus 更新已保存为未发布，审阅后可发布公告"
+        : "节点版本已保存为未发布，可先推送灰度节点监测");
       form.reset();
+      syncReleaseTargetUi();
       releaseDraftChecked = false;
       loadAdmin();
     }).catch(function (err) { toast(err.message, true); });
@@ -1302,23 +1349,30 @@
     }
     if (t.dataset && t.dataset.releaseAction) {
       var action = t.dataset.releaseAction;
+      var platformRelease = t.dataset.releaseTarget === "nexus";
       var releaseId = Number(t.dataset.releaseId);
       var body = { release_id: releaseId, action: action };
       if (action === "canary") {
         body.instance_id = Number($("#release-canary").value || 0);
         if (!body.instance_id) return toast("请先选择一个灰度节点", true);
       }
-      var promptText = action === "publish"
+      var promptText = action === "publish" && platformRelease
+        ? "确认把这条 Nexus 平台更新公告展示给全部 OEM 客户？这不会更新或重启客户节点。"
+        : action === "publish"
         ? "确认向全部 " + releaseInstanceCount + " 个实例发布此版本？节点将在下一轮检查时自动安装。"
         : action === "rollback"
           ? "确认把全部 " + releaseInstanceCount + " 个实例回撤到 v" + (t.dataset.releaseVersion || "") + "？这会真实切换线上运行版本。"
+        : action === "pause" && platformRelease
+          ? "确认从全部 OEM 后台撤下这条 Nexus 平台公告？历史记录仍会保留。"
         : action === "pause"
           ? "确认暂停该版本？已经开始安装的节点不会被中断。"
           : action === "retry"
             ? "确认让该版本所有失败节点重新尝试一次？"
             : "确认把该版本推送到当前选中的灰度节点？";
-      var dangerousReleaseAction = action === "publish" || action === "rollback";
-      var releaseOkText = action === "publish" ? "确认全量发布" : (action === "rollback" ? "确认回撤" : "确认");
+      var dangerousReleaseAction = (action === "publish" && !platformRelease) || action === "rollback";
+      var releaseOkText = action === "publish"
+        ? (platformRelease ? "发布公告" : "确认全量发布")
+        : (action === "rollback" ? "确认回撤" : "确认");
       uiConfirm(promptText, dangerousReleaseAction, releaseOkText).then(function (ok) {
         if (!ok) return;
         api("/nexus/admin/release_action", { body: body })
