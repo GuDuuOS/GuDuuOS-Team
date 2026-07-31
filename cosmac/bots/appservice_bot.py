@@ -4685,7 +4685,10 @@ class CosmacBot:
         from cosmac import registration
         b0 = body or {}
         return registration.request_code(
-            str(b0.get("email") or ""), client_ip=client_ip, turnstile=str(b0.get("turnstile") or ""),
+            str(b0.get("email") or ""),
+            client_ip=client_ip,
+            turnstile=str(b0.get("turnstile") or ""),
+            referral_code=str(b0.get("referral_code") or ""),
         )
 
     def handle_register_verify(
@@ -4695,8 +4698,13 @@ class CosmacBot:
         from cosmac import registration
         b = body or {}
         return registration.verify_and_register(
-            b.get("email", ""), b.get("code", ""), b.get("username", ""), b.get("password", ""),
-            hs_url=self.config.homeserver_url, client_ip=client_ip,
+            b.get("email", ""),
+            b.get("code", ""),
+            b.get("username", ""),
+            b.get("password", ""),
+            hs_url=self.config.homeserver_url,
+            client_ip=client_ip,
+            referral_code=str(b.get("referral_code") or ""),
         )
 
     def handle_reset_request_code(
@@ -8040,6 +8048,18 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(503, {"errcode": "M_UNAVAILABLE"})
 
     def do_GET(self) -> None:  # noqa: N802
+        # OEM 邀请注册页：实例代前端向 Nexus 校验分享码，避免跨域和暴露实例授权 KEY。
+        if self.path.split("?", 1)[0] == "/cosmac/register/referral":
+            from urllib.parse import parse_qs, urlparse
+            from cosmac import nexus_link
+
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                payload = nexus_link.referral_info((qs.get("code") or [""])[0])
+                self._send_json(200, payload, cors=True)
+            except nexus_link.ReferralError as exc:
+                self._send_json(400, {"error": str(exc)}, cors=True)
+            return
         # 公开读「认证前端配置」：前端据此决定登录/注册页要不要挂 Turnstile 人机验证。
         # 只回 site_key(本就是公开的)+ 开关;secret 绝不出现。无需鉴权、可跨源。
         if self.path.split("?", 1)[0] == "/cosmac/auth/config":

@@ -240,6 +240,61 @@ class InviteTest(unittest.TestCase):
         with self.assertRaises(FleetError):
             oem.register(self.s, "s2@x.com", "abc12345", inviter="t2@x.com", company="测试公司", contact_name="张三", phone="13800000000")
 
+    def test_share_code_builds_unlimited_oem_chain(self):
+        """分享码可邀请下级 OEM，层级/全部下级按任意深度动态计算。"""
+        top = oem.register(
+            self.s, "top3@x.com", "abc12345", inviter="GUDUU",
+            company="顶层公司", contact_name="张三", phone="13800000000",
+        )
+        top_share = oem.share_summary(self.s, top["id"], "https://nexus.test")
+        self.assertIn("?invite=", top_share["partner_link"])
+        sub = oem.register(
+            self.s, "sub3@x.com", "abc12345", inviter=top_share["code"],
+            company="二层公司", contact_name="李四", phone="13900000000",
+        )
+        sub_share = oem.share_summary(self.s, sub["id"], "https://nexus.test")
+        leaf = oem.register(
+            self.s, "leaf3@x.com", "abc12345", inviter=sub_share["code"],
+            company="三层公司", contact_name="王五", phone="13700000000",
+        )
+        rows = {row["id"]: row for row in oem.list_oems(self.s)}
+        self.assertEqual(rows[top["id"]]["level"], 1)
+        self.assertEqual(rows[sub["id"]]["level"], 2)
+        self.assertEqual(rows[leaf["id"]]["level"], 3)
+        self.assertEqual(rows[top["id"]]["direct_oems"], 1)
+        self.assertEqual(rows[top["id"]]["total_downline_oems"], 2)
+
+    def test_user_attribution_requires_matching_oem_instance(self):
+        """普通用户归属必须同时匹配分享码、KEY 归属、实例和 Matrix 域名。"""
+        owner = oem.register(
+            self.s, "owner@x.com", "abc12345", inviter="GUDUU",
+            company="归属公司", contact_name="张三", phone="13800000000",
+        )
+        issued = fleet.issue_keys(self.s, token_grant=10)[0]["key"]
+        oem.claim_key(self.s, owner["id"], issued)
+        fleet.redeem(self.s, issued, "owner.example.com")
+        share = oem.share_summary(self.s, owner["id"], "https://nexus.test")
+        self.assertEqual(len(share["user_links"]), 1)
+
+        first = oem.record_user_attribution(
+            self.s, issued, share["code"], "@alice:owner.example.com"
+        )
+        self.assertFalse(first["already"])
+        again = oem.record_user_attribution(
+            self.s, issued, share["code"], "@alice:owner.example.com"
+        )
+        self.assertTrue(again["already"])
+        with self.assertRaises(FleetError):
+            oem.record_user_attribution(
+                self.s, issued, share["code"], "@mallory:other.example.com"
+            )
+
+        summary = oem.share_summary(self.s, owner["id"], "https://nexus.test")
+        self.assertEqual(summary["direct_users"], 1)
+        self.assertEqual(summary["network_users"], 1)
+        snapshot = oem.hierarchy_snapshot(self.s)
+        self.assertEqual(snapshot["user_edges"][0]["user_id"], "@alice:owner.example.com")
+
 
 class ProfileAndFilesTest(unittest.TestCase):
     """客户档案(注册强制三项)与合同附件(上传/下载/删除/白名单/上限)。"""

@@ -62,6 +62,16 @@
     t.textContent = msg; t.className = "toast" + (bad ? " bad" : ""); t.hidden = false;
     clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.hidden = true; }, 3200);
   }
+  function copyText(value) {
+    var text = String(value || "");
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    var area = document.createElement("textarea");
+    area.value = text; area.style.position = "fixed"; area.style.opacity = "0";
+    document.body.appendChild(area); area.select(); document.execCommand("copy"); area.remove();
+    return Promise.resolve();
+  }
 
   // ---------- 自家对话框（替代浏览器原生 confirm/prompt，风格统一） ----------
   var dlgResolve = null;
@@ -270,6 +280,19 @@
       $("#login-err").hidden = true;
     });
   });
+
+  // 下级 OEM 邀请链接：自动切注册页并锁定随机分享码，避免用户把直属上级填错。
+  (function applyPartnerInvite() {
+    var invite = new URLSearchParams(window.location.search).get("invite") || "";
+    if (!invite) return;
+    var form = $("#form-oem-reg");
+    var tab = document.querySelector('[data-tab="oem-reg"]');
+    if (!form || !tab) return;
+    tab.click();
+    form.inviter.value = invite;
+    form.inviter.readOnly = true;
+    form.inviter.title = "该直属上级来自邀请链接";
+  })();
   function loginErr(msg) { var el = $("#login-err"); el.textContent = msg; el.hidden = false; }
 
   $("#form-oem-login").addEventListener("submit", function (e) {
@@ -333,6 +356,54 @@
   function fmtYuan(cents) {
     var y = (Number(cents) || 0) / 100;
     return "¥" + (y % 1 ? y.toFixed(2) : String(y));
+  }
+
+  function loadShareQr(img, path) {
+    var auth = getAuth();
+    fetch(new URL(path, window.location.origin).href, {
+      headers: { "Authorization": "Bearer " + (auth ? auth.token : "") },
+    }).then(function (res) {
+      if (!res.ok) throw new Error("二维码生成失败(" + res.status + ")");
+      return res.blob();
+    }).then(function (blob) {
+      if (img.dataset.objectUrl) URL.revokeObjectURL(img.dataset.objectUrl);
+      var objectUrl = URL.createObjectURL(blob);
+      img.dataset.objectUrl = objectUrl;
+      img.src = objectUrl;
+    }).catch(function (err) {
+      img.alt = err.message;
+    });
+  }
+
+  function renderReferral(referral) {
+    var r = referral || {};
+    $("#oem-referral-code").textContent = r.code ? ("分享码 · " + r.code) : "分享码生成中";
+    $("#oem-ref-level").textContent = r.level ? ("第 " + r.level + " 层") : "—";
+    $("#oem-ref-users").textContent = String(r.direct_users || 0);
+    $("#oem-ref-direct").textContent = String(r.direct_oems || 0);
+    $("#oem-ref-network").textContent = String(r.total_downline_oems || 0) + " / " + String(r.network_users || 0);
+
+    var links = r.user_links || [];
+    $("#oem-user-share").innerHTML = links.map(function (item) {
+      return '<div class="share-item"><img class="share-qr" data-user-qr="' + item.instance_id + '" alt="用户注册二维码" />' +
+        '<div><div class="share-domain">' + esc(item.domain) + '</div>' +
+        '<input class="share-url" readonly value="' + esc(item.url) + '" />' +
+        '<div class="share-actions"><button class="ghost small" data-copy-link="' + esc(item.url) + '">复制注册链接</button>' +
+        '<a class="ghost small" href="' + esc(item.url) + '" target="_blank" rel="noopener">打开注册页</a></div></div></div>';
+    }).join("") || '<p class="empty">开通并兑换实例后，这里会自动生成普通用户注册链接和二维码。</p>';
+    links.forEach(function (item) {
+      var img = document.querySelector('[data-user-qr="' + item.instance_id + '"]');
+      if (img) loadShareQr(img, "/nexus/oem/share_qr?kind=user&instance_id=" + item.instance_id);
+    });
+
+    var partner = String(r.partner_link || "");
+    $("#oem-partner-share").innerHTML = partner
+      ? '<div class="share-item"><img class="share-qr" id="partner-share-qr" alt="下级 OEM 注册二维码" />' +
+        '<div><div class="share-domain">OEM 合作伙伴注册链接</div><input class="share-url" readonly value="' + esc(partner) + '" />' +
+        '<div class="share-actions"><button class="ghost small" data-copy-link="' + esc(partner) + '">复制 OEM 邀请链接</button>' +
+        '<a class="ghost small" href="' + esc(partner) + '" target="_blank" rel="noopener">打开注册页</a></div></div></div>'
+      : '<p class="empty">分享链接生成中。</p>';
+    if (partner) loadShareQr($("#partner-share-qr"), "/nexus/oem/share_qr?kind=partner");
   }
 
   // 渲染「购买与充值」区（定价 + 渠道可用性 + 我的实例下拉）
@@ -471,6 +542,7 @@
       renderShop(rs[1], r.instances);
       renderOrders(r.orders || []);
       renderAnnouncements(r.announcements || []);
+      renderReferral(r.referral || {});
       // 实例卡
       var box = $("#oem-instances");
       box.innerHTML = r.instances.map(function (i) {
@@ -757,12 +829,14 @@
           ? '<span style="color:var(--orange)">GuDuu</span>'
           : esc(o.inviter || "—");
         return "<tr><td>#" + o.id + "</td><td>" + esc(o.email) + "</td><td class=\"zh\">" + esc(o.name || "—") + "</td>" +
-          "<td>" + inviter + "</td>" +
+          '<td class="zh"><b>第 ' + (o.level || 1) + ' 层</b><div class="hint">直属：' + inviter + "</div></td>" +
+          '<td class="zh">直属 ' + (o.direct_users || 0) + '<div class="hint">网络 ' + (o.network_users || 0) + "</div></td>" +
+          '<td class="zh">直属 ' + (o.direct_oems || 0) + '<div class="hint">全部 ' + (o.total_downline_oems || 0) + "</div></td>" +
           '<td class="zh"><span class="badge ' + (on ? "active" : "disabled") + '">' + (on ? "正常" : "停用") + "</span></td>" +
           "<td>" + o.keys_claimed + "</td><td>" + fmtTime(o.created_ts) + "</td>" +
           '<td class="zh"><button class="ghost small" data-detail="' + o.id + '">详情</button> ' +
           '<button class="ghost small" data-oemstatus="' + o.id + '" data-tostatus="' + (on ? "disabled" : "active") + '" data-email="' + esc(o.email) + '">' + (on ? "停用" : "启用") + "</button></td></tr>";
-      }).join("") || '<tr><td colspan="8" class="zh empty">暂无注册客户</td></tr>';
+      }).join("") || '<tr><td colspan="10" class="zh empty">暂无注册客户</td></tr>';
       // 首次进入后台时自动回填，之后刷新数据不覆盖管理员正在编辑的内容。
       loadReleaseDraft(false);
     }).catch(function (err) { toast(err.message, true); });
@@ -922,6 +996,12 @@
   // 表格行内操作（事件代理：吊销 / 充值）
   document.addEventListener("click", function (e) {
     var t = e.target;
+    if (t.dataset && t.dataset.copyLink) {
+      copyText(t.dataset.copyLink)
+        .then(function () { toast("分享链接已复制"); })
+        .catch(function () { toast("复制失败，请手动选择链接", true); });
+      return;
+    }
     if (t.dataset && t.dataset.releaseAction) {
       var action = t.dataset.releaseAction;
       var releaseId = Number(t.dataset.releaseId);

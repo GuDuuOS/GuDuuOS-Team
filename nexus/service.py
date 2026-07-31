@@ -8,6 +8,8 @@
         GET  /nexus/health                       探活
         POST /nexus/redeem     {key,domain,admin_email,region}  兑换开通（install.sh 调）
         POST /nexus/heartbeat  {key,version,stats}        心跳上报（实例定时调）
+        GET  /nexus/referral?code=...                    公开校验 OEM 分享码
+        POST /nexus/user/attribution {key,referral_code,user_id} 用户归属上报
         POST /nexus/update/check   {key,current_version}  拉取已分配的版本更新
         POST /nexus/update/report  {key,release_id,status,...} 上报更新结果
     管理（console 用，须 Authorization: Bearer <NEXUS_ADMIN_TOKEN>）：
@@ -17,6 +19,7 @@
         GET  /nexus/admin/instances                            实例列表（含余额）
         POST /nexus/admin/topup      {instance_id,tokens,note} 手动充值
         GET  /nexus/admin/finance_summary                      资金经营汇总
+        GET  /nexus/admin/hierarchy                            OEM/用户完整归属边
         GET/POST /nexus/admin/releases                         版本发布中心
         GET  /nexus/admin/release_draft                        从 DEVLOG 自动生成版本草稿
         POST /nexus/admin/release_action                       灰度/全量/回撤/暂停/重试
@@ -30,6 +33,7 @@
 from __future__ import annotations
 
 import hmac
+import io
 import json
 import logging
 import os
@@ -37,6 +41,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict
+from urllib.parse import parse_qs, quote, urlsplit
 
 from nexus import db, fleet, geo, oem as oem_svc, pay, releases
 from nexus.fleet import FleetError
@@ -184,12 +189,29 @@ class NexusHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         logger.info("%s %s", self._client_ip(), fmt % args)
 
+    def _public_origin(self) -> str:
+        """根据反代头生成当前 Nexus 公网 origin，并拒绝异常 Host 注入分享链接。"""
+        host = (self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "").strip()
+        host = host.split(",", 1)[0].strip()
+        if not host or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:" for c in host):
+            raise FleetError("NEXUS_BAD_HOST", "请求 Host 不合法")
+        forwarded = (self.headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip()
+        scheme = forwarded if forwarded in ("http", "https") else (
+            "http" if host.startswith(("127.0.0.1", "localhost")) else "https"
+        )
+        return f"{scheme}://{host}"
+
     # ---- 路由 ----
 
     def do_GET(self) -> None:  # noqa: N802  # http.server 命名约定
         path = self.path.split("?", 1)[0]
         if path == "/nexus/health":
             self._json(200, {"ok": True, "ts": int(time.time() * 1000)})
+            return
+        if path == "/nexus/referral":
+            qs = parse_qs(urlsplit(self.path).query)
+            code = str((qs.get("code") or [""])[0])
+            self._with_session(lambda s: self._json(200, oem_svc.referral_info(s, code)))
             return
         if path == "/nexus/admin/keys":
             if self._check_admin():
@@ -228,6 +250,12 @@ class NexusHandler(BaseHTTPRequestHandler):
                     lambda s: self._json(200, {"oems": oem_svc.list_oems(s)})
                 )
             return
+        if path == "/nexus/admin/hierarchy":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(200, oem_svc.hierarchy_snapshot(s))
+                )
+            return
         if path == "/nexus/admin/dashboard-token":
             # 管理员控制台只在用户进入大屏时兑换“只读”凭据。前端从此不会把具有
             # KEY/钱包写权限的管理员令牌传给大屏，避免一个展示层 XSS 升级成接管后台。
@@ -264,9 +292,50 @@ class NexusHandler(BaseHTTPRequestHandler):
                         # 只返回该 OEM 名下节点已经成功安装的版本；它与上方 instances
                         # 使用同一归属边，但在业务层再次强制过滤，避免依赖前端隐藏。
                         "announcements": releases.list_oem_announcements(s, oem.id),
+                        # 分享码与层级统计只在 OEM 登录后返回；链接按当前 Nexus 公网域名生成。
+                        "referral": oem_svc.share_summary(
+                            s, oem.id, self._public_origin()
+                        ),
                     },
                 )
             self._with_session(_me)
+            return
+        if path == "/nexus/oem/share_qr":
+            def _share_qr(s):
+                account = self._oem(s)
+                if account is None:
+                    return
+                qs = parse_qs(urlsplit(self.path).query)
+                kind = str((qs.get("kind") or [""])[0])
+                try:
+                    instance_id = int((qs.get("instance_id") or ["0"])[0])
+                except ValueError:
+                    instance_id = 0
+                target = oem_svc.qr_target(
+                    s, account.id, self._public_origin(), kind, instance_id
+                )
+                # SVG 不依赖 Pillow，适合 Nexus 轻量服务；二维码只编码服务端重算的合法链接。
+                import qrcode
+                import qrcode.image.svg
+
+                image = qrcode.make(
+                    target,
+                    image_factory=qrcode.image.svg.SvgPathImage,
+                    box_size=7,
+                    border=3,
+                )
+                buffer = io.BytesIO()
+                image.save(buffer)
+                data = buffer.getvalue()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/svg+xml")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "private, max-age=300")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                self.wfile.write(data)
+
+            self._with_session(_share_qr)
             return
         # —— 商品与渠道（登录后查询：定价 + 各渠道可用性）——
         if path == "/nexus/oem/products":
@@ -345,7 +414,6 @@ class NexusHandler(BaseHTTPRequestHandler):
                     self.send_header("Content-Type", row.content_type)
                     self.send_header("Content-Length", str(len(data)))
                     # RFC 5987 filename*：中文文件名安全下载
-                    from urllib.parse import quote
                     self.send_header(
                         "Content-Disposition",
                         "attachment; filename*=UTF-8''" + quote(row.filename),
@@ -461,7 +529,7 @@ class NexusHandler(BaseHTTPRequestHandler):
         # POST /nexus/admin/oem_upload?oem_id=N&filename=合同.pdf  body=文件字节
         if path == "/nexus/admin/oem_upload":
             if self._check_admin():
-                from urllib.parse import parse_qs, unquote
+                from urllib.parse import unquote
                 qs = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
                 oem_id = int((qs.get("oem_id") or ["0"])[0] or 0)
                 filename = unquote((qs.get("filename") or [""])[0])
@@ -515,6 +583,20 @@ class NexusHandler(BaseHTTPRequestHandler):
                         stats if isinstance(stats, dict) else {},
                         # 来源 IP 由母舰这边读（实例自报不可信、也拿不到自己的公网 IP）
                         client_ip=self._client_ip(),
+                    ),
+                )
+            )
+            return
+
+        if path == "/nexus/user/attribution":
+            self._with_session(
+                lambda s: self._json(
+                    200,
+                    oem_svc.record_user_attribution(
+                        s,
+                        str(body.get("key", "")),
+                        str(body.get("referral_code", "")),
+                        str(body.get("user_id", "")),
                     ),
                 )
             )

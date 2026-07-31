@@ -2775,12 +2775,29 @@ export async function getAuthConfig(baseUrl: string): Promise<{ turnstile: boole
   } catch { return { turnstile: false, siteKey: '' } }
 }
 
-export async function registerRequestCode(baseUrl: string, email: string, turnstile = ''): Promise<number> {
+/** 校验 OEM 分享码，注册页只展示 Nexus 确认过的邀请方名称。 */
+export async function getReferralInfo(
+  baseUrl: string,
+  referralCode: string,
+): Promise<{ code: string; oem_id: number; name: string }> {
+  const base = baseUrl.replace(/\/$/, '')
+  const r = await fetch(`${base}/cosmac/register/referral?code=${encodeURIComponent(referralCode)}`)
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || '邀请链接已失效')
+  return { code: String(j.code || ''), oem_id: Number(j.oem_id || 0), name: String(j.name || 'OEM 客户') }
+}
+
+export async function registerRequestCode(
+  baseUrl: string,
+  email: string,
+  turnstile = '',
+  referralCode = '',
+): Promise<number> {
   const base = baseUrl.replace(/\/$/, '')
   const r = await fetch(`${base}/cosmac/register/request-code`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, turnstile }),
+    body: JSON.stringify({ email, turnstile, referral_code: referralCode }),
   })
   const j = await r.json().catch(() => ({}))
   if (!r.ok) {
@@ -2795,7 +2812,7 @@ export async function registerRequestCode(baseUrl: string, email: string, turnst
 /** 验码 + 建号。成功返回后端 body（含 user_id）；失败抛出带文案的错误。 */
 export async function registerVerify(
   baseUrl: string,
-  args: { email: string; code: string; username: string; password: string },
+  args: { email: string; code: string; username: string; password: string; referral_code?: string },
 ): Promise<Record<string, any>> {
   const base = baseUrl.replace(/\/$/, '')
   const r = await fetch(`${base}/cosmac/register/verify`, {

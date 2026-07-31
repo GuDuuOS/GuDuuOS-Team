@@ -19,7 +19,7 @@ import secrets
 import time
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from nexus.db import (
     NexusInstance,
@@ -30,7 +30,9 @@ from nexus.db import (
     NexusOemFile,
     NexusOemInvite,
     NexusOemProfile,
+    NexusOemShare,
     NexusSession,
+    NexusUserAttribution,
     NexusWallet,
 )
 from nexus.fleet import FleetError
@@ -93,13 +95,25 @@ def _resolve_inviter(s, inviter: str) -> Optional[int]:
     规则（负责人 2026-07-23 拍板：必填、填错不能注册）：
       - 空 → 拒绝（层级必须完整，大屏星球图不允许悬空节点）；
       - 官方码 GUDUU（不分大小写）→ None（平台直属）；
-      - 其他 → 必须是已存在且状态正常的 OEM 邮箱，否则拒绝。
+      - 其他 → 可填已存在 OEM 的邮箱，也可填其门户分享链接里的随机分享码；
+        两者都要求邀请方状态正常，否则拒绝。
     """
     inviter = (inviter or "").strip()
     if not inviter:
         raise FleetError("NEXUS_INVITER_REQUIRED", "请填写邀请人邮箱（平台直接客户填 GUDUU）")
     if inviter.upper() == _ROOT_INVITE_CODE:
         return None
+    # 分享链接会把随机码自动回填到 OEM 注册表单；保留邮箱输入兼容既有客户和线下邀请。
+    share = s.execute(
+        select(NexusOemShare).where(NexusOemShare.code == inviter)
+    ).scalar_one_or_none()
+    if share is not None:
+        owner = s.get(NexusOem, share.oem_id)
+        if owner is not None and owner.status == "active":
+            return int(owner.id)
+        raise FleetError(
+            "NEXUS_INVITER_INVALID", "邀请人不存在或不可用，请与邀请你的人确认", 400
+        )
     row = s.execute(
         select(NexusOem).where(NexusOem.email == inviter.lower())
     ).scalar_one_or_none()
@@ -230,6 +244,203 @@ def public_oem(oem: NexusOem) -> Dict[str, Any]:
     }
 
 
+# ---------- 分享码、无限层级与普通用户归属 ----------
+
+def _share_for(s, oem_id: int) -> NexusOemShare:
+    """读取或首次生成某 OEM 的稳定随机分享码。"""
+    row = s.get(NexusOemShare, int(oem_id))
+    if row is not None:
+        return row
+    # 96 bit 随机量足够防枚举；去掉 URL 不友好的符号，方便口头/纸面传播。
+    while True:
+        code = secrets.token_urlsafe(12).replace("-", "").replace("_", "")[:16]
+        exists = s.execute(
+            select(NexusOemShare.oem_id).where(NexusOemShare.code == code)
+        ).first()
+        if exists is None:
+            row = NexusOemShare(oem_id=int(oem_id), code=code)
+            s.add(row)
+            s.flush()
+            return row
+
+
+def referral_info(s, code: str) -> Dict[str, Any]:
+    """公开校验分享码并返回最小邀请方信息，供实例注册页展示。
+
+    不返回邮箱、联系人和上级链，避免一条公开链接变成客户资料查询接口。
+    """
+    normalized = (code or "").strip()
+    if not normalized:
+        raise FleetError("NEXUS_REFERRAL_REQUIRED", "邀请链接缺少分享码")
+    share = s.execute(
+        select(NexusOemShare).where(NexusOemShare.code == normalized)
+    ).scalar_one_or_none()
+    owner = s.get(NexusOem, share.oem_id) if share is not None else None
+    if owner is None or owner.status != "active":
+        raise FleetError("NEXUS_REFERRAL_INVALID", "邀请链接已失效，请联系邀请方", 404)
+    profile = s.get(NexusOemProfile, owner.id)
+    return {
+        "code": share.code,
+        "oem_id": owner.id,
+        "name": (profile.company if profile and profile.company else owner.name) or "OEM 客户",
+    }
+
+
+def _hierarchy_maps(s) -> tuple:
+    """一次读取 OEM 树，返回 ``父映射、子映射、账号映射``。"""
+    rows = s.execute(select(NexusOem)).scalars().all()
+    accounts = {int(row.id): row for row in rows}
+    parents: Dict[int, Optional[int]] = {oid: None for oid in accounts}
+    children: Dict[int, List[int]] = {oid: [] for oid in accounts}
+    for child_id, parent_id in s.execute(
+        select(NexusOemInvite.oem_id, NexusOemInvite.inviter_id)
+    ).all():
+        child = int(child_id)
+        parent = int(parent_id) if parent_id is not None else None
+        parents[child] = parent
+        if parent is not None:
+            children.setdefault(parent, []).append(child)
+    return parents, children, accounts
+
+
+def _ancestor_ids(parents: Dict[int, Optional[int]], oem_id: int) -> List[int]:
+    """从直属上级向平台根部取祖先 id；带环检测，坏数据不会拖死请求。"""
+    out: List[int] = []
+    seen = {int(oem_id)}
+    current = parents.get(int(oem_id))
+    while current is not None and current not in seen:
+        out.append(current)
+        seen.add(current)
+        current = parents.get(current)
+    return out
+
+
+def _descendant_ids(children: Dict[int, List[int]], oem_id: int) -> List[int]:
+    """广度遍历全部下级，不限制深度；异常环通过 seen 收敛。"""
+    out: List[int] = []
+    queue = list(children.get(int(oem_id), []))
+    seen = {int(oem_id)}
+    while queue:
+        current = queue.pop(0)
+        if current in seen:
+            continue
+        seen.add(current)
+        out.append(current)
+        queue.extend(children.get(current, []))
+    return out
+
+
+def share_summary(s, oem_id: int, portal_base: str) -> Dict[str, Any]:
+    """生成 OEM 门户的分享链接、二维码目标与层级人数统计。"""
+    owner = s.get(NexusOem, int(oem_id))
+    if owner is None:
+        raise FleetError("NEXUS_OEM_NOT_FOUND", "OEM 不存在", 404)
+    share = _share_for(s, owner.id)
+    instances = my_instances(s, owner.id)
+    parents, children, accounts = _hierarchy_maps(s)
+    descendants = _descendant_ids(children, owner.id)
+    network_ids = [owner.id] + descendants
+    direct_users = int(
+        s.execute(
+            select(func.count(NexusUserAttribution.id)).where(
+                NexusUserAttribution.oem_id == owner.id
+            )
+        ).scalar_one()
+    )
+    network_users = int(
+        s.execute(
+            select(func.count(NexusUserAttribution.id)).where(
+                NexusUserAttribution.oem_id.in_(network_ids)
+            )
+        ).scalar_one()
+    )
+    ancestor_ids = _ancestor_ids(parents, owner.id)
+    return {
+        "code": share.code,
+        "partner_link": f"{portal_base.rstrip('/')}/portal/?invite={share.code}",
+        "user_links": [
+            {
+                "instance_id": int(item["id"]),
+                "domain": item["domain"],
+                "url": f"https://{item['domain']}/#/login?mode=register&ref={share.code}",
+            }
+            for item in instances
+        ],
+        "level": len(ancestor_ids) + 1,
+        "ancestors": [
+            {
+                "id": oid,
+                "name": accounts[oid].name or accounts[oid].email,
+            }
+            for oid in reversed(ancestor_ids)
+            if oid in accounts
+        ],
+        "direct_oems": len(children.get(owner.id, [])),
+        "total_downline_oems": len(descendants),
+        "direct_users": direct_users,
+        "network_users": network_users,
+    }
+
+
+def qr_target(s, oem_id: int, portal_base: str, kind: str, instance_id: int = 0) -> str:
+    """按当前登录 OEM 重新计算二维码目标，拒绝把二维码端点当任意 URL 生成器。"""
+    summary = share_summary(s, oem_id, portal_base)
+    if kind == "partner":
+        return str(summary["partner_link"])
+    if kind == "user":
+        for item in summary["user_links"]:
+            if int(item["instance_id"]) == int(instance_id):
+                return str(item["url"])
+        raise FleetError("NEXUS_INSTANCE_NOT_OWNED", "该实例不属于当前 OEM", 403)
+    raise FleetError("NEXUS_BAD_QR_KIND", "二维码类型不合法")
+
+
+def record_user_attribution(
+    s, raw_key: str, referral_code: str, user_id: str
+) -> Dict[str, Any]:
+    """实例用授权 KEY 幂等上报一条“普通用户→直属 OEM”归属边。
+
+    分享码所属 OEM、KEY 归属 OEM、实例域名与 Matrix user_id 域名必须四者一致，
+    防止任意实例把别处用户或别家客户计到自己名下。
+    """
+    from nexus.fleet import _key_by_plain
+
+    key = _key_by_plain(s, raw_key)
+    if key.instance_id is None:
+        raise FleetError("NEXUS_NOT_REDEEMED", "授权码尚未兑换开通", 403)
+    instance = s.get(NexusInstance, key.instance_id)
+    claim = s.get(NexusKeyClaim, key.id)
+    if instance is None or claim is None:
+        raise FleetError("NEXUS_ATTRIBUTION_OWNER_MISSING", "实例尚未归属 OEM", 403)
+    info = referral_info(s, referral_code)
+    if int(info["oem_id"]) != int(claim.oem_id):
+        raise FleetError("NEXUS_REFERRAL_INSTANCE_MISMATCH", "邀请链接与注册实例不匹配", 403)
+    normalized_user = (user_id or "").strip()
+    if not normalized_user.startswith("@") or ":" not in normalized_user:
+        raise FleetError("NEXUS_BAD_USER_ID", "用户 ID 格式不正确")
+    if normalized_user.rsplit(":", 1)[-1].lower() != instance.domain.lower():
+        raise FleetError("NEXUS_USER_INSTANCE_MISMATCH", "用户不属于该注册实例", 403)
+    existing = s.execute(
+        select(NexusUserAttribution).where(
+            NexusUserAttribution.instance_id == instance.id,
+            NexusUserAttribution.user_id == normalized_user,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        if int(existing.oem_id) != int(claim.oem_id):
+            raise FleetError("NEXUS_USER_ALREADY_ATTRIBUTED", "用户已经归属其他 OEM", 409)
+        return {"id": existing.id, "already": True, "oem_id": existing.oem_id}
+    row = NexusUserAttribution(
+        instance_id=instance.id,
+        oem_id=claim.oem_id,
+        user_id=normalized_user[:255],
+        referral_code=(referral_code or "").strip()[:32],
+    )
+    s.add(row)
+    s.flush()
+    return {"id": row.id, "already": False, "oem_id": row.oem_id}
+
+
 # ---------- KEY 认领（把一把 KEY 归到自己名下）----------
 
 def claim_key(s, oem_id: int, raw_key: str) -> Dict[str, Any]:
@@ -335,15 +546,19 @@ def list_oems(s) -> List[Dict[str, Any]]:
     for (oid,) in s.execute(select(NexusKeyClaim.oem_id)).all():
         counts[int(oid)] = counts.get(int(oid), 0) + 1
     # 邀请边一次拉全：oem_id → inviter_id（None=平台直属；无边=旧账号,视同直属）
-    invites: Dict[int, Optional[int]] = {}
-    for oid, iid in s.execute(
-        select(NexusOemInvite.oem_id, NexusOemInvite.inviter_id)
+    invites, children, _accounts = _hierarchy_maps(s)
+    user_counts: Dict[int, int] = {}
+    for oid, count in s.execute(
+        select(NexusUserAttribution.oem_id, func.count(NexusUserAttribution.id))
+        .group_by(NexusUserAttribution.oem_id)
     ).all():
-        invites[int(oid)] = int(iid) if iid is not None else None
+        user_counts[int(oid)] = int(count)
     emails = {r.id: r.email for r in rows}
     out = []
     for r in rows:
         iid = invites.get(r.id)
+        ancestors = _ancestor_ids(invites, r.id)
+        descendants = _descendant_ids(children, r.id)
         out.append(
             {
                 **public_oem(r),
@@ -351,9 +566,45 @@ def list_oems(s) -> List[Dict[str, Any]]:
                 "inviter_id": iid,
                 # 展示名：上线邮箱 / GuDuu(平台直属或历史账号)
                 "inviter": emails.get(iid, f"#{iid}") if iid is not None else "GuDuu",
+                "level": len(ancestors) + 1,
+                "direct_oems": len(children.get(r.id, [])),
+                "total_downline_oems": len(descendants),
+                "direct_users": user_counts.get(r.id, 0),
+                "network_users": sum(
+                    user_counts.get(oid, 0) for oid in [r.id] + descendants
+                ),
             }
         )
     return out
+
+
+def hierarchy_snapshot(s) -> Dict[str, Any]:
+    """超级管理员读取完整 OEM 树和普通用户归属边。
+
+    返回平铺 nodes/edges，前端可按需要画树或表格；不在数据库复制祖先路径，层级调整时
+    只需变更 OEM 入边。普通用户仅返回 Matrix user_id 与注册实例，不含邮箱和认证资料。
+    """
+    nodes = list_oems(s)
+    users = s.execute(
+        select(NexusUserAttribution).order_by(NexusUserAttribution.id.desc())
+    ).scalars().all()
+    return {
+        "oems": nodes,
+        "oem_edges": [
+            {"oem_id": row["id"], "parent_oem_id": row["inviter_id"]}
+            for row in nodes
+        ],
+        "user_edges": [
+            {
+                "id": row.id,
+                "user_id": row.user_id,
+                "instance_id": row.instance_id,
+                "oem_id": row.oem_id,
+                "created_ts": row.created_ts,
+            }
+            for row in users
+        ],
+    }
 
 
 # ---------- 授权码申请闭环（OEM 申请 → 超管签发 → 门户交付明文）----------
@@ -616,6 +867,11 @@ __all__ = [
     "resolve_session",
     "logout",
     "public_oem",
+    "referral_info",
+    "share_summary",
+    "qr_target",
+    "record_user_attribution",
+    "hierarchy_snapshot",
     "claim_key",
     "my_keys",
     "my_instances",

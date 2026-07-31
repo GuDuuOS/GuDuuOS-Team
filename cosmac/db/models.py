@@ -440,6 +440,31 @@ class RegisteredEmail(Base, TimestampMixin):
         return f"<RegisteredEmail {self.email} -> {self.username}>"
 
 
+class OemUserAttribution(Base, TimestampMixin):
+    """实例本地的普通用户 OEM 归属与可靠同步队列。
+
+    用户注册成功后先在本地事务中写入这一行，再异步同步到 Nexus。Nexus 暂时不可达时
+    关系不会丢，后续心跳会继续重试；母舰确认后状态改为 ``synced``。这里不保存用户
+    密码、验证码或聊天内容，只保存 Matrix user_id 与分享码。
+    """
+
+    __tablename__ = "cosmac_oem_user_attribution"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, unique=True, index=True
+    )
+    referral_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    # pending=等待/重试同步；synced=母舰已确认；rejected=母舰判定为永久非法。
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str] = mapped_column(String(300), nullable=False, default="")
+    synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<OemUserAttribution {self.user_id} {self.status}>"
+
+
 class AuthEvent(Base, TimestampMixin):
     """认证审计事件（登录/注册/找回密码的每次尝试）——安全增强阶段0 的地基。
 

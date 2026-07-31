@@ -22,6 +22,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -252,6 +253,42 @@ class NexusOemInvite(Base):
 
     oem_id = Column(Integer, primary_key=True)  # = NexusOem.id
     inviter_id = Column(Integer, nullable=True, default=None, index=True)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
+class NexusOemShare(Base):
+    """OEM 稳定分享码（一家一个，普通用户与下级 OEM 邀请共用）。
+
+    分享码不是登录凭证，只承担“这次注册由谁邀请”的不可猜测标识。使用随机码而非
+    OEM id/邮箱，避免公开链接暴露内部编号或客户邮箱；码生成后保持稳定，已印刷的二维码
+    不会因门户刷新而失效。
+    """
+
+    __tablename__ = "nexus_oem_share"
+
+    oem_id = Column(Integer, primary_key=True)  # = NexusOem.id
+    code = Column(String(32), nullable=False, unique=True, index=True)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
+class NexusUserAttribution(Base):
+    """普通用户到直属 OEM 的归属边（母舰只存关系，不存密码、验证码或聊天内容）。
+
+    ``instance_id + user_id`` 唯一，保证一个具体 Matrix 账号只会首次挂靠一次；
+    ``oem_id`` 保存直属 OEM，完整祖先链通过 ``NexusOemInvite`` 动态计算。这样 OEM
+    层级以后扩展到任意深度也不用复制/改写每个用户的祖先数组。
+    """
+
+    __tablename__ = "nexus_user_attribution"
+    __table_args__ = (
+        UniqueConstraint("instance_id", "user_id", name="uq_nexus_user_instance"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    instance_id = Column(Integer, nullable=False, index=True)
+    oem_id = Column(Integer, nullable=False, index=True)
+    user_id = Column(String(255), nullable=False)
+    referral_code = Column(String(32), nullable=False, default="")
     created_ts = Column(BigInteger, nullable=False, default=_now_ms)
 
 

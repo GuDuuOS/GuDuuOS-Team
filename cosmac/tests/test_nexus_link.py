@@ -88,6 +88,7 @@ class NexusLinkTest(unittest.TestCase):
             self.assertEqual(nexus_link.get_last_balance(), 4321)
         finally:
             srv.shutdown()
+            srv.server_close()
 
     def test_beat_network_failure_returns_false(self):
         os.environ["COSMAC_NEXUS_URL"] = "http://127.0.0.1:1"  # 必然连不上

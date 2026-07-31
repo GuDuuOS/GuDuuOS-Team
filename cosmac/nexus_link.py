@@ -20,6 +20,7 @@ import logging
 import threading
 import time
 from typing import Any, Dict, Optional
+from urllib.parse import quote
 
 import requests
 
@@ -39,6 +40,12 @@ _COUNTS: Dict[str, Any] = {"day": "", "messages": 0}
 
 # 母舰最近一次回传的钱包余额（实例后台"余额快见底"提醒的数据源，负数=已透支）
 _last_balance: Optional[int] = None
+# 注册请求和 10 分钟心跳可能同时触发队列投递；一把锁避免同一行被重复并发提交。
+_ATTR_SYNC_LOCK = threading.Lock()
+
+
+class ReferralError(Exception):
+    """邀请链接无法由 Nexus 确认时的用户可读错误。"""
 
 
 def _today() -> str:
@@ -63,6 +70,103 @@ def _messages_today() -> int:
 def enabled() -> bool:
     """是否接入了 OEM 体系（两项 env 齐备才算）。"""
     return bool(_env("NEXUS_URL")) and bool(_env("OEM_KEY"))
+
+
+def referral_info(code: str) -> Dict[str, Any]:
+    """向 Nexus 校验分享码并返回最小邀请方信息。
+
+    带分享码的注册必须 fail-closed：母舰不可达或分享码无效时不继续建号，否则会生成
+    无法确认归属的用户。普通不带分享码的直接注册不受影响。
+    """
+    normalized = (code or "").strip()
+    if not normalized:
+        raise ReferralError("邀请链接缺少分享码")
+    if not enabled():
+        raise ReferralError("当前实例尚未接入 OEM 邀请体系")
+    try:
+        response = requests.get(
+            f"{_env('NEXUS_URL').rstrip('/')}/nexus/referral?code={quote(normalized)}",
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        raise ReferralError("邀请关系暂时无法确认，请稍后重试") from exc
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if not response.ok:
+        raise ReferralError(str(payload.get("error") or "邀请链接已失效"))
+    return dict(payload)
+
+
+def queue_user_attribution(user_id: str, referral_code: str) -> bool:
+    """先把注册用户归属写入实例本地可靠队列。"""
+    try:
+        from cosmac.db import session_scope
+        from cosmac.db.oem_attribution_repo import enqueue
+
+        with session_scope() as session:
+            return enqueue(
+                session, user_id=user_id, referral_code=referral_code
+            )
+    except Exception:
+        logger.exception("保存 OEM 用户归属失败 user_id=%s", user_id)
+        return False
+
+
+def sync_pending_attributions(limit: int = 50) -> int:
+    """把本地待同步关系幂等投递到 Nexus，返回本轮成功数。"""
+    if not enabled() or not _ATTR_SYNC_LOCK.acquire(blocking=False):
+        return 0
+    synced = 0
+    try:
+        from cosmac.db import session_scope
+        from cosmac.db.oem_attribution_repo import mark_failed, mark_synced, pending
+
+        with session_scope() as session:
+            for row in pending(session, limit=limit):
+                try:
+                    response = requests.post(
+                        f"{_env('NEXUS_URL').rstrip('/')}/nexus/user/attribution",
+                        json={
+                            "key": _env("OEM_KEY"),
+                            "referral_code": row.referral_code,
+                            "user_id": row.user_id,
+                        },
+                        timeout=10,
+                    )
+                    if response.ok:
+                        mark_synced(row)
+                        synced += 1
+                    else:
+                        try:
+                            payload = response.json()
+                        except ValueError:
+                            payload = {}
+                        mark_failed(
+                            row,
+                            str(payload.get("error") or f"HTTP {response.status_code}"),
+                            # 429 是临时限频；其他 4xx 表示链接/实例/用户不一致，继续重试无益。
+                            permanent=400 <= response.status_code < 500
+                            and response.status_code != 429,
+                        )
+                except requests.RequestException as exc:
+                    mark_failed(row, str(exc), permanent=False)
+        return synced
+    except Exception:
+        logger.exception("同步 OEM 用户归属队列失败")
+        return synced
+    finally:
+        _ATTR_SYNC_LOCK.release()
+
+
+def sync_attributions_soon() -> None:
+    """注册成功后后台立即投递一次，不让 HTTP 注册响应额外等待母舰网络。"""
+    threading.Thread(
+        target=sync_pending_attributions,
+        name="nexus-attribution-sync",
+        daemon=True,
+    ).start()
 
 
 def get_last_balance() -> Optional[int]:
@@ -137,6 +241,8 @@ def start(config: CosmacConfig) -> None:
         time.sleep(_FIRST_BEAT_DELAY_S)
         while True:
             ok = beat(config)
+            # 无论心跳本身成功与否都尝试队列：二者端点可能受不同的瞬时故障影响。
+            sync_pending_attributions()
             if ok and _last_balance is not None and _last_balance <= 0:
                 # 余额耗尽：AI 已被网关断供。日志大声说，后台横幅是后续 UI 活。
                 logger.warning(

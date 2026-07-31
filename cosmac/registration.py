@@ -372,9 +372,9 @@ def _issue_code(key: str, send: Callable[[str], None]) -> Tuple[int, Dict[str, A
 
 
 def request_code(
-    email: str, *, client_ip: str = "", turnstile: str = ""
+    email: str, *, client_ip: str = "", turnstile: str = "", referral_code: str = ""
 ) -> Tuple[int, Dict[str, Any]]:
-    """发**注册**验证码到邮箱。返回 (http状态, 响应体)。turnstile=前端人机验证令牌。"""
+    """发注册验证码；带 OEM 分享码时先向 Nexus 确认，避免为失效链接发信。"""
     if not registration_enabled():
         return 503, {"error": "服务器未开启邮箱注册"}
     email = (email or "").strip().lower()
@@ -384,6 +384,13 @@ def request_code(
     # (审查中④)。校验/限频都放在 _verify_turnstile 之前。
     if not _ip_rate_ok("send", client_ip, _IP_SEND_MAX, _IP_SEND_WINDOW):
         return 429, {"error": "请求过于频繁，请稍后再试"}
+    if referral_code:
+        from cosmac import nexus_link
+
+        try:
+            nexus_link.referral_info(referral_code)
+        except nexus_link.ReferralError as exc:
+            return 400, {"error": str(exc)}
     if not _verify_turnstile(turnstile, client_ip):
         return 400, {"error": "人机验证未通过，请重试"}
     return _issue_code(_key("register", email), lambda c: _send_email(email, c))
@@ -471,7 +478,7 @@ def _synapse_register(hs_url: str, username: str, password: str) -> Tuple[int, D
 
 def verify_and_register(
     email: str, code: str, username: str, password: str, *, hs_url: str,
-    client_ip: str = "",
+    client_ip: str = "", referral_code: str = "",
 ) -> Tuple[int, Dict[str, Any]]:
     """验码 → 建号。成功返回 (200, {user_id, access_token...})。"""
     if not registration_enabled():
@@ -488,6 +495,16 @@ def verify_and_register(
     # 按 IP 限制验码尝试（叠加单码 5 次上限，堵住「不断重发刷新尝试计数 + 多邮箱并发」爆破）。
     if not _ip_rate_ok("attempt", client_ip, _IP_ATTEMPT_MAX, _IP_ATTEMPT_WINDOW):
         return 429, {"error": "尝试过于频繁，请稍后再试"}
+
+    referral = None
+    if referral_code:
+        # 注册前再次服务端校验（不能只信前端加载时的展示结果）；失效就不消费验证码、不建号。
+        from cosmac import nexus_link
+
+        try:
+            referral = nexus_link.referral_info(referral_code)
+        except nexus_link.ReferralError as exc:
+            return 400, {"error": str(exc)}
 
     ok, msg = _check_code(email, code, purpose="register")
     if not ok:
@@ -516,6 +533,18 @@ def verify_and_register(
         # 无法邮箱登录/找回(审查 bug#6)。保住映射,本人重试时 _claim_email 走 "existing"
         # 自愈:账号没建成→重试成功;已建成→报"用户名已占用",可走找回密码拿回账号。
         _release_email(email, username)
+    if status == 200 and referral_code:
+        # 先落本地可靠队列，再后台投递母舰；网络抖动不影响用户拿到已创建的账号。
+        from cosmac import nexus_link
+
+        user_id = str(payload.get("user_id") or "")
+        queued = bool(user_id) and nexus_link.queue_user_attribution(
+            user_id, referral_code
+        )
+        if queued:
+            nexus_link.sync_attributions_soon()
+        payload["referral"] = referral or {}
+        payload["attribution_queued"] = queued
     # 建号失败时不还原验证码（已一次性作废）——让用户重新走流程，避免码被复用。
     return status, payload
 

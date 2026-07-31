@@ -17,7 +17,7 @@ import { useRoute, useRouter } from 'vue-router'
 import logoUrl from '@/assets/cosmac-logo.png'
 import {
   loginNoStart, loginWithEmailNoStart,
-  registerRequestCode, registerVerify,
+  registerRequestCode, registerVerify, getReferralInfo,
   resetRequestCode, resetVerify, getAuthConfig,
   fetchSitePage,
 } from '@/matrix/client'
@@ -100,6 +100,28 @@ const loading = ref(false)
 // 「添加账号」模式：从主应用点「添加账号」跳来时带 ?add=1，给个「返回当前账号」出口。
 const isAdd = computed(() => route.query.add === '1')
 
+// OEM 分享链接：/#/login?mode=register&ref=<随机码>。码只作归属标识，必须由本实例
+// 后端转 Nexus 校验后才展示邀请方名称、允许发送验证码。
+const referralCode = computed(() => typeof route.query.ref === 'string' ? route.query.ref.trim() : '')
+const referralName = ref('')
+const referralLoading = ref(false)
+const referralInvalid = ref('')
+
+async function loadReferral() {
+  referralName.value = ''
+  referralInvalid.value = ''
+  if (!referralCode.value) return
+  referralLoading.value = true
+  try {
+    const result = await getReferralInfo(HS, referralCode.value)
+    referralName.value = result.name
+  } catch (err: any) {
+    referralInvalid.value = err?.message || '邀请链接已失效'
+  } finally {
+    referralLoading.value = false
+  }
+}
+
 // —— 异地登录二次验证(阶段2):登录密码对了但换了新地点 → 后端发邮箱码,这里输码完成验证 ——
 const stepUp = ref(false)
 const stepUpHint = ref('')          // 打码后的邮箱(g***@gmail.com),提示码发哪了
@@ -154,6 +176,8 @@ async function renderTurnstile() {
 }
 
 onMounted(async () => {
+  if (route.query.mode === 'register' || referralCode.value) authMode.value = 'register'
+  await loadReferral()
   const cfg = await getAuthConfig(HS)
   tsEnabled.value = cfg.turnstile
   tsSiteKey.value = cfg.siteKey
@@ -231,7 +255,7 @@ async function sendCode() {
   try {
     const cd = authMode.value === 'reset'
       ? await resetRequestCode(HS, e, tsToken.value)
-      : await registerRequestCode(HS, e, tsToken.value)
+      : await registerRequestCode(HS, e, tsToken.value, referralCode.value)
     info.value = `验证码已发送，请查收 ${e}（含垃圾箱）`
     startCodeCooldown(cd || 60)
   } catch (err: any) {
@@ -346,7 +370,17 @@ async function doRegister() {
   try {
     // L18：注册成功即返回可用会话，registerVerify 内部已 saveSession；只有老后端没回 token 时
     // 才回退登录一次（不再无条件 loginNoStart 多建一个 device/token）。
-    const reg = await registerVerify(HS, { email: e, code: emailCode.value.trim(), username: u, password: password.value })
+    if (referralCode.value && (referralLoading.value || referralInvalid.value || !referralName.value)) {
+      error.value = referralInvalid.value || '正在确认邀请关系，请稍后再试'
+      return
+    }
+    const reg = await registerVerify(HS, {
+      email: e,
+      code: emailCode.value.trim(),
+      username: u,
+      password: password.value,
+      referral_code: referralCode.value,
+    })
     if (!reg?.access_token) await loginNoStart(HS, u, password.value)
     proceed()
   } catch (err: any) {
@@ -442,6 +476,12 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
 
         <!-- ===== 注册 / 找回密码 ===== -->
         <template v-else>
+          <div v-if="authMode === 'register' && referralCode" class="referral-banner" :class="{ invalid: referralInvalid }">
+            <span class="referral-dot"></span>
+            <span v-if="referralLoading">正在确认邀请关系…</span>
+            <span v-else-if="referralInvalid">{{ referralInvalid }}</span>
+            <span v-else>由 <b>{{ referralName }}</b> 邀请注册，账号将归属该 OEM</span>
+          </div>
           <div class="auth-code-row">
             <input v-model="email" type="email" name="reg-email" autocomplete="email" placeholder="邮箱" />
             <button class="auth-code-btn" :disabled="codeCooldown > 0 || sendingCode || !email.trim()" @click="sendCode">
@@ -527,6 +567,10 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
 .auth-subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .auth-code-row { display: flex; gap: 8px; }
 .auth-code-row input { flex: 1; min-width: 0; }
+.referral-banner { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid rgba(224, 119, 31, .28); border-radius: 10px; background: rgba(224, 119, 31, .07); color: var(--text-2, #55504a); font-size: 13px; }
+.referral-banner.invalid { border-color: rgba(190, 55, 55, .28); background: rgba(190, 55, 55, .06); color: var(--danger); }
+.referral-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--accent); }
+.referral-banner.invalid .referral-dot { background: var(--danger); }
 /* 密码框 + 右侧小眼睛(负责人建议):相对定位包一层,眼睛绝对定位在右内侧;
    输入框右内边距留出图标位,避免长密码文字压到图标下面。 */
 .pw-wrap { position: relative; display: flex; }

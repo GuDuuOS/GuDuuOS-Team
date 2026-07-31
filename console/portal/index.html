@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
 <script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=9" />
+<link rel="stylesheet" href="/portal/portal.css?v=10" />
 </head>
 <body>
 <!--
@@ -55,7 +55,7 @@
       <label>联系方式<input name="phone" type="text" required placeholder="手机号 / 微信号" /></label>
       <label>邮箱<input name="email" type="email" autocomplete="username" required placeholder="you@company.com" /></label>
       <label>密码<input name="password" type="password" autocomplete="new-password" required placeholder="至少 8 位，含字母和数字" /></label>
-      <label>邀请人邮箱<input name="inviter" type="text" required placeholder="邀请你的合作伙伴邮箱" /></label>
+      <label>邀请人<input name="inviter" type="text" required placeholder="邀请链接会自动填写，也可输入邀请人邮箱" /></label>
       <button class="primary">注册并登录</button>
       <p class="hint">以上信息均为必填。邀请人必须是已注册的合作伙伴（填错无法注册）；GuDuu 平台直接客户填 <b>GUDUU</b>。</p>
     </form>
@@ -78,6 +78,34 @@
     <div class="panel-head"><h2>我的实例</h2></div>
     <div id="oem-instances" class="cards"></div>
     <p id="oem-noinst" class="empty" hidden>还没有已开通的实例——认领授权码后，在你的服务器上运行安装命令即可开通。</p>
+  </section>
+
+  <section class="panel" id="panel-referral">
+    <div class="panel-head">
+      <div>
+        <h2>邀请与层级</h2>
+        <p class="hint">分享用户注册链接，注册成功后会直属挂靠在你的 OEM 名下；邀请合作伙伴注册 OEM，会成为你的直属下级。层级深度不设上限，仅记录关系与人数。</p>
+      </div>
+      <span class="badge active" id="oem-referral-code">—</span>
+    </div>
+    <div class="stats referral-stats">
+      <div class="stat"><small>当前层级</small><b class="plain" id="oem-ref-level">—</b></div>
+      <div class="stat"><small>直属普通用户</small><b id="oem-ref-users">0</b></div>
+      <div class="stat"><small>直属下级 OEM</small><b id="oem-ref-direct">0</b></div>
+      <div class="stat"><small>全部下级 / 网络用户</small><b class="plain" id="oem-ref-network">0 / 0</b></div>
+    </div>
+    <div class="share-grid">
+      <div class="share-block">
+        <h3>邀请普通用户</h3>
+        <p class="hint">每个已开通实例都有自己的注册链接和二维码。</p>
+        <div id="oem-user-share"></div>
+      </div>
+      <div class="share-block">
+        <h3>邀请下级 OEM</h3>
+        <p class="hint">对方从此链接注册后，自动成为你的直属下级。</p>
+        <div id="oem-partner-share"></div>
+      </div>
+    </div>
   </section>
 
   <section class="panel" id="panel-announcements" hidden>
@@ -294,7 +322,7 @@
       <section class="panel">
         <div class="panel-head"><h2>OEM 客户</h2></div>
         <table class="tbl" id="admin-oems">
-          <thead><tr><th>#</th><th>邮箱</th><th>称呼</th><th>邀请人</th><th>状态</th><th>认领 KEY</th><th>注册时间</th><th>操作</th></tr></thead>
+          <thead><tr><th>#</th><th>邮箱</th><th>称呼</th><th>层级 / 直属上级</th><th>用户</th><th>下级 OEM</th><th>状态</th><th>认领 KEY</th><th>注册时间</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </section>
@@ -362,6 +390,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=16"></script>
+<script src="/portal/portal.js?v=17"></script>
 </body>
 </html>
