@@ -1,16 +1,16 @@
 """Nexus 支付层：商品定价 / 订单 / 支付渠道抽象（模块6 P3）。
 
-商业定调（负责人 2026-07-23 拍板）：
-    - 国内市场：渠道 = **支付宝 + 微信**（Stripe/PayPal 不做）；
+商业定调（负责人 2026-08-01 更新）：
+    - 国内市场：支付宝 + 微信；海外市场：Stripe + PayPal + USDT；
     - 门户直接购买授权码（付款即出码）+ token 充值；
     - 人工「申请→批准」通道保留（谈价/定制客户走它）。
 
 分层：
     - 定价（NexusSetting.pricing）：超管控制台可改、即改即生效；
     - 订单（NexusOrder）：金额一律人民币**分**；
-    - 渠道（PayProvider）：alipay/wechat 是**占位骨架**——`available()` 按 env
-      判断，凭据未配时门户按钮置灰"开通中"；真实 API 到手后只需补
-      `create()` 的下单参数与 `verify_notify()` 的验签两处；
+    - 渠道（PayProvider）：五个真实渠道都是**占位骨架**——`available()` 只表示
+      所需凭据是否配齐，不代表 API 已联调；凭据未配时舰队总览明确显示“待接 API”。
+      海外渠道正式开工前还要扩展订单的多币种字段，不能把外币冒充人民币收入；
     - mock 渠道：`NEXUS_PAY_MOCK=1` 的环境（开发机）可用，一键"模拟支付成功"
       走通 下单→回调→履约 全链路，不碰真钱。
 
@@ -190,15 +190,101 @@ class WechatProvider(PayProvider):
         raise FleetError("NEXUS_PAY_UNAVAILABLE", "微信回调尚未接入", 503)
 
 
+class StripeProvider(PayProvider):
+    """Stripe 海外银行卡收款占位骨架。
+
+    所需 env（正式联调时配置到 ``/etc/nexus.env``）：
+        NEXUS_PAY_STRIPE_SECRET_KEY      Stripe Secret key
+        NEXUS_PAY_STRIPE_WEBHOOK_SECRET Webhook 签名密钥
+
+    当前只向舰队总览报告凭据状态，不开放 OEM 下单按钮。正式接入前必须先给订单模型
+    增加 currency 与原币金额，避免 USD 被现有人民币分字段错误汇总。
+    """
+
+    name = "stripe"
+
+    def available(self) -> bool:
+        return all(
+            os.environ.get(name, "").strip()
+            for name in (
+                "NEXUS_PAY_STRIPE_SECRET_KEY",
+                "NEXUS_PAY_STRIPE_WEBHOOK_SECRET",
+            )
+        )
+
+    def create(self, order: NexusOrder) -> Dict[str, Any]:
+        raise FleetError("NEXUS_PAY_UNAVAILABLE", "Stripe 支付尚未接入", 503)
+
+    def verify_notify(self, headers: Dict[str, str], body: bytes) -> Dict[str, str]:
+        raise FleetError("NEXUS_PAY_UNAVAILABLE", "Stripe 回调尚未接入", 503)
+
+
+class PaypalProvider(PayProvider):
+    """PayPal Checkout 海外收款占位骨架。
+
+    所需 env：``NEXUS_PAY_PAYPAL_CLIENT_ID``、``NEXUS_PAY_PAYPAL_CLIENT_SECRET``
+    与 ``NEXUS_PAY_PAYPAL_WEBHOOK_ID``。三个值齐全时总览显示“凭据已配置”，但在
+    下单/回调实现并经过沙箱验收前仍拒绝真实交易。
+    """
+
+    name = "paypal"
+
+    def available(self) -> bool:
+        return all(
+            os.environ.get(name, "").strip()
+            for name in (
+                "NEXUS_PAY_PAYPAL_CLIENT_ID",
+                "NEXUS_PAY_PAYPAL_CLIENT_SECRET",
+                "NEXUS_PAY_PAYPAL_WEBHOOK_ID",
+            )
+        )
+
+    def create(self, order: NexusOrder) -> Dict[str, Any]:
+        raise FleetError("NEXUS_PAY_UNAVAILABLE", "PayPal 支付尚未接入", 503)
+
+    def verify_notify(self, headers: Dict[str, str], body: bytes) -> Dict[str, str]:
+        raise FleetError("NEXUS_PAY_UNAVAILABLE", "PayPal 回调尚未接入", 503)
+
+
+class UsdtProvider(PayProvider):
+    """USDT 稳定币收款服务商占位骨架。
+
+    链上支付不能只配置一个钱包地址后靠人工猜单。这里要求服务商 API 地址、API key
+    和 webhook 密钥全部存在，未来通过“一单一地址/唯一金额 + 确认数 + webhook
+    验签”完成自动对账。具体支持哪条链由后续服务商选择决定，当前不提前写死网络。
+    """
+
+    name = "usdt"
+
+    def available(self) -> bool:
+        return all(
+            os.environ.get(name, "").strip()
+            for name in (
+                "NEXUS_PAY_USDT_API_BASE",
+                "NEXUS_PAY_USDT_API_KEY",
+                "NEXUS_PAY_USDT_WEBHOOK_SECRET",
+            )
+        )
+
+    def create(self, order: NexusOrder) -> Dict[str, Any]:
+        raise FleetError("NEXUS_PAY_UNAVAILABLE", "USDT 支付尚未接入", 503)
+
+    def verify_notify(self, headers: Dict[str, str], body: bytes) -> Dict[str, str]:
+        raise FleetError("NEXUS_PAY_UNAVAILABLE", "USDT 回调尚未接入", 503)
+
+
 _PROVIDERS: Dict[str, PayProvider] = {
     "mock": MockProvider(),
     "alipay": AlipayProvider(),
     "wechat": WechatProvider(),
+    "stripe": StripeProvider(),
+    "paypal": PaypalProvider(),
+    "usdt": UsdtProvider(),
 }
 
 
 def channels(s=None) -> Dict[str, bool]:
-    """各渠道可用性（门户据此亮/灰按钮）。"""
+    """返回国内与海外渠道凭据状态，门户据此展示“已配置/待接 API”。"""
     return {name: p.available() for name, p in _PROVIDERS.items()}
 
 

@@ -357,7 +357,7 @@ class NexusHandler(BaseHTTPRequestHandler):
             return
         if path == "/nexus/admin/finance_summary":
             # 资金汇总与订单列表分开：列表只取最近 200 单，汇总必须覆盖全部历史订单。
-            # 渠道状态只返回布尔值，不暴露任何支付宝/微信凭据内容。
+            # 国内与海外渠道都只返回布尔状态，不暴露任何支付凭据内容。
             if self._check_admin():
                 self._with_session(
                     lambda s: self._json(

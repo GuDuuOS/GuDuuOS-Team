@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
 <script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=10" />
+<link rel="stylesheet" href="/portal/portal.css?v=11" />
 </head>
 <body>
 <!--
@@ -229,7 +229,7 @@
         <div class="panel-head finance-panel-head">
           <div>
             <h2>资金与经营概览</h2>
-            <p class="hint">仅已确认支付成功的订单计入收入；待支付订单单独展示，不作为营收。</p>
+            <p class="hint">覆盖国内与海外支付；仅已确认成功的订单计入收入，待支付订单不作为营收。</p>
           </div>
           <span id="finance-api-status" class="badge warning">支付 API 待接</span>
         </div>
@@ -240,8 +240,12 @@
             <div id="admin-finance-breakdown"></div>
           </div>
           <div class="finance-block">
-            <h3>支付渠道状态</h3>
-            <div id="admin-payment-channels"></div>
+            <h3>国内支付</h3>
+            <div id="admin-payment-domestic"></div>
+          </div>
+          <div class="finance-block finance-block-overseas">
+            <h3>海外支付</h3>
+            <div id="admin-payment-overseas"></div>
           </div>
         </div>
       </section>
@@ -339,7 +343,7 @@
         <label>充值包（每行一档：<code>元:token数</code>，如 <code>99:50000000</code>）
           <textarea id="pricing-packs" rows="3" style="width:100%;font-family:var(--mono);background:var(--input-bg);color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:9px 12px"></textarea>
         </label>
-        <p class="hint">保存后立即生效；支付宝/微信渠道在凭据配置到服务器后自动亮起（当前可用渠道见门户购买区）。</p>
+        <p class="hint">保存后立即生效；真钱支付按钮尚未开放，国内与海外渠道的凭据状态请在舰队总览查看。</p>
       </section>
       <section class="panel" id="panel-admin-orders" hidden>
         <div class="panel-head"><h2>订单</h2></div>
@@ -390,6 +394,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=17"></script>
+<script src="/portal/portal.js?v=18"></script>
 </body>
 </html>

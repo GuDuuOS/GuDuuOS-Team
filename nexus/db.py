@@ -174,9 +174,10 @@ class NexusSetting(Base):
 class NexusOrder(Base):
     """支付订单（模块6 P3：KEY 在线购买 / token 在线充值）。
 
-    负责人 2026-07-23 拍板：国内市场，渠道=支付宝+微信（Stripe/PayPal 不做）；
-    真实渠道 API 待接（1~2 天后），先落订单闭环 + mock 通道全链路可测。
-    金额单位：人民币**分**（整数，杜绝浮点）。
+    渠道范围包括国内支付宝/微信，以及海外 Stripe/PayPal/USDT；真实渠道 API
+    未联调前只保留渠道骨架与总览状态，先用 mock 通道验证订单履约闭环。
+    现阶段已落地订单金额仍为人民币**分**（整数，杜绝浮点）；海外真实收款开工时
+    必须先补 currency/原币金额/结算金额字段，禁止把 USD 或 USDT 冒充人民币汇总。
     """
 
     __tablename__ = "nexus_order"
@@ -189,7 +190,7 @@ class NexusOrder(Base):
     kind = Column(String(16), nullable=False)
     # 充值目标实例（kind=topup 时必填；kind=key 为空）
     instance_id = Column(Integer, nullable=True, default=None)
-    # alipay / wechat / mock（mock 仅 NEXUS_PAY_MOCK=1 的环境可用）
+    # alipay / wechat / stripe / paypal / usdt / mock；mock 仅开发环境可用
     channel = Column(String(16), nullable=False)
     amount_cents = Column(BigInteger, nullable=False)
     # 本单对应的 token 量（key=附赠额度；topup=充值额度）

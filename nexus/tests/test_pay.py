@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from nexus import db, fleet, oem, pay
 from nexus.fleet import FleetError
@@ -51,6 +52,28 @@ class PayTest(unittest.TestCase):
         self.assertTrue(ch["mock"])       # env 已开
         self.assertFalse(ch["alipay"])    # 凭据未配 → 占位不可用
         self.assertFalse(ch["wechat"])
+        self.assertFalse(ch["stripe"])
+        self.assertFalse(ch["paypal"])
+        self.assertFalse(ch["usdt"])
+
+    def test_overseas_credentials_do_not_open_real_payment(self):
+        """凭据齐全只点亮总览状态；adapter 未联调前仍必须拒绝真钱下单。"""
+        credentials = {
+            "NEXUS_PAY_STRIPE_SECRET_KEY": "test",
+            "NEXUS_PAY_STRIPE_WEBHOOK_SECRET": "test",
+            "NEXUS_PAY_PAYPAL_CLIENT_ID": "test",
+            "NEXUS_PAY_PAYPAL_CLIENT_SECRET": "test",
+            "NEXUS_PAY_PAYPAL_WEBHOOK_ID": "test",
+            "NEXUS_PAY_USDT_API_BASE": "https://provider.invalid",
+            "NEXUS_PAY_USDT_API_KEY": "test",
+            "NEXUS_PAY_USDT_WEBHOOK_SECRET": "test",
+        }
+        with patch.dict(os.environ, credentials, clear=False):
+            states = pay.channels()
+            for channel in ("stripe", "paypal", "usdt"):
+                self.assertTrue(states[channel])
+                with self.assertRaises(FleetError):
+                    pay.create_order(self.s, self.buyer, "key", channel)
 
     # ---- KEY 购买全链路 ----
 
@@ -154,6 +177,9 @@ class PayTest(unittest.TestCase):
         pay.set_pricing(self.s, {"key_price_cents": 100})
         with self.assertRaises(FleetError):
             pay.create_order(self.s, self.buyer, "key", "alipay")  # 凭据未配 → 503
+        for channel in ("stripe", "paypal", "usdt"):
+            with self.assertRaises(FleetError):
+                pay.create_order(self.s, self.buyer, "key", channel)
         with self.assertRaises(FleetError):
             pay.create_order(self.s, self.buyer, "key", "nonsense")  # 未知渠道
 

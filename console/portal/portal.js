@@ -352,7 +352,10 @@
   })());
 
   // ---------- OEM 门户 ----------
-  var CH_ZH = { alipay: "支付宝", wechat: "微信支付", mock: "模拟支付(开发)" };
+  var CH_ZH = {
+    alipay: "支付宝", wechat: "微信支付", stripe: "Stripe", paypal: "PayPal",
+    usdt: "USDT", mock: "模拟支付(开发)"
+  };
   function fmtYuan(cents) {
     var y = (Number(cents) || 0) / 100;
     return "¥" + (y % 1 ? y.toFixed(2) : String(y));
@@ -461,11 +464,12 @@
     // 再次求和，否则业务增长后会悄悄少算收入。
     var f = payload.finance || {};
     var channels = payload.channels || {};
-    var readyCount = (channels.alipay ? 1 : 0) + (channels.wechat ? 1 : 0);
+    var channelNames = ["alipay", "wechat", "stripe", "paypal", "usdt"];
+    var readyCount = channelNames.filter(function (name) { return !!channels[name]; }).length;
     var apiStatus = $("#finance-api-status");
-    apiStatus.className = "badge " + (readyCount === 2 ? "active" : "warning");
-    apiStatus.textContent = readyCount === 2 ? "支付 API 已接入" :
-      (readyCount === 1 ? "部分渠道待接" : "支付 API 待接");
+    apiStatus.className = "badge " + (readyCount === channelNames.length ? "active" : "warning");
+    apiStatus.textContent = readyCount === 0 ? "5 个渠道待接 API" :
+      (readyCount + "/" + channelNames.length + " 渠道凭据已配置");
     $("#admin-finance-stats").innerHTML =
       '<div class="stat"><small>累计已支付</small><b>' + fmtYuan(f.paid_revenue_cents) +
       '</b><span class="stat-note">' + (f.paid_order_count || 0) + ' 笔已履约订单</span></div>' +
@@ -483,17 +487,23 @@
       ' · ' + (f.topup_paid_count || 0) + ' 单</b></div>' +
       '<div class="finance-row"><span>当前全舰队 Token 余额</span><b id="finance-wallet-balance">—</b></div>';
 
-    function channelRow(label, enabled) {
+    function channelRow(label, enabled, note) {
       var badgeClass = enabled ? "active" : "idle";
-      var badgeText = enabled ? "已配置" : "待接 API";
-      return '<div class="finance-row"><span>' + label +
-        '</span><b class="channel-status"><span class="badge ' + badgeClass + '">' + badgeText +
+      var badgeText = enabled ? "凭据已配置" : "待接 API";
+      return '<div class="finance-row"><span><b class="channel-name">' + label +
+        '</b><small class="channel-note">' + note + '</small></span>' +
+        '<b class="channel-status"><span class="badge ' + badgeClass + '">' + badgeText +
         '</span></b></div>';
     }
-    $("#admin-payment-channels").innerHTML =
-      channelRow("支付宝", !!channels.alipay) +
-      channelRow("微信支付", !!channels.wechat) +
+    $("#admin-payment-domestic").innerHTML =
+      channelRow("支付宝", !!channels.alipay, "人民币 · 网页支付") +
+      channelRow("微信支付", !!channels.wechat, "人民币 · Native 扫码") +
       '<div class="finance-row"><span>收入确认规则</span><b class="channel-status">支付回调成功后计入</b></div>';
+    $("#admin-payment-overseas").innerHTML =
+      channelRow("Stripe", !!channels.stripe, "银行卡 · 多币种") +
+      channelRow("PayPal", !!channels.paypal, "PayPal 账户 · 多币种") +
+      channelRow("USDT", !!channels.usdt, "稳定币 · 网络待服务商确认") +
+      '<div class="finance-row"><span>外币统计规则</span><b class="channel-status">按原币分开核算</b></div>';
   }
 
   // 更新公告只来自 Nexus 已确认成功的逐节点投放记录。前端不根据“节点当前版本”猜测，
