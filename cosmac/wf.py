@@ -96,18 +96,47 @@ def _is_metadata_addr(addr) -> bool:
     return str(addr) in ("fd00:ec2::254",)
 
 
+def _check_ip_danger(ip_str: str) -> str:
+    """单个 IP 过危险段规则（check_outbound_url 与连接后校验共用同一套口径）。
+
+    放行返回 ""，否则返回拒绝原因。规则分三档：
+      · 云元数据 —— **永远拒绝，连 ALLOW_INTERNAL 也不放行**（能吐 RAM/IAM 临时凭据）；
+      · 链路本地/保留/组播/未指定 —— 永远拒绝；
+      · 私网/环回 —— 默认拒绝；自建内网工作流可设 COSMAC_WF_ALLOW_INTERNAL=1 放行。
+    """
+    try:
+        addr = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return f"解析到非法 IP：{ip_str}"
+    if _is_metadata_addr(addr):
+        # 「我要打内网」这个诉求从来不包含「我要打元数据」——单独一类永远拒绝。
+        return f"目标 {addr} 是云元数据地址，已拒绝（会泄露实例凭据）"
+    if (
+        addr.is_link_local or addr.is_reserved
+        or addr.is_multicast or addr.is_unspecified
+    ):
+        return f"目标 {addr} 属链路本地/保留段，已拒绝（防 SSRF/云元数据）"
+    allow_internal = os.environ.get("COSMAC_WF_ALLOW_INTERNAL", "").lower() in (
+        "1", "true", "yes",
+    )
+    if (addr.is_private or addr.is_loopback) and not allow_internal:
+        return (
+            f"目标 {addr} 属内网/环回，已拒绝；自建内网工作流请设 "
+            "COSMAC_WF_ALLOW_INTERNAL=1"
+        )
+    return ""
+
+
 def check_outbound_url(url: str) -> str:
     """SSRF 防护：校验"服务端将要外呼的 URL"是否安全。放行返回 ""，否则返回拒绝原因。
 
     管理员可在连接器里填任意 URL，服务端会带着 Bearer 密钥去打它——必须挡住"打内网/
     localhost/云元数据(169.254.169.254)"这类 SSRF + 凭据外泄：
       - 只允许 http/https；
-      - 把主机名解析成 IP，**任一**解析结果落在危险段就拒绝：
-        · 链路本地(含云 metadata)/保留/组播/未指定 —— **永远拒绝**；
-        · 私网/环回 —— 默认拒绝；自建内网工作流可设 COSMAC_WF_ALLOW_INTERNAL=1 放行。
+      - 把主机名解析成 IP，**任一**解析结果落在危险段就拒绝（规则见 _check_ip_danger）。
     调用方还须 ``allow_redirects=False``，否则重定向到内网可绕过本校验。
-    （残留：getaddrinfo 与 requests 各解析一次，存在 DNS rebinding 的理论窗口；
-      要彻底防需把校验过的 IP 钉死再连，本期先挡住绝大多数直球 SSRF。）
+    ⚠️ getaddrinfo 与 requests 各解析一次，存在 DNS rebinding 窗口——调用方应在建连后、
+    读 body 前再用 :func:`verify_connected_peer` 校验实际对端 IP（fetch_url 已接）。
     """
     try:
         u = urlparse(url)
@@ -118,34 +147,55 @@ def check_outbound_url(url: str) -> str:
     host = u.hostname
     if not host:
         return "URL 缺少主机名"
-    allow_internal = os.environ.get("COSMAC_WF_ALLOW_INTERNAL", "").lower() in (
-        "1", "true", "yes",
-    )
     try:
         infos = socket.getaddrinfo(host, u.port or 0, proto=socket.IPPROTO_TCP)
     except Exception as exc:
         return f"无法解析主机 {host}：{exc}"
     for info in infos:
-        try:
-            addr = ipaddress.ip_address(info[4][0])
-        except ValueError:
-            return f"解析到非法 IP：{info[4][0]}"
-        if _is_metadata_addr(addr):
-            # 单独一类：**永远拒绝，连 ALLOW_INTERNAL 也不放行**。
-            # 云元数据能直接吐出实例信息与 RAM/IAM 临时凭据，是 SSRF 最值钱的目标；
-            # 「我要打内网」这个诉求从来不包含「我要打元数据」。
-            return f"目标 {addr} 是云元数据地址，已拒绝（会泄露实例凭据）"
-        if (
-            addr.is_link_local or addr.is_reserved
-            or addr.is_multicast or addr.is_unspecified
-        ):
-            return f"目标 {addr} 属链路本地/保留段，已拒绝（防 SSRF/云元数据）"
-        if (addr.is_private or addr.is_loopback) and not allow_internal:
-            return (
-                f"目标 {addr} 属内网/环回，已拒绝；自建内网工作流请设 "
-                "COSMAC_WF_ALLOW_INTERNAL=1"
-            )
+        bad = _check_ip_danger(info[4][0])
+        if bad:
+            return bad
     return ""
+
+
+def verify_connected_peer(resp) -> str:
+    """**连接后校验**（堵 DNS rebinding，2026-07-31）：取 requests 响应底层 socket 的
+    实际对端 IP，再过一遍与 check_outbound_url 相同的危险段规则。
+
+    为什么需要：check_outbound_url 的 getaddrinfo 与 requests 发请求各解析一次 DNS，
+    攻击者控制的域名可先解析到公网过校验、再 rebind 到内网/云元数据。本函数在
+    **建连后、读 body 前**（调用方须用 ``stream=True``）校验真实连上的 IP——即使
+    请求头已发出，rebind 目标的**响应内容一个字节都读不到**，读取型 SSRF（元数据
+    凭据这类最值钱的目标）就此堵死。
+
+    返回 ""=放行；否则返回拒绝原因，调用方应立即 ``resp.close()`` 且不读内容。
+    socket 拿不到（urllib3 版本差异/连接已释放）时放行不拦——此时窗口已远小于
+    原「两次解析」，且绝不能让正常抓取因内省失败而全挂（够用即止）。
+
+    ⚠️ 走 HTTP(S) 代理时跳过本校验：socket 对端是**代理自己**（开发机常见
+    127.0.0.1 本机代理，2026-07-31 实测踩到），不是目标——按对端拦会把代理环境
+    下的所有正常抓取误杀；且此时真正外呼的是代理进程，对端校验对 rebinding 本就
+    无意义（生产 bot 容器不配代理，校验照常生效）。
+    """
+    try:
+        # requests → urllib3 HTTPResponse(_connection) → HTTPConnection(sock)
+        sock = getattr(getattr(resp, "raw", None), "_connection", None)
+        sock = getattr(sock, "sock", None)
+        peer = sock.getpeername()[0] if sock is not None else ""
+    except Exception:
+        peer = ""
+    if not peer:
+        return ""
+    try:
+        # 该请求若命中环境代理(HTTP_PROXY/HTTPS_PROXY,尊重 NO_PROXY)则跳过对端校验
+        import requests as _rq
+
+        req_url = getattr(getattr(resp, "request", None), "url", "") or ""
+        if req_url and _rq.utils.get_environ_proxies(req_url):
+            return ""
+    except Exception:
+        pass
+    return _check_ip_danger(peer)
 
 DEFAULT_TIMEOUT = 30  # 秒；webhook 同步等待上限
 _MAX_OUT = 4000       # 结果文本截断，避免把超长内容塞进群/上下文

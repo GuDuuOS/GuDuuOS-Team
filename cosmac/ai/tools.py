@@ -2008,7 +2008,7 @@ class Toolbox:
         url = (args.get("url") or "").strip()
         if not url:
             return "请给出要抓取的地址。"
-        from cosmac.wf import check_outbound_url
+        from cosmac.wf import check_outbound_url, verify_connected_peer
 
         bad = check_outbound_url(url)
         if bad:
@@ -2016,19 +2016,36 @@ class Toolbox:
         try:
             import requests
 
+            # stream=True：先建连、不读 body——给下面的「连接后对端校验」留出在读取任何
+            # 内容前掐断连接的机会（堵 DNS rebinding，见 wf.verify_connected_peer）。
             resp = requests.get(
                 url, timeout=self._FETCH_TIMEOUT, allow_redirects=False,
-                headers={"User-Agent": "GuDuuOS-Bot/1.0"},
+                headers={"User-Agent": "GuDuuOS-Bot/1.0"}, stream=True,
             )
         except Exception as exc:
             return f"抓取失败：{type(exc).__name__}: {str(exc)[:120]}"
+        # 连接后校验实际对端 IP：域名先过校验再 rebind 到内网/元数据的，在这里被掐断，
+        # 响应内容一个字节都不读。
+        bad2 = verify_connected_peer(resp)
+        if bad2:
+            resp.close()
+            return f"这个地址不能抓取：{bad2}"
         if resp.status_code in (301, 302, 303, 307, 308):
             loc = resp.headers.get("Location", "")[:200]
+            resp.close()
             # 不自动跟随:重定向目标可能指向内网。把地址给模型,让它显式再抓一次(会重新过校验)。
             return f"该地址跳转到了：{loc}\n如需继续，请对这个新地址再调一次 fetch_url。"
         if resp.status_code != 200:
+            resp.close()
             return f"抓取失败（HTTP {resp.status_code}）。"
-        body = (resp.content or b"")[: self._FETCH_MAX_BYTES]
+        try:
+            # stream 模式下手动读，仍按原上限截断（decode_content=True 保持 gzip 等自动解压，
+            # 与原 resp.content 行为一致）
+            body = resp.raw.read(self._FETCH_MAX_BYTES, decode_content=True) or b""
+        except Exception as exc:
+            return f"抓取失败：{type(exc).__name__}: {str(exc)[:120]}"
+        finally:
+            resp.close()
         try:
             text = body.decode(resp.encoding or "utf-8", errors="replace")
         except (LookupError, TypeError):
