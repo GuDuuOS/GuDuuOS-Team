@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
 <script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=13" />
+<link rel="stylesheet" href="/portal/portal.css?v=14" />
 </head>
 <body>
 <!--
@@ -280,7 +280,7 @@
             <select id="release-canary" name="canary_instance_id"></select>
           </label>
           <label class="release-notes-field">更新说明
-            <textarea name="notes" rows="4" required placeholder="面向 OEM 写清新增、修复和注意事项"></textarea>
+            <textarea name="notes" rows="8" required placeholder="面向 OEM 写清新增、修复和注意事项"></textarea>
           </label>
           <div class="release-submit"><button class="primary" type="submit">保存为未发布</button></div>
         </form>

@@ -212,6 +212,9 @@ label input { margin-top: 5px; }
 .release-form select { width: 100%; margin-top: 5px; }
 .release-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .release-notes-field { grid-column: 1 / -2; }
+/* 自动生成的版本说明通常有多条内容，默认展开可以直接完成审阅；
+ * 仍保留竖向拖拽，方便超管编辑更长的 OEM 公告。 */
+.release-notes-field textarea { min-height: 190px; resize: vertical; }
 .release-submit { display: flex; align-items: flex-end; }
 .release-submit .primary { width: 100%; }
 .release-list { display: grid; gap: 12px; margin-top: 16px; }
@@ -267,6 +270,7 @@ label input { margin-top: 5px; }
   .announcement-meta { margin-top: 4px; white-space: normal; }
   .release-form { grid-template-columns: 1fr 1fr; }
   .release-title-field, .release-canary-field, .release-notes-field { grid-column: 1 / -1; }
+  .release-notes-field textarea { min-height: 150px; }
   .release-submit { grid-column: 1 / -1; }
 }
 
