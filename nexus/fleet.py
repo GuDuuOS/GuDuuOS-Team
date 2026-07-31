@@ -621,6 +621,12 @@ def dash_summary(s) -> Dict[str, Any]:
             online += 1
         t_today = today_usage.get(inst.id, {}).get("tokens", 0)
         t_yesterday = yesterday_usage.get(inst.id, {}).get("tokens", 0)
+        # 新节点已将业务用户与管理员/AI 拆开；旧节点只有 ``users``
+        # 总数时仍兼容展示，等节点升级后自动切换到准确口径。
+        business_users = int(stats.get("users_business", stats.get("users", 0)) or 0)
+        accounts_total = int(stats.get("users_total", stats.get("users", 0)) or 0)
+        admin_users = int(stats.get("users_admin") or 0)
+        ai_users = int(stats.get("users_ai") or 0)
         # 环比：昨日为 0 时不算涨幅（避免 +∞），显示 0
         delta = round((t_today - t_yesterday) / t_yesterday * 100, 1) if t_yesterday else 0.0
         oems.append(
@@ -643,7 +649,10 @@ def dash_summary(s) -> Dict[str, Any]:
                 "peak_per_min": (req_stats.get(inst.id) or {}).get("peak_per_min", 0),
                 # 地域（大屏地图按真实经纬度打点；未填时 lat/lon=None，前端跳过不画）
                 **_geo_of(s, inst.id),
-                "users": int(stats.get("users") or 0),
+                "users": business_users,
+                "accounts_total": accounts_total,
+                "admin_users": admin_users,
+                "ai_users": ai_users,
             }
         )
 
@@ -671,6 +680,9 @@ def dash_summary(s) -> Dict[str, Any]:
             "instances": len(oems),
             "online": online,
             "users": sum(o["users"] for o in oems),
+            "accounts_total": sum(o["accounts_total"] for o in oems),
+            "admin_users": sum(o["admin_users"] for o in oems),
+            "ai_users": sum(o["ai_users"] for o in oems),
             "tokens_total": sum(o["tokens_total"] for o in oems),
             "tokens_today": sum(o["tokens_today"] for o in oems),
             "tokens_yesterday": tokens_yesterday,

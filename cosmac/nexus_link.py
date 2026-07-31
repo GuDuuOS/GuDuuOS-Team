@@ -1,15 +1,22 @@
 """实例 → GuDuu Nexus 母舰的回连（模块6 P1③：心跳上报）。
 
 每个 GuDuu OS 实例（含主站自己=实例#0）定期向母舰上报心跳：
-版本号 + 运营统计（注册用户数 / 今日消息量），母舰回传 token 钱包余额。
+版本号 + 运营统计（人员构成 / 今日消息量），母舰回传 token 钱包余额。
 这是大屏「实时树状图 / 增长数据」的数据来源之一（另一来源是 LLM 网关计量）。
 
 启用条件：环境变量 ``COSMAC_NEXUS_URL`` 与 ``COSMAC_OEM_KEY`` **都**配置。
 缺任一个 = 完全静默不启动——本地开发、未接入 OEM 体系的部署零影响。
 
 统计口径（P1，诚实优先，不伪造）：
-    users          注册用户总数（经 Synapse admin API；需 COSMAC_ADMIN_TOKEN
-                   是真实的服务器管理员 access token，拿不到就不报这项）
+    users_total        Synapse 本地账号总数
+    users_business     正常业务用户（排除管理员、AI、访客、停用和锁定）
+    users_admin        正常服务器管理员
+    users_ai           主 AI 与已注册的协作 AI 账号
+    users_guest        正常访客账号
+    users_deactivated  已停用账号
+    users_locked       已锁定账号
+                       （以上经 Synapse admin API 获取；需真实的
+                       COSMAC_ADMIN_TOKEN，拿不到就不报人数）
     messages_today 今日 bot 亲眼所见的消息条数（appservice 推送计数，日切归零；
                    进程重启会从 0 重计——心跳是趋势数据，可接受）
 """
@@ -174,37 +181,90 @@ def get_last_balance() -> Optional[int]:
     return _last_balance
 
 
-def _users_count(hs_url: str) -> Optional[int]:
-    """注册用户总数：/_synapse/admin/v2/users 的 total 字段。
+def _is_ai_account(user_id: str, bot_user_id: str) -> bool:
+    """判断 Matrix 账号是否属于 GuDuu AI，只使用项目已有的确定规则。
 
-    需要 COSMAC_ADMIN_TOKEN 是真实的服务器管理员 access token（发行版由
-    bootstrap 登录 admin 换取并写入 .env）。任何失败返回 None——统计缺项
-    好过伪造数字。
+    ``bot_user_id`` 是该节点主 AI 的完整 MXID；``guduu-ai-*`` 是项目在
+    ``CosmacBot._worker_user_id`` 里统一生成的协作 AI 机器人账号。不根据
+    显示名或邮箱猜测，避免把真人误统计成 AI。
+    """
+    normalized = str(user_id or "").strip().lower()
+    master = str(bot_user_id or "").strip().lower()
+    localpart = normalized.split(":", 1)[0]
+    return bool(normalized and (normalized == master or localpart.startswith("@guduu-ai-")))
+
+
+def _user_breakdown(config: CosmacConfig) -> Optional[Dict[str, int]]:
+    """读取全部 Synapse 本地账号，返回互斥的人员构成统计。
+
+    Synapse 列表端点是分页的，只读 ``total`` 无法区分管理员、AI 与
+    真实用户，所以这里遍历每页。分类按“停用 → 锁定 → 访客 → AI →
+    管理员 → 业务用户”的顺序只计一类，因此各分项之和严格等于
+    ``users_total``。任一页失败就返回 ``None``，不向 Nexus 上报半截数据。
     """
     token = _env("ADMIN_TOKEN")
     if not token:
         return None
+    counts = {
+        "users_total": 0,
+        "users_business": 0,
+        "users_admin": 0,
+        "users_ai": 0,
+        "users_guest": 0,
+        "users_deactivated": 0,
+        "users_locked": 0,
+    }
+    offset = 0
+    page_size = 500
     try:
-        r = requests.get(
-            f"{hs_url.rstrip('/')}/_synapse/admin/v2/users",
-            params={"from": 0, "limit": 1},
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10,
-        )
-        if r.ok:
-            total = r.json().get("total")
-            return int(total) if total is not None else None
+        while True:
+            response = requests.get(
+                f"{config.homeserver_url.rstrip('/')}/_synapse/admin/v2/users",
+                params={"from": offset, "limit": page_size},
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10,
+            )
+            if not response.ok:
+                return None
+            payload = response.json()
+            users = payload.get("users")
+            total = payload.get("total")
+            if not isinstance(users, list) or total is None:
+                return None
+            expected_total = int(total)
+            for user in users:
+                if not isinstance(user, dict):
+                    return None
+                counts["users_total"] += 1
+                if bool(user.get("deactivated")):
+                    counts["users_deactivated"] += 1
+                elif bool(user.get("locked")):
+                    counts["users_locked"] += 1
+                elif bool(user.get("is_guest")):
+                    counts["users_guest"] += 1
+                elif _is_ai_account(str(user.get("name") or ""), config.bot_user_id):
+                    counts["users_ai"] += 1
+                elif bool(user.get("admin")):
+                    counts["users_admin"] += 1
+                else:
+                    counts["users_business"] += 1
+            offset += len(users)
+            if offset >= expected_total:
+                # total 与实际遍历数必须一致，避免并发注册或接口异常
+                # 时把一组无法对账的数字传到管理后台。
+                return counts if counts["users_total"] == expected_total else None
+            if not users:
+                return None
     except Exception:
-        pass
-    return None
+        return None
 
 
 def build_stats(config: CosmacConfig) -> Dict[str, Any]:
     """组一次心跳的 stats 载荷（只放拿得到的真实数据）。"""
     stats: Dict[str, Any] = {"messages_today": _messages_today()}
-    users = _users_count(config.homeserver_url)
+    users = _user_breakdown(config)
     if users is not None:
-        stats["users"] = users
+        stats.update(users)
     return stats
 
 

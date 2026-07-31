@@ -203,7 +203,17 @@ class FleetTest(unittest.TestCase):
         # 实例A：有心跳、有今日用量、两种模型
         ka = self._one_key(grant=1000)
         inst = fleet.redeem(self.s, ka, "im.dash-a.test")["instance_id"]
-        fleet.heartbeat(self.s, ka, "1.0.0", {"users": 12})
+        fleet.heartbeat(
+            self.s,
+            ka,
+            "1.0.0",
+            {
+                "users_total": 12,
+                "users_business": 9,
+                "users_admin": 1,
+                "users_ai": 2,
+            },
+        )
         fleet.debit(self.s, inst, 150, "openai/gpt-4o in=100 out=50")
         fleet.debit(self.s, inst, 30, "anthropic/claude-x in=20 out=10")
         # 实例B：兑换后从未心跳 → 大屏应判 offline
@@ -221,7 +231,14 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(a["tokens_total"], 180)
         self.assertEqual(a["requests_today"], 2)
         self.assertEqual(a["models_today"], 2)  # gpt-4o + claude-x
-        self.assertEqual(a["users"], 12)
+        self.assertEqual(a["users"], 9)
+        self.assertEqual(a["accounts_total"], 12)
+        self.assertEqual(a["admin_users"], 1)
+        self.assertEqual(a["ai_users"], 2)
+        self.assertEqual(out["totals"]["users"], 9)
+        self.assertEqual(out["totals"]["accounts_total"], 12)
+        self.assertEqual(out["totals"]["admin_users"], 1)
+        self.assertEqual(out["totals"]["ai_users"], 2)
         self.assertEqual(a["balance_tokens"], 820)
         self.assertEqual(by_domain["im.dash-b.test"]["status"], "offline")
         # 实时动态：A 的 grant + 2 笔 usage + B 的 grant = 4 条流水
@@ -237,6 +254,18 @@ class FleetTest(unittest.TestCase):
         # 总发放 = A 附赠 1000 + B 附赠 500（_one_key 默认）
         self.assertEqual(out["totals"]["granted_total"], 1500)
         self.assertEqual(out["totals"]["tokens_yesterday"], 0)
+
+    def test_dash_summary_keeps_legacy_users_compatible(self):
+        """未升级节点只上报 users 时，大屏仍保留原数字而不变成 0。"""
+        key = self._one_key()
+        fleet.redeem(self.s, key, "im.legacy.test")
+        fleet.heartbeat(self.s, key, "1.11.0", {"users": 2})
+
+        out = fleet.dash_summary(self.s)
+
+        self.assertEqual(out["oems"][0]["users"], 2)
+        self.assertEqual(out["oems"][0]["accounts_total"], 2)
+        self.assertEqual(out["totals"]["users"], 2)
 
 
 if __name__ == "__main__":

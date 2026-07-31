@@ -1139,13 +1139,38 @@
       // 统计条
       var online = insts.filter(function (i) { return hbStatus(i) !== "offline"; }).length;
       var balSum = insts.reduce(function (a, i) { return a + (i.balance_tokens || 0); }, 0);
+      // 人员数只从节点心跳汇总，不掺入 Nexus 门户账号。旧节点的
+      // ``users`` 只能用于账号总数，不猜测其中多少是管理员或 AI。
+      var peopleTotals = insts.reduce(function (sum, inst) {
+        var stats = inst.stats && typeof inst.stats === "object" ? inst.stats : {};
+        var detailed = stats.users_business !== undefined;
+        sum.accounts += Number(stats.users_total !== undefined ? stats.users_total : (stats.users || 0)) || 0;
+        if (detailed) {
+          sum.detailedNodes += 1;
+          sum.business += Number(stats.users_business) || 0;
+          sum.admins += Number(stats.users_admin) || 0;
+          sum.ai += Number(stats.users_ai) || 0;
+        }
+        return sum;
+      }, { accounts: 0, business: 0, admins: 0, ai: 0, detailedNodes: 0 });
+      var detailedHint = peopleTotals.detailedNodes + " / " + insts.length + " 个节点已分类";
+      var formatPeople = function (value) {
+        return (Number(value) || 0).toLocaleString("zh-CN");
+      };
+      var detailedValue = function (value) {
+        return peopleTotals.detailedNodes ? formatPeople(value) : "—";
+      };
       $("#finance-wallet-balance").textContent = fmtTokens(balSum);
       $("#admin-stats").innerHTML =
         '<div class="stat"><small>实例总数</small><b class="plain">' + insts.length + "</b></div>" +
         '<div class="stat"><small>在线</small><b>' + online + "</b></div>" +
         '<div class="stat"><small>OEM 客户</small><b class="plain">' + oems.length + "</b></div>" +
         '<div class="stat"><small>KEY 已发/已兑换</small><b class="plain">' + keys.length + " / " + keys.filter(function (k) { return k.instance_id; }).length + "</b></div>" +
-        '<div class="stat"><small>钱包余额合计</small><b>' + fmtTokens(balSum) + "</b></div>";
+        '<div class="stat"><small>钱包余额合计</small><b>' + fmtTokens(balSum) + "</b></div>" +
+        '<div class="stat"><small>节点账号总数</small><b class="plain">' + formatPeople(peopleTotals.accounts) + "</b></div>" +
+        '<div class="stat"><small>业务用户</small><b>' + detailedValue(peopleTotals.business) + '</b><span class="stat-note">' + detailedHint + "</span></div>" +
+        '<div class="stat"><small>管理员账号</small><b class="plain">' + detailedValue(peopleTotals.admins) + '</b><span class="stat-note">' + detailedHint + "</span></div>" +
+        '<div class="stat"><small>AI / 系统账号</small><b class="plain">' + detailedValue(peopleTotals.ai) + '</b><span class="stat-note">' + detailedHint + "</span></div>";
 
       // 实例表（行内充值按钮）
       $("#admin-instances tbody").innerHTML = insts.map(function (i) {
@@ -1154,12 +1179,18 @@
         var company = i.company_name
           ? "<b>" + esc(i.company_name) + "</b>" + (i.oem_email ? '<div class="hint">' + esc(i.oem_email) + "</div>" : "")
           : '<span class="hint">未绑定企业</span>';
+        var nodeStats = i.stats && typeof i.stats === "object" ? i.stats : {};
+        var hasBreakdown = nodeStats.users_business !== undefined;
+        var people = hasBreakdown
+          ? '<b>业务 ' + esc(instanceStatText(nodeStats.users_business)) + '</b><div class="hint">管理员 ' +
+            esc(instanceStatText(nodeStats.users_admin || 0)) + ' · AI ' + esc(instanceStatText(nodeStats.users_ai || 0)) + '</div>'
+          : '<span class="hint">账号总数 ' + esc(instanceStatText(nodeStats.users)) + '<br>待节点升级后分类</span>';
         return "<tr><td>#" + i.id + "</td><td>" + esc(i.domain) + "</td><td class=\"zh\">" + company + "</td><td class=\"zh\">" + badge(hbStatus(i)) + "</td>" +
-          "<td>" + esc(i.version || "—") + "</td><td>" + fmtTime(i.last_seen_ts) + "</td>" +
+          "<td>" + esc(i.version || "—") + "</td><td class=\"zh\">" + people + "</td><td>" + fmtTime(i.last_seen_ts) + "</td>" +
           "<td>" + fmtTokens(i.balance_tokens) + "</td>" +
           '<td class="zh"><button class="ghost small" data-instance-detail="' + i.id + '">详情</button> ' +
           '<button class="ghost small" data-topup="' + i.id + '" data-domain="' + esc(i.domain) + '">充值</button></td></tr>';
-      }).join("") || '<tr><td colspan="8" class="zh empty">暂无实例</td></tr>';
+      }).join("") || '<tr><td colspan="9" class="zh empty">暂无实例</td></tr>';
 
       // KEY 表（吊销）
       $("#admin-keys tbody").innerHTML = keys.map(function (k) {
@@ -1232,7 +1263,14 @@
 
   // ---------- 节点详情弹窗（运行快照 / 企业归属 / 心跳统计） ----------
   var INSTANCE_STAT_LABELS = {
-    users: "用户数",
+    users_total: "账号总数",
+    users_business: "业务用户",
+    users_admin: "管理员",
+    users_ai: "AI / 系统账号",
+    users_guest: "访客账号",
+    users_deactivated: "已停用账号",
+    users_locked: "已锁定账号",
+    users: "旧版账号总数",
     dau: "日活用户",
     messages_today: "今日消息",
     rooms: "房间数",
@@ -1283,6 +1321,7 @@
       return "<small>" + esc(row[0]) + "</small><b>" + esc(row[1]) + "</b>";
     }).join("");
     var stats = inst.stats && typeof inst.stats === "object" ? inst.stats : {};
+    var hasBreakdown = stats.users_business !== undefined;
     var keys = Object.keys(stats).sort(function (a, b) {
       return (INSTANCE_STAT_LABELS[a] || a).localeCompare(INSTANCE_STAT_LABELS[b] || b, "zh-CN");
     });
@@ -1290,6 +1329,12 @@
       return '<div class="instance-stat"><small>' + esc(INSTANCE_STAT_LABELS[key] || key) +
         "</small><b>" + esc(instanceStatText(stats[key])) + "</b></div>";
     }).join("") || '<p class="empty">暂无心跳统计</p>';
+    if (!hasBreakdown && stats.users !== undefined) {
+      $("#instance-detail-stats").insertAdjacentHTML(
+        "beforeend",
+        '<p class="instance-stat-note">当前是旧版节点的合计口径；升级后会自动拆分业务用户、管理员和 AI 账号。</p>'
+      );
+    }
     var oemButton = $("#instance-detail-oem");
     oemButton.hidden = !inst.oem_id;
     oemButton.dataset.oemId = inst.oem_id ? String(inst.oem_id) : "";
