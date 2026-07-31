@@ -1146,11 +1146,16 @@
 
       // 实例表（行内充值按钮）
       $("#admin-instances tbody").innerHTML = insts.map(function (i) {
-        return "<tr><td>#" + i.id + "</td><td>" + esc(i.domain) + "</td><td class=\"zh\">" + badge(hbStatus(i)) + "</td>" +
+        // 企业名来自 Nexus 服务端的 KEY 归属关联，邮箱只作为快速核对提示。
+        // 历史节点尚未认领 KEY 时不猜测企业，明确提醒超管后续补绑。
+        var company = i.company_name
+          ? "<b>" + esc(i.company_name) + "</b>" + (i.oem_email ? '<div class="hint">' + esc(i.oem_email) + "</div>" : "")
+          : '<span class="hint">未绑定企业</span>';
+        return "<tr><td>#" + i.id + "</td><td>" + esc(i.domain) + "</td><td class=\"zh\">" + company + "</td><td class=\"zh\">" + badge(hbStatus(i)) + "</td>" +
           "<td>" + esc(i.version || "—") + "</td><td>" + fmtTime(i.last_seen_ts) + "</td>" +
           "<td>" + fmtTokens(i.balance_tokens) + "</td>" +
           '<td class="zh"><button class="ghost small" data-topup="' + i.id + '" data-domain="' + esc(i.domain) + '">充值</button></td></tr>';
-      }).join("") || '<tr><td colspan="7" class="zh empty">暂无实例</td></tr>';
+      }).join("") || '<tr><td colspan="8" class="zh empty">暂无实例</td></tr>';
 
       // KEY 表（吊销）
       $("#admin-keys tbody").innerHTML = keys.map(function (k) {

@@ -22,7 +22,10 @@ from nexus.db import (
     NexusInstance,
     NexusInstanceGeo,
     NexusKey,
+    NexusKeyClaim,
     NexusLedger,
+    NexusOem,
+    NexusOemProfile,
     NexusRequestStat,
     NexusWallet,
 )
@@ -429,13 +432,43 @@ def list_keys(s) -> List[Dict[str, Any]]:
 
 
 def list_instances(s) -> List[Dict[str, Any]]:
-    """全部实例 + 钱包余额快照（console 列表页/大屏树状图的数据源）。"""
+    """全部实例 + 所属 OEM 企业 + 钱包余额快照。
+
+    所属关系不直接写在实例表，而是沿 ``实例.key_id → KEY 认领记录
+    → OEM 企业档案`` 查找。这样 KEY 的商业归属仍保持单一真实源，不会在
+    实例表再复制一份企业名造成改名后不一致。早期未认领节点返回空企业，
+    由前端明确显示“未绑定企业”。
+    """
     rows = s.execute(
         select(NexusInstance).order_by(NexusInstance.id.desc())
     ).scalars().all()
+    key_ids = [int(row.key_id) for row in rows]
+    owners: Dict[int, Dict[str, Any]] = {}
+    if key_ids:
+        # 一次 JOIN 拿齐所有企业，避免实例越多时产生 N+1 查询。
+        owner_rows = s.execute(
+            select(
+                NexusKeyClaim.key_id,
+                NexusOem.id,
+                NexusOem.email,
+                NexusOem.name,
+                NexusOemProfile.company,
+            )
+            .join(NexusOem, NexusOem.id == NexusKeyClaim.oem_id)
+            .outerjoin(NexusOemProfile, NexusOemProfile.oem_id == NexusOem.id)
+            .where(NexusKeyClaim.key_id.in_(key_ids))
+        ).all()
+        for key_id, oem_id, email, name, company in owner_rows:
+            # 新注册必有 company；历史账号无档案时回退显示名，再回退邮箱。
+            owners[int(key_id)] = {
+                "oem_id": int(oem_id),
+                "company_name": (company or name or email or "").strip(),
+                "oem_email": email or "",
+            }
     out = []
     for r in rows:
         wallet = s.get(NexusWallet, r.id)
+        owner = owners.get(int(r.key_id), {})
         try:
             stats = json.loads(r.stats_json or "{}")
         except Exception:
@@ -445,6 +478,9 @@ def list_instances(s) -> List[Dict[str, Any]]:
                 "id": r.id,
                 "domain": r.domain,
                 "admin_email": r.admin_email,
+                "oem_id": owner.get("oem_id"),
+                "company_name": owner.get("company_name", ""),
+                "oem_email": owner.get("oem_email", ""),
                 "status": r.status,
                 "version": r.version,
                 "created_ts": r.created_ts,

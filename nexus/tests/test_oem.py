@@ -179,6 +179,13 @@ class OemScopingTest(unittest.TestCase):
         self.assertEqual(a_inst[0]["balance_tokens"], 1000)
         self.assertEqual(len(b_inst), 0)  # B 尚未装机，无实例
 
+        # 超管节点列表必须沿 KEY 认领关系带出真实 OEM 企业，
+        # 不能把实例管理员邮箱误当企业名。
+        admin_inst = fleet.list_instances(self.s)[0]
+        self.assertEqual(admin_inst["oem_id"], self.a)
+        self.assertEqual(admin_inst["company_name"], "测试公司")
+        self.assertEqual(admin_inst["oem_email"], "a@x.com")
+
         # 归属守卫
         self.assertTrue(oem.owns_instance(self.s, self.a, a_inst[0]["id"]))
         self.assertFalse(oem.owns_instance(self.s, self.b, a_inst[0]["id"]))

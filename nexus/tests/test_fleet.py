@@ -86,6 +86,11 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(wallet.balance_tokens, 500)
         rows = self.s.execute(select(NexusLedger)).scalars().all()
         self.assertEqual([r.kind for r in rows], ["grant"])
+        # 历史/平台直接签发但尚未被 OEM 认领的节点不得猜测企业。
+        listed = fleet.list_instances(self.s)[0]
+        self.assertIsNone(listed["oem_id"])
+        self.assertEqual(listed["company_name"], "")
+        self.assertEqual(listed["oem_email"], "")
 
     def test_redeem_reinstall_idempotent(self):
         k = self._one_key()
