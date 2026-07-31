@@ -150,6 +150,11 @@ class NexusLinkTest(unittest.TestCase):
                 "workflow_runs": -1,
                 "orders_paid": True,
                 "kb_docs": 8,
+                "channels_total": 6,
+                "knowledge_bases_total": 2,
+                "skills_available": 12,
+                "agents_available": 7,
+                "workflows_enabled": 3,
                 "user_ids": ["@alice:test"],
             },
         )
@@ -157,6 +162,11 @@ class NexusLinkTest(unittest.TestCase):
         self.assertEqual(stats["members_paid"], 3)
         self.assertEqual(stats["members_creator"], 1)
         self.assertEqual(stats["kb_docs"], 8)
+        self.assertEqual(stats["channels_total"], 6)
+        self.assertEqual(stats["knowledge_bases_total"], 2)
+        self.assertEqual(stats["skills_available"], 12)
+        self.assertEqual(stats["agents_available"], 7)
+        self.assertEqual(stats["workflows_enabled"], 3)
         self.assertNotIn("workflow_runs", stats)
         self.assertNotIn("orders_paid", stats)
         self.assertNotIn("user_ids", stats)

@@ -95,6 +95,49 @@ class TestMatrixClientAuth(unittest.TestCase):
         )
 
 
+class TestAdminListRooms(unittest.TestCase):
+    """节点资产统计必须读取 Synapse 全量房间，并在分页失败时拒绝部分结果。"""
+
+    def setUp(self) -> None:
+        self.client = MatrixClient(
+            homeserver_url="http://hs:8008", as_token="t", bot_user_id="@guduu:hs",
+        )
+
+    @mock.patch.dict("os.environ", {"COSMAC_ADMIN_TOKEN": "admin-token"}, clear=False)
+    def test_paginates_all_room_ids(self) -> None:
+        responses = [
+            _Resp(200, {
+                "rooms": [{"room_id": "!a:hs"}, {"room_id": "!b:hs"}],
+                "total_rooms": 3,
+                "next_batch": 2,
+            }),
+            _Resp(200, {
+                "rooms": [{"room_id": "!c:hs"}],
+                "total_rooms": 3,
+            }),
+        ]
+        with mock.patch("cosmac.bots.matrix_client.requests.get", side_effect=responses) as get:
+            self.assertEqual(self.client.admin_list_room_ids(), ["!a:hs", "!b:hs", "!c:hs"])
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(get.call_args_list[0].kwargs["params"]["from"], 0)
+        self.assertEqual(get.call_args_list[1].kwargs["params"]["from"], 2)
+
+    @mock.patch.dict("os.environ", {"COSMAC_ADMIN_TOKEN": "admin-token"}, clear=False)
+    def test_drops_partial_result_when_later_page_fails(self) -> None:
+        with mock.patch(
+            "cosmac.bots.matrix_client.requests.get",
+            side_effect=[
+                _Resp(200, {
+                    "rooms": [{"room_id": "!a:hs"}],
+                    "total_rooms": 2,
+                    "next_batch": 1,
+                }),
+                _Resp(503, {}),
+            ],
+        ):
+            self.assertIsNone(self.client.admin_list_room_ids())
+
+
 class TestSetDisplayname(unittest.TestCase):
     """设置自己 profile 时不带 user_id 伪装参数（新 Synapse 上带它会 500）。"""
 

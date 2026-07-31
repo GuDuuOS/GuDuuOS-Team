@@ -3568,17 +3568,17 @@ class CosmacBot:
         return out
 
     def operating_stats(self) -> Dict[str, Any]:
-        """返回当前节点可对账的会员和业务运营聚合数据。
+        """返回当前节点可对账的会员、内容资产和业务运营聚合数据。
 
-        只统计 GuDuu OS 真正拥有的数据：会员（Matrix 控制室）以及工作流、
-        订单和知识库（cosmac DB）。返回值不包含用户 ID、订单内容或聊天内容，
-        既供节点管理看板使用，也可安全地作为 Nexus 心跳的聚合指标。
-        每个数据源独立兜底，某一项失败不阻断其他统计。
+        只统计 GuDuu OS 真正拥有的数据：会员和平台能力定义（Matrix 控制室）、
+        频道类型（Synapse Admin API），以及自建技能、Agent、知识库、工作流运行和
+        订单（cosmac DB）。返回值不包含用户 ID、订单内容或聊天内容，既供节点管理
+        看板使用，也可安全地作为 Nexus 心跳聚合指标。每个数据源独立兜底；无法读取
+        Synapse 全量房间时会直接缺省该组字段，绝不把部分数据或演示数字当真实统计。
         """
-        out: Dict[str, Any] = {
-            "members_total": 0, "members_paid": 0, "members_creator": 0,
-            "workflow_runs": 0, "orders_paid": 0, "kb_docs": 0,
-        }
+        # 字段只在对应数据源确实读成功后加入。这样数据库或管理员 API 故障时，Nexus
+        # 显示「未上报」而不是一个看似可信的 0，严格区分“真实为空”和“暂时读不到”。
+        out: Dict[str, Any] = {}
         try:
             mp = self.members.get_all()
             # get_all() 已排除 free 和已过期记录，这里的 total 就是当前有效会员。
@@ -3590,10 +3590,38 @@ class CosmacBot:
         except Exception:
             logger.debug("统计会员失败", exc_info=True)
         try:
+            # 平台可用技能/Agent 是「内置预置 + 控制室覆盖」后的真实启用目录，
+            # 与下方 DB 中用户/频道自建资源分开上报，避免把两种来源混为一个数字。
+            out["skills_available"] = len(self._skill_library())
+            out["agents_available"] = len(self._global_agent_items())
+        except Exception:
+            logger.debug("统计平台技能和 Agent 目录失败", exc_info=True)
+        try:
+            ctrl = self.client.resolve_alias(self.config.control_room_alias)
+            if ctrl:
+                event = self.client.get_state_event(ctrl, WORKFLOWS_EVENT_TYPE) or {}
+                workflows = [
+                    row for row in (event.get("workflows") or [])
+                    if isinstance(row, dict) and row.get("slug")
+                ]
+                out["workflows_total"] = len(workflows)
+                out["workflows_enabled"] = sum(
+                    1 for row in workflows if row.get("enabled", True)
+                )
+        except Exception:
+            logger.debug("统计工作流定义失败", exc_info=True)
+        try:
             from sqlalchemy import func, select
 
             from cosmac.db import session_scope
-            from cosmac.db.models import KnowledgeDoc, Order, WorkflowRun
+            from cosmac.db.models import (
+                Agent,
+                KnowledgeChunk,
+                KnowledgeDoc,
+                Order,
+                Skill,
+                WorkflowRun,
+            )
 
             with session_scope() as s:
                 out["workflow_runs"] = int(
@@ -3608,8 +3636,55 @@ class CosmacBot:
                 out["kb_docs"] = int(
                     s.execute(select(func.count()).select_from(KnowledgeDoc)).scalar() or 0
                 )
+                out["kb_chunks"] = int(
+                    s.execute(select(func.count()).select_from(KnowledgeChunk)).scalar() or 0
+                )
+                # 当前没有单独的「知识库」表；一个 scope + scope_id 就是一座真实知识库。
+                # 只统计至少已有一篇文档的作用域，标签明确叫「有内容的知识库」。
+                out["knowledge_bases_total"] = len(
+                    s.execute(
+                        select(KnowledgeDoc.scope, KnowledgeDoc.scope_id).distinct()
+                    ).all()
+                )
+                out["skills_custom_total"] = int(
+                    s.execute(select(func.count()).select_from(Skill)).scalar() or 0
+                )
+                out["skills_custom_enabled"] = int(
+                    s.execute(
+                        select(func.count()).select_from(Skill)
+                        .where(Skill.enabled.is_(True))
+                    ).scalar() or 0
+                )
+                out["agents_custom_total"] = int(
+                    s.execute(select(func.count()).select_from(Agent)).scalar() or 0
+                )
+                out["agents_custom_enabled"] = int(
+                    s.execute(
+                        select(func.count()).select_from(Agent)
+                        .where(Agent.enabled.is_(True))
+                    ).scalar() or 0
+                )
         except Exception:
             logger.debug("统计 DB 指标失败", exc_info=True)
+        try:
+            room_ids = self.client.admin_list_room_ids()
+            if room_ids is not None:
+                classified = self._classify_admin_rooms(room_ids)
+                kinds = classified["kinds"]
+                out["channels_total"] = sum(
+                    1 for room_id in room_ids if kinds.get(room_id) == "channel"
+                )
+                out["spaces_total"] = sum(
+                    1 for room_id in room_ids if kinds.get(room_id) == "space"
+                )
+                out["ai_rooms_total"] = sum(
+                    1 for room_id in room_ids if kinds.get(room_id) == "ai"
+                )
+                out["dm_rooms_total"] = sum(
+                    1 for room_id in room_ids if kinds.get(room_id) == "dm"
+                )
+        except Exception:
+            logger.debug("统计 Matrix 房间类型失败", exc_info=True)
         return out
 
     def handle_stats(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
@@ -3701,6 +3776,56 @@ class CosmacBot:
     # 与 kind 同一趟读 state 时顺手取出(零额外请求),供后台「频道管理」按创建时间倒序排。
     _admin_created_cache: Dict[str, int] = {}
 
+    def _classify_admin_rooms(self, room_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """把 Synapse 全量房间按真实 state 标记分类，并返回分类与创建时间。
+
+        这是后台频道管理和 Nexus 节点统计共用的唯一判定口径。调用方负责提供可信的
+        全量房间 id；本方法保留永久缓存并并发读取 state，避免两处各写一套规则后漂移。
+        """
+        ids = [
+            str(room_id).strip() for room_id in room_ids
+            if str(room_id).strip().startswith("!")
+        ]
+        todo = [room_id for room_id in ids if room_id not in self._admin_kind_cache]
+
+        def _judge(room_id: str) -> None:
+            kind = "channel"
+            created = 0
+            try:
+                state = self.client.admin_room_state(room_id) or []
+                for event in state:
+                    event_type = event.get("type")
+                    # m.room.create 一定存在：既用于判 space，也顺手取永久不变的建房时间。
+                    # 不能提前 break，否则普通频道可能拿不到 create 事件的时间。
+                    if event_type == "m.room.create":
+                        created = int(event.get("origin_server_ts") or 0)
+                        if (event.get("content") or {}).get("type") == "m.space":
+                            kind = "space"
+                    elif event_type == "cosmac.ai_session":
+                        kind = "ai"
+                    elif event_type == "cosmac.dm":
+                        kind = "dm"
+            except Exception:
+                pass  # 读不出时 fail-open 为 channel，后台不能静默隐藏可能的真频道。
+            self._admin_kind_cache[room_id] = kind
+            self._admin_created_cache[room_id] = created
+
+        if todo:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=8, thread_name_prefix="kind") as pool:
+                list(pool.map(_judge, todo))
+        return {
+            "kinds": {
+                room_id: self._admin_kind_cache.get(room_id, "channel")
+                for room_id in ids
+            },
+            "created": {
+                room_id: self._admin_created_cache.get(room_id, 0)
+                for room_id in ids
+            },
+        }
+
     def handle_admin_room_kinds(
         self, access_token: str, body: Dict[str, Any]
     ) -> Tuple[int, Dict[str, Any]]:
@@ -3717,43 +3842,12 @@ class CosmacBot:
             return 401, {"error": "登录已失效，请重新登录"}
         if not self._is_platform_admin(user_id):
             return 403, {"error": "仅平台管理员可用"}
-        ids = [str(r).strip() for r in (body or {}).get("room_ids") or [] if str(r).strip().startswith("!")]
-        ids = ids[:2000]  # 防滥用上限
-        todo = [r for r in ids if r not in self._admin_kind_cache]
-
-        def _judge(rid: str) -> None:
-            kind = "channel"
-            created = 0
-            try:
-                state = self.client.admin_room_state(rid) or []
-                for ev in state:
-                    et = ev.get("type")
-                    # m.room.create 一定存在:既用来判 space,也顺手取建房时间(origin_server_ts)。
-                    # 注意不能像旧版那样判到 space 就 break——否则普通频道走不到这行、拿不到时间;
-                    # 改为先记时间,再按标记归类。
-                    if et == "m.room.create":
-                        created = int(ev.get("origin_server_ts") or 0)
-                        if (ev.get("content") or {}).get("type") == "m.space":
-                            kind = "space"
-                    elif et == "cosmac.ai_session":
-                        kind = "ai"
-                    elif et == "cosmac.dm":
-                        kind = "dm"
-            except Exception:
-                pass  # 读不出按 channel(fail-open 展示,别把真频道藏了)
-            self._admin_kind_cache[rid] = kind
-            self._admin_created_cache[rid] = created
-
-        if todo:
-            from concurrent.futures import ThreadPoolExecutor
-
-            with ThreadPoolExecutor(max_workers=8, thread_name_prefix="kind") as pool:
-                list(pool.map(_judge, todo))
-        return 200, {
-            "kinds": {r: self._admin_kind_cache.get(r, "channel") for r in ids},
-            # 建房时间(毫秒);拿不到的给 0,前端排序时视作最早。
-            "created": {r: self._admin_created_cache.get(r, 0) for r in ids},
-        }
+        ids = [
+            str(room_id).strip()
+            for room_id in (body or {}).get("room_ids") or []
+            if str(room_id).strip().startswith("!")
+        ][:2000]  # HTTP 后台接口保留防滥用上限；节点内部全量统计不截断。
+        return 200, self._classify_admin_rooms(ids)
 
     def handle_admin_room_detail(
         self, access_token: str, room_id: str

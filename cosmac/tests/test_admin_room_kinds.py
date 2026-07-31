@@ -15,7 +15,8 @@ from typing import Any, Dict, List, Optional
 
 from cosmac.bots.appservice_bot import CosmacBot
 from cosmac.config import CosmacConfig
-from cosmac.db import init_engine
+from cosmac.db import init_engine, session_scope
+from cosmac.db.models import Agent, KnowledgeChunk, KnowledgeDoc, Skill
 
 
 class _C:
@@ -36,6 +37,10 @@ class _C:
     def admin_room_state(self, room_id: str) -> Optional[List[Dict[str, Any]]]:
         self.state_calls.append(room_id)
         return self.states.get(room_id)  # 未知房返回 None(读不出)
+
+    def admin_list_room_ids(self) -> List[str]:
+        """模拟 Synapse Admin API 返回完整房间清单。"""
+        return list(self.states)
 
     def whoami(self, t):
         return "@admin:h"
@@ -93,6 +98,62 @@ class TestAdminRoomKinds(unittest.TestCase):
         bot = _bot(is_admin=False)
         code, _ = bot.handle_admin_room_kinds("tok", {"room_ids": ["!ch:h"]})
         self.assertEqual(code, 403)
+
+    def test_operating_stats_counts_real_room_kinds(self) -> None:
+        """节点心跳沿用后台房型规则，业务频道不能混入空间、AI 会话或私聊。"""
+        out = _bot().operating_stats()
+        self.assertEqual(out["channels_total"], 1)
+        self.assertEqual(out["spaces_total"], 1)
+        self.assertEqual(out["ai_rooms_total"], 1)
+        self.assertEqual(out["dm_rooms_total"], 1)
+
+    def test_operating_stats_counts_database_assets(self) -> None:
+        """知识库、分块和自建 Skill/Agent 全部来自真实 cosmac 数据表。"""
+        with session_scope() as session:
+            session.add_all([
+                Skill(scope="global", scope_id="", slug="enabled", enabled=True),
+                Skill(scope="global", scope_id="", slug="disabled", enabled=False),
+                Agent(scope="global", scope_id="", slug="enabled", enabled=True),
+                Agent(scope="global", scope_id="", slug="disabled", enabled=False),
+            ])
+            first = KnowledgeDoc(scope="room", scope_id="!ch:h", title="频道知识")
+            second = KnowledgeDoc(scope="user", scope_id="@alice:h", title="个人知识")
+            third = KnowledgeDoc(scope="room", scope_id="!ch:h", title="同库第二篇")
+            session.add_all([first, second, third])
+            session.flush()
+            session.add_all([
+                KnowledgeChunk(
+                    doc_id=first.id, scope=first.scope, scope_id=first.scope_id,
+                    ordinal=0, text="第一块",
+                ),
+                KnowledgeChunk(
+                    doc_id=second.id, scope=second.scope, scope_id=second.scope_id,
+                    ordinal=0, text="第二块",
+                ),
+            ])
+        out = _bot().operating_stats()
+        self.assertEqual(out["skills_custom_total"], 2)
+        self.assertEqual(out["skills_custom_enabled"], 1)
+        self.assertEqual(out["agents_custom_total"], 2)
+        self.assertEqual(out["agents_custom_enabled"], 1)
+        self.assertEqual(out["knowledge_bases_total"], 2)
+        self.assertEqual(out["kb_docs"], 3)
+        self.assertEqual(out["kb_chunks"], 2)
+
+    def test_operating_stats_counts_workflow_definitions(self) -> None:
+        """工作流定义来自控制室 state，停用项保留在总数但不计入启用数。"""
+        bot = _bot()
+        bot.client.resolve_alias = lambda alias: "!control:h"  # type: ignore
+        bot.client.get_state_event = lambda *args: {  # type: ignore
+            "workflows": [
+                {"slug": "a", "enabled": True},
+                {"slug": "b", "enabled": False},
+                {"slug": "c"},
+            ]
+        }
+        out = bot.operating_stats()
+        self.assertEqual(out["workflows_total"], 3)
+        self.assertEqual(out["workflows_enabled"], 2)
 
 
 if __name__ == "__main__":

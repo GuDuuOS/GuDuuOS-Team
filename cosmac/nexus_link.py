@@ -58,7 +58,21 @@ _EXTRA_STAT_KEYS = (
     "members_creator",
     "workflow_runs",
     "orders_paid",
+    "channels_total",
+    "spaces_total",
+    "ai_rooms_total",
+    "dm_rooms_total",
+    "knowledge_bases_total",
     "kb_docs",
+    "kb_chunks",
+    "skills_available",
+    "skills_custom_total",
+    "skills_custom_enabled",
+    "agents_available",
+    "agents_custom_total",
+    "agents_custom_enabled",
+    "workflows_total",
+    "workflows_enabled",
 )
 StatsProvider = Callable[[], Dict[str, Any]]
 

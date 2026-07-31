@@ -441,7 +441,11 @@ class PayEndpointTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(out["members_total"], 1)
         self.assertEqual(out["members_paid"], 1)
-        for k in ("members_creator", "workflow_runs", "orders_paid", "kb_docs"):
+        for k in (
+            "members_creator", "workflow_runs", "orders_paid", "kb_docs",
+            "knowledge_bases_total", "kb_chunks", "skills_custom_total",
+            "agents_custom_total",
+        ):
             self.assertIn(k, out)
         self.assertEqual(bot.handle_stats("bad")[0], 401)  # 无效 token → 401
 

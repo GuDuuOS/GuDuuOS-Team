@@ -678,6 +678,55 @@ class MatrixClient:
             logger.debug("admin 查用户房间失败", exc_info=True)
         return None
 
+    def admin_list_room_ids(self) -> Optional[List[str]]:
+        """管理员视角分页列出当前节点的全部房间 id。
+
+        这是 Nexus 统计「业务频道 / 空间 / AI 会话 / 私聊」的入口。不能用 bot 的
+        ``joined_rooms`` 代替：appservice 可能尚未加入部分真实频道，会造成少算。
+        返回 ``None`` 表示管理员令牌缺失、请求失败或响应不完整；调用方遇到这种情况
+        应当**不报该组指标**，不能拿部分分页结果冒充完整数据。
+        """
+        token = self._admin_token()
+        if not token:
+            return None
+        url = f"{self.homeserver_url}/_synapse/admin/v1/rooms"
+        offset = 0
+        room_ids: List[str] = []
+        try:
+            while True:
+                resp = requests.get(
+                    url,
+                    params={"from": offset, "limit": 500},
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=15,
+                )
+                if resp.status_code != 200:
+                    logger.debug("admin 列房间返回 %s", resp.status_code)
+                    return None
+                payload = resp.json()
+                rows = payload.get("rooms")
+                total = payload.get("total_rooms")
+                if not isinstance(rows, list) or total is None:
+                    return None
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    room_id = str(row.get("room_id") or "").strip()
+                    if room_id.startswith("!"):
+                        room_ids.append(room_id)
+                total_rooms = max(0, int(total))
+                if offset + len(rows) >= total_rooms:
+                    return room_ids
+                # Synapse 正常会返回 next_batch；兼容旧版本缺该字段时按本页长度续页。
+                # 若服务端声称还有数据却返回空页，说明响应不完整，整组统计宁缺毋滥。
+                if not rows:
+                    return None
+                next_batch = payload.get("next_batch")
+                offset = int(next_batch) if next_batch is not None else offset + len(rows)
+        except (requests.RequestException, TypeError, ValueError):
+            logger.debug("admin 分页列房间失败", exc_info=True)
+            return None
+
     def admin_room_state(self, room_id: str) -> Optional[List[Dict[str, Any]]]:
         """管理员视角读某房间**全部 state**(bot 不在的房也能读)。失败/没配 token → None。
 

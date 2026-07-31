@@ -1161,6 +1161,43 @@
           sum.roomNodes += 1;
           sum.rooms += Number(stats.rooms_total) || 0;
         }
+        if (stats.channels_total !== undefined) {
+          sum.channelNodes += 1;
+          sum.channels += Number(stats.channels_total) || 0;
+        }
+        if (stats.knowledge_bases_total !== undefined) {
+          sum.knowledgeBaseNodes += 1;
+          sum.knowledgeBases += Number(stats.knowledge_bases_total) || 0;
+        }
+        if (stats.kb_docs !== undefined) {
+          sum.kbDocNodes += 1;
+          sum.kbDocs += Number(stats.kb_docs) || 0;
+        }
+        if (stats.skills_available !== undefined) {
+          sum.skillNodes += 1;
+          sum.skillsAvailable += Number(stats.skills_available) || 0;
+        }
+        if (stats.skills_custom_enabled !== undefined) {
+          sum.skillCustomNodes += 1;
+          sum.skillsCustomEnabled += Number(stats.skills_custom_enabled) || 0;
+        }
+        if (stats.agents_available !== undefined) {
+          sum.agentNodes += 1;
+          sum.agentsAvailable += Number(stats.agents_available) || 0;
+        }
+        if (stats.agents_custom_enabled !== undefined) {
+          sum.agentCustomNodes += 1;
+          sum.agentsCustomEnabled += Number(stats.agents_custom_enabled) || 0;
+        }
+        if (stats.workflows_enabled !== undefined) {
+          sum.workflowNodes += 1;
+          sum.workflowsEnabled += Number(stats.workflows_enabled) || 0;
+          sum.workflowsTotal += Number(stats.workflows_total) || 0;
+        }
+        if (stats.workflow_runs !== undefined) {
+          sum.workflowRunNodes += 1;
+          sum.workflowRuns += Number(stats.workflow_runs) || 0;
+        }
         if (stats.members_total !== undefined) {
           sum.memberNodes += 1;
           sum.members += Number(stats.members_total) || 0;
@@ -1173,6 +1210,12 @@
       }, {
         accounts: 0, business: 0, admins: 0, ai: 0, detailedNodes: 0,
         rooms: 0, roomNodes: 0, members: 0, memberNodes: 0,
+        channels: 0, channelNodes: 0,
+        knowledgeBases: 0, knowledgeBaseNodes: 0, kbDocs: 0, kbDocNodes: 0,
+        skillsAvailable: 0, skillNodes: 0, skillsCustomEnabled: 0, skillCustomNodes: 0,
+        agentsAvailable: 0, agentNodes: 0, agentsCustomEnabled: 0, agentCustomNodes: 0,
+        workflowsTotal: 0, workflowsEnabled: 0, workflowNodes: 0,
+        workflowRuns: 0, workflowRunNodes: 0,
         tokensTotal: 0, tokensToday: 0, requestsTotal: 0, requestsToday: 0,
       });
       var detailedHint = peopleTotals.detailedNodes + " / " + insts.length + " 个节点已分类";
@@ -1181,6 +1224,12 @@
       };
       var detailedValue = function (value) {
         return peopleTotals.detailedNodes ? formatPeople(value) : "—";
+      };
+      var reportedValue = function (value, nodeCount) {
+        return nodeCount ? formatPeople(value) : "—";
+      };
+      var reportedHint = function (nodeCount) {
+        return nodeCount + " / " + insts.length + " 个节点已上报";
       };
       $("#finance-wallet-balance").textContent = fmtTokens(balSum);
       $("#admin-stats").innerHTML =
@@ -1193,7 +1242,14 @@
         '<div class="stat"><small>业务用户</small><b>' + detailedValue(peopleTotals.business) + '</b><span class="stat-note">' + detailedHint + "</span></div>" +
         '<div class="stat"><small>管理员账号</small><b class="plain">' + detailedValue(peopleTotals.admins) + '</b><span class="stat-note">' + detailedHint + "</span></div>" +
         '<div class="stat"><small>AI / 系统账号</small><b class="plain">' + detailedValue(peopleTotals.ai) + '</b><span class="stat-note">' + detailedHint + "</span></div>" +
-        '<div class="stat"><small>聊天房间</small><b class="plain">' + (peopleTotals.roomNodes ? formatPeople(peopleTotals.rooms) : "—") + '</b><span class="stat-note">' + peopleTotals.roomNodes + " / " + insts.length + " 个节点已上报</span></div>" +
+        '<div class="stat"><small>全部 Matrix 房间</small><b class="plain">' + reportedValue(peopleTotals.rooms, peopleTotals.roomNodes) + '</b><span class="stat-note">' + reportedHint(peopleTotals.roomNodes) + "</span></div>" +
+        '<div class="stat"><small>业务频道</small><b>' + reportedValue(peopleTotals.channels, peopleTotals.channelNodes) + '</b><span class="stat-note">已排除空间、私聊和 AI 会话 · ' + reportedHint(peopleTotals.channelNodes) + "</span></div>" +
+        '<div class="stat"><small>有内容的知识库</small><b class="plain">' + reportedValue(peopleTotals.knowledgeBases, peopleTotals.knowledgeBaseNodes) + '</b><span class="stat-note">共 ' + reportedValue(peopleTotals.kbDocs, peopleTotals.kbDocNodes) + " 篇文档 · " + reportedHint(peopleTotals.knowledgeBaseNodes) + "</span></div>" +
+        '<div class="stat"><small>平台可用技能</small><b class="plain">' + reportedValue(peopleTotals.skillsAvailable, peopleTotals.skillNodes) + '</b><span class="stat-note">内置与控制室启用目录 · ' + reportedHint(peopleTotals.skillNodes) + "</span></div>" +
+        '<div class="stat"><small>节点自建技能（启用）</small><b class="plain">' + reportedValue(peopleTotals.skillsCustomEnabled, peopleTotals.skillCustomNodes) + '</b><span class="stat-note">来自各节点 PostgreSQL · ' + reportedHint(peopleTotals.skillCustomNodes) + "</span></div>" +
+        '<div class="stat"><small>平台可用 AI Agent</small><b class="plain">' + reportedValue(peopleTotals.agentsAvailable, peopleTotals.agentNodes) + '</b><span class="stat-note">内置与控制室启用目录 · ' + reportedHint(peopleTotals.agentNodes) + "</span></div>" +
+        '<div class="stat"><small>节点自建 AI Agent（启用）</small><b class="plain">' + reportedValue(peopleTotals.agentsCustomEnabled, peopleTotals.agentCustomNodes) + '</b><span class="stat-note">来自各节点 PostgreSQL · ' + reportedHint(peopleTotals.agentCustomNodes) + "</span></div>" +
+        '<div class="stat"><small>启用工作流</small><b class="plain">' + reportedValue(peopleTotals.workflowsEnabled, peopleTotals.workflowNodes) + '</b><span class="stat-note">共 ' + reportedValue(peopleTotals.workflowsTotal, peopleTotals.workflowNodes) + " 个定义，累计运行 " + reportedValue(peopleTotals.workflowRuns, peopleTotals.workflowRunNodes) + " 次 · " + reportedHint(peopleTotals.workflowNodes) + "</span></div>" +
         '<div class="stat"><small>有效会员</small><b class="plain">' + (peopleTotals.memberNodes ? formatPeople(peopleTotals.members) : "—") + '</b><span class="stat-note">' + peopleTotals.memberNodes + " / " + insts.length + " 个节点已上报</span></div>" +
         '<div class="stat"><small>今日 Token 消耗</small><b>' + fmtTokens(peopleTotals.tokensToday) + "</b></div>" +
         '<div class="stat"><small>累计 Token 消耗</small><b>' + fmtTokens(peopleTotals.tokensTotal) + "</b></div>" +
@@ -1301,22 +1357,40 @@
     users: "旧版账号总数",
     dau: "日活用户",
     messages_today: "今日消息（进程计数）",
-    rooms_total: "聊天房间数",
+    rooms_total: "全部 Matrix 房间",
+    channels_total: "业务频道",
+    spaces_total: "空间",
+    ai_rooms_total: "AI 会话房",
+    dm_rooms_total: "私聊房",
     rooms: "旧版房间数",
     members_total: "有效会员",
     members_paid: "付费会员",
     members_creator: "创作者会员",
+    workflows_total: "工作流定义",
+    workflows_enabled: "已启用工作流",
     workflow_runs: "工作流累计运行",
     orders_paid: "已支付订单",
+    knowledge_bases_total: "有内容的知识库",
     kb_docs: "知识库文档",
+    kb_chunks: "知识库分块",
+    skills_available: "平台可用技能",
+    skills_custom_total: "节点自建技能",
+    skills_custom_enabled: "已启用自建技能",
+    agents_available: "平台可用 AI Agent",
+    agents_custom_total: "节点自建 AI Agent",
+    agents_custom_enabled: "已启用自建 AI Agent",
     bots: "Bot 数",
     workflows: "工作流数",
   };
   var INSTANCE_STAT_ORDER = [
     "users_total", "users_business", "users_admin", "users_ai", "users_guest",
-    "users_deactivated", "users_locked", "rooms_total", "messages_today",
-    "members_total", "members_paid", "members_creator", "workflow_runs",
-    "orders_paid", "kb_docs",
+    "users_deactivated", "users_locked", "rooms_total", "channels_total",
+    "spaces_total", "ai_rooms_total", "dm_rooms_total", "messages_today",
+    "members_total", "members_paid", "members_creator",
+    "knowledge_bases_total", "kb_docs", "kb_chunks",
+    "skills_available", "skills_custom_total", "skills_custom_enabled",
+    "agents_available", "agents_custom_total", "agents_custom_enabled",
+    "workflows_total", "workflows_enabled", "workflow_runs", "orders_paid",
   ];
 
   function instanceStatText(value) {
