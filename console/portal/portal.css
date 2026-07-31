@@ -145,6 +145,51 @@ label input { margin-top: 5px; }
 .inline-form { display: flex; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
 .inline-form input { width: auto; min-width: 180px; }
 
+/* —— 超级管理员工作台：桌面左侧导航 + 独立功能页 —— */
+.admin-shell {
+  width: min(1440px, 100%); margin: 0 auto; padding: 24px;
+  display: grid; grid-template-columns: 224px minmax(0, 1fr); gap: 24px;
+  align-items: start;
+}
+.admin-sidebar {
+  position: sticky; top: 86px; min-height: calc(100vh - 110px);
+  display: flex; flex-direction: column; padding: 18px 12px 14px;
+  border: 1px solid var(--line); border-radius: 16px;
+  background: var(--panel-strong); backdrop-filter: blur(10px);
+}
+.admin-sidebar-head { padding: 3px 10px 16px; border-bottom: 1px solid var(--line); }
+.admin-sidebar-head small, .admin-workspace-head small {
+  display: block; color: var(--muted); font: 10px/1.4 var(--mono); letter-spacing: .12em;
+}
+.admin-sidebar-head b { display: block; margin-top: 4px; font-size: 16px; }
+.admin-menu { display: grid; gap: 5px; padding: 14px 0; }
+.admin-menu-item {
+  width: 100%; display: grid; grid-template-columns: 26px 1fr auto; align-items: center;
+  gap: 8px; min-height: 42px; padding: 7px 10px; border: 1px solid transparent;
+  border-radius: 10px; background: transparent; color: var(--muted); text-align: left;
+  text-decoration: none; font: inherit; transition: .16s ease;
+}
+.admin-menu-item:hover { color: var(--ink); background: var(--hover-row); border-color: var(--line); }
+.admin-menu-item.on {
+  color: var(--orange); background: var(--badge-orange-bg); border-color: var(--orange);
+}
+.admin-menu-icon { font: 17px/1 var(--mono); text-align: center; }
+.admin-menu-item em {
+  min-width: 23px; padding: 1px 7px; border-radius: 999px; color: var(--muted);
+  background: var(--badge-idle-bg); font: normal 10.5px/1.7 var(--mono); text-align: center;
+}
+.admin-menu-item.on em { color: var(--orange); background: var(--panel-strong); }
+.admin-menu-item i { color: var(--muted); font: normal 12px var(--mono); }
+.admin-sidebar-foot { margin-top: auto; padding: 12px 10px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+.admin-workspace { min-width: 0; }
+.admin-workspace-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  min-height: 56px; margin-bottom: 18px;
+}
+.admin-workspace-head h1 { margin-top: 2px; font-size: 22px; letter-spacing: .02em; }
+.admin-page { min-width: 0; }
+.admin-page > .panel:last-child { margin-bottom: 0; }
+
 /* 超管登录后在主内容区明确展示大屏入口，避免只放在顶栏而被误认为普通导航。 */
 .dashboard-entry {
   display: flex; align-items: center; justify-content: space-between; gap: 20px;
@@ -183,6 +228,32 @@ label input { margin-top: 5px; }
   .release-form { grid-template-columns: 1fr 1fr; }
   .release-title-field, .release-canary-field, .release-notes-field { grid-column: 1 / -1; }
   .release-submit { grid-column: 1 / -1; }
+}
+
+@media (max-width: 960px) {
+  .admin-shell { display: block; padding: 18px 16px 60px; }
+  .admin-sidebar {
+    position: sticky; top: 61px; z-index: 4; min-height: 0; margin-bottom: 18px;
+    padding: 9px; border-radius: 13px;
+  }
+  .admin-sidebar-head, .admin-sidebar-foot { display: none; }
+  .admin-menu {
+    display: flex; gap: 7px; padding: 0; overflow-x: auto; scrollbar-width: none;
+  }
+  .admin-menu::-webkit-scrollbar { display: none; }
+  .admin-menu-item {
+    width: auto; min-width: max-content; grid-template-columns: 22px auto auto;
+    min-height: 38px; padding: 6px 11px;
+  }
+}
+
+@media (max-width: 620px) {
+  .topbar { padding: 12px 14px; }
+  .brand em, .who { display: none; }
+  .topnav { gap: 7px; }
+  .admin-workspace-head { align-items: flex-end; }
+  .admin-workspace-head h1 { font-size: 19px; }
+  .admin-workspace-head #btn-admin-refresh { padding-inline: 10px; }
 }
 
 /* —— 统计条 —— */

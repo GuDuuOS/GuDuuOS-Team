@@ -194,6 +194,47 @@
     });
   });
 
+  // ---------- 超管左侧功能导航 ----------
+  // 控制台不用前端框架，但页面级功能仍要支持刷新、前进/后退和深链。因此用一个很小的
+  // hash 状态机维护当前功能页；这里只切展示区域，所有权限和数据仍由服务端接口控制。
+  var ADMIN_PAGE_TITLES = {
+    overview: "舰队总览",
+    releases: "版本管理",
+    instances: "节点实例",
+    licenses: "授权与申请",
+    customers: "OEM 客户",
+    billing: "支付与订单",
+  };
+  function adminPageFromHash() {
+    var value = window.location.hash.replace(/^#/, "").trim();
+    return Object.prototype.hasOwnProperty.call(ADMIN_PAGE_TITLES, value) ? value : "overview";
+  }
+  function selectAdminPage(page, resetScroll) {
+    if (!Object.prototype.hasOwnProperty.call(ADMIN_PAGE_TITLES, page)) page = "overview";
+    $all("[data-admin-view]").forEach(function (view) {
+      view.hidden = view.dataset.adminView !== page;
+    });
+    $all("button[data-admin-page]").forEach(function (button) {
+      var active = button.dataset.adminPage === page;
+      button.classList.toggle("on", active);
+      if (active) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
+    });
+    $("#admin-page-title").textContent = ADMIN_PAGE_TITLES[page];
+    if (resetScroll) window.scrollTo(0, 0);
+  }
+  $all("button[data-admin-page]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var target = button.dataset.adminPage;
+      if (adminPageFromHash() === target) selectAdminPage(target, true);
+      else window.location.hash = target;
+    });
+  });
+  window.addEventListener("hashchange", function () {
+    var auth = getAuth();
+    if (auth && auth.mode === "admin") selectAdminPage(adminPageFromHash(), true);
+  });
+
   // ---------- 视图切换 ----------
   function show(viewId) {
     ["#view-login", "#view-oem", "#view-admin"].forEach(function (id) { $(id).hidden = (id !== viewId); });
@@ -212,7 +253,11 @@
       prepareDashboardLinks();
       return;
     }
-    if (auth.mode === "admin") { show("#view-admin"); loadAdmin(); }
+    if (auth.mode === "admin") {
+      show("#view-admin");
+      selectAdminPage(adminPageFromHash(), false);
+      loadAdmin();
+    }
     else { show("#view-oem"); loadOem(); }
     prepareDashboardLinks();
   }
@@ -528,6 +573,14 @@
       releaseInstanceCount = insts.length;
       renderReleases(releases);
 
+      // 左侧数量让超管不进入页面也能看到各功能区规模；待处理申请尤其需要醒目，避免
+      // 被埋在授权列表里。这里只展示已有接口返回的计数，不额外增加轮询请求。
+      $("#nav-count-releases").textContent = String(releases.length);
+      $("#nav-count-instances").textContent = String(insts.length);
+      $("#nav-count-requests").textContent = String(reqs.length);
+      $("#nav-count-customers").textContent = String(oems.length);
+      $("#nav-count-orders").textContent = String(orders.length);
+
       // 定价表单回填（仅在超管未编辑时覆盖,避免打字被刷新冲掉）
       var pf = $("#form-pricing");
       if (document.activeElement === null || !pf.contains(document.activeElement)) {
@@ -608,6 +661,7 @@
 
   $("#btn-refresh").addEventListener("click", loadAdmin);
   $("#btn-release-refresh").addEventListener("click", loadAdmin);
+  $("#btn-admin-refresh").addEventListener("click", loadAdmin);
 
   // 输入版本号时自动补对应 tag；若管理员已经手动改过 tag，就不强行覆盖。
   $("#form-release").version.addEventListener("input", function () {
