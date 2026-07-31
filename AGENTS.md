@@ -95,11 +95,16 @@
 | **知识库** | ✅ GuDuu OS Star DB + **pgvector** | 文档分块 + 向量检索(RAG)，state event 存不下也搜不了。**这是上 DB 的最硬理由**。 |
 | **群级 / Agent 记忆**（摘要、长期记忆） | ✅ GuDuu OS Star DB | 派生数据，与原始聊天记录分开存。 |
 | 工作流定义与运行记录（模块3）、交易（模块4）、个人主页（模块5） | ✅ GuDuu OS Star DB | 关系型。 |
-| **OEM/Nexus 数据**（KEY、实例、钱包、心跳、版本发布与逐节点升级状态） | ✅ Nexus 独立 DB | 母舰侧独立保存，与各 OEM 的 Synapse/cosmac 数据库隔离；版本发布只下发严格 Git tag，不保存客户 SSH 凭据。 |
+| **OEM/Nexus 数据**（OEM 层级、用户归属、KEY、实例、钱包/订单、心跳、版本发布） | ✅ Nexus 独立 PostgreSQL | 母舰侧独立保存，与各 OEM 的 Synapse/cosmac 数据库隔离；只存 Matrix 用户 ID 与归属边，不收集客户密码/聊天；版本发布只下发严格 Git tag，不保存客户 SSH 凭据。 |
 
 **基建决策**：GuDuu OS Star 的 DB **复用生产现成的 PostgreSQL**，给 cosmac 服务**单开一个 database/schema**，按需装 **pgvector**。走 §2 的第 3 条路径，与 Synapse 核心解耦、不碰它。
 
 **实现约定**（`cosmac/db/`）：用 **SQLAlchemy（同步）**（bot 是同步的，别引入 async）；连接由 `COSMAC_DATABASE_URL`（旧 `GUDUU_DATABASE_URL` 仍兼容） 配置，生产指向 Postgres、本地默认回退 SQLite（`run/cosmac.db`）；pgvector 是 Postgres 专属，本地缺它时相关功能要优雅降级。
+
+**Nexus 基建决策（2026-08）**：生产 Nexus 使用自己 VM 上的独立 PostgreSQL
+数据库 `nexus` 和最小权限角色 `nexus_app`，连接只监听本机；`NEXUS_DATABASE_URL`
+从 `/etc/nexus.env` 注入。SQLite 仅保留为本地开发回退，不能再作为生产主库。生产每天
+生成 custom-format `pg_dump`，保留 30 天；迁移前 SQLite 停机快照长期保留用于灾备。
 
 ---
 
