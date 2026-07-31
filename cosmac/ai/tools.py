@@ -1527,6 +1527,88 @@ class Toolbox:
             return f"{user_id} 是已停用账号，登不进来，邀请也没用。请先让管理员恢复该账号，或改邀其他人。"
         return None
 
+    # 任务真人指派时的噪音词：assignee 按 ASCII 切词后这些不是账号名，别拿去邀请。
+    _TASK_HUMAN_NOISE = {"ai", "bot", "none"}
+
+    def _ensure_task_humans_in_room(
+        self, room_id: str, humans: List[str], ctx: ToolContext
+    ) -> List[str]:
+        """任务派给真人时，保证 TA 真的在任务所在频道里——不在就**自动邀请**。
+
+        背景(负责人 dev 实测,2026-07-31)：中枢 AI 在私人会话(全局模式)拆任务时，能力
+        名册给的是**全局名册**，AI 把任务派给了不在该频道的 duxz01——任务落库了，但
+        TA 侧边栏看不到频道、频道成员里也查无此人，任务悬空没人知道。
+        修法=服务端兜底(不靠提示词)：登记/改派后逐个检查真人执行者与 assignee 挂名
+        真人，不在频道的自动邀请进来(复用 invite_user_status + 403 提权重试)。
+
+        参数:
+            room_id: 任务所属房间(create_tasks=当前房;update_task=**任务自己的房**,
+                     改派可能是在别的频道/私聊里发起的)。
+            humans:  候选真人标识列表(localpart 或 @全id,可混有噪音词,内部会过滤去重)。
+        返回给模型看的备注行列表(邀请成功/失败/私聊提醒)；全程兜异常绝不抛。
+        """
+        notes: List[str] = []
+        if not humans or not room_id:
+            return notes
+        kind = self._room_kind(room_id)
+        if kind != "channel":
+            # 私聊/AI 会话里拆的任务没有对应频道可邀——真人在自己任务看板能看到(按
+            # localpart 匹配)，但收不到频道 @ 通知。提醒模型转告用户，别让任务静默悬空。
+            if kind in ("ai", "dm"):
+                notes.append(
+                    "ℹ️ 本任务登记在私聊会话下：被指派的真人能在自己的「任务看板」看到，"
+                    "但**不会收到频道通知**。建议转告 TA，或改在具体频道里拆解。"
+                )
+            return notes
+        # 现有成员的 localpart 集合(查失败就整体放弃——别因一次抖动把人乱邀一通)
+        try:
+            members = {
+                str(m.get("user_id") or "").lstrip("@").split(":")[0].lower()
+                for m in (self.client.get_members(room_id) or [])
+            }
+        except Exception:
+            return notes
+        if not members:
+            return notes
+        # 单 homeserver:完整 id 的域名从发起人身上取(@boss:cosmac.cc → cosmac.cc)
+        domain = ctx.sender.split(":", 1)[1] if ":" in ctx.sender else ""
+        seen: Set[str] = set()
+        for raw in humans:
+            lp = str(raw or "").strip().lstrip("@").split(":")[0].lower()
+            # 过滤噪音:太短的词/AI 字样/已处理过的/已在频道里的
+            if not lp or len(lp) < 2 or lp in self._TASK_HUMAN_NOISE or lp in seen:
+                continue
+            seen.add(lp)
+            if lp in members:
+                continue
+            raw = str(raw).strip()
+            uid = raw if (raw.startswith("@") and ":" in raw) else (
+                f"@{lp}:{domain}" if domain else ""
+            )
+            if not uid:
+                continue
+            try:
+                if hasattr(self.client, "invite_user_status"):
+                    ok, status, err = self.client.invite_user_status(room_id, uid)
+                    # 403=bot 在该频道无邀请权限 → 提权重试(与 invite_to_room 同套路)
+                    if not ok and status == 403 and self._promote_bot_in_room(room_id):
+                        ok, status, err = self.client.invite_user_status(room_id, uid)
+                else:
+                    ok, status, err = bool(self.client.invite_user(room_id, uid)), 0, ""
+            except Exception:
+                ok, status, err = False, 0, "网络异常"
+            if ok:
+                notes.append(
+                    f"✅ {uid} 原不在本频道，已自动邀请进来（TA 接受后即可看到频道和任务）。"
+                )
+            else:
+                detail = f"{status}: {err}" if status else (err or "未知原因")
+                notes.append(
+                    f"⚠️ 被指派的 {raw} 不在本频道，自动邀请失败（{detail}）。"
+                    "若这是真实成员，请让频道管理员手动邀请；否则请改派名册里的成员。"
+                )
+        return notes
+
     def _tool_invite_to_room(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         """邀请用户进已有房间。默认当前房间；指定别的房间要过 _check_room_access 防越权。"""
         user_id = str(args.get("user_id") or "").strip()
@@ -1921,6 +2003,19 @@ class Toolbox:
             if isinstance(it, dict) and it.get("due"):
                 it["due_ts"] = _parse_due_to_ts(it.get("due"))
         by_person: Dict[str, list] = {}  # 真人被指派者 id → 其任务标题(用于群内 @ 通知,bug12)
+        humans: List[str] = []           # 全部真人指派(执行者+assignee 挂名)→成员校验/自动邀请
+        # 单 homeserver:纯 localpart(如"duxz01")归一成完整 id,让 @ 通知与邀请都能落地——
+        # 此前只认 @ 开头的 id,模型常填裸用户名,通知静默跳过、当事人毫不知情(dev 实测)。
+        _dom = ctx.sender.split(":", 1)[1] if ":" in ctx.sender else ""
+
+        def _norm_uid(w: str) -> str:
+            w = str(w or "").strip()
+            if w.startswith("@") and ":" in w:
+                return w
+            lp = w.lstrip("@").split(":")[0].lower()
+            if not lp or len(lp) < 2 or lp in self._TASK_HUMAN_NOISE or not _dom:
+                return ""
+            return f"@{lp}:{_dom}"
         try:
             from cosmac.db import session_scope
             from cosmac.db.task_repo import create_tasks
@@ -1944,10 +2039,20 @@ class Toolbox:
                     elif t.assignee:
                         seg += f" —— {t.assignee}"
                     lines.append(seg)
-                    # 收集真人被指派者(id 以 @ 开头才能 @提及触发通知;AI/工作流执行者不 @)
-                    who = (t.executor_ref if t.executor_kind == "human" else "") or t.assignee or ""
-                    if who.startswith("@"):
-                        by_person.setdefault(who, []).append(t.title)
+                    # 收集真人指派:human 执行者 ref + assignee 里的挂名真人(共同负责,
+                    # 切词口径与看板可见性 _is_task_assignee 一致)。归一化后既发 @ 通知,
+                    # 也送成员校验/自动邀请——两边共用同一份名单。
+                    if t.executor_kind == "human" and t.executor_ref:
+                        humans.append(t.executor_ref)
+                        uid = _norm_uid(t.executor_ref)
+                        if uid:
+                            by_person.setdefault(uid, []).append(t.title)
+                    elif t.assignee:
+                        for w in re.split(r"[^A-Za-z0-9._=@:\-]+", t.assignee):
+                            uid = _norm_uid(w)
+                            if uid:
+                                humans.append(w)
+                                by_person.setdefault(uid, []).append(t.title)
         except Exception:
             logger.exception("登记任务到看板失败")
             return "登记任务到看板失败（数据库不可用？）。"
@@ -1964,7 +2069,13 @@ class Toolbox:
                 )
             except Exception:
                 logger.debug("通知任务被指派者失败 who=%s", _who, exc_info=True)
-        return f"已把目标拆成 {n} 个任务、登记到「任务看板」：\n" + "\n".join(lines)
+        # 成员校验+自动邀请:派给了不在本频道的真人 → 拉 TA 进来,别让任务悬空(dev 实测)。
+        notes = self._ensure_task_humans_in_room(ctx.room_id, humans, ctx)
+        tail_note = ("\n" + "\n".join(notes)) if notes else ""
+        return (
+            f"已把目标拆成 {n} 个任务、登记到「任务看板」：\n" + "\n".join(lines)
+            + tail_note
+        )
 
     def _tool_list_capabilities(self, args: Dict[str, Any], ctx: ToolContext) -> str:
         """能力名册（转发到 bot 注入的 list_capabilities）。未注入则优雅降级。"""
@@ -2372,6 +2483,7 @@ class Toolbox:
                         "**不要**另建一个新任务来假装完成它;如需推进,请让该任务的执行者或频道管理员来改。"
                     )
                 title = t.title
+                task_room = t.room_id or ""   # 任务所属房(改派可能在别的频道/私聊里发起)
                 ok = update_task(
                     s, tid,
                     status=status,
@@ -2389,6 +2501,17 @@ class Toolbox:
                 tail += f"（{due_label}）"
             if isinstance(assignee, str) and assignee.strip():
                 tail += f"（改派给 {assignee.strip()}）"
+            # 改派给了真人 → 与 create_tasks 同口径:不在任务所属频道就自动邀请,别悬空。
+            _humans: List[str] = []
+            if str(exec_kind or "") == "human" and exec_ref:
+                _humans.append(str(exec_ref))
+            if isinstance(assignee, str) and assignee.strip():
+                _humans.extend(
+                    w for w in re.split(r"[^A-Za-z0-9._=@:\-]+", assignee) if w
+                )
+            if _humans:
+                for note in self._ensure_task_humans_in_room(task_room, _humans, ctx):
+                    tail += f"\n{note}"
             # 触发自动执行 → 让"派给 AI 同事的任务真的被执行、产出发频道、回填看板"。
             # 两种情形都要触发(负责人实报:AI 把任务标 doing 却没人执行,卡在看板、频道无产出):
             #   ① 本次把执行者**改派**成 agent；
