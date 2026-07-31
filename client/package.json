@@ -1,7 +1,7 @@
 {
   "name": "cosmac-workbench",
   "private": true,
-  "version": "1.6.32",
+  "version": "1.7.0",
   "type": "module",
   "description": "GuDuu OS · 行业 AI 工作台 Demo",
   "scripts": {

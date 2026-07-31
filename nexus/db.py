@@ -343,9 +343,62 @@ class NexusInstanceGeo(Base):
     updated_ts = Column(BigInteger, nullable=False, default=_now_ms)
 
 
+class NexusRelease(Base):
+    """超级管理员创建的 GuDuu OS 发行版本。
+
+    版本记录与 Git tag 一一对应。状态机刻意保持很小：``draft`` 仅保存草稿，
+    ``canary`` 只推给一个灰度节点，``published`` 推给全部在线授权实例，
+    ``paused`` 暂停尚未领取的任务。发布说明存 Nexus DB，OEM 节点不需要访问
+    GitHub API 就能取得统一说明。
+    """
+
+    __tablename__ = "nexus_release"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    version = Column(String(32), nullable=False, unique=True, index=True)
+    title = Column(String(255), nullable=False, default="")
+    notes = Column(Text, nullable=False, default="")
+    # 自动更新只接受 vX.Y.Z 形式的 tag，避免后台内容变成任意 git 参数。
+    git_ref = Column(String(40), nullable=False, unique=True)
+    # draft / canary / published / paused
+    status = Column(String(16), nullable=False, default="draft", index=True)
+    canary_instance_id = Column(Integer, nullable=True, default=None)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    updated_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    published_ts = Column(BigInteger, nullable=True, default=None)
+
+
+class NexusReleaseDeployment(Base):
+    """一个发行版本在一个 OEM 实例上的投放与安装状态。
+
+    复合主键保证同一版本对同一实例只生成一个任务。失败任务不会被节点无限重试，
+    必须由超级管理员在控制台明确重置为 ``pending``，避免坏版本形成重启风暴。
+    """
+
+    __tablename__ = "nexus_release_deployment"
+
+    release_id = Column(Integer, primary_key=True)
+    instance_id = Column(Integer, primary_key=True)
+    # pending / downloading / installing / success / failed / skipped
+    status = Column(String(16), nullable=False, default="pending", index=True)
+    from_version = Column(String(32), nullable=False, default="")
+    to_version = Column(String(32), nullable=False, default="")
+    # 节点只上报末尾错误摘要；服务端仍截断，防止日志灌库。
+    detail = Column(Text, nullable=False, default="")
+    attempts = Column(Integer, nullable=False, default=0)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    updated_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    finished_ts = Column(BigInteger, nullable=True, default=None)
+
+
 # 组合索引：按实例翻流水/心跳是最高频查询
 Index("ix_nexus_ledger_inst_ts", NexusLedger.instance_id, NexusLedger.ts)
 Index("ix_nexus_hb_inst_ts", NexusHeartbeat.instance_id, NexusHeartbeat.ts)
+Index(
+    "ix_nexus_release_deploy_inst_status",
+    NexusReleaseDeployment.instance_id,
+    NexusReleaseDeployment.status,
+)
 
 # —— 引擎/会话（模块级单例；init_engine 幂等，测试可传显式 URL 拿独立库）——
 _engine = None

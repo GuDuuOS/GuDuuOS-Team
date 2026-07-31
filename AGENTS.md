@@ -95,6 +95,7 @@
 | **知识库** | ✅ GuDuu OS Star DB + **pgvector** | 文档分块 + 向量检索(RAG)，state event 存不下也搜不了。**这是上 DB 的最硬理由**。 |
 | **群级 / Agent 记忆**（摘要、长期记忆） | ✅ GuDuu OS Star DB | 派生数据，与原始聊天记录分开存。 |
 | 工作流定义与运行记录（模块3）、交易（模块4）、个人主页（模块5） | ✅ GuDuu OS Star DB | 关系型。 |
+| **OEM/Nexus 数据**（KEY、实例、钱包、心跳、版本发布与逐节点升级状态） | ✅ Nexus 独立 DB | 母舰侧独立保存，与各 OEM 的 Synapse/cosmac 数据库隔离；版本发布只下发严格 Git tag，不保存客户 SSH 凭据。 |
 
 **基建决策**：GuDuu OS Star 的 DB **复用生产现成的 PostgreSQL**，给 cosmac 服务**单开一个 database/schema**，按需装 **pgvector**。走 §2 的第 3 条路径，与 Synapse 核心解耦、不碰它。
 
@@ -112,6 +113,7 @@
 | 3 | Bot / 插件 / 工作流引擎 | ✅ 完成 | **定调：不自建引擎，对接外部平台**(n8n/Make/Coze/ComfyUI/Dify)。全套上线：通用连接器引擎(`cosmac/wf.py`，含 webhook/Dify/Coze/ComfyUI)+ 聊天命令 `工作流 列表/跑` + 主 AI 工具 `run_workflow` + 异步回调协议 + 运行记录入库 + **后台编排 UI**(`AdminView.vue` 工作流面板：4 平台连接器增删改查、凭据只填名)；定义走控制室 `cosmac.workflows`、密钥走服务端 env。**安全/健壮性"够用即止"**(负责人 2026-06 拍板)：单实例下真实风险(SSRF/密钥/鉴权/DoS/重复触发/崩溃可见性)全堵；**durable 任务队列 + 多实例 fencing + per-event 精确一次**记为**已知架构边界·本期不做**(单 bot 小规模属过度设计)。增强项(更多平台适配器/graph 上传 UI)按需再补 |
 | 4 | 交易系统（会员订阅） | 🟡 进行中 | **主线=会员订阅/充值**，多渠道支付(Stripe/PayPal/USDT/支付宝/微信)按 IP 地理路由，范围"较完整"。**P1 地基已落地+单测**(`cosmac/trading/`)：套餐定义(控制室 `cosmac.plans`)+ 订单(DB `cosmac_order`)+ **可插拔支付抽象** `PaymentProvider`(密钥只进 env)+ 订单服务(下单/支付成功**幂等**开通/**续费按原到期日顺延**)+ 会员**到期**(扩 `members.py`：grant 带 expires_ts、查等级自动判过期)+ 手动/mock 支付(HMAC 验签)。**分期**：P2 Stripe 全链路+webhook+前端套餐页；P3 PayPal/USDT+地理路由；P4 支付宝/微信+对账/退款。 |
 | 5 | 个人主页 | ⬜ | 需要客户端 UI 配合 |
+| 6 | **OEM 体系（GuDuu Nexus + 发行版）** | 🟡 进行中 | 当前增量：建设 Nexus **版本发布中心**。超级管理员维护版本列表，发布流程固定为“草稿→灰度监测→全量发布→暂停”；节点通过宿主更新代理按 KEY 拉取指令并上报 pending/installing/success/failed，禁止 Nexus 主动 SSH OEM 服务器，也禁止给 bot 容器宿主机控制权。 |
 | R | **品牌化 Matrix→GuDuu OS Star** | ⬜ 持续 | 贯穿全程的横切任务，按 §7 三层红线分层改，每碰到呈现层字样就顺手改 |
 
 > 状态符号：⬜未开始 / 🟡进行中 / ✅完成。开工/完成时更新这张表。

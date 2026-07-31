@@ -380,6 +380,70 @@
   });
 
   // ---------- 超管视图 ----------
+  var RELEASE_STATUS = {
+    draft: ["idle", "草稿"],
+    canary: ["warning", "灰度监测"],
+    published: ["active", "全量发布"],
+    paused: ["offline", "已暂停"],
+  };
+  var DEPLOY_STATUS = {
+    pending: ["idle", "待领取"],
+    downloading: ["warning", "下载中"],
+    installing: ["warning", "安装中"],
+    success: ["active", "成功"],
+    failed: ["offline", "失败"],
+    skipped: ["idle", "已跳过"],
+  };
+  var releaseInstanceCount = 0;
+
+  function releaseBadge(status, mapping) {
+    var item = mapping[status] || ["idle", status];
+    return '<span class="badge ' + item[0] + '">' + esc(item[1]) + "</span>";
+  }
+
+  // 版本列表同时展示流程状态和逐节点结果。说明、域名、错误摘要全部先转义，
+  // 防止某个被入侵的 OEM 节点借上报错误内容攻击超管浏览器。
+  function renderReleases(releases) {
+    var box = $("#admin-releases");
+    box.innerHTML = releases.map(function (r) {
+      var c = r.counts || {};
+      var countText = "待领取 " + (c.pending || 0) + " · 安装中 " +
+        ((c.downloading || 0) + (c.installing || 0)) + " · 成功 " +
+        (c.success || 0) + " · 失败 " + (c.failed || 0);
+      var actions = [];
+      if (["draft", "paused", "canary"].indexOf(r.status) >= 0) {
+        actions.push('<button class="ghost small" data-release-action="canary" data-release-id="' + r.id + '">推送灰度节点</button>');
+      }
+      if (["draft", "canary", "paused"].indexOf(r.status) >= 0) {
+        actions.push('<button class="primary small" data-release-action="publish" data-release-id="' + r.id + '">推送全部节点</button>');
+      }
+      if (r.status === "canary" || r.status === "published") {
+        actions.push('<button class="ghost small" data-release-action="pause" data-release-id="' + r.id + '">暂停发布</button>');
+      }
+      if ((c.failed || 0) > 0) {
+        actions.push('<button class="ghost small" data-release-action="retry" data-release-id="' + r.id + '">重试失败节点</button>');
+      }
+      var deployments = (r.deployments || []).map(function (d) {
+        var detail = d.detail ? '<div class="hint">' + esc(d.detail) + "</div>" : "";
+        return "<tr><td>#" + d.instance_id + "</td><td>" + esc(d.domain) + '</td><td class="zh">' +
+          releaseBadge(d.status, DEPLOY_STATUS) + "</td><td>" + esc(d.from_version || "—") + " → " +
+          esc(d.to_version || "—") + "</td><td>" + fmtTime(d.updated_ts) + detail + "</td></tr>";
+      }).join("");
+      var detailBlock = deployments
+        ? '<details class="release-deployments"><summary>查看 ' + r.deployments.length +
+          ' 个节点的安装明细</summary><table class="tbl"><thead><tr><th>#</th><th>节点</th><th>状态</th><th>版本</th><th>更新时间 / 说明</th></tr></thead><tbody>' +
+          deployments + "</tbody></table></details>"
+        : '<p class="hint">尚未推送到任何节点。</p>';
+      return '<article class="release-card"><div class="release-card-head"><div>' +
+        '<div class="release-card-title"><b>v' + esc(r.version) + "</b>" +
+        releaseBadge(r.status, RELEASE_STATUS) + "<strong>" + esc(r.title) + "</strong></div>" +
+        '<div class="release-meta">Git ' + esc(r.git_ref) + " · 创建 " + fmtTime(r.created_ts) + "</div></div>" +
+        '<div class="release-actions">' + actions.join("") + "</div></div>" +
+        '<div class="release-notes">' + esc(r.notes) + '</div><div class="release-counts">' + countText + "</div>" +
+        detailBlock + "</article>";
+    }).join("") || '<p class="empty">还没有版本记录。先保存一个草稿，再进行灰度监测。</p>';
+  }
+
   function loadAdmin() {
     Promise.all([
       api("/nexus/admin/instances"),
@@ -388,10 +452,25 @@
       api("/nexus/admin/requests"),
       api("/nexus/admin/pricing"),
       api("/nexus/admin/orders"),
+      api("/nexus/admin/releases"),
     ]).then(function (rs) {
       var insts = rs[0].instances, keys = rs[1].keys, oems = rs[2].oems;
       var reqs = rs[3].requests || [];
       var pricing = rs[4].pricing, orders = rs[5].orders || [];
+      var releases = rs[6].releases || [];
+
+      // 灰度节点选择器随实例列表更新，但保留管理员当前已选值。
+      var canarySelect = $("#release-canary");
+      var selectedCanary = canarySelect.value;
+      canarySelect.innerHTML = insts.map(function (i) {
+        return '<option value="' + i.id + '">#' + i.id + " · " + esc(i.domain) +
+          "（" + esc(i.version || "未知版本") + "）</option>";
+      }).join("") || '<option value="">暂无可用实例</option>';
+      if (selectedCanary && insts.some(function (i) { return String(i.id) === selectedCanary; })) {
+        canarySelect.value = selectedCanary;
+      }
+      releaseInstanceCount = insts.length;
+      renderReleases(releases);
 
       // 定价表单回填（仅在超管未编辑时覆盖,避免打字被刷新冲掉）
       var pf = $("#form-pricing");
@@ -472,6 +551,34 @@
   }
 
   $("#btn-refresh").addEventListener("click", loadAdmin);
+  $("#btn-release-refresh").addEventListener("click", loadAdmin);
+
+  // 输入版本号时自动补对应 tag；若管理员已经手动改过 tag，就不强行覆盖。
+  $("#form-release").version.addEventListener("input", function () {
+    var form = $("#form-release");
+    var expected = this.dataset.previousTag || "";
+    if (!form.git_ref.value || form.git_ref.value === expected) {
+      form.git_ref.value = this.value ? "v" + this.value.trim() : "";
+    }
+    this.dataset.previousTag = this.value ? "v" + this.value.trim() : "";
+  });
+
+  $("#form-release").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var form = e.target;
+    api("/nexus/admin/releases", {
+      body: {
+        version: form.version.value,
+        git_ref: form.git_ref.value,
+        title: form.title.value,
+        notes: form.notes.value,
+      },
+    }).then(function () {
+      toast("版本草稿已保存，可先推送灰度节点监测");
+      form.reset();
+      loadAdmin();
+    }).catch(function (err) { toast(err.message, true); });
+  });
 
   // ---------- 客户详情弹窗（档案/资产/合同附件/备注） ----------
   var detailOemId = 0; // 当前弹窗对应的客户 id
@@ -593,6 +700,29 @@
   // 表格行内操作（事件代理：吊销 / 充值）
   document.addEventListener("click", function (e) {
     var t = e.target;
+    if (t.dataset && t.dataset.releaseAction) {
+      var action = t.dataset.releaseAction;
+      var releaseId = Number(t.dataset.releaseId);
+      var body = { release_id: releaseId, action: action };
+      if (action === "canary") {
+        body.instance_id = Number($("#release-canary").value || 0);
+        if (!body.instance_id) return toast("请先选择一个灰度节点", true);
+      }
+      var promptText = action === "publish"
+        ? "确认向全部 " + releaseInstanceCount + " 个实例发布此版本？节点将在下一轮检查时自动安装。"
+        : action === "pause"
+          ? "确认暂停该版本？已经开始安装的节点不会被中断。"
+          : action === "retry"
+            ? "确认让该版本所有失败节点重新尝试一次？"
+            : "确认把该版本推送到当前选中的灰度节点？";
+      uiConfirm(promptText, action === "publish", action === "publish" ? "确认全量发布" : "确认").then(function (ok) {
+        if (!ok) return;
+        api("/nexus/admin/release_action", { body: body })
+          .then(function () { toast("版本操作已生效"); loadAdmin(); })
+          .catch(function (err) { toast(err.message, true); });
+      });
+      return;
+    }
     if (t.dataset && t.dataset.revoke) {
       uiConfirm("确认吊销 KEY #" + t.dataset.revoke + "？吊销后该码立即失效。", true, "确认吊销").then(function (ok) {
         if (!ok) return;

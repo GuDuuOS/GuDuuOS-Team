@@ -8,12 +8,16 @@
         GET  /nexus/health                       探活
         POST /nexus/redeem     {key,domain,admin_email,region}  兑换开通（install.sh 调）
         POST /nexus/heartbeat  {key,version,stats}        心跳上报（实例定时调）
+        POST /nexus/update/check   {key,current_version}  拉取已分配的版本更新
+        POST /nexus/update/report  {key,release_id,status,...} 上报更新结果
     管理（console 用，须 Authorization: Bearer <NEXUS_ADMIN_TOKEN>）：
         POST /nexus/admin/keys       {count,note,token_grant}  签发 KEY（明文仅此一次）
         POST /nexus/admin/revoke     {key_id}                  吊销 KEY
         GET  /nexus/admin/keys                                 KEY 列表
         GET  /nexus/admin/instances                            实例列表（含余额）
         POST /nexus/admin/topup      {instance_id,tokens,note} 手动充值
+        GET/POST /nexus/admin/releases                         版本发布中心
+        POST /nexus/admin/release_action                       灰度/全量/暂停/重试
 
 安全：
     - NEXUS_ADMIN_TOKEN 无默认值，未配置则管理端点一律 503（宁停不裸奔）；
@@ -32,7 +36,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict
 
-from nexus import db, fleet, geo, oem as oem_svc, pay
+from nexus import db, fleet, geo, oem as oem_svc, pay, releases
 from nexus.fleet import FleetError
 
 logger = logging.getLogger("nexus.service")
@@ -198,6 +202,14 @@ class NexusHandler(BaseHTTPRequestHandler):
             if self._check_admin():
                 self._with_session(
                     lambda s: self._json(200, {"instances": fleet.list_instances(s)})
+                )
+            return
+        if path == "/nexus/admin/releases":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200, {"releases": releases.list_releases(s)}
+                    )
                 )
             return
         if path == "/nexus/admin/oems":
@@ -480,6 +492,38 @@ class NexusHandler(BaseHTTPRequestHandler):
             )
             return
 
+        # —— 节点版本代理：授权 KEY 只可读取/更新自己的投放记录 ——
+        if path == "/nexus/update/check":
+            self._with_session(
+                lambda s: self._json(
+                    200,
+                    {
+                        "update": releases.check_update(
+                            s,
+                            str(body.get("key", "")),
+                            str(body.get("current_version", "")),
+                        )
+                    },
+                )
+            )
+            return
+
+        if path == "/nexus/update/report":
+            self._with_session(
+                lambda s: self._json(
+                    200,
+                    releases.report_update(
+                        s,
+                        raw_key=str(body.get("key", "")),
+                        release_id=int(body.get("release_id") or 0),
+                        status=str(body.get("status", "")),
+                        current_version=str(body.get("current_version", "")),
+                        detail=str(body.get("detail", "")),
+                    ),
+                )
+            )
+            return
+
         # —— OEM 账号：注册 / 登录（免鉴权，按 IP 限频）/ 登出 / 认领 KEY ——
         if path in ("/nexus/oem/register", "/nexus/oem/login"):
             if not _auth_rate_ok(self._client_ip()):
@@ -602,6 +646,50 @@ class NexusHandler(BaseHTTPRequestHandler):
                         200, {"pricing": pay.set_pricing(s, body)}
                     )
                 )
+            return
+
+        if path == "/nexus/admin/releases":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        201,
+                        {
+                            "release": releases.create_release(
+                                s,
+                                version=str(body.get("version", "")),
+                                title=str(body.get("title", "")),
+                                notes=str(body.get("notes", "")),
+                                git_ref=str(body.get("git_ref", "")),
+                            )
+                        },
+                    )
+                )
+            return
+
+        if path == "/nexus/admin/release_action":
+            if self._check_admin():
+                def _release_action(s):
+                    action = str(body.get("action", ""))
+                    release_id = int(body.get("release_id") or 0)
+                    if action == "canary":
+                        result = releases.start_canary(
+                            s,
+                            release_id,
+                            int(body.get("instance_id") or 0),
+                        )
+                    elif action == "publish":
+                        result = releases.publish(s, release_id)
+                    elif action == "pause":
+                        result = releases.pause(s, release_id)
+                    elif action == "retry":
+                        result = releases.retry_failed(s, release_id)
+                    else:
+                        raise FleetError(
+                            "NEXUS_BAD_RELEASE_ACTION", "版本操作不合法"
+                        )
+                    self._json(200, {"release": result})
+
+                self._with_session(_release_action)
             return
 
         if path == "/nexus/admin/instance_region":

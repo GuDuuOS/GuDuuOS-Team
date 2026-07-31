@@ -109,7 +109,7 @@
 | **会员等级**（账号权限分层：免费/付费/创作者） | Matrix state event | 已实现：存控制室 `cosmac.members`（同 admins 套路，管理员/bot 写、用户不可自改——付费门槛靠它）。**与「服务器管理员」正交**：管理员仍走 Synapse admin 标志。授予入口 `cosmac.members.MembersStore.grant`（**预留给模块4支付**）。枚举/校验见 `cosmac/members.py`。普通用户查自己等级走「DM 问 bot」命令`会员`（控制室只管理员可读）。 |
 | **功能门控策略**（能力→最低会员等级） | Matrix state event | 已实现：存控制室 `cosmac.gating`，后台「会员权限」页逐项配，bot **服务端强制**（客户端只配置）。门槛阶梯 免费<付费<创作者<仅管理员；平台管理员永远不受会员门控。能力目录 `cosmac/members.py` GATE_CATALOG（ai_chat/knowledge/create_room/workflow_run；**新增功能往这加一条**，前后端各一份）。工具层经 `Toolbox.gate_check` 同样受控（防自然语言绕过命令）。 |
 | 工作流运行记录（模块3）、交易（模块4）、个人主页（模块5） | ✅ GuDuu OS DB | 关系型。 |
-| **OEM/Nexus 数据**（KEY·license、实例注册、token 钱包、用量计量、心跳遥测） | ✅ Nexus 独立 DB | 模块6：存**母舰侧**（GuDuu Nexus fleet 服务自己的 Postgres），与各 OEM 自部实例完全隔离；原厂 LLM key 只进网关 env，永不进发行版。 |
+| **OEM/Nexus 数据**（KEY·license、实例注册、token 钱包、用量计量、心跳遥测、版本发布与逐节点升级状态） | ✅ Nexus 独立 DB | 模块6：存**母舰侧**（GuDuu Nexus fleet 服务自己的 Postgres），与各 OEM 自部实例完全隔离；原厂 LLM key 只进网关 env，永不进发行版；版本发布只下发严格 Git tag，不保存客户 SSH 凭据。 |
 
 **基建决策**：GuDuu OS 的 DB **复用生产现成的 PostgreSQL**（Synapse 已在跑，见 `DEPLOY.md`），给 cosmac 服务**单开一个 database/schema**，按需装 **pgvector**。这走 §2 的第 3 条路径（新增独立服务/数据），与 Synapse 核心解耦、不碰它。
 
@@ -135,6 +135,11 @@
 
 > 状态符号：⬜未开始 / 🟡进行中 / ✅完成。开工/完成时更新这张表。
 > 已上线功能全貌见 **docs/FEATURES.md**(对外介绍/新人了解用;功能增减顺手更新)。
+
+**模块6当前增量（2026-07-31）**：建设 Nexus **版本发布中心**。超级管理员维护
+版本列表，发布流程固定为“草稿→灰度监测→全量发布→暂停”；节点通过宿主更新代理
+按 KEY 拉取指令并上报 pending/installing/success/failed。Nexus 不主动 SSH OEM
+服务器，bot 容器也不获得宿主机控制权；失败更新必须由管理员明确重试。
 
 ---
 

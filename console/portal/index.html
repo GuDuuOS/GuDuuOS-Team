@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
 <script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=4" />
+<link rel="stylesheet" href="/portal/portal.css?v=5" />
 </head>
 <body>
 <!--
@@ -155,6 +155,27 @@
 
   <section id="admin-stats" class="stats"></section>
 
+  <section class="panel" id="panel-releases">
+    <div class="panel-head">
+      <h2>版本发布中心</h2>
+      <button id="btn-release-refresh" class="ghost small">刷新状态</button>
+    </div>
+    <form id="form-release" class="release-form">
+      <label>版本号<input name="version" required placeholder="1.7.0" /></label>
+      <label>Git tag<input name="git_ref" required placeholder="v1.7.0" /></label>
+      <label class="release-title-field">版本标题<input name="title" required placeholder="例：OEM 节点自动更新" /></label>
+      <label class="release-canary-field">灰度节点
+        <select id="release-canary" name="canary_instance_id"></select>
+      </label>
+      <label class="release-notes-field">更新说明
+        <textarea name="notes" rows="4" required placeholder="面向 OEM 写清新增、修复和注意事项"></textarea>
+      </label>
+      <div class="release-submit"><button class="primary">保存草稿</button></div>
+    </form>
+    <p class="hint">流程：保存草稿 → 推送灰度节点并监测 → 确认成功后推送全部节点。失败节点不会无限重试，需由超管明确安排。</p>
+    <div id="admin-releases" class="release-list"></div>
+  </section>
+
   <section class="panel">
     <div class="panel-head">
       <h2>实例</h2>
@@ -261,6 +282,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=10"></script>
+<script src="/portal/portal.js?v=11"></script>
 </body>
 </html>

@@ -12,8 +12,38 @@ cd "$(dirname "$0")"
 
 [ -f .env ] || { echo "[失败] 未找到 .env——本机尚未安装，先跑 ./install.sh" >&2; exit 1; }
 
-echo "[GuDuu OS] 拉取最新版本……"
-git -C .. pull --ff-only
+TARGET_REF=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --ref) TARGET_REF="${2:-}"; shift 2 ;;
+    *) echo "[失败] 未知参数：$1（仅支持 --ref vX.Y.Z）" >&2; exit 1 ;;
+  esac
+done
+
+if [ -n "$TARGET_REF" ]; then
+  # 自动更新端只允许固定形态的版本 tag。这里再次校验（不能只信 Python 代理），
+  # 避免未来其他调用方把 ref 当成任意 git 参数注入。
+  case "$TARGET_REF" in
+    v[0-9]*.[0-9]*.[0-9]*) ;;
+    *) echo "[失败] 更新目标必须是 vX.Y.Z tag。" >&2; exit 1 ;;
+  esac
+  if ! printf '%s' "$TARGET_REF" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+    echo "[失败] 更新目标必须是严格的 vX.Y.Z tag。" >&2
+    exit 1
+  fi
+  # 只检查 tracked 文件；.env/data 本来就是实例本地数据。若有人手改了源码，宁可
+  # 停下让管理员处理，也不能 merge 后把定制内容悄悄覆盖。
+  git -C .. diff --quiet && git -C .. diff --cached --quiet \
+    || { echo "[失败] 仓库存在未提交的源码改动，自动升级已停止。" >&2; exit 1; }
+  echo "[GuDuu OS] 拉取已发布版本 $TARGET_REF……"
+  # 不加 --force：发布 tag 一旦存在就应视为不可变；远端若被移动，本机应报冲突停下，
+  # 不能悄悄把同一个版本号换成另一份代码。
+  git -C .. fetch origin "refs/tags/$TARGET_REF:refs/tags/$TARGET_REF"
+  git -C .. merge --ff-only "refs/tags/$TARGET_REF"
+else
+  echo "[GuDuu OS] 拉取 main 最新版本……"
+  git -C .. pull --ff-only
+fi
 
 # 1.6.24 以前安装生成的 Caddyfile 没有安全头 import。升级不能整份重渲染，
 # 因为 OEM 可能已经改过反代规则；这里只在明确识别到站点块时插入一行，

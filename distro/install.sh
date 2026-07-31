@@ -245,6 +245,22 @@ if [ -n "$ADMIN_TOK" ]; then
   docker compose up -d bot >/dev/null 2>&1
 fi
 
+# ---------- 7. 宿主更新代理 ----------
+# 自动升级必须在宿主执行 docker compose，不能把 Docker socket 暴露给 bot 容器。
+# systemd timer 只主动出站访问 Nexus，不开放端口，也不需要平台保存客户 SSH 凭据。
+if [ "$(id -u)" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
+  DISTRO_DIR="$(pwd -P)"
+  say "安装 Nexus 版本更新代理（每 5 分钟检查一次）……"
+  render templates/guduu-update-agent.service.tpl \
+    /etc/systemd/system/guduu-update-agent.service "DISTRO_DIR=$DISTRO_DIR"
+  install -m 0644 templates/guduu-update-agent.timer.tpl \
+    /etc/systemd/system/guduu-update-agent.timer
+  systemctl daemon-reload
+  systemctl enable --now guduu-update-agent.timer >/dev/null
+else
+  warn "当前环境没有 root/systemd，未安装自动更新 timer；可继续手动运行 ./update.sh。"
+fi
+
 say "=============================================="
 say "安装完成 ✅"
 if [ "$BEHIND_PROXY" -eq 1 ]; then
@@ -255,5 +271,6 @@ say "  访问地址： https://$DOMAIN"
 say "  管理员账号/初始密码见上方 bootstrap 输出（仅显示一次，登录后请修改）"
 say "  管理后台： https://$DOMAIN/#/admin"
 say "  体检：     ./doctor.sh    升级： ./update.sh"
+say "  自动更新： systemctl status guduu-update-agent.timer"
 say "  配置文件： distro/.env（密钥在内，妥善保管）"
 say "=============================================="
