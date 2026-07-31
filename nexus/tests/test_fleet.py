@@ -134,10 +134,15 @@ class FleetTest(unittest.TestCase):
         out = fleet.heartbeat(self.s, k, "1.2.0", {"users": 42, "dau": 7})
         self.assertEqual(out["instance_id"], inst)
         self.assertEqual(out["balance_tokens"], 800)
+        fleet.debit(self.s, inst, 125, "openai/test")
         insts = fleet.list_instances(self.s)
         self.assertEqual(insts[0]["version"], "1.2.0")
         self.assertEqual(insts[0]["stats"]["users"], 42)
         self.assertIsNotNone(insts[0]["last_seen_ts"])
+        self.assertEqual(insts[0]["tokens_total"], 125)
+        self.assertEqual(insts[0]["tokens_today"], 125)
+        self.assertEqual(insts[0]["requests_total"], 1)
+        self.assertEqual(insts[0]["requests_today"], 1)
 
     def test_heartbeat_unredeemed(self):
         with self.assertRaises(FleetError) as ctx:

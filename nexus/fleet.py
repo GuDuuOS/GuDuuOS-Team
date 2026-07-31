@@ -411,6 +411,35 @@ def debit(s, instance_id: int, tokens: int, note: str = "") -> int:
     return new_balance
 
 
+def _usage_by_instance(
+    s, since: int = 0, until: int = 0
+) -> Dict[int, Dict[str, int]]:
+    """Nexus usage 流水按实例聚合 token 消耗与 AI 请求次数。
+
+    返回 ``{instance_id: {tokens, requests}}``。账本中 usage 是负数扣费，
+    展示统计取绝对值；时间边界用毫秒，``since`` 包含、``until`` 不包含。
+    SQL 直接 SUM/COUNT，不会把大量明细流水拉进内存。
+    """
+    query = select(
+        NexusLedger.instance_id,
+        func.sum(NexusLedger.delta_tokens),
+        func.count(),
+    ).where(NexusLedger.kind == "usage")
+    if since:
+        query = query.where(NexusLedger.ts >= since)
+    if until:
+        query = query.where(NexusLedger.ts < until)
+    out: Dict[int, Dict[str, int]] = {}
+    for instance_id, total, count in s.execute(
+        query.group_by(NexusLedger.instance_id)
+    ).all():
+        out[int(instance_id)] = {
+            "tokens": abs(int(total or 0)),
+            "requests": int(count or 0),
+        }
+    return out
+
+
 # ---------- 列表（console 用）----------
 
 def list_keys(s) -> List[Dict[str, Any]]:
@@ -432,7 +461,7 @@ def list_keys(s) -> List[Dict[str, Any]]:
 
 
 def list_instances(s) -> List[Dict[str, Any]]:
-    """全部实例 + 所属 OEM 企业 + 钱包余额快照。
+    """全部实例 + OEM 企业 + 钱包 + Token 消耗快照。
 
     所属关系不直接写在实例表，而是沿 ``实例.key_id → KEY 认领记录
     → OEM 企业档案`` 查找。这样 KEY 的商业归属仍保持单一真实源，不会在
@@ -442,6 +471,9 @@ def list_instances(s) -> List[Dict[str, Any]]:
     rows = s.execute(
         select(NexusInstance).order_by(NexusInstance.id.desc())
     ).scalars().all()
+    # 两次聚合查询一次拿齐所有实例，避免列表里每个节点再查两遍账本。
+    all_usage = _usage_by_instance(s)
+    today_usage = _usage_by_instance(s, since=_day_start_ms())
     key_ids = [int(row.key_id) for row in rows]
     owners: Dict[int, Dict[str, Any]] = {}
     if key_ids:
@@ -487,6 +519,10 @@ def list_instances(s) -> List[Dict[str, Any]]:
                 "last_seen_ts": r.last_seen_ts,
                 "stats": stats,
                 "balance_tokens": int(wallet.balance_tokens) if wallet else 0,
+                "tokens_total": all_usage.get(r.id, {}).get("tokens", 0),
+                "tokens_today": today_usage.get(r.id, {}).get("tokens", 0),
+                "requests_total": all_usage.get(r.id, {}).get("requests", 0),
+                "requests_today": today_usage.get(r.id, {}).get("requests", 0),
                 # 地域（大屏地图打点；未填时 lat/lon 为 None，前端跳过该点）
                 **_geo_of(s, r.id),
             }
@@ -535,26 +571,9 @@ def dash_summary(s) -> Dict[str, Any]:
     today0 = _day_start_ms()
     yesterday0 = _day_start_ms(-1)
 
-    def _usage_by_instance(since: int = 0, until: int = 0) -> Dict[int, Dict[str, int]]:
-        """usage 流水按实例聚合：{instance_id: {tokens, requests}}（SQL SUM/COUNT）。"""
-        q = select(
-            NexusLedger.instance_id,
-            func.sum(NexusLedger.delta_tokens),
-            func.count(),
-        ).where(NexusLedger.kind == "usage")
-        if since:
-            q = q.where(NexusLedger.ts >= since)
-        if until:
-            q = q.where(NexusLedger.ts < until)
-        out: Dict[int, Dict[str, int]] = {}
-        for iid, total, cnt in s.execute(q.group_by(NexusLedger.instance_id)).all():
-            # usage 的 delta 是负数，取绝对值当消耗
-            out[int(iid)] = {"tokens": abs(int(total or 0)), "requests": int(cnt or 0)}
-        return out
-
-    all_usage = _usage_by_instance()
-    today_usage = _usage_by_instance(since=today0)
-    yesterday_usage = _usage_by_instance(since=yesterday0, until=today0)
+    all_usage = _usage_by_instance(s)
+    today_usage = _usage_by_instance(s, since=today0)
+    yesterday_usage = _usage_by_instance(s, since=yesterday0, until=today0)
 
     # 今日模型分布：从流水备注（"provider/model in=x out=y"）解析，封顶 4000 行。
     # 同一次扫描喂两个面板：每实例的"在用模型数" + 全舰队的"模型用量分布环图"。

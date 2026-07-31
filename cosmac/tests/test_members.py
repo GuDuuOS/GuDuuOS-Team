@@ -439,6 +439,7 @@ class PayEndpointTests(unittest.TestCase):
         # 平台管理员 → 200 且字段齐
         code, out = bot.handle_stats(ADMIN)
         self.assertEqual(code, 200)
+        self.assertEqual(out["members_total"], 1)
         self.assertEqual(out["members_paid"], 1)
         for k in ("members_creator", "workflow_runs", "orders_paid", "kb_docs"):
             self.assertIn(k, out)

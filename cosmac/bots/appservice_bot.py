@@ -3567,26 +3567,22 @@ class CosmacBot:
             })
         return out
 
-    def handle_stats(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
-        """平台**真实运营指标**（给数据看板用，替掉演示假数据）。**仅平台管理员**可读。
+    def operating_stats(self) -> Dict[str, Any]:
+        """返回当前节点可对账的会员和业务运营聚合数据。
 
-        只统计 GuDuu OS 真正拥有的数据：会员（控制室）+ 工作流运行/订单/知识库（cosmac DB）。
-        影视业务数据（播放量/集数等）GuDuu OS 不拥有，不在此处编造。每项独立兜底，缺 DB 不报错。
-
-        权限：这些是**全平台**聚合（总付费会员数/总订单数等），属运营敏感数据，普通登录用户
-        不该看到。故限平台管理员；非管理员回 403，前端据此回退占位（不报错）。
+        只统计 GuDuu OS 真正拥有的数据：会员（Matrix 控制室）以及工作流、
+        订单和知识库（cosmac DB）。返回值不包含用户 ID、订单内容或聊天内容，
+        既供节点管理看板使用，也可安全地作为 Nexus 心跳的聚合指标。
+        每个数据源独立兜底，某一项失败不阻断其他统计。
         """
-        user_id = self.client.whoami(access_token)
-        if not user_id:
-            return 401, {"error": "登录已失效，请重新登录"}
-        if not self._is_platform_admin(user_id):
-            return 403, {"error": "仅平台管理员可查看平台运营指标"}
         out: Dict[str, Any] = {
-            "members_paid": 0, "members_creator": 0,
+            "members_total": 0, "members_paid": 0, "members_creator": 0,
             "workflow_runs": 0, "orders_paid": 0, "kb_docs": 0,
         }
         try:
             mp = self.members.get_all()
+            # get_all() 已排除 free 和已过期记录，这里的 total 就是当前有效会员。
+            out["members_total"] = len(mp)
             out["members_paid"] = sum(1 for r in mp.values() if r.get("tier") == "paid")
             out["members_creator"] = sum(
                 1 for r in mp.values() if r.get("tier") == "creator"
@@ -3614,6 +3610,20 @@ class CosmacBot:
                 )
         except Exception:
             logger.debug("统计 DB 指标失败", exc_info=True)
+        return out
+
+    def handle_stats(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """平台**真实运营指标**（给数据看板用），仅平台管理员可读。
+
+        权限校验与统计计算分开：HTTP 请求必须是管理员；节点自身的 Nexus
+        心跳不经过用户 HTTP，由进程内部直接调用 :meth:`operating_stats`。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(user_id):
+            return 403, {"error": "仅平台管理员可查看平台运营指标"}
+        out = self.operating_stats()
         return 200, out
 
     def handle_hr_employees(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
@@ -8944,7 +8954,7 @@ def run(config: CosmacConfig) -> None:
     bot.start_reminder_scanner()
     bot.start_rules_backfill()   # 存量频道补默认「频道资源边界」规则(一次性,幂等)
     # 模块6：实例→GuDuu Nexus 母舰心跳（COSMAC_NEXUS_URL+COSMAC_OEM_KEY 齐备才启动）
-    nexus_link.start(config)
+    nexus_link.start(config, bot.operating_stats)
 
     # 把 bot 和 hs_token 注入到 Handler 类上（http.server 用类、不便传参，用 partial 构造）
     handler_cls = partial(_make_handler, bot=bot, hs_token=config.hs_token)

@@ -44,6 +44,12 @@
     function p(x) { return (x < 10 ? "0" : "") + x; }
     return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
   }
+  function activeDays(createdTs) {
+    // 节点兑换开通当天记为第 1 天；未有真实开通时间时不猜测。
+    var created = Number(createdTs) || 0;
+    if (!created) return "—";
+    return String(Math.max(1, Math.floor((Date.now() - created) / 86400000) + 1)) + " 天";
+  }
   // 心跳新旧 → 三色状态（与 fleet._display_status 同阈值：15 分钟/2 小时）
   function hbStatus(inst) {
     if (inst.status && inst.status !== "active") return "offline";
@@ -1151,8 +1157,24 @@
           sum.admins += Number(stats.users_admin) || 0;
           sum.ai += Number(stats.users_ai) || 0;
         }
+        if (stats.rooms_total !== undefined) {
+          sum.roomNodes += 1;
+          sum.rooms += Number(stats.rooms_total) || 0;
+        }
+        if (stats.members_total !== undefined) {
+          sum.memberNodes += 1;
+          sum.members += Number(stats.members_total) || 0;
+        }
+        sum.tokensTotal += Number(inst.tokens_total) || 0;
+        sum.tokensToday += Number(inst.tokens_today) || 0;
+        sum.requestsTotal += Number(inst.requests_total) || 0;
+        sum.requestsToday += Number(inst.requests_today) || 0;
         return sum;
-      }, { accounts: 0, business: 0, admins: 0, ai: 0, detailedNodes: 0 });
+      }, {
+        accounts: 0, business: 0, admins: 0, ai: 0, detailedNodes: 0,
+        rooms: 0, roomNodes: 0, members: 0, memberNodes: 0,
+        tokensTotal: 0, tokensToday: 0, requestsTotal: 0, requestsToday: 0,
+      });
       var detailedHint = peopleTotals.detailedNodes + " / " + insts.length + " 个节点已分类";
       var formatPeople = function (value) {
         return (Number(value) || 0).toLocaleString("zh-CN");
@@ -1170,7 +1192,13 @@
         '<div class="stat"><small>节点账号总数</small><b class="plain">' + formatPeople(peopleTotals.accounts) + "</b></div>" +
         '<div class="stat"><small>业务用户</small><b>' + detailedValue(peopleTotals.business) + '</b><span class="stat-note">' + detailedHint + "</span></div>" +
         '<div class="stat"><small>管理员账号</small><b class="plain">' + detailedValue(peopleTotals.admins) + '</b><span class="stat-note">' + detailedHint + "</span></div>" +
-        '<div class="stat"><small>AI / 系统账号</small><b class="plain">' + detailedValue(peopleTotals.ai) + '</b><span class="stat-note">' + detailedHint + "</span></div>";
+        '<div class="stat"><small>AI / 系统账号</small><b class="plain">' + detailedValue(peopleTotals.ai) + '</b><span class="stat-note">' + detailedHint + "</span></div>" +
+        '<div class="stat"><small>聊天房间</small><b class="plain">' + (peopleTotals.roomNodes ? formatPeople(peopleTotals.rooms) : "—") + '</b><span class="stat-note">' + peopleTotals.roomNodes + " / " + insts.length + " 个节点已上报</span></div>" +
+        '<div class="stat"><small>有效会员</small><b class="plain">' + (peopleTotals.memberNodes ? formatPeople(peopleTotals.members) : "—") + '</b><span class="stat-note">' + peopleTotals.memberNodes + " / " + insts.length + " 个节点已上报</span></div>" +
+        '<div class="stat"><small>今日 Token 消耗</small><b>' + fmtTokens(peopleTotals.tokensToday) + "</b></div>" +
+        '<div class="stat"><small>累计 Token 消耗</small><b>' + fmtTokens(peopleTotals.tokensTotal) + "</b></div>" +
+        '<div class="stat"><small>今日 AI 请求</small><b class="plain">' + formatPeople(peopleTotals.requestsToday) + "</b></div>" +
+        '<div class="stat"><small>累计 AI 请求</small><b class="plain">' + formatPeople(peopleTotals.requestsTotal) + "</b></div>";
 
       // 实例表（行内充值按钮）
       $("#admin-instances tbody").innerHTML = insts.map(function (i) {
@@ -1272,11 +1300,24 @@
     users_locked: "已锁定账号",
     users: "旧版账号总数",
     dau: "日活用户",
-    messages_today: "今日消息",
-    rooms: "房间数",
+    messages_today: "今日消息（进程计数）",
+    rooms_total: "聊天房间数",
+    rooms: "旧版房间数",
+    members_total: "有效会员",
+    members_paid: "付费会员",
+    members_creator: "创作者会员",
+    workflow_runs: "工作流累计运行",
+    orders_paid: "已支付订单",
+    kb_docs: "知识库文档",
     bots: "Bot 数",
     workflows: "工作流数",
   };
+  var INSTANCE_STAT_ORDER = [
+    "users_total", "users_business", "users_admin", "users_ai", "users_guest",
+    "users_deactivated", "users_locked", "rooms_total", "messages_today",
+    "members_total", "members_paid", "members_creator", "workflow_runs",
+    "orders_paid", "kb_docs",
+  ];
 
   function instanceStatText(value) {
     // 心跳 stats 允许以后增加字段；对象/数组转成 JSON 后再统一转义展示。
@@ -1312,9 +1353,14 @@
       ["当前版本", inst.version || "—"],
       ["最近心跳", fmtTime(inst.last_seen_ts)],
       ["创建时间", fmtTime(inst.created_ts)],
+      ["已开通天数", activeDays(inst.created_ts)],
       ["节点地域", region],
       ["来源网段", inst.last_ip || "—"],
       ["Token 余额", fmtTokens(inst.balance_tokens) + " token"],
+      ["今日 Token 消耗", fmtTokens(inst.tokens_today) + " token"],
+      ["累计 Token 消耗", fmtTokens(inst.tokens_total) + " token"],
+      ["今日 AI 请求", String(Number(inst.requests_today) || 0)],
+      ["累计 AI 请求", String(Number(inst.requests_total) || 0)],
       ["服务状态", STATUS_ZH[status] || status],
     ];
     $("#instance-detail-kv").innerHTML = rows.map(function (row) {
@@ -1323,6 +1369,13 @@
     var stats = inst.stats && typeof inst.stats === "object" ? inst.stats : {};
     var hasBreakdown = stats.users_business !== undefined;
     var keys = Object.keys(stats).sort(function (a, b) {
+      var ai = INSTANCE_STAT_ORDER.indexOf(a);
+      var bi = INSTANCE_STAT_ORDER.indexOf(b);
+      if (ai >= 0 || bi >= 0) {
+        if (ai < 0) return 1;
+        if (bi < 0) return -1;
+        return ai - bi;
+      }
       return (INSTANCE_STAT_LABELS[a] || a).localeCompare(INSTANCE_STAT_LABELS[b] || b, "zh-CN");
     });
     $("#instance-detail-stats").innerHTML = keys.map(function (key) {

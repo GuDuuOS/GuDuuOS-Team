@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 from urllib.parse import quote
 
 import requests
@@ -49,6 +49,18 @@ _COUNTS: Dict[str, Any] = {"day": "", "messages": 0}
 _last_balance: Optional[int] = None
 # 注册请求和 10 分钟心跳可能同时触发队列投递；一把锁避免同一行被重复并发提交。
 _ATTR_SYNC_LOCK = threading.Lock()
+
+# Bot 内部运营统计只允许这些已定义的整数字段进心跳。用白名单而不是
+# 盲目合并 callback 返回值，避免以后内部统计意外带上用户标识或其他敏感字段。
+_EXTRA_STAT_KEYS = (
+    "members_total",
+    "members_paid",
+    "members_creator",
+    "workflow_runs",
+    "orders_paid",
+    "kb_docs",
+)
+StatsProvider = Callable[[], Dict[str, Any]]
 
 
 class ReferralError(Exception):
@@ -259,16 +271,65 @@ def _user_breakdown(config: CosmacConfig) -> Optional[Dict[str, int]]:
         return None
 
 
-def build_stats(config: CosmacConfig) -> Dict[str, Any]:
-    """组一次心跳的 stats 载荷（只放拿得到的真实数据）。"""
+def _room_count(config: CosmacConfig) -> Optional[int]:
+    """返回 Synapse 当前房间总数，拿不到则返回 ``None``。
+
+    这是“聊天房间数”而不是“历史消息总数”。Synapse Admin API 能直接
+    返回 ``total_rooms``，无需把房间或消息详情上传 Nexus。
+    """
+    token = _env("ADMIN_TOKEN")
+    if not token:
+        return None
+    try:
+        response = requests.get(
+            f"{config.homeserver_url.rstrip('/')}/_synapse/admin/v1/rooms",
+            params={"from": 0, "limit": 1},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        if not response.ok:
+            return None
+        total = response.json().get("total_rooms")
+        return int(total) if total is not None else None
+    except Exception:
+        return None
+
+
+def build_stats(
+    config: CosmacConfig,
+    extra_stats_provider: Optional[StatsProvider] = None,
+) -> Dict[str, Any]:
+    """组一次心跳的 stats 载荷（只放拿得到的真实聚合数据）。
+
+    ``extra_stats_provider`` 由正在运行的 ``CosmacBot`` 注入，用于读会员、
+    工作流、订单和知识库数量。回调失败只使这些字段缺省，不影响
+    节点版本、账号和消息心跳。
+    """
     stats: Dict[str, Any] = {"messages_today": _messages_today()}
     users = _user_breakdown(config)
     if users is not None:
         stats.update(users)
+    rooms = _room_count(config)
+    if rooms is not None:
+        stats["rooms_total"] = max(0, rooms)
+    if extra_stats_provider is not None:
+        try:
+            extra = extra_stats_provider()
+            for key in _EXTRA_STAT_KEYS:
+                if key not in extra or isinstance(extra[key], bool):
+                    continue
+                value = int(extra[key])
+                if value >= 0:
+                    stats[key] = value
+        except Exception:
+            logger.debug("Nexus 心跳读取 Bot 运营统计失败（忽略该组字段）", exc_info=True)
     return stats
 
 
-def beat(config: CosmacConfig) -> bool:
+def beat(
+    config: CosmacConfig,
+    extra_stats_provider: Optional[StatsProvider] = None,
+) -> bool:
     """打一次心跳。成功返回 True 并更新余额缓存；失败返回 False（调用方节流告警）。"""
     global _last_balance
     try:
@@ -277,7 +338,7 @@ def beat(config: CosmacConfig) -> bool:
             json={
                 "key": _env("OEM_KEY"),
                 "version": cosmac.__version__,
-                "stats": build_stats(config),
+                "stats": build_stats(config, extra_stats_provider),
             },
             timeout=15,
         )
@@ -291,7 +352,10 @@ def beat(config: CosmacConfig) -> bool:
     return False
 
 
-def start(config: CosmacConfig) -> None:
+def start(
+    config: CosmacConfig,
+    extra_stats_provider: Optional[StatsProvider] = None,
+) -> None:
     """启动心跳后台线程（daemon）。未接入 OEM 体系时安静返回。"""
     if not enabled():
         logger.info("未配置 COSMAC_NEXUS_URL/COSMAC_OEM_KEY，跳过 Nexus 心跳（独立模式）")
@@ -300,7 +364,7 @@ def start(config: CosmacConfig) -> None:
     def _loop() -> None:
         time.sleep(_FIRST_BEAT_DELAY_S)
         while True:
-            ok = beat(config)
+            ok = beat(config, extra_stats_provider)
             # 无论心跳本身成功与否都尝试队列：二者端点可能受不同的瞬时故障影响。
             sync_pending_attributions()
             if ok and _last_balance is not None and _last_balance <= 0:

@@ -87,8 +87,13 @@ class NexusLinkTest(unittest.TestCase):
             {"name": "@locked:node.test", "locked": True},
         ]
 
-        def response_for_page(*_args, **kwargs):
+        def response_for_page(url, **kwargs):
             """假 Synapse 故意每页只返回 4 条，验证 from 续页。"""
+            if url.endswith("/_synapse/admin/v1/rooms"):
+                response = Mock()
+                response.ok = True
+                response.json.return_value = {"total_rooms": 3}
+                return response
             start = int(kwargs["params"]["from"])
             response = Mock()
             response.ok = True
@@ -105,9 +110,13 @@ class NexusLinkTest(unittest.TestCase):
         with patch("cosmac.nexus_link.requests.get", side_effect=response_for_page) as get:
             stats = nexus_link.build_stats(config)
 
-        self.assertEqual(get.call_count, 2)
-        self.assertEqual(get.call_args_list[0].kwargs["params"]["from"], 0)
-        self.assertEqual(get.call_args_list[1].kwargs["params"]["from"], 4)
+        user_calls = [
+            call for call in get.call_args_list
+            if call.args[0].endswith("/_synapse/admin/v2/users")
+        ]
+        self.assertEqual(len(user_calls), 2)
+        self.assertEqual(user_calls[0].kwargs["params"]["from"], 0)
+        self.assertEqual(user_calls[1].kwargs["params"]["from"], 4)
         self.assertEqual(stats["users_total"], 7)
         self.assertEqual(stats["users_business"], 1)
         self.assertEqual(stats["users_admin"], 1)
@@ -115,6 +124,7 @@ class NexusLinkTest(unittest.TestCase):
         self.assertEqual(stats["users_guest"], 1)
         self.assertEqual(stats["users_deactivated"], 1)
         self.assertEqual(stats["users_locked"], 1)
+        self.assertEqual(stats["rooms_total"], 3)
         self.assertEqual(
             stats["users_total"],
             sum(value for key, value in stats.items() if key.startswith("users_") and key != "users_total"),
@@ -128,6 +138,28 @@ class NexusLinkTest(unittest.TestCase):
         with patch("cosmac.nexus_link.requests.get", return_value=response):
             stats = nexus_link.build_stats(CosmacConfig())
         self.assertEqual(stats, {"messages_today": 0})
+
+    def test_build_stats_accepts_only_known_non_negative_operating_metrics(self):
+        """Bot 回调只能上报白名单内的非负整数，不泄露其他字段。"""
+        stats = nexus_link.build_stats(
+            CosmacConfig(),
+            lambda: {
+                "members_total": 4,
+                "members_paid": "3",
+                "members_creator": 1,
+                "workflow_runs": -1,
+                "orders_paid": True,
+                "kb_docs": 8,
+                "user_ids": ["@alice:test"],
+            },
+        )
+        self.assertEqual(stats["members_total"], 4)
+        self.assertEqual(stats["members_paid"], 3)
+        self.assertEqual(stats["members_creator"], 1)
+        self.assertEqual(stats["kb_docs"], 8)
+        self.assertNotIn("workflow_runs", stats)
+        self.assertNotIn("orders_paid", stats)
+        self.assertNotIn("user_ids", stats)
 
     def test_beat_posts_payload_and_caches_balance(self):
         srv = ThreadingHTTPServer(("127.0.0.1", 0), _FakeNexus)
