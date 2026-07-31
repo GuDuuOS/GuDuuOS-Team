@@ -6202,6 +6202,22 @@ class CosmacBot:
         # 创作者技能=**获取即买断**（P4）：先付清再记获取；扣不动就明确失败、不给货。
         # 已买断过/免费/自己的/总开关关都由 charge_skill_purchase 内部放行不扣（幂等）。
         if want and kind == "cskill":
+            # 买断前置守卫(修「钱扣了货没到」)：charge_skill_purchase 自带事务先提交扣款，
+            # 若随后 add_acquired 因每人 200 条硬上限失败，就会扣了款却没记获取(需人工退款)。
+            # 故对**新买断**先确认没撞上限再扣款，把这个窗口关掉。(已买断过的重复点击不受影响：
+            # add_acquired 幂等返回 True，且 charge 内部 has_purchased 命中不再扣款。)
+            if not match.get("acquired"):
+                try:
+                    from cosmac.db import session_scope as _sc2
+                    from cosmac.db.market_repo import (
+                        MAX_ACQUIRED_PER_USER,
+                        list_acquired as _la2,
+                    )
+                    with _sc2() as _s2:
+                        if len(_la2(_s2, user_id=user_id)) >= MAX_ACQUIRED_PER_USER:
+                            return 400, {"error": "已获取的资源太多了，先移除一些再购买"}
+                except Exception:
+                    logger.debug("买断前置上限检查失败，放行不拦", exc_info=True)
             try:
                 r = self.wallet.charge_skill_purchase(user_id, int(slug))
             except (TypeError, ValueError):
@@ -7100,7 +7116,13 @@ class CosmacBot:
         if not self._gate_allows(sender, "knowledge"):
             return self._gate_denied_text("knowledge")
         try:
-            is_dm = self.client.joined_member_count(room_id) <= 2
+            # 与主 AI 路径(见 _handle 处 is_dm)同口径：实名频道即使暂时只剩 ≤2 人也按群聊，
+            # 否则新频道/退到 2 人的实名频道里发「知识 添加」会误判私聊→写进个人库、并跳过
+            # 频道管理员写检查(作用域错乱)。人数兜底只对无名房生效。
+            is_dm = (
+                self.client.joined_member_count(room_id) <= 2
+                and not self._room_is_named_channel(room_id)
+            )
         except Exception:
             is_dm = False
         can_write = True if is_dm else self._is_room_admin(room_id, sender)
@@ -7158,7 +7180,12 @@ class CosmacBot:
         SQLAlchemy / 没配 DB 时，回一句"未启用"而不是让 bot 崩或不吭声。
         """
         try:
-            is_dm = self.client.joined_member_count(room_id) <= 2
+            # 与主 AI 路径同口径：实名频道即使暂时只剩 ≤2 人也按群聊，避免误判私聊把技能
+            # 写进个人库、并跳过频道管理员写检查(作用域错乱)。人数兜底只对无名房生效。
+            is_dm = (
+                self.client.joined_member_count(room_id) <= 2
+                and not self._room_is_named_channel(room_id)
+            )
         except Exception:
             is_dm = False
         # #1 群级技能写操作要求发送者是房间管理员（个人技能/私聊不限）。

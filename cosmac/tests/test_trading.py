@@ -94,7 +94,10 @@ class ManualProviderTests(unittest.TestCase):
         p = ManualProvider()
         co = p.create_checkout(order_no="o1", amount_cents=999, currency="usd", title="X")
         self.assertEqual(co.kind, "manual")
-        token = co.extra["confirm_token"]
+        # 安全:签名不再出现在 checkout 返回里(防客户端拿到自助白嫖),只能服务端算
+        self.assertNotIn("confirm_token", co.extra)
+        from cosmac.trading.manual import manual_sign
+        token = manual_sign("o1")
         ev = p.parse_callback(headers={}, body=f'{{"order_no":"o1","token":"{token}"}}'.encode())
         self.assertTrue(ev.paid)
         self.assertEqual(ev.order_no, "o1")

@@ -405,7 +405,11 @@ class PayEndpointTests(unittest.TestCase):
         )
         self.assertEqual(code, 200)
         order_no = out["order_no"]
-        token = out["checkout"]["extra"]["confirm_token"]
+        # 安全:confirm_token 已不再返回给客户端(防自助白嫖),响应里不该有它
+        self.assertNotIn("confirm_token", out["checkout"].get("extra", {}))
+        # 线下确认的签名由服务端持密钥算(模拟管理员从日志/后台取),不走客户端响应
+        from cosmac.trading.manual import manual_sign
+        token = manual_sign(order_no)
 
         os.environ.pop("COSMAC_PAY_ALLOW_MANUAL", None)
         # manual 回调默认禁用（防自助白嫖会员）→ 403，会员未开通

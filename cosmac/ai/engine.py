@@ -66,10 +66,13 @@ _SDK_HOME = "/tmp/cosmac-sdk-home"
 # 不可使用，**即使本来会被允许**」——所以它在 bypassPermissions 下依然生效。
 # （can_use_tool 回调不行：文档写明 bypassPermissions 下压根不会触发它。）
 #
-# 保留 WebSearch（负责人定：AI 要能联网查资料）——它走搜索引擎，指定不了内网目标。
+# WebSearch 也拉黑（负责人 2026-07-31 定：免费用户没有联网功能，门槛要能在后台设）——
+# CLI 内置 WebSearch 不走 Toolbox.execute，在 bypassPermissions 下会绕过 web_search 的
+# 会员门控（免费用户一句"上网查一下"就白嫖联网）。拉黑后联网统一走自研 web_search 工具，
+# 它经 Toolbox.gate_check 强制、门槛在后台「会员权限」页逐项可调（GATE_CATALOG.web_search）。
 # WebFetch 已拉黑并**换成自研的 fetch_url**：能力等价（都是取一个网页回来读），
 # 但自研那个走 wf.check_outbound_url，挡内网/环回/云元数据，且禁重定向、限大小。
-# 这不是砍能力，是把同一件事挪到有防护的路径上。
+# 这不是砍能力，是把同一件事挪到有防护、有门控的路径上。
 _SDK_BLOCKED_TOOLS = [
     # —— 执行命令 ——
     "Bash", "BashOutput", "KillShell", "KillBash",
@@ -85,6 +88,9 @@ _SDK_BLOCKED_TOOLS = [
     #    与云元数据(阿里云 100.100.100.200 可取 RAM 临时凭据)。
     #    不是砍掉联网能力——换成自研的 fetch_url，那个走 wf.check_outbound_url 防护。
     "WebFetch",
+    # —— 内置搜索绕过会员门控：不经 Toolbox.execute，免费用户可白嫖联网。
+    #    换成自研 web_search（受后台可调的 gate 强制），见上方注释。
+    "WebSearch",
 ]
 
 

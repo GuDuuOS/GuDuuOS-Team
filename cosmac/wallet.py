@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from cosmac.config import TOKEN_CONFIG_EVENT_TYPE
 from cosmac.db import session_scope, wallet_repo
@@ -141,6 +142,23 @@ class WalletStore:
         self._ttl = ttl
         self._cache: Optional[Dict[str, Any]] = None
         self._cache_ts: float = float("-inf")
+        # Skill 买断去重锁：防同一用户对同一技能并发/双击「获取」时，两个事务都读到
+        # has_purchased=False（对方还没 commit）→ 重复扣款（跨事务 TOCTOU）。单实例进程内
+        # 按 (buyer, listing_id) 串行化即可堵住（多实例 fencing 按 CLAUDE.md §4 本期不做）。
+        # ⚠️ 绝不能靠 (buyer,listing_id) 全表唯一约束——CreatorEarning 同表还存 agent **按次**
+        # 流水（同键多行），加约束会把按次计费打死。
+        self._buy_locks_guard = threading.Lock()
+        self._buy_locks: Dict[Tuple[str, int], threading.Lock] = {}
+
+    def _buy_lock(self, buyer: str, listing_id: int) -> threading.Lock:
+        """取某 (买家, listing) 的专用锁（懒创建）。买断是一次性低频事件，串行化开销可忽略。"""
+        key = (buyer, int(listing_id))
+        with self._buy_locks_guard:
+            lk = self._buy_locks.get(key)
+            if lk is None:
+                lk = threading.Lock()
+                self._buy_locks[key] = lk
+            return lk
 
     # —— 配置 ——
 
@@ -270,12 +288,13 @@ class WalletStore:
         free_total = int(cfg.get("free_daily") or 0)
         pkey = quota_repo.period_key("day")
         with session_scope() as s:
-            # 1) 先吃今日免费额度
-            used_today = quota_repo.get_count(s, user_id, FREE_DAILY_METRIC, pkey)
-            free_remaining = max(0, free_total - used_today)
-            from_free = min(cost, free_remaining)
-            if from_free > 0:
-                quota_repo.incr(s, user_id, FREE_DAILY_METRIC, pkey, by=from_free)
+            # 1) 先吃今日免费额度——用原子「部分消费」原语(守卫+自增同一条 SQL,不足重试)。
+            # 修原「get_count 读→算 remaining→incr」三步非原子:并发计费时两个线程都读到
+            # used_today=0 都判"还够"再各自 incr,当天免费额度会被写穿上限、超出部分本该从
+            # 钱包扣的 token 变成平台买单。consume_up_to 保证免费计数绝不超过 free_total。
+            from_free = quota_repo.consume_up_to(
+                s, user_id, FREE_DAILY_METRIC, pkey, free_total, cost
+            )
             # 2) 剩余从钱包扣
             remainder = cost - from_free
             from_wallet = 0
@@ -401,7 +420,9 @@ class WalletStore:
         if not cfg.get("enabled"):
             return out
         try:
-            with session_scope() as s:
+            # 进程内按 (买家,listing) 串行：读 has_purchased→扣款→记账 整段互斥，
+            # 挡住并发/双击「获取」的跨事务重复买断（见 _buy_lock 注释）。
+            with self._buy_lock(buyer, listing_id), session_scope() as s:
                 listing = listing_repo.get_listing(s, listing_id)
                 if listing is None or listing.status != "on":
                     out.update(ok=False, error="该技能已下架")

@@ -12,10 +12,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 from typing import Dict
 
 from cosmac.trading.base import CheckoutResult, PaymentEvent, PaymentProvider
+
+logger = logging.getLogger("cosmac.trading.manual")
 
 
 def _secret() -> str:
@@ -46,13 +49,20 @@ class ManualProvider(PaymentProvider):
         self, *, order_no: str, amount_cents: int, currency: str,
         title: str, return_url: str = "",
     ) -> CheckoutResult:
-        # 没有真实收银台，返回一个"待人工/测试确认"的占位，附上本单签名便于线下确认。
+        # 安全红线(2026-07-31 修)：confirm_token 是回调验签所需的 HMAC，**绝不能返回给客户端**——
+        # 否则任意用户正常下单就能从 HTTP 响应里拿到本单签名，再裸 POST /pay/callback/manual
+        # 即可不付一分钱开会员/充 token，HMAC 验签形同虚设(本模块顶部注释声称能防白嫖，靠的正是
+        # 签名保密)。改为只把签名打进**服务端日志**，线下人工确认时由管理员从日志/后台取。
+        # extra 里只留可公开的占位信息(订单号/提示语)。
+        logger.info(
+            "manual 渠道待确认: order_no=%s confirm_token=%s (仅服务端可见，勿外泄)",
+            order_no, manual_sign(order_no),
+        )
         return CheckoutResult(
             kind="manual",
             extra={
                 "order_no": order_no,
                 "note": "等待人工/测试确认收款后开通",
-                "confirm_token": manual_sign(order_no),
             },
         )
 

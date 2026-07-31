@@ -140,3 +140,36 @@ def consume_if_below(
     if (result.rowcount or 0) < 1:
         return None
     return get_count(session, user_id, metric, pkey)
+
+
+def consume_up_to(
+    session: Session,
+    user_id: str,
+    metric: str,
+    pkey: str,
+    limit: int,
+    want: int,
+) -> int:
+    """**部分消费**：在不超过 ``limit`` 的前提下尽量消费 ``want``，返回**实际消费量**(0~want)。
+
+    与 :func:`consume_if_below`(全有或全无)的差别：免费日额度这类场景要「能吃多少吃多少、
+    剩下的走别的渠道」，不能因为一次想吃的量超过剩余就整笔放弃。
+
+    实现：读当前计数算可吃量 ``take=min(want, limit-count)``，再用 ``consume_if_below``
+    以 ``by=take`` 原子落账——若期间被并发改动导致 ``count+take>limit`` 而失败，则重读重算
+    (CAS 重试)。因此**绝不会把免费额度写穿上限**(修原「读-判断-自增」三步非原子、并发下免费
+    额度可超发的缺口)。极端争用重试几次仍不成则返回 0(本次不吃免费额度，由调用方走后续渠道)。
+    """
+    want = int(want)
+    ceiling = int(limit)
+    if want <= 0 or ceiling <= 0:
+        return 0
+    _ensure_counter(session, user_id, metric, pkey)
+    for _ in range(8):  # CAS 重试：并发下最多几轮即收敛
+        cur = get_count(session, user_id, metric, pkey)
+        take = min(want, ceiling - cur)
+        if take <= 0:
+            return 0
+        if consume_if_below(session, user_id, metric, pkey, ceiling, by=take) is not None:
+            return take
+    return 0

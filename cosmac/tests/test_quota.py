@@ -9,7 +9,13 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 
 from cosmac.db import init_engine, session_scope
-from cosmac.db.quota_repo import consume_if_below, get_count, incr, period_key
+from cosmac.db.quota_repo import (
+    consume_if_below,
+    consume_up_to,
+    get_count,
+    incr,
+    period_key,
+)
 from cosmac.quotas import QuotaStore, parse_quota_limits
 
 
@@ -57,6 +63,42 @@ class TestQuotaRepo(unittest.TestCase):
                     get_count(s, "@race:h", "ai_msg_daily", "2026-07-31"),
                     1,
                 )
+        finally:
+            os.unlink(tmp.name)
+
+    def test_consume_up_to_partial_and_ceiling(self) -> None:
+        """部分消费：能吃多少吃多少、返回实际量；且绝不写穿上限。"""
+        with session_scope() as s:
+            # 上限 10，想吃 4 → 全给
+            self.assertEqual(consume_up_to(s, "@u:h", "free", "d", 10, 4), 4)
+            # 已用 4，想吃 8 → 只剩 6，给 6
+            self.assertEqual(consume_up_to(s, "@u:h", "free", "d", 10, 8), 6)
+            # 已到顶 → 给 0
+            self.assertEqual(consume_up_to(s, "@u:h", "free", "d", 10, 5), 0)
+            self.assertEqual(get_count(s, "@u:h", "free", "d"), 10)
+            # 上限为 0（无免费额度）→ 恒 0
+            self.assertEqual(consume_up_to(s, "@u:h", "free", "d2", 0, 3), 0)
+
+    def test_consume_up_to_concurrent_never_exceeds_ceiling(self) -> None:
+        """并发部分消费不写穿上限：修「读-判断-自增」非原子导致免费额度超发的缺口。"""
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            init_engine("sqlite:///" + tmp.name, create_all=True)
+            ready = threading.Barrier(4)
+
+            def consume() -> int:
+                ready.wait(timeout=3)
+                with session_scope() as s:
+                    # 每线程都想吃 3，上限 5——总需求 12，但最终计数必须 ≤5
+                    return consume_up_to(s, "@r:h", "free", "d", 5, 3)
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                granted = list(pool.map(lambda _: consume(), range(4)))
+
+            self.assertEqual(sum(granted), 5)  # 实际发放合计恰为上限
+            with session_scope() as s:
+                self.assertEqual(get_count(s, "@r:h", "free", "d"), 5)
         finally:
             os.unlink(tmp.name)
 

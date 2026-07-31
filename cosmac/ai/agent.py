@@ -15,6 +15,7 @@ ReAct 式循环：
 from __future__ import annotations
 
 import logging
+import threading
 from typing import List, Optional
 
 from cosmac.ai.base import LLMProvider, Message
@@ -25,9 +26,6 @@ logger = logging.getLogger("cosmac.ai.agent")
 
 class Agent:
     """主 AI 的"思考-行动"循环。"""
-
-    # 上次 run 累计的真实 LLM 用量（Token 经济计费用）；run 开始清零、逐轮累加。
-    last_usage_tokens: int = 0
 
     def __init__(
         self,
@@ -42,6 +40,21 @@ class Agent:
         self.toolbox = toolbox
         self.system_prompt = system_prompt
         self.max_steps = max_steps
+        # 用量计数的**线程本地**存储（2026-07-31 修计费竞态）：同一 model 的 Agent 实例会被
+        # 不同房间的并发线程共享（见 bot._agent_for_model 缓存），若把用量记在普通实例属性上，
+        # 两个并发 run 会互相清零/累加对方的数 → Token 经济计费串号（偏多或偏少）。
+        # bot 是在跑完 run() 的**同一线程**里读 last_usage_tokens 结算的，thread-local 让
+        # 每个线程各记各的账，天然隔离，调用方无需任何改动。
+        self._usage_local = threading.local()
+
+    @property
+    def last_usage_tokens(self) -> int:
+        """本线程上次 run 累计的真实 LLM 用量（Token 经济计费用）；线程隔离，见 __init__。"""
+        return int(getattr(self._usage_local, "value", 0))
+
+    @last_usage_tokens.setter
+    def last_usage_tokens(self, v: int) -> None:
+        self._usage_local.value = int(v)
 
     def run(
         self,

@@ -38,9 +38,25 @@ class SdkToolBlocklistTest(unittest.TestCase):
         for name in ("Glob", "Grep", "Skill", "Task", "SlashCommand"):
             self.assertIn(name, _SDK_BLOCKED_TOOLS, f"{name} 必须在黑名单里")
 
-    def test_websearch_remains_available(self) -> None:
-        """保留 WebSearch：它走搜索引擎，指定不了内网目标，风险面小得多。"""
-        self.assertNotIn("WebSearch", _SDK_BLOCKED_TOOLS)
+    def test_websearch_is_blocked(self) -> None:
+        """WebSearch 必须拉黑（负责人 2026-07-31 定：免费用户没有联网功能）。
+
+        内置 WebSearch 不走 Toolbox.execute，bypassPermissions 下会绕过 web_search 的
+        会员门控——免费用户一句「上网查一下」就白嫖联网。拉黑后联网统一走自研
+        web_search 工具，门槛在后台「会员权限」页可调、服务端强制。
+        """
+        self.assertIn("WebSearch", _SDK_BLOCKED_TOOLS)
+        # 替代品必须存在：拉黑不是砍能力，自研 web_search 工具得真的在（同 fetch_url 口径）
+        from cosmac.ai.tools import Toolbox
+
+        class _C:
+            def resolve_alias(self, a):
+                return "!c:h"
+
+            def get_state_event(self, *a, **k):
+                return None
+
+        self.assertIn("web_search", {s.name for s in Toolbox(_C()).specs()})
 
     def test_webfetch_is_blocked_and_replaced(self) -> None:
         """WebFetch 必须拉黑：它能抓任意 URL = SSRF 通道。

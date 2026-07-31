@@ -2262,6 +2262,7 @@ class Toolbox:
         try:
             from cosmac.db import session_scope
             from cosmac.db.task_repo import list_tasks
+            from cosmac.tzutil import fmt_ts
 
             with session_scope() as s:
                 rows = list_tasks(s, room_ids=[room_id])
@@ -2273,6 +2274,12 @@ class Toolbox:
                     if t.status == "done":
                         done += 1
                     seg = f"#{t.id} [{t.status}] {t.title}"
+                    # 进度% 与截止时间：与任务看板取的是同一份 DB 字段(progress/due_ts)。
+                    # 此前工具不返回这俩,中枢 AI 汇报时只能凭空编数字(如说 60%/截止8-1,而
+                    # 看板真实是 10%/截止8-14),导致"AI 说的和看板对不上"。补上即同源。
+                    seg += f" 进度{int(t.progress or 0)}%"
+                    if t.due_ts:
+                        seg += f"，截止{fmt_ts(t.due_ts, '%m月%d日 %H:%M')}"
                     if t.executor_kind != "none" and t.executor_ref:
                         seg += f"（{t.executor_kind}:{t.executor_ref}）"
                     elif t.assignee:

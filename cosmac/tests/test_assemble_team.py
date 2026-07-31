@@ -336,6 +336,19 @@ class TestTaskReviewTools(unittest.TestCase):
         self.assertIn("出图", out)
         self.assertIn(f"#{self.tid}", out)
 
+    def test_list_room_tasks_includes_progress_and_due(self) -> None:
+        """回归:工具此前不返回 progress/due_ts,中枢 AI 汇报时凭空编数字(说 60%/截止8-1,
+        看板真实 10%/8-14),两处对不上。修复后工具必须把这俩字段(与看板同源)带出来。"""
+        from cosmac.db.task_repo import update_task
+        # 设一个明确的进度(37%)和截止时间(2026-08-14 23:59 北京时间)
+        from cosmac.tzutil import parse_local_to_epoch
+        due = parse_local_to_epoch("2026-08-14 23:59", "%Y-%m-%d %H:%M")
+        with session_scope() as s:
+            update_task(s, self.tid, progress=37, due_ts=due)
+        out = self._exec("list_room_tasks", {})
+        self.assertIn("进度37%", out)          # 进度百分比要出现,不能只报 status
+        self.assertIn("截止08月14日", out)      # 截止时间按产品时区格式化后出现
+
     def test_list_room_tasks_by_room_name(self) -> None:
         """负责人线上实测:私聊里问「查XX专班进度」要能按名字精确解析到该频道。
 
