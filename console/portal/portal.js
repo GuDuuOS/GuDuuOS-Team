@@ -152,6 +152,48 @@
     });
   }
 
+  // ---------- 超管数据大屏入口 ----------
+  // 大屏聚合全部 OEM 经营数据，必须由超管先登录，再向服务端兑换只读令牌。入口初始化
+  // 放在 route 生命周期里，而不是仅在脚本首次加载时执行：用户通常是“先打开登录页，
+  // 再登录”，若只初始化一次，登录完成后永远拿不到大屏链接。
+  var dashboardTokenLoading = false;
+  function prepareDashboardLinks() {
+    var auth = getAuth();
+    var links = $all(".dashboard-link");
+    var allowed = !!auth && auth.mode === "admin";
+    links.forEach(function (link) { link.hidden = !allowed; });
+    if (!allowed) {
+      dashboardTokenLoading = false;
+      links.forEach(function (link) {
+        link.href = "/";
+        link.dataset.ready = "false";
+      });
+      return;
+    }
+    if (links.some(function (link) { return link.dataset.ready === "true"; }) || dashboardTokenLoading) return;
+    dashboardTokenLoading = true;
+    api("/nexus/admin/dashboard-token").then(function (result) {
+      if (!result || !result.token) throw new Error("服务端未返回只读大屏令牌");
+      links.forEach(function (link) {
+        link.href = "/#token=" + encodeURIComponent(result.token);
+        link.dataset.ready = "true";
+      });
+      dashboardTokenLoading = false;
+    }).catch(function (error) {
+      dashboardTokenLoading = false;
+      toast(error.message, true);
+    });
+  }
+  $all(".dashboard-link").forEach(function (link) {
+    link.dataset.ready = "false";
+    link.addEventListener("click", function (event) {
+      if (link.dataset.ready !== "true") {
+        event.preventDefault();
+        toast("只读大屏令牌尚未就绪，请稍后重试", true);
+      }
+    });
+  });
+
   // ---------- 视图切换 ----------
   function show(viewId) {
     ["#view-login", "#view-oem", "#view-admin"].forEach(function (id) { $(id).hidden = (id !== viewId); });
@@ -165,9 +207,14 @@
   }
   function route() {
     var auth = getAuth();
-    if (!auth) return show("#view-login");
+    if (!auth) {
+      show("#view-login");
+      prepareDashboardLinks();
+      return;
+    }
     if (auth.mode === "admin") { show("#view-admin"); loadAdmin(); }
     else { show("#view-oem"); loadOem(); }
+    prepareDashboardLinks();
   }
 
   // ---------- 登录页 ----------
@@ -381,9 +428,10 @@
 
   // ---------- 超管视图 ----------
   var RELEASE_STATUS = {
-    draft: ["idle", "草稿"],
+    draft: ["idle", "未发布"],
     canary: ["warning", "灰度监测"],
     published: ["active", "全量发布"],
+    rollback: ["warning", "回撤发布中"],
     paused: ["offline", "已暂停"],
   };
   var DEPLOY_STATUS = {
@@ -420,6 +468,14 @@
       if (r.status === "canary" || r.status === "published") {
         actions.push('<button class="ghost small" data-release-action="pause" data-release-id="' + r.id + '">暂停发布</button>');
       }
+      if (r.status === "rollback") {
+        actions.push('<button class="ghost small" data-release-action="pause" data-release-id="' + r.id + '">暂停回撤</button>');
+      }
+      // 只有真正全量发布过、且当前不再活动的历史版本才可作为回撤目标；草稿和仅灰度
+      // 版本没有经过全量验证，不能通过“回撤”绕过发布门禁。
+      if (r.published_ts && ["canary", "published", "rollback"].indexOf(r.status) < 0) {
+        actions.push('<button class="ghost small" data-release-action="rollback" data-release-id="' + r.id + '" data-release-version="' + esc(r.version) + '">回撤到此版本</button>');
+      }
       if ((c.failed || 0) > 0) {
         actions.push('<button class="ghost small" data-release-action="retry" data-release-id="' + r.id + '">重试失败节点</button>');
       }
@@ -441,7 +497,7 @@
         '<div class="release-actions">' + actions.join("") + "</div></div>" +
         '<div class="release-notes">' + esc(r.notes) + '</div><div class="release-counts">' + countText + "</div>" +
         detailBlock + "</article>";
-    }).join("") || '<p class="empty">还没有版本记录。先保存一个草稿，再进行灰度监测。</p>';
+    }).join("") || '<p class="empty">还没有版本记录。先保存一个未发布版本，再进行灰度监测。</p>';
   }
 
   function loadAdmin() {
@@ -574,7 +630,7 @@
         notes: form.notes.value,
       },
     }).then(function () {
-      toast("版本草稿已保存，可先推送灰度节点监测");
+      toast("版本已保存为未发布，可先推送灰度节点监测");
       form.reset();
       loadAdmin();
     }).catch(function (err) { toast(err.message, true); });
@@ -710,12 +766,16 @@
       }
       var promptText = action === "publish"
         ? "确认向全部 " + releaseInstanceCount + " 个实例发布此版本？节点将在下一轮检查时自动安装。"
+        : action === "rollback"
+          ? "确认把全部 " + releaseInstanceCount + " 个实例回撤到 v" + (t.dataset.releaseVersion || "") + "？这会真实切换线上运行版本。"
         : action === "pause"
           ? "确认暂停该版本？已经开始安装的节点不会被中断。"
           : action === "retry"
             ? "确认让该版本所有失败节点重新尝试一次？"
             : "确认把该版本推送到当前选中的灰度节点？";
-      uiConfirm(promptText, action === "publish", action === "publish" ? "确认全量发布" : "确认").then(function (ok) {
+      var dangerousReleaseAction = action === "publish" || action === "rollback";
+      var releaseOkText = action === "publish" ? "确认全量发布" : (action === "rollback" ? "确认回撤" : "确认");
+      uiConfirm(promptText, dangerousReleaseAction, releaseOkText).then(function (ok) {
         if (!ok) return;
         api("/nexus/admin/release_action", { body: body })
           .then(function () { toast("版本操作已生效"); loadAdmin(); })
@@ -823,28 +883,6 @@
       });
     }
   });
-
-  // ---------- 大屏只使用只读令牌 ----------
-  // 管理令牌具有签 KEY、充值等写权限，绝不能再直接塞进大屏 URL。控制台先在服务端完成
-  // 管理员鉴权，再兑换 NEXUS_DASH_TOKEN；即使展示页日后再出现漏洞，损失面也只到只读数据。
-  var auth0 = getAuth();
-  var dashboardLink = $("#nav-dash");
-  if (auth0 && auth0.mode === "admin" && dashboardLink) {
-    dashboardLink.dataset.ready = "false";
-    dashboardLink.addEventListener("click", function (event) {
-      if (dashboardLink.dataset.ready !== "true") {
-        event.preventDefault();
-        toast("只读大屏令牌尚未就绪，请稍后重试", true);
-      }
-    });
-    api("/nexus/admin/dashboard-token")
-      .then(function (result) {
-        if (!result || !result.token) throw new Error("服务端未返回只读大屏令牌");
-        dashboardLink.href = "/#token=" + encodeURIComponent(result.token);
-        dashboardLink.dataset.ready = "true";
-      })
-      .catch(function (error) { toast(error.message, true); });
-  }
 
   route();
 })();

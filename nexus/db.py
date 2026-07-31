@@ -348,8 +348,8 @@ class NexusRelease(Base):
 
     版本记录与 Git tag 一一对应。状态机刻意保持很小：``draft`` 仅保存草稿，
     ``canary`` 只推给一个灰度节点，``published`` 推给全部在线授权实例，
-    ``paused`` 暂停尚未领取的任务。发布说明存 Nexus DB，OEM 节点不需要访问
-    GitHub API 就能取得统一说明。
+    ``rollback`` 表示全节点精确回撤到该历史版本，``paused`` 暂停尚未领取的任务。
+    发布说明存 Nexus DB，OEM 节点不需要访问 GitHub API 就能取得统一说明。
     """
 
     __tablename__ = "nexus_release"
@@ -360,7 +360,7 @@ class NexusRelease(Base):
     notes = Column(Text, nullable=False, default="")
     # 自动更新只接受 vX.Y.Z 形式的 tag，避免后台内容变成任意 git 参数。
     git_ref = Column(String(40), nullable=False, unique=True)
-    # draft / canary / published / paused
+    # draft / canary / published / rollback / paused
     status = Column(String(16), nullable=False, default="draft", index=True)
     canary_instance_id = Column(Integer, nullable=True, default=None)
     created_ts = Column(BigInteger, nullable=False, default=_now_ms)

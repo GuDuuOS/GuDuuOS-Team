@@ -145,6 +145,14 @@ label input { margin-top: 5px; }
 .inline-form { display: flex; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
 .inline-form input { width: auto; min-width: 180px; }
 
+/* 超管登录后在主内容区明确展示大屏入口，避免只放在顶栏而被误认为普通导航。 */
+.dashboard-entry {
+  display: flex; align-items: center; justify-content: space-between; gap: 20px;
+}
+.dashboard-entry h2 { font-size: 15px; }
+.dashboard-entry .hint { margin: 5px 0 0; }
+.dashboard-entry .primary { flex: 0 0 auto; text-decoration: none; }
+
 /* —— 版本发布中心 —— */
 .release-form {
   display: grid; grid-template-columns: 130px 150px 1fr 190px; gap: 10px;
@@ -171,6 +179,7 @@ label input { margin-top: 5px; }
 .release-deployments summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 
 @media (max-width: 820px) {
+  .dashboard-entry { align-items: flex-start; flex-direction: column; }
   .release-form { grid-template-columns: 1fr 1fr; }
   .release-title-field, .release-canary-field, .release-notes-field { grid-column: 1 / -1; }
   .release-submit { grid-column: 1 / -1; }

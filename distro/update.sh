@@ -39,7 +39,10 @@ if [ -n "$TARGET_REF" ]; then
   # 不加 --force：发布 tag 一旦存在就应视为不可变；远端若被移动，本机应报冲突停下，
   # 不能悄悄把同一个版本号换成另一份代码。
   git -C .. fetch origin "refs/tags/$TARGET_REF:refs/tags/$TARGET_REF"
-  git -C .. merge --ff-only "refs/tags/$TARGET_REF"
+  # 每次都精确检出不可变 tag，而不是 merge：普通升级与“回撤到旧 tag”走同一条受限
+  # 路径。detached HEAD 是有意设计——实例只运行发行 tag，不在服务器上开发；以后再
+  # 升级到新 tag 仍可直接切换，也不会误改 main 分支指针。
+  git -C .. checkout --detach "refs/tags/$TARGET_REF"
 else
   echo "[GuDuu OS] 拉取 main 最新版本……"
   git -C .. pull --ff-only

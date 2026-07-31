@@ -1,7 +1,7 @@
 """Nexus 版本发布中心回归测试。
 
-覆盖草稿、灰度、全量、暂停、节点领取、结果上报与失败人工重试。测试使用独立
-SQLite 文件，不访问 GitHub，也不会真的执行发行版升级脚本。
+覆盖未发布、灰度、全量、历史列表、版本回撤、暂停、节点领取、结果上报与失败人工
+重试。测试使用独立 SQLite 文件，不访问 GitHub，也不会真的执行发行版升级脚本。
 """
 
 from __future__ import annotations
@@ -148,6 +148,39 @@ class ReleaseTest(unittest.TestCase):
                 current_version="1.7.0",
             )
         self.assertEqual(ctx.exception.code, "NEXUS_UPDATE_NOT_ASSIGNED")
+
+    def test_history_list_and_rollback_to_lower_version(self):
+        """历史版本永久保留，回撤时当前版本高于目标也必须领取旧 tag。"""
+        old_id = self._create("1.7.0")["id"]
+        releases.publish(self.s, old_id)
+        # 模拟 1.7.0 已完成全量发布；心跳是实例当前运行版本的权威快照。
+        fleet.heartbeat(self.s, self.key_a, "1.7.0")
+        fleet.heartbeat(self.s, self.key_b, "1.7.0")
+
+        new_id = self._create("1.7.1")["id"]
+        releases.publish(self.s, new_id)
+        fleet.heartbeat(self.s, self.key_a, "1.7.1")
+        fleet.heartbeat(self.s, self.key_b, "1.7.1")
+
+        history = releases.list_releases(self.s)
+        self.assertEqual([row["version"] for row in history], ["1.7.1", "1.7.0"])
+        self.assertEqual(history[1]["status"], "paused")
+
+        rolled_back = releases.rollback(self.s, old_id)
+        self.assertEqual(rolled_back["status"], "rollback")
+        self.assertEqual(rolled_back["counts"]["pending"], 2)
+        task = releases.check_update(self.s, self.key_a, "1.7.1")
+        self.assertIsNotNone(task)
+        self.assertEqual(task["version"], "1.7.0")
+        self.assertEqual(task["git_ref"], "v1.7.0")
+
+    def test_unpublished_version_cannot_be_rollback_target(self):
+        """默认未发布版本不能借回撤动作绕过灰度和首次发布门禁。"""
+        release = self._create("1.7.0")
+        self.assertEqual(release["status"], "draft")
+        with self.assertRaises(FleetError) as ctx:
+            releases.rollback(self.s, release["id"])
+        self.assertEqual(ctx.exception.code, "NEXUS_RELEASE_NOT_PUBLISHED")
 
 
 if __name__ == "__main__":

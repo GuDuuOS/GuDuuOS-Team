@@ -37,7 +37,7 @@ git clone <发行版仓库地址> cosmac && cd cosmac/distro
 |---|---|
 | 体检（装完必跑 / 出问题先跑） | `./doctor.sh` |
 | 手动升级 main 最新版 | `./update.sh` |
-| 手动升级已发布版本 | `./update.sh --ref vX.Y.Z` |
+| 手动升级或回撤到指定已发布版本 | `./update.sh --ref vX.Y.Z` |
 | 查看自动更新计划 | `systemctl status guduu-update-agent.timer` |
 | 查看最近更新日志 | `journalctl -u guduu-update-agent.service -n 100` |
 | 看某个组件日志 | `docker compose logs -f synapse\|bot\|web\|postgres` |

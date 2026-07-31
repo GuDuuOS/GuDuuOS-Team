@@ -24,7 +24,7 @@ from nexus.fleet import FleetError
 
 _VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 _REPORT_STATES = {"downloading", "installing", "success", "failed"}
-_ACTIVE_RELEASE_STATES = {"canary", "published"}
+_ACTIVE_RELEASE_STATES = {"canary", "published", "rollback"}
 # 下载/构建被强制中断时，任务不能永久卡在 installing。超过一小时后允许同一节点
 # 再次领取；正常升级一般远低于一小时，这个阈值不会制造并发执行。
 _STALE_INSTALL_MS = 60 * 60 * 1000
@@ -174,6 +174,57 @@ def publish(s, release_id: int) -> Dict[str, Any]:
     return get_release(s, release.id)
 
 
+def rollback(s, release_id: int) -> Dict[str, Any]:
+    """把全部活动 OEM 节点回撤到一个曾经全量发布过的历史版本。
+
+    回撤复用历史版本对应的不可变 Git tag，但会重置该版本的逐节点投放状态。这样
+    超级管理员看到的始终是“这次回撤”的实时结果，而不是该版本第一次发布时留下的
+    success。未全量发布过的草稿/灰度版本不能作为回撤目标，避免把未经验证的代码借
+    “回撤”名义推向全舰队。
+    """
+    release = _release(s, release_id)
+    if release.published_ts is None:
+        raise FleetError(
+            "NEXUS_RELEASE_NOT_PUBLISHED",
+            "只有曾经全量发布过的历史版本才能回撤",
+        )
+    if release.status in _ACTIVE_RELEASE_STATES:
+        raise FleetError(
+            "NEXUS_RELEASE_ALREADY_ACTIVE",
+            "该版本已经是当前活动版本，无需回撤",
+        )
+
+    _pause_other_active(s, release.id)
+    now = _now_ms()
+    release.status = "rollback"
+    release.canary_instance_id = None
+    release.updated_ts = now
+
+    instances = s.execute(
+        select(NexusInstance).where(NexusInstance.status == "active")
+    ).scalars()
+    for instance in instances:
+        deployment = _ensure_deployment(s, release, instance)
+        deployment.from_version = instance.version or ""
+        deployment.to_version = release.version
+        deployment.attempts = 0
+        deployment.updated_ts = now
+        deployment.finished_ts = None
+        # 已经处于目标版本的节点不需要重装；其余节点无论高于还是低于目标，都应
+        # 精确切换到选中的版本，不能沿用普通升级的“高于目标也算成功”规则。
+        if _version_tuple(instance.version, strict=False) == _version_tuple(
+            release.version
+        ):
+            deployment.status = "success"
+            deployment.detail = "节点已经处于回撤目标版本"
+            deployment.finished_ts = now
+        else:
+            deployment.status = "pending"
+            deployment.detail = "超级管理员已发起版本回撤"
+    s.flush()
+    return get_release(s, release.id)
+
+
 def pause(s, release_id: int) -> Dict[str, Any]:
     """暂停尚未被节点领取的版本；已在执行的节点不会被粗暴终止。"""
     release = _release(s, release_id)
@@ -306,9 +357,14 @@ def check_update(s, raw_key: str, current_version: str) -> Optional[Dict[str, An
             deployment.detail = "上次安装超时，节点重新领取"
             deployment.updated_ts = now
 
-        if _version_tuple(current_version, strict=False) >= _version_tuple(
-            release.version
-        ):
+        current_tuple = _version_tuple(current_version, strict=False)
+        target_tuple = _version_tuple(release.version)
+        reached_target = (
+            current_tuple == target_tuple
+            if release.status == "rollback"
+            else current_tuple >= target_tuple
+        )
+        if reached_target:
             deployment.status = "success"
             deployment.detail = "节点当前版本已达到目标"
             deployment.updated_ts = now

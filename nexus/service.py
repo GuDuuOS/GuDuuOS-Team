@@ -17,7 +17,7 @@
         GET  /nexus/admin/instances                            实例列表（含余额）
         POST /nexus/admin/topup      {instance_id,tokens,note} 手动充值
         GET/POST /nexus/admin/releases                         版本发布中心
-        POST /nexus/admin/release_action                       灰度/全量/暂停/重试
+                        POST /nexus/admin/release_action                       灰度/全量/回撤/暂停/重试
 
 安全：
     - NEXUS_ADMIN_TOKEN 无默认值，未配置则管理端点一律 503（宁停不裸奔）；
@@ -681,6 +681,8 @@ class NexusHandler(BaseHTTPRequestHandler):
                         result = releases.publish(s, release_id)
                     elif action == "pause":
                         result = releases.pause(s, release_id)
+                    elif action == "rollback":
+                        result = releases.rollback(s, release_id)
                     elif action == "retry":
                         result = releases.retry_failed(s, release_id)
                     else:
