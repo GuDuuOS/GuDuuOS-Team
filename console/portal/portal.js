@@ -912,6 +912,8 @@
     skipped: ["idle", "已跳过"],
   };
   var releaseInstanceCount = 0;
+  // 节点详情使用最近一次管理列表快照，打开弹窗时无需再发请求。
+  var adminInstances = [];
   var releaseDraftChecked = false;
 
   function releaseBadge(status, mapping) {
@@ -1069,6 +1071,7 @@
       var releases = rs[6].releases || [];
       var finance = rs[7] || {};
       var configs = rs[8].payment_configs || [];
+      adminInstances = insts.slice();
       manualTransferOems = oems.slice();
       renderFinanceOverview(finance, configs);
 
@@ -1154,7 +1157,8 @@
         return "<tr><td>#" + i.id + "</td><td>" + esc(i.domain) + "</td><td class=\"zh\">" + company + "</td><td class=\"zh\">" + badge(hbStatus(i)) + "</td>" +
           "<td>" + esc(i.version || "—") + "</td><td>" + fmtTime(i.last_seen_ts) + "</td>" +
           "<td>" + fmtTokens(i.balance_tokens) + "</td>" +
-          '<td class="zh"><button class="ghost small" data-topup="' + i.id + '" data-domain="' + esc(i.domain) + '">充值</button></td></tr>';
+          '<td class="zh"><button class="ghost small" data-instance-detail="' + i.id + '">详情</button> ' +
+          '<button class="ghost small" data-topup="' + i.id + '" data-domain="' + esc(i.domain) + '">充值</button></td></tr>';
       }).join("") || '<tr><td colspan="8" class="zh empty">暂无实例</td></tr>';
 
       // KEY 表（吊销）
@@ -1224,6 +1228,83 @@
       releaseDraftChecked = false;
       loadAdmin();
     }).catch(function (err) { toast(err.message, true); });
+  });
+
+  // ---------- 节点详情弹窗（运行快照 / 企业归属 / 心跳统计） ----------
+  var INSTANCE_STAT_LABELS = {
+    users: "用户数",
+    dau: "日活用户",
+    messages_today: "今日消息",
+    rooms: "房间数",
+    bots: "Bot 数",
+    workflows: "工作流数",
+  };
+
+  function instanceStatText(value) {
+    // 心跳 stats 允许以后增加字段；对象/数组转成 JSON 后再统一转义展示。
+    if (value === null || value === undefined || value === "") return "—";
+    if (typeof value === "object") {
+      try { return JSON.stringify(value); } catch (e) { return "—"; }
+    }
+    return String(value);
+  }
+
+  function closeInstanceDetail() {
+    $("#instance-detail-mask").hidden = true;
+  }
+
+  function openInstanceDetail(instanceId) {
+    var inst = adminInstances.find(function (item) { return Number(item.id) === Number(instanceId); });
+    if (!inst) return toast("节点数据已更新，请刷新后重试", true);
+    var status = hbStatus(inst);
+    var company = inst.company_name || "未绑定企业";
+    var region = inst.region_label
+      ? inst.region_label + (inst.region ? "（" + inst.region + "）" : "")
+      : "未设置";
+    $("#instance-detail-title").textContent = company;
+    $("#instance-detail-summary").textContent = "节点 #" + inst.id + " · " + inst.domain;
+    $("#instance-detail-state").innerHTML = badge(status) +
+      "<span>" + (status === "active" ? "节点心跳正常" : (status === "warning" ? "心跳已超过 15 分钟" : "节点离线或已停用")) + "</span>";
+    var rows = [
+      ["所属企业", company],
+      ["OEM 账号", inst.oem_email || "—"],
+      ["OEM 编号", inst.oem_id ? "#" + inst.oem_id : "—"],
+      ["节点域名", inst.domain],
+      ["节点管理员", inst.admin_email || "—"],
+      ["当前版本", inst.version || "—"],
+      ["最近心跳", fmtTime(inst.last_seen_ts)],
+      ["创建时间", fmtTime(inst.created_ts)],
+      ["节点地域", region],
+      ["来源网段", inst.last_ip || "—"],
+      ["Token 余额", fmtTokens(inst.balance_tokens) + " token"],
+      ["服务状态", STATUS_ZH[status] || status],
+    ];
+    $("#instance-detail-kv").innerHTML = rows.map(function (row) {
+      return "<small>" + esc(row[0]) + "</small><b>" + esc(row[1]) + "</b>";
+    }).join("");
+    var stats = inst.stats && typeof inst.stats === "object" ? inst.stats : {};
+    var keys = Object.keys(stats).sort(function (a, b) {
+      return (INSTANCE_STAT_LABELS[a] || a).localeCompare(INSTANCE_STAT_LABELS[b] || b, "zh-CN");
+    });
+    $("#instance-detail-stats").innerHTML = keys.map(function (key) {
+      return '<div class="instance-stat"><small>' + esc(INSTANCE_STAT_LABELS[key] || key) +
+        "</small><b>" + esc(instanceStatText(stats[key])) + "</b></div>";
+    }).join("") || '<p class="empty">暂无心跳统计</p>';
+    var oemButton = $("#instance-detail-oem");
+    oemButton.hidden = !inst.oem_id;
+    oemButton.dataset.oemId = inst.oem_id ? String(inst.oem_id) : "";
+    $("#instance-detail-mask").hidden = false;
+  }
+
+  $("#instance-detail-close").addEventListener("click", closeInstanceDetail);
+  $("#instance-detail-mask").addEventListener("click", function (e) {
+    if (e.target === this) closeInstanceDetail();
+  });
+  $("#instance-detail-oem").addEventListener("click", function () {
+    var oemId = Number(this.dataset.oemId || 0);
+    if (!oemId) return;
+    closeInstanceDetail();
+    openDetail(oemId);
   });
 
   // ---------- 客户详情弹窗（档案/资产/合同附件/备注） ----------
@@ -1343,9 +1424,13 @@
     }).catch(function (err) { toast(err.message, true); });
   });
 
-  // 表格行内操作（事件代理：吊销 / 充值）
+  // 表格行内操作（事件代理：详情 / 吊销 / 充值）
   document.addEventListener("click", function (e) {
     var t = e.target;
+    if (t.dataset && t.dataset.instanceDetail) {
+      openInstanceDetail(Number(t.dataset.instanceDetail));
+      return;
+    }
     if (t.dataset && t.dataset.copyLink) {
       copyText(t.dataset.copyLink)
         .then(function () { toast("分享链接已复制"); })
