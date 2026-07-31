@@ -42,10 +42,19 @@ import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from urllib.parse import parse_qs, quote, urlsplit
 
-from nexus import db, fleet, geo, oem as oem_svc, pay, payment_config, releases
+from nexus import (
+    db,
+    fleet,
+    geo,
+    manual_transfer,
+    oem as oem_svc,
+    pay,
+    payment_config,
+    releases,
+)
 from nexus.fleet import FleetError
 
 logger = logging.getLogger("nexus.service")
@@ -135,6 +144,34 @@ class NexusHandler(BaseHTTPRequestHandler):
             return data if isinstance(data, dict) else {}
         except Exception:
             return {}
+
+    def _read_large_json(self, max_bytes: int) -> Optional[Dict[str, Any]]:
+        """读取受控的大 JSON 请求，专供 Base64 图片上传接口。
+
+        普通管理接口仍限制 64KB；只有凭证上传明确放宽到约 11MB（8MB 图片经 Base64
+        膨胀后），避免无意中把整个服务的请求体上限一起放大。失败时本函数已经发送
+        HTTP 错误，调用者收到 ``None`` 后必须立即返回。
+        """
+        try:
+            size = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            size = 0
+        if size <= 0 or size > int(max_bytes):
+            self._err(
+                413,
+                "NEXUS_TRANSFER_BODY_TOO_BIG",
+                "转账凭证请求为空或超过大小限制",
+            )
+            return None
+        try:
+            payload = json.loads(self.rfile.read(size).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._err(400, "NEXUS_BAD_JSON", "请求内容不是有效 JSON")
+            return None
+        if not isinstance(payload, dict):
+            self._err(400, "NEXUS_BAD_JSON", "请求内容必须是对象")
+            return None
+        return payload
 
     def _client_ip(self) -> str:
         # 生产在 Caddy 后面，以 X-Forwarded-For 第一跳为准；直连时用对端地址
@@ -367,6 +404,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                         {
                             "finance": pay.finance_summary(s),
                             "channels": pay.channels(s),
+                            "manual_transfer_ai": manual_transfer.ai_status(),
                         },
                     )
                 )
@@ -439,6 +477,33 @@ class NexusHandler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(data)
                 self._with_session(_dl)
+            return
+        # 企业转账凭证包含银行信息，只允许超管按记录 id 查看；响应禁止缓存。
+        if path.startswith("/nexus/admin/manual_transfer_voucher/"):
+            if self._check_admin():
+                try:
+                    transfer_id = int(path.rsplit("/", 1)[-1])
+                except ValueError:
+                    self._err(404, "NEXUS_TRANSFER_NOT_FOUND", "企业转账单不存在")
+                    return
+
+                def _transfer_voucher(s):
+                    filename, content_type, data = manual_transfer.voucher(
+                        s, transfer_id
+                    )
+                    self.send_response(200)
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(len(data)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header(
+                        "Content-Disposition",
+                        "inline; filename*=UTF-8''" + quote(filename),
+                    )
+                    self.end_headers()
+                    self.wfile.write(data)
+
+                self._with_session(_transfer_voucher)
             return
         # —— 其余 GET：当静态请求，托管数据大屏（console/dashboard）——
         if self._serve_dashboard(path):
@@ -566,6 +631,69 @@ class NexusHandler(BaseHTTPRequestHandler):
                         {"file": oem_svc.add_oem_file(s, oem_id, filename, ctype, data)},
                     )
                 )
+            return
+
+        # 企业转账图片以 Base64 放在 JSON 中，字段与文件在一个受鉴权请求里原子提交；
+        # 这避免把银行账号塞进 URL/query，也避免“先存孤儿文件、后建记录”产生垃圾数据。
+        if path in (
+            "/nexus/admin/manual_transfer/recognize",
+            "/nexus/admin/manual_transfers",
+        ):
+            if not self._check_admin():
+                return
+            transfer_body = self._read_large_json(12 * 1024 * 1024)
+            if transfer_body is None:
+                return
+            try:
+                image_data, content_type = manual_transfer.decode_image(
+                    str(transfer_body.get("image_base64", "")),
+                    str(transfer_body.get("content_type", "")),
+                )
+            except FleetError as error:
+                self._err(error.http_status, error.code, error.message)
+                return
+            if path.endswith("/recognize"):
+                def _recognize_transfer(_s):
+                    self._json(
+                        200,
+                        {
+                            "recognition": manual_transfer.recognize_voucher(
+                                image_data, content_type
+                            )
+                        },
+                    )
+
+                self._with_session(_recognize_transfer)
+                return
+
+            if transfer_body.get("confirmed") is not True:
+                self._err(
+                    400,
+                    "NEXUS_TRANSFER_NOT_CONFIRMED",
+                    "请先确认银行实际到账，再登记企业转账",
+                )
+                return
+            details = transfer_body.get("details")
+            recognition = transfer_body.get("recognition")
+
+            def _create_transfer(s):
+                record = manual_transfer.create_transfer(
+                    s,
+                    # 类型转换与可读业务错误统一交给领域层处理，避免畸形输入冒泡成 500。
+                    amount_cents=transfer_body.get("amount_cents"),
+                    image_data=image_data,
+                    content_type=content_type,
+                    filename=str(transfer_body.get("filename", "")),
+                    oem_id=transfer_body.get("oem_id"),
+                    purpose=str(transfer_body.get("purpose", "")),
+                    details=details if isinstance(details, dict) else {},
+                    recognition=(
+                        recognition if isinstance(recognition, dict) else None
+                    ),
+                )
+                self._json(201, {"transfer": record})
+
+            self._with_session(_create_transfer)
             return
 
         body = self._read_body()

@@ -396,6 +396,7 @@ def clear_order_plain_by_key_id(s, key_id: int) -> None:
 def public_order(o: NexusOrder, owner: bool = False) -> Dict[str, Any]:
     """订单对外表示。KEY 明文只给买家本人（owner=True），超管列表不带。"""
     out = {
+        "record_type": "online_order",
         "order_no": o.order_no,
         "oem_id": o.oem_id,
         "kind": o.kind,
@@ -425,11 +426,20 @@ def my_orders(s, oem_id: int) -> List[Dict[str, Any]]:
 
 
 def list_orders(s) -> List[Dict[str, Any]]:
-    """超管全量订单（近 200 单；不含 KEY 明文）。"""
+    """超管统一订单列表（在线订单 + 企业转账，近 200 条）。
+
+    两种记录来自不同表：在线订单会自动履约，企业转账由超管核实后人工登记。统一
+    返回只是为了运营列表与数量徽标完整，不改变两者的支付/履约语义。
+    """
+    from nexus import manual_transfer
+
     rows = s.execute(
         select(NexusOrder).order_by(NexusOrder.id.desc()).limit(200)
     ).scalars().all()
-    return [public_order(r) for r in rows]
+    combined = [public_order(r) for r in rows]
+    combined.extend(manual_transfer.list_transfers(s, limit=200))
+    combined.sort(key=lambda item: int(item.get("created_ts") or 0), reverse=True)
+    return combined[:200]
 
 
 def finance_summary(s) -> Dict[str, Any]:
@@ -475,12 +485,25 @@ def finance_summary(s) -> Dict[str, Any]:
             ),
         )
     ).one()
+    # 企业转账是已由超管核实银行到账的独立收款单。它计入总营收/总订单数，但必须
+    # 单独返回金额和笔数，让界面用专色标出，不能伪装成自动支付订单。
+    from nexus import manual_transfer
+
+    manual = manual_transfer.summary(s)
+    online_revenue = int(row[0] or 0)
+    online_revenue_30d = int(row[1] or 0)
+    online_paid_count = int(row[3] or 0)
     return {
-        "paid_revenue_cents": int(row[0] or 0),
-        "paid_revenue_30d_cents": int(row[1] or 0),
+        "paid_revenue_cents": online_revenue
+        + manual["manual_transfer_revenue_cents"],
+        "paid_revenue_30d_cents": online_revenue_30d
+        + manual["manual_transfer_30d_cents"],
         "pending_amount_cents": int(row[2] or 0),
-        "paid_order_count": int(row[3] or 0),
+        "paid_order_count": online_paid_count + manual["manual_transfer_count"],
         "pending_order_count": int(row[4] or 0),
+        "online_paid_revenue_cents": online_revenue,
+        "online_paid_order_count": online_paid_count,
+        **manual,
         "key_revenue_cents": int(row[5] or 0),
         "topup_revenue_cents": int(row[6] or 0),
         "key_paid_count": int(row[7] or 0),

@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
 <script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=11" />
+<link rel="stylesheet" href="/portal/portal.css?v=12" />
 </head>
 <body>
 <!--
@@ -231,7 +231,6 @@
             <h2>资金与经营概览</h2>
             <p class="hint">覆盖国内与海外支付；仅已确认成功的订单计入收入，待支付订单不作为营收。</p>
           </div>
-          <span id="finance-api-status" class="badge warning">支付 API 待接</span>
         </div>
         <div id="admin-finance-stats" class="stats finance-stats"></div>
         <div class="finance-details">
@@ -348,13 +347,62 @@
       <section class="panel" id="panel-admin-orders" hidden>
         <div class="panel-head"><h2>订单</h2></div>
         <table class="tbl" id="admin-orders">
-          <thead><tr><th>订单号</th><th>客户</th><th>内容</th><th>金额</th><th>渠道</th><th>状态</th><th>时间</th></tr></thead>
+          <thead><tr><th>订单号</th><th>客户</th><th>内容</th><th>金额</th><th>渠道</th><th>状态</th><th>凭证</th><th>时间</th></tr></thead>
           <tbody></tbody>
         </table>
       </section>
     </div>
   </div>
 </main>
+
+<!-- 企业转账人工入账：凭证必传，AI 只做候选字段识别，超管确认到账后才保存 -->
+<div id="transfer-mask" class="mask" hidden>
+  <div class="modal transfer-modal" role="dialog" aria-modal="true" aria-labelledby="transfer-title">
+    <div class="modal-head">
+      <div>
+        <b id="transfer-title">登记企业转账</b>
+        <p class="hint">适用于企业网银、公对公转账；保存后计入实收并生成 BT 开头的人工单号。</p>
+      </div>
+      <button id="transfer-close" class="ghost small" type="button">关闭</button>
+    </div>
+    <form id="form-manual-transfer">
+      <div class="transfer-upload-grid">
+        <div class="transfer-voucher-box">
+          <img id="transfer-preview" alt="转账凭证预览" hidden />
+          <div id="transfer-preview-empty">请上传银行转账凭证</div>
+        </div>
+        <div class="transfer-upload-actions">
+          <input id="transfer-file" type="file" accept="image/jpeg,image/png,image/webp" required />
+          <button id="transfer-recognize" class="ghost" type="button" disabled>AI 识别凭证</button>
+          <p id="transfer-ai-state" class="hint">正在读取 AI 配置…</p>
+          <p class="hint">点击识别才会把图片发送给已配置的视觉模型；AI 结果仅用于预填，金额必须人工核对。</p>
+        </div>
+      </div>
+      <div class="transfer-fields">
+        <label>到账金额（元）<input name="amount_yuan" type="number" min="0.01" step="0.01" required placeholder="0.00" /></label>
+        <label>关联 OEM 客户<select name="oem_id" id="transfer-oem"><option value="">暂不关联</option></select></label>
+        <label>付款企业<input name="payer_company" maxlength="160" placeholder="凭证中的付款单位" /></label>
+        <label>付款账号<input name="payer_account" maxlength="120" autocomplete="off" placeholder="按凭证可见内容填写" /></label>
+        <label>收款企业<input name="payee_company" maxlength="160" placeholder="凭证中的收款单位" /></label>
+        <label>收款账号<input name="payee_account" maxlength="120" autocomplete="off" placeholder="按凭证可见内容填写" /></label>
+        <label>银行名称<input name="bank_name" maxlength="160" placeholder="付款行 / 收款行" /></label>
+        <label>银行流水号<input name="transaction_id" maxlength="160" placeholder="交易单号 / 回单编号" /></label>
+        <label>转账时间<input name="transfer_time" maxlength="80" placeholder="例：2026-08-01 14:30" /></label>
+        <label>收款用途<input name="purpose" maxlength="255" required value="企业转账收款" /></label>
+        <label class="transfer-note-field">备注<textarea name="note" rows="2" maxlength="500" placeholder="合同号、业务说明或人工核对备注"></textarea></label>
+      </div>
+      <div id="transfer-recognition-result" class="transfer-recognition-result" hidden></div>
+      <label class="transfer-confirm">
+        <input name="confirmed" type="checkbox" required />
+        <span>我已核对银行实际到账，确认将这笔企业转账计入平台实收。</span>
+      </label>
+      <div class="transfer-submit-row">
+        <span class="hint">凭证及银行账户字段使用 Nexus 主密钥加密后存入 PostgreSQL。</span>
+        <button id="transfer-save" class="primary" type="submit">确认并登记入账</button>
+      </div>
+    </form>
+  </div>
+</div>
 
 <!-- 支付渠道配置弹窗（超管）：字段由服务端白名单动态生成，密钥原文永不回填） -->
 <div id="payment-mask" class="mask" hidden>
@@ -426,6 +474,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=19"></script>
+<script src="/portal/portal.js?v=20"></script>
 </body>
 </html>

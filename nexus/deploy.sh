@@ -84,6 +84,10 @@ NEXUS_SECRET_KEY=$(openssl rand -hex 32)
 NEXUS_GW_ANTHROPIC_KEY=
 NEXUS_GW_OPENAI_KEY=
 NEXUS_GW_ARK_KEY=
+# —— 企业转账凭证视觉识别（可选）——
+# 留空时复用 NEXUS_GW_OPENAI_KEY；两者均为空则只保留人工填写，不影响入账。
+NEXUS_RECEIPT_AI_KEY=
+NEXUS_RECEIPT_AI_MODEL=gpt-5-mini
 EOF
   chmod 600 "$ENVF"
 else

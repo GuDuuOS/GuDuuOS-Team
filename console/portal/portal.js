@@ -354,7 +354,7 @@
   // ---------- OEM 门户 ----------
   var CH_ZH = {
     alipay: "支付宝", wechat: "微信支付", stripe: "Stripe", paypal: "PayPal",
-    usdt: "USDT", mock: "模拟支付(开发)"
+    usdt: "USDT", mock: "模拟支付(开发)", corporate_transfer: "企业转账（人工）"
   };
   function fmtYuan(cents) {
     var y = (Number(cents) || 0) / 100;
@@ -460,39 +460,35 @@
   }
 
   var paymentConfigs = {};
+  var manualTransferAi = {};
+  var manualTransferOems = [];
   function renderFinanceOverview(payload, configs) {
     // 所有金额都来自服务端全历史聚合；前端只负责格式化，不能从受限的近 200 单列表
     // 再次求和，否则业务增长后会悄悄少算收入。
     var f = payload.finance || {};
-    var channelNames = ["alipay", "wechat", "stripe", "paypal", "usdt"];
+    manualTransferAi = payload.manual_transfer_ai || {};
     paymentConfigs = {};
     (configs || []).forEach(function (item) { paymentConfigs[item.provider] = item; });
-    var configuredCount = channelNames.filter(function (name) {
-      return paymentConfigs[name] && paymentConfigs[name].configured;
-    }).length;
-    var verifiedCount = channelNames.filter(function (name) {
-      var status = paymentConfigs[name] && paymentConfigs[name].verify_status;
-      return status === "remote_verified" || status === "local_valid";
-    }).length;
-    var apiStatus = $("#finance-api-status");
-    apiStatus.className = "badge " + (verifiedCount ? "warning" : "idle");
-    apiStatus.textContent = configuredCount === 0 ? "点击渠道配置 API" :
-      (verifiedCount + "/" + channelNames.length + " 凭据已验证 · 交易未开放");
     $("#admin-finance-stats").innerHTML =
       '<div class="stat"><small>累计已支付</small><b>' + fmtYuan(f.paid_revenue_cents) +
-      '</b><span class="stat-note">' + (f.paid_order_count || 0) + ' 笔已履约订单</span></div>' +
+      '</b><span class="stat-note">' + (f.paid_order_count || 0) + ' 笔已确认收款记录</span></div>' +
       '<div class="stat"><small>近 30 天已支付</small><b>' + fmtYuan(f.paid_revenue_30d_cents) +
       '</b><span class="stat-note">按支付成功时间统计</span></div>' +
       '<div class="stat"><small>待支付金额</small><b class="plain">' + fmtYuan(f.pending_amount_cents) +
       '</b><span class="stat-note">' + (f.pending_order_count || 0) + ' 笔，不计入收入</span></div>' +
       '<div class="stat"><small>Token 充值收入</small><b>' + fmtYuan(f.topup_revenue_cents) +
-      '</b><span class="stat-note">已交付 ' + fmtTokens(f.topup_tokens) + ' Token</span></div>';
+      '</b><span class="stat-note">已交付 ' + fmtTokens(f.topup_tokens) + ' Token</span></div>' +
+      '<div class="stat"><small>企业转账实收</small><b class="manual-money">' +
+      fmtYuan(f.manual_transfer_revenue_cents) + '</b><span class="stat-note">' +
+      (f.manual_transfer_count || 0) + ' 笔人工确认单</span></div>';
 
     $("#admin-finance-breakdown").innerHTML =
       '<div class="finance-row"><span>授权码买断</span><b>' + fmtYuan(f.key_revenue_cents) +
       ' · ' + (f.key_paid_count || 0) + ' 单</b></div>' +
       '<div class="finance-row"><span>Token 在线充值</span><b>' + fmtYuan(f.topup_revenue_cents) +
       ' · ' + (f.topup_paid_count || 0) + ' 单</b></div>' +
+      '<div class="finance-row"><span>企业转账（手工确认）</span><b class="manual-money">' +
+      fmtYuan(f.manual_transfer_revenue_cents) + ' · ' + (f.manual_transfer_count || 0) + ' 单</b></div>' +
       '<div class="finance-row"><span>当前全舰队 Token 余额</span><b id="finance-wallet-balance">—</b></div>';
 
     function channelRow(provider, fallbackLabel, fallbackNote) {
@@ -514,7 +510,10 @@
     $("#admin-payment-domestic").innerHTML =
       channelRow("alipay", "支付宝", "人民币 · 网页支付") +
       channelRow("wechat", "微信支付", "人民币 · Native 扫码") +
-      '<div class="finance-row"><span>收入确认规则</span><b class="channel-status">支付回调成功后计入</b></div>';
+      '<button type="button" class="finance-row payment-channel-row manual-transfer-entry" data-manual-transfer="open">' +
+      '<span><b class="channel-name">企业转账</b><small class="channel-note">人工登记 · 凭证必传 · AI 辅助识别</small></span>' +
+      '<b class="channel-status"><span class="badge manual">手工入账</span><i class="channel-arrow">›</i></b></button>' +
+      '<div class="finance-row"><span>收入确认规则</span><b class="channel-status">自动回调 / 人工核实后计入</b></div>';
     $("#admin-payment-overseas").innerHTML =
       channelRow("stripe", "Stripe", "银行卡 · 多币种") +
       channelRow("paypal", "PayPal", "PayPal 账户 · 多币种") +
@@ -615,6 +614,175 @@
       }).catch(function (error) { toast(error.message, true); }).then(function () {
         button.disabled = false; button.textContent = "重新验证已保存凭据";
       });
+  });
+
+  // ---------- 企业转账人工入账 ----------
+  // 图片只在当前页面内存中短暂停留：选择文件后用于预览、AI 识别和最终一次性保存；
+  // 关闭弹窗即释放 Object URL 和 Base64，避免银行凭证残留在 local/sessionStorage。
+  var transferImageBase64 = "";
+  var transferPreviewUrl = "";
+  var transferRecognition = null;
+
+  function fillTransferOems() {
+    var select = $("#transfer-oem");
+    var selected = select.value;
+    select.innerHTML = '<option value="">暂不关联</option>' + manualTransferOems.map(function (o) {
+      return '<option value="' + o.id + '">#' + o.id + ' · ' + esc(o.name || o.email) + '</option>';
+    }).join("");
+    if (selected && manualTransferOems.some(function (o) { return String(o.id) === selected; })) {
+      select.value = selected;
+    }
+  }
+
+  function resetTransferForm() {
+    var form = $("#form-manual-transfer");
+    form.reset();
+    transferImageBase64 = "";
+    transferRecognition = null;
+    if (transferPreviewUrl) URL.revokeObjectURL(transferPreviewUrl);
+    transferPreviewUrl = "";
+    $("#transfer-preview").hidden = true;
+    $("#transfer-preview").removeAttribute("src");
+    $("#transfer-preview-empty").hidden = false;
+    $("#transfer-recognition-result").hidden = true;
+    $("#transfer-recognition-result").textContent = "";
+    $("#transfer-recognize").disabled = true;
+    fillTransferOems();
+    var configured = !!manualTransferAi.configured;
+    $("#transfer-ai-state").textContent = configured
+      ? "AI 已配置：" + (manualTransferAi.model || "视觉模型")
+      : "AI 尚未配置，可直接人工填写并登记";
+  }
+
+  function openTransferModal() {
+    resetTransferForm();
+    $("#transfer-mask").hidden = false;
+  }
+
+  function closeTransferModal() {
+    $("#transfer-mask").hidden = true;
+    resetTransferForm();
+  }
+
+  function fileAsBase64(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        var value = String(reader.result || "");
+        resolve(value.indexOf(",") >= 0 ? value.split(",", 2)[1] : "");
+      };
+      reader.onerror = function () { reject(new Error("读取凭证图片失败")); };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  document.addEventListener("click", function (event) {
+    var openButton = event.target.closest && event.target.closest("[data-manual-transfer]");
+    if (openButton) openTransferModal();
+    var voucherButton = event.target.closest && event.target.closest("[data-transfer-voucher]");
+    if (!voucherButton) return;
+    var auth = getAuth();
+    voucherButton.disabled = true;
+    fetch(new URL("/nexus/admin/manual_transfer_voucher/" + voucherButton.dataset.transferVoucher, window.location.origin).href, {
+      headers: { "Authorization": "Bearer " + (auth ? auth.token : "") },
+      cache: "no-store",
+    }).then(function (response) {
+      if (!response.ok) return response.json().then(function (data) { throw new Error(data.error || "凭证读取失败"); });
+      return response.blob();
+    }).then(function (blob) {
+      var url = URL.createObjectURL(blob);
+      var link = document.createElement("a");
+      link.href = url; link.target = "_blank"; link.rel = "noopener";
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+    }).catch(function (error) { toast(error.message, true); }).then(function () {
+      voucherButton.disabled = false;
+    });
+  });
+
+  $("#transfer-close").addEventListener("click", closeTransferModal);
+  $("#transfer-mask").addEventListener("click", function (event) {
+    if (event.target === this) closeTransferModal();
+  });
+
+  $("#transfer-file").addEventListener("change", function () {
+    var file = this.files && this.files[0];
+    transferImageBase64 = "";
+    transferRecognition = null;
+    $("#transfer-recognition-result").hidden = true;
+    if (!file) return;
+    if (["image/jpeg", "image/png", "image/webp"].indexOf(file.type) < 0) {
+      this.value = ""; return toast("凭证必须是 JPG、PNG 或 WebP 图片", true);
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      this.value = ""; return toast("凭证图片不能超过 8MB", true);
+    }
+    if (transferPreviewUrl) URL.revokeObjectURL(transferPreviewUrl);
+    transferPreviewUrl = URL.createObjectURL(file);
+    $("#transfer-preview").src = transferPreviewUrl;
+    $("#transfer-preview").hidden = false;
+    $("#transfer-preview-empty").hidden = true;
+    fileAsBase64(file).then(function (value) {
+      transferImageBase64 = value;
+      $("#transfer-recognize").disabled = !value || !manualTransferAi.configured;
+    }).catch(function (error) { toast(error.message, true); });
+  });
+
+  $("#transfer-recognize").addEventListener("click", function () {
+    var file = $("#transfer-file").files && $("#transfer-file").files[0];
+    if (!file || !transferImageBase64) return toast("请先上传转账凭证", true);
+    var button = this; button.disabled = true; button.textContent = "AI 识别中…";
+    api("/nexus/admin/manual_transfer/recognize", {
+      body: { image_base64: transferImageBase64, content_type: file.type },
+    }).then(function (result) {
+      var data = result.recognition || {};
+      transferRecognition = data;
+      var form = $("#form-manual-transfer");
+      if (Number(data.amount_cents) > 0) form.amount_yuan.value = (Number(data.amount_cents) / 100).toFixed(2);
+      ["payer_company", "payer_account", "payee_company", "payee_account", "bank_name", "transaction_id", "transfer_time", "note"]
+        .forEach(function (name) { if (data[name]) form[name].value = data[name]; });
+      var confidence = Math.round((Number(data.confidence) || 0) * 100);
+      var box = $("#transfer-recognition-result");
+      box.textContent = "AI 已识别并预填（置信度 " + confidence + "%）。请逐项对照原图，尤其核对金额、收付款方和账号。";
+      box.hidden = false;
+      toast("AI 识别完成，请人工核对");
+    }).catch(function (error) { toast(error.message, true); }).then(function () {
+      button.disabled = !manualTransferAi.configured || !transferImageBase64;
+      button.textContent = "AI 识别凭证";
+    });
+  });
+
+  $("#form-manual-transfer").addEventListener("submit", function (event) {
+    event.preventDefault();
+    var form = event.target;
+    var file = $("#transfer-file").files && $("#transfer-file").files[0];
+    if (!file || !transferImageBase64) return toast("必须上传转账凭证图片", true);
+    var cents = Math.round(Number(form.amount_yuan.value || 0) * 100);
+    if (!(cents > 0)) return toast("请输入正确的到账金额", true);
+    if (!form.confirmed.checked) return toast("请确认银行实际到账", true);
+    var details = {};
+    ["payer_company", "payer_account", "payee_company", "payee_account", "bank_name", "transaction_id", "transfer_time", "note"]
+      .forEach(function (name) { details[name] = form[name].value.trim(); });
+    var button = $("#transfer-save");
+    button.disabled = true; button.textContent = "正在加密保存…";
+    api("/nexus/admin/manual_transfers", { body: {
+      amount_cents: cents,
+      oem_id: Number(form.oem_id.value || 0) || null,
+      purpose: form.purpose.value.trim(),
+      details: details,
+      recognition: transferRecognition,
+      filename: file.name,
+      content_type: file.type,
+      image_base64: transferImageBase64,
+      confirmed: true,
+    } }).then(function (result) {
+      var no = result.transfer && result.transfer.order_no;
+      closeTransferModal();
+      toast("企业转账已入账" + (no ? " · " + no : ""));
+      loadAdmin();
+    }).catch(function (error) { toast(error.message, true); }).then(function () {
+      button.disabled = false; button.textContent = "确认并登记入账";
+    });
   });
 
   // 更新公告只来自 Nexus 已确认成功的逐节点投放记录。前端不根据“节点当前版本”猜测，
@@ -859,6 +1027,7 @@
       var releases = rs[6].releases || [];
       var finance = rs[7] || {};
       var configs = rs[8].payment_configs || [];
+      manualTransferOems = oems.slice();
       renderFinanceOverview(finance, configs);
 
       // 灰度节点选择器随实例列表更新，但保留管理员当前已选值。
@@ -900,10 +1069,16 @@
       oems.forEach(function (o) { oemEmailById[o.id] = o.email; });
       $("#admin-orders tbody").innerHTML = orders.map(function (o) {
         var st = ORDER_ST[o.status] || ["idle", o.status];
-        var what = o.kind === "key" ? "授权码" : "充值 " + fmtTokens(o.tokens);
-        return "<tr><td>" + esc(o.order_no) + "</td><td>" + esc(oemEmailById[o.oem_id] || "#" + o.oem_id) + "</td>" +
-          '<td class="zh">' + what + "</td><td>" + fmtYuan(o.amount_cents) + '</td><td class="zh">' + (CH_ZH[o.channel] || o.channel) + "</td>" +
-          '<td class="zh"><span class="badge ' + st[0] + '">' + st[1] + "</span></td><td>" + fmtTime(o.created_ts) + "</td></tr>";
+        var manual = o.record_type === "manual_transfer";
+        var what = o.kind === "key" ? "授权码" : (o.kind === "topup" ? "充值 " + fmtTokens(o.tokens) : esc(o.purpose || "企业转账收款"));
+        var payer = manual && o.details && o.details.payer_company ? '<div class="hint">付款：' + esc(o.details.payer_company) + "</div>" : "";
+        var customer = o.oem_id ? (oemEmailById[o.oem_id] || "#" + o.oem_id) : "未关联";
+        var voucher = manual
+          ? '<button class="ghost small" data-transfer-voucher="' + o.transfer_id + '">查看图片</button>'
+          : "—";
+        return '<tr class="' + (manual ? "manual-transfer-row" : "") + '"><td>' + esc(o.order_no) + "</td><td>" + esc(customer) + "</td>" +
+          '<td class="zh">' + what + payer + '</td><td class="' + (manual ? "manual-money" : "") + '">' + fmtYuan(o.amount_cents) + '</td><td class="zh">' + (CH_ZH[o.channel] || o.channel) + "</td>" +
+          '<td class="zh"><span class="badge ' + (manual ? "manual" : st[0]) + '">' + (manual ? "人工确认" : st[1]) + "</span></td><td class=\"zh\">" + voucher + "</td><td>" + fmtTime(o.created_ts) + "</td></tr>";
       }).join("");
 
       // 待处理申请（无申请时整个面板隐藏，不占版面）

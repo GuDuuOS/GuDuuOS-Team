@@ -206,6 +206,40 @@ class NexusOrder(Base):
     paid_ts = Column(BigInteger, nullable=True, default=None)
 
 
+class NexusManualTransfer(Base):
+    """超级管理员登记的企业银行转账收款单。
+
+    企业转账不是微信/支付宝回调，也不能复用仅供开发联调的 ``manual`` 渠道。
+    它有自己稳定的 ``BT`` 单号、必传凭证和人工确认语义。金额保留明文整数用于财务
+    聚合；付款企业、银行账号、AI 识别结果及凭证图片都用 ``NEXUS_SECRET_KEY``
+    加密，避免数据库备份或只读查询意外暴露银行信息。
+    """
+
+    __tablename__ = "nexus_manual_transfer"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    transfer_no = Column(String(40), nullable=False, unique=True, index=True)
+    # 可选关联 OEM；线下商务款可能先到账、后建客户，因此允许为空。
+    oem_id = Column(Integer, nullable=True, default=None, index=True)
+    # 当前人工企业转账只收人民币；和现有在线订单一致，以分为单位杜绝浮点误差。
+    currency = Column(String(8), nullable=False, default="CNY")
+    amount_cents = Column(BigInteger, nullable=False)
+    # confirmed=超管已核实银行到账。未来若开放 OEM 自助上传，再增加 pending_review。
+    status = Column(String(24), nullable=False, default="confirmed", index=True)
+    purpose = Column(String(255), nullable=False, default="企业转账收款")
+    # 结构化详情（付款/收款企业、账号、银行、流水号、时间、备注、AI 结果）加密保存。
+    encrypted_details = Column(LargeBinary, nullable=False)
+    voucher_filename = Column(String(255), nullable=False)
+    voucher_content_type = Column(String(64), nullable=False)
+    voucher_size = Column(BigInteger, nullable=False)
+    voucher_sha256 = Column(String(64), nullable=False, index=True)
+    encrypted_voucher = Column(LargeBinary, nullable=False)
+    # not_run / recognized / failed；状态不含银行信息，可以明文用于运营筛选。
+    recognition_status = Column(String(24), nullable=False, default="not_run")
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms, index=True)
+    confirmed_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
 class NexusPaymentConfig(Base):
     """支付渠道的服务端加密配置与最近验证状态。
 
