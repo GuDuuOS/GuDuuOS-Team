@@ -560,6 +560,17 @@
     }).join("") || '<p class="empty">还没有版本记录。先保存一个未发布版本，再进行灰度监测。</p>';
   }
 
+  function syncReleaseSubmitState() {
+    // 当前产品版本如果已经落库，表单仍完整展示内容供查看/复制，但禁止重复提交同一
+    // SemVer；管理员手动换成另一个版本号时按钮自动恢复，保留应急手工录入能力。
+    var form = $("#form-release");
+    var submit = form.querySelector('button[type="submit"]');
+    var alreadySaved = form.dataset.alreadyExists === "true" &&
+      form.version.value.trim() === form.dataset.generatedVersion;
+    submit.disabled = alreadySaved;
+    submit.textContent = alreadySaved ? "当前版本已保存" : "保存为未发布";
+  }
+
   function loadReleaseDraft(force) {
     if (!force && releaseDraftChecked) return Promise.resolve();
     releaseDraftChecked = true;
@@ -569,11 +580,6 @@
     button.disabled = true;
     status.textContent = "正在读取当前版本与 DEVLOG.md…";
     return api("/nexus/admin/release_draft").then(function (draft) {
-      if (draft.already_exists) {
-        status.textContent = "当前版本 v" + draft.version + " 已存在于历史列表，无需重复创建。";
-        if (force) toast("当前版本已经保存过");
-        return;
-      }
       var empty = !form.version.value && !form.git_ref.value && !form.title.value && !form.notes.value;
       if (!force && !empty) {
         status.textContent = "已找到 v" + draft.version + "，当前表单正在编辑，未自动覆盖。";
@@ -584,8 +590,16 @@
       form.title.value = draft.title;
       form.notes.value = draft.notes;
       form.version.dataset.previousTag = draft.git_ref;
-      status.textContent = "已根据 " + draft.source + " 自动生成 v" + draft.version + "，请审阅后保存为未发布。";
-      if (force) toast("最新版本信息已生成");
+      form.dataset.generatedVersion = draft.version;
+      form.dataset.alreadyExists = draft.already_exists ? "true" : "false";
+      syncReleaseSubmitState();
+      if (draft.already_exists) {
+        status.textContent = "已显示 v" + draft.version + " 的完整生成内容；该版本已存在于历史列表，无需重复保存。";
+        if (force) toast("已显示当前版本的完整内容");
+      } else {
+        status.textContent = "已根据 " + draft.source + " 自动生成 v" + draft.version + "，请审阅后保存为未发布。";
+        if (force) toast("最新版本信息已生成");
+      }
     }).catch(function (err) {
       status.textContent = "自动生成失败：" + err.message;
       if (force) toast(err.message, true);
@@ -723,6 +737,7 @@
       form.git_ref.value = this.value ? "v" + this.value.trim() : "";
     }
     this.dataset.previousTag = this.value ? "v" + this.value.trim() : "";
+    syncReleaseSubmitState();
   });
 
   $("#form-release").addEventListener("submit", function (e) {
@@ -738,6 +753,7 @@
     }).then(function () {
       toast("版本已保存为未发布，可先推送灰度节点监测");
       form.reset();
+      releaseDraftChecked = false;
       loadAdmin();
     }).catch(function (err) { toast(err.message, true); });
   });

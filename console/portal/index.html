@@ -225,7 +225,7 @@
           <label class="release-notes-field">更新说明
             <textarea name="notes" rows="4" required placeholder="面向 OEM 写清新增、修复和注意事项"></textarea>
           </label>
-          <div class="release-submit"><button class="primary">保存为未发布</button></div>
+          <div class="release-submit"><button class="primary" type="submit">保存为未发布</button></div>
         </form>
         <p id="release-draft-status" class="hint">版本信息会根据当前产品版本与 DEVLOG.md 自动生成，你可以审阅和修改后再保存。</p>
         <p class="hint">新版本默认未发布。流程：保存 → 推送灰度节点并监测 → 确认成功后推送全部节点；历史列表永久保留，可选择已发布旧版本发起全节点回撤。失败节点不会无限重试，需由超管明确安排。</p>
@@ -342,6 +342,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=14"></script>
+<script src="/portal/portal.js?v=15"></script>
 </body>
 </html>
