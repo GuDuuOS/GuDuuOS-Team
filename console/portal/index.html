@@ -356,6 +356,38 @@
   </div>
 </main>
 
+<!-- 支付渠道配置弹窗（超管）：字段由服务端白名单动态生成，密钥原文永不回填） -->
+<div id="payment-mask" class="mask" hidden>
+  <div class="modal payment-modal" role="dialog" aria-modal="true" aria-labelledby="payment-title">
+    <div class="modal-head">
+      <div>
+        <b id="payment-title">支付渠道配置</b>
+        <p id="payment-summary" class="hint"></p>
+      </div>
+      <button id="payment-close" class="ghost small" type="button">关闭</button>
+    </div>
+    <div id="payment-state" class="payment-state"></div>
+    <div class="payment-callback">
+      <label>平台回调地址</label>
+      <div class="payment-copy-row">
+        <input id="payment-callback-url" readonly />
+        <button id="payment-copy-callback" class="ghost small" type="button">复制</button>
+      </div>
+      <p class="hint">在支付平台创建 Webhook / 异步通知时填写；当前只完成配置验证，真实交易开放前还会做沙箱验收。</p>
+    </div>
+    <form id="form-payment-config">
+      <input name="provider" type="hidden" />
+      <div id="payment-fields" class="payment-fields"></div>
+      <p id="payment-verification-note" class="hint"></p>
+      <div class="payment-actions">
+        <a id="payment-docs" class="ghost" href="#" target="_blank" rel="noopener">查看官方接入文档 ↗</a>
+        <button id="payment-recheck" class="ghost" type="button">重新验证已保存凭据</button>
+        <button id="payment-save" class="primary" type="submit">加密保存并验证</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- 客户详情弹窗（超管）：档案 / 资产汇总 / 合同附件 / 备注 -->
 <div id="detail-mask" class="mask" hidden>
   <div class="modal">
@@ -394,6 +426,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=18"></script>
+<script src="/portal/portal.js?v=19"></script>
 </body>
 </html>

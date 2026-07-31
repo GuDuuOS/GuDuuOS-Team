@@ -2,6 +2,8 @@
 # 与 cosmac 一致的最小栈：HTTP 走标准库，不引 Web 框架。
 requests>=2.31
 SQLAlchemy>=2.0
+# 支付配置中心用 Fernet 加密数据库内的第三方 API 密钥；主密钥只放 /etc/nexus.env。
+cryptography>=42.0
 # OEM 门户分享链接二维码：使用 SVG 工厂，不需要 Pillow。
 qrcode>=7.4
 # 生产连 Postgres 用；本地 SQLite 时不装也能跑

@@ -9,7 +9,7 @@
 # 干了什么：
 #   1. 装依赖：python3-venv / git / Caddy（官方 apt 源，自动 HTTPS）
 #   2. 拉主仓库到 /opt/nexus/app，venv 装 nexus/requirements.txt
-#   3. 生成 NEXUS_ADMIN_TOKEN / NEXUS_DASH_TOKEN → /etc/nexus.env（600）
+#   3. 生成管理员/大屏令牌及支付配置加密主密钥 → /etc/nexus.env（600）
 #   4. systemd 服务 nexus.service（监听 127.0.0.1:9100，只对 Caddy 暴露）
 #   5. Caddy 反代：https://<域名>/ → Nexus（fleet API + LLM 网关 + 数据大屏）
 #
@@ -77,6 +77,8 @@ NEXUS_LISTEN_PORT=9100
 # 管理令牌（console/命令行管理用）与只读大屏令牌（分权：大屏挂墙只能看）
 NEXUS_ADMIN_TOKEN=$(openssl rand -hex 32)
 NEXUS_DASH_TOKEN=$(openssl rand -hex 24)
+# 支付 API 凭据在 PostgreSQL 中的加密主密钥；丢失后已保存凭据无法解密，请纳入备份。
+NEXUS_SECRET_KEY=$(openssl rand -hex 32)
 # —— 原厂 LLM key（模块6 铁律：只存在这里，永不下发实例）——
 # 配好后 systemctl restart nexus 生效
 NEXUS_GW_ANTHROPIC_KEY=

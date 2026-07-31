@@ -323,6 +323,46 @@ label input { margin-top: 5px; }
 .finance-row .channel-name { display: block; font-family: inherit; font-weight: 600; }
 .finance-row .channel-note { display: block; margin-top: 2px; color: var(--muted); font-size: 10.5px; }
 .finance-block-overseas { border-color: color-mix(in srgb, var(--orange) 28%, var(--line)); }
+.payment-channel-row {
+  width: 100%; border: 0; border-bottom: 1px solid var(--line); border-radius: 0;
+  background: transparent; text-align: left; font: inherit;
+}
+.payment-channel-row:last-of-type { border-bottom: 1px solid var(--line); }
+.payment-channel-row:hover { background: var(--hover-row); }
+.payment-channel-row .channel-status { display: flex; align-items: center; gap: 6px; }
+.payment-channel-row .channel-arrow { color: var(--muted); font: 15px/1 var(--mono); }
+
+/* —— 支付配置中心：动态字段、回调地址与分层验证状态 —— */
+.payment-modal { width: min(720px, 94vw); max-height: min(820px, 92vh); overflow: auto; }
+.payment-modal .modal-head { align-items: flex-start; }
+.payment-modal .modal-head .hint { margin: 2px 0 0; }
+.payment-state {
+  margin: 4px 0 14px; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: 10px; color: var(--muted); background: var(--card); font-size: 12.5px;
+}
+.payment-state strong { color: var(--ink); }
+.payment-callback { padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
+.payment-callback label { margin: 0 0 5px; }
+.payment-copy-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.payment-copy-row input { font-family: var(--mono); font-size: 12px; }
+.payment-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+.payment-fields label { margin: 0; }
+.payment-fields label:has(textarea) { grid-column: 1 / -1; }
+.payment-fields textarea, .payment-fields select {
+  width: 100%; margin-top: 5px; padding: 9px 12px; border: 1px solid var(--line);
+  border-radius: 9px; color: var(--ink); background: var(--input-bg); font: inherit;
+}
+.payment-fields textarea { min-height: 104px; resize: vertical; font: 11.5px/1.5 var(--mono); }
+.payment-fields textarea:focus, .payment-fields select:focus { outline: none; border-color: var(--orange); }
+.payment-field-help { display: block; margin-top: 4px; color: var(--muted); font-size: 10.5px; line-height: 1.45; }
+.payment-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+.payment-actions a { text-decoration: none; margin-right: auto; }
+
+@media (max-width: 680px) {
+  .payment-fields { grid-template-columns: 1fr; }
+  .payment-fields label:has(textarea) { grid-column: auto; }
+  .payment-actions a { width: 100%; margin-right: 0; text-align: center; }
+}
 
 @media (max-width: 980px) {
   .finance-details { grid-template-columns: 1fr; }

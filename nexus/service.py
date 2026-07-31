@@ -19,6 +19,8 @@
         GET  /nexus/admin/instances                            实例列表（含余额）
         POST /nexus/admin/topup      {instance_id,tokens,note} 手动充值
         GET  /nexus/admin/finance_summary                      资金经营汇总
+        GET  /nexus/admin/payment_configs                      支付配置字段与验证状态
+        POST /nexus/admin/payment_config {provider,config|action} 加密保存/重新验证
         GET  /nexus/admin/hierarchy                            OEM/用户完整归属边
         GET/POST /nexus/admin/releases                         版本发布中心
         GET  /nexus/admin/release_draft                        从 DEVLOG 自动生成版本草稿
@@ -43,7 +45,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict
 from urllib.parse import parse_qs, quote, urlsplit
 
-from nexus import db, fleet, geo, oem as oem_svc, pay, releases
+from nexus import db, fleet, geo, oem as oem_svc, pay, payment_config, releases
 from nexus.fleet import FleetError
 
 logger = logging.getLogger("nexus.service")
@@ -369,12 +371,28 @@ class NexusHandler(BaseHTTPRequestHandler):
                     )
                 )
             return
+        if path == "/nexus/admin/payment_configs":
+            # 配置接口只返回字段是否已填写和验证摘要；密钥原文、密文、掩码均不出服务端。
+            # callback URL 使用经 Host 白名单检查后的公网 origin，管理员可直接复制到平台。
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "payment_configs": payment_config.list_public(
+                                s, self._public_origin()
+                            )
+                        },
+                    )
+                )
+            return
         if path == "/nexus/admin/pricing":
             if self._check_admin():
                 self._with_session(
                     lambda s: self._json(200, {"pricing": pay.get_pricing(s)})
                 )
             return
+
         if path == "/nexus/admin/requests":
             if self._check_admin():
                 self._with_session(
@@ -756,6 +774,31 @@ class NexusHandler(BaseHTTPRequestHandler):
                         200, {"pricing": pay.set_pricing(s, body)}
                     )
                 )
+            return
+
+        if path == "/nexus/admin/payment_config":
+            if self._check_admin():
+                def _payment_config(s):
+                    provider = str(body.get("provider", "")).strip().lower()
+                    action = str(body.get("action", "save")).strip().lower()
+                    if action == "verify":
+                        result = payment_config.verify_existing(s, provider)
+                    elif action == "save":
+                        submitted = body.get("config")
+                        if not isinstance(submitted, dict):
+                            raise FleetError(
+                                "NEXUS_PAY_CONFIG_INVALID", "支付配置格式不正确"
+                            )
+                        result = payment_config.save_and_verify(
+                            s, provider, submitted
+                        )
+                    else:
+                        raise FleetError(
+                            "NEXUS_PAY_CONFIG_ACTION", "支付配置操作不合法"
+                        )
+                    self._json(200, {"payment_config": result})
+
+                self._with_session(_payment_config)
             return
 
         if path == "/nexus/admin/releases":

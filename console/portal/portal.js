@@ -459,17 +459,25 @@
     }).join("");
   }
 
-  function renderFinanceOverview(payload) {
+  var paymentConfigs = {};
+  function renderFinanceOverview(payload, configs) {
     // 所有金额都来自服务端全历史聚合；前端只负责格式化，不能从受限的近 200 单列表
     // 再次求和，否则业务增长后会悄悄少算收入。
     var f = payload.finance || {};
-    var channels = payload.channels || {};
     var channelNames = ["alipay", "wechat", "stripe", "paypal", "usdt"];
-    var readyCount = channelNames.filter(function (name) { return !!channels[name]; }).length;
+    paymentConfigs = {};
+    (configs || []).forEach(function (item) { paymentConfigs[item.provider] = item; });
+    var configuredCount = channelNames.filter(function (name) {
+      return paymentConfigs[name] && paymentConfigs[name].configured;
+    }).length;
+    var verifiedCount = channelNames.filter(function (name) {
+      var status = paymentConfigs[name] && paymentConfigs[name].verify_status;
+      return status === "remote_verified" || status === "local_valid";
+    }).length;
     var apiStatus = $("#finance-api-status");
-    apiStatus.className = "badge " + (readyCount === channelNames.length ? "active" : "warning");
-    apiStatus.textContent = readyCount === 0 ? "5 个渠道待接 API" :
-      (readyCount + "/" + channelNames.length + " 渠道凭据已配置");
+    apiStatus.className = "badge " + (verifiedCount ? "warning" : "idle");
+    apiStatus.textContent = configuredCount === 0 ? "点击渠道配置 API" :
+      (verifiedCount + "/" + channelNames.length + " 凭据已验证 · 交易未开放");
     $("#admin-finance-stats").innerHTML =
       '<div class="stat"><small>累计已支付</small><b>' + fmtYuan(f.paid_revenue_cents) +
       '</b><span class="stat-note">' + (f.paid_order_count || 0) + ' 笔已履约订单</span></div>' +
@@ -487,24 +495,127 @@
       ' · ' + (f.topup_paid_count || 0) + ' 单</b></div>' +
       '<div class="finance-row"><span>当前全舰队 Token 余额</span><b id="finance-wallet-balance">—</b></div>';
 
-    function channelRow(label, enabled, note) {
-      var badgeClass = enabled ? "active" : "idle";
-      var badgeText = enabled ? "凭据已配置" : "待接 API";
-      return '<div class="finance-row"><span><b class="channel-name">' + label +
-        '</b><small class="channel-note">' + note + '</small></span>' +
-        '<b class="channel-status"><span class="badge ' + badgeClass + '">' + badgeText +
-        '</span></b></div>';
+    function channelRow(provider, fallbackLabel, fallbackNote) {
+      var item = paymentConfigs[provider] || {};
+      var status = item.verify_status || "not_configured";
+      var statusUi = {
+        not_configured: ["idle", "填写 API"],
+        not_checked: ["warning", "待验证"],
+        remote_verified: ["active", "官方认证通过"],
+        local_valid: ["warning", "格式已验证"],
+        verification_failed: ["offline", "验证失败"],
+      }[status] || ["idle", status];
+      return '<button type="button" class="finance-row payment-channel-row" data-payment-config="' + provider + '">' +
+        '<span><b class="channel-name">' + esc(item.label || fallbackLabel) +
+        '</b><small class="channel-note">' + esc(item.summary || fallbackNote) + '</small></span>' +
+        '<b class="channel-status"><span class="badge ' + statusUi[0] + '">' + statusUi[1] +
+        '</span><i class="channel-arrow">›</i></b></button>';
     }
     $("#admin-payment-domestic").innerHTML =
-      channelRow("支付宝", !!channels.alipay, "人民币 · 网页支付") +
-      channelRow("微信支付", !!channels.wechat, "人民币 · Native 扫码") +
+      channelRow("alipay", "支付宝", "人民币 · 网页支付") +
+      channelRow("wechat", "微信支付", "人民币 · Native 扫码") +
       '<div class="finance-row"><span>收入确认规则</span><b class="channel-status">支付回调成功后计入</b></div>';
     $("#admin-payment-overseas").innerHTML =
-      channelRow("Stripe", !!channels.stripe, "银行卡 · 多币种") +
-      channelRow("PayPal", !!channels.paypal, "PayPal 账户 · 多币种") +
-      channelRow("USDT", !!channels.usdt, "稳定币 · 网络待服务商确认") +
+      channelRow("stripe", "Stripe", "银行卡 · 多币种") +
+      channelRow("paypal", "PayPal", "PayPal 账户 · 多币种") +
+      channelRow("usdt", "USDT（NOWPayments）", "稳定币 · 自动对账") +
       '<div class="finance-row"><span>外币统计规则</span><b class="channel-status">按原币分开核算</b></div>';
   }
+
+  // ---------- 支付配置中心 ----------
+  var PAYMENT_STATUS_ZH = {
+    not_configured: "尚未配置",
+    not_checked: "已保存，尚未验证",
+    remote_verified: "官方远程认证通过",
+    local_valid: "本地格式验证通过",
+    verification_failed: "验证失败",
+  };
+  function renderPaymentState(item) {
+    var status = item.verify_status || "not_configured";
+    var checked = item.last_checked_ts ? " · 最近检查 " + fmtTime(item.last_checked_ts) : "";
+    $("#payment-state").innerHTML = "<strong>" + esc(PAYMENT_STATUS_ZH[status] || status) +
+      "</strong> · " + esc(item.verify_message || "尚未填写凭据") + checked +
+      '<br><span class="hint">真实交易状态：未开放。还需完成订单币种、下单、回调验签与沙箱交易验收。</span>';
+  }
+  function openPaymentConfig(provider) {
+    var item = paymentConfigs[provider];
+    if (!item) { toast("支付配置数据尚未加载，请刷新后重试", true); return; }
+    var form = $("#form-payment-config");
+    form.provider.value = provider;
+    $("#payment-title").textContent = item.label + " API 配置";
+    $("#payment-summary").textContent = item.summary || "";
+    $("#payment-callback-url").value = item.callback_url || "";
+    $("#payment-verification-note").textContent = item.verification_note || "";
+    $("#payment-docs").href = item.docs_url || "#";
+    $("#payment-recheck").hidden = !item.configured;
+    renderPaymentState(item);
+    $("#payment-fields").innerHTML = (item.fields || []).map(function (field) {
+      var name = esc(field.name), label = esc(field.label), help = esc(field.help || "");
+      var configured = field.configured ? "已安全保存；留空保持原值" : "请填写";
+      var control = "";
+      if (field.type === "select") {
+        control = '<select name="' + name + '">' + (field.options || []).map(function (option) {
+          var selected = String(option.value) === String(field.value || "") ? " selected" : "";
+          return '<option value="' + esc(option.value) + '"' + selected + '>' + esc(option.label) + "</option>";
+        }).join("") + "</select>";
+      } else if (field.type === "textarea") {
+        control = '<textarea name="' + name + '" placeholder="' + configured + '" autocomplete="off"></textarea>';
+      } else {
+        var type = field.type === "password" ? "password" : "text";
+        control = '<input name="' + name + '" type="' + type + '" placeholder="' + configured +
+          '" autocomplete="new-password" />';
+      }
+      return "<label>" + label + control + '<small class="payment-field-help">' + help + "</small></label>";
+    }).join("");
+    $("#payment-mask").hidden = false;
+  }
+  function closePaymentConfig() { $("#payment-mask").hidden = true; }
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest && event.target.closest("[data-payment-config]");
+    if (button) openPaymentConfig(button.dataset.paymentConfig);
+  });
+  $("#payment-close").addEventListener("click", closePaymentConfig);
+  $("#payment-mask").addEventListener("click", function (event) {
+    if (event.target === this) closePaymentConfig();
+  });
+  $("#payment-copy-callback").addEventListener("click", function () {
+    copyText($("#payment-callback-url").value).then(function () { toast("回调地址已复制"); });
+  });
+  $("#form-payment-config").addEventListener("submit", function (event) {
+    event.preventDefault();
+    var form = event.target, config = {};
+    Array.prototype.slice.call(form.querySelectorAll("#payment-fields input, #payment-fields textarea, #payment-fields select"))
+      .forEach(function (field) { config[field.name] = field.value; });
+    var button = $("#payment-save");
+    button.disabled = true; button.textContent = "正在验证…";
+    api("/nexus/admin/payment_config", {
+      body: { provider: form.provider.value, action: "save", config: config }
+    }).then(function (result) {
+      var item = result.payment_config;
+      paymentConfigs[item.provider] = item;
+      renderPaymentState(item);
+      toast(item.verify_status === "verification_failed" ? "已加密保存，但验证未通过" : "凭据已加密保存并完成检查",
+        item.verify_status === "verification_failed");
+      closePaymentConfig(); loadAdmin();
+    }).catch(function (error) { toast(error.message, true); }).then(function () {
+      button.disabled = false; button.textContent = "加密保存并验证";
+    });
+  });
+  $("#payment-recheck").addEventListener("click", function () {
+    var provider = $("#form-payment-config").provider.value;
+    var button = this; button.disabled = true; button.textContent = "检查中…";
+    api("/nexus/admin/payment_config", { body: { provider: provider, action: "verify" } })
+      .then(function (result) {
+        var item = result.payment_config;
+        paymentConfigs[item.provider] = item; renderPaymentState(item);
+        toast(item.verify_status === "verification_failed" ? "验证未通过" : "验证完成",
+          item.verify_status === "verification_failed");
+        closePaymentConfig(); loadAdmin();
+      }).catch(function (error) { toast(error.message, true); }).then(function () {
+        button.disabled = false; button.textContent = "重新验证已保存凭据";
+      });
+  });
 
   // 更新公告只来自 Nexus 已确认成功的逐节点投放记录。前端不根据“节点当前版本”猜测，
   // 这样人工安装、未完成更新都不会被误写成官方公告。
@@ -740,13 +851,15 @@
       api("/nexus/admin/orders"),
       api("/nexus/admin/releases"),
       api("/nexus/admin/finance_summary"),
+      api("/nexus/admin/payment_configs"),
     ]).then(function (rs) {
       var insts = rs[0].instances, keys = rs[1].keys, oems = rs[2].oems;
       var reqs = rs[3].requests || [];
       var pricing = rs[4].pricing, orders = rs[5].orders || [];
       var releases = rs[6].releases || [];
       var finance = rs[7] || {};
-      renderFinanceOverview(finance);
+      var configs = rs[8].payment_configs || [];
+      renderFinanceOverview(finance, configs);
 
       // 灰度节点选择器随实例列表更新，但保留管理员当前已选值。
       var canarySelect = $("#release-canary");

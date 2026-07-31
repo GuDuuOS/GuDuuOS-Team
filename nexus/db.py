@@ -206,6 +206,30 @@ class NexusOrder(Base):
     paid_ts = Column(BigInteger, nullable=True, default=None)
 
 
+class NexusPaymentConfig(Base):
+    """支付渠道的服务端加密配置与最近验证状态。
+
+    为什么单开表：项目目前用 ``create_all`` 管理结构，新表能在现有 PostgreSQL 上
+    无损创建；给旧表加列则不会自动 ALTER。``encrypted_config`` 只保存由
+    ``NEXUS_SECRET_KEY`` 加密后的 JSON，管理员 API 永远不能把它原样返回浏览器。
+
+    ``verify_status`` 只描述凭据检查结果，不代表渠道已经完成下单、回调、退款和对账
+    联调。真实交易是否开放由支付 adapter 独立控制，避免“填过 Key”被误当成可收款。
+    """
+
+    __tablename__ = "nexus_payment_config"
+
+    # alipay / wechat / stripe / paypal / usdt；一渠道只保留一份当前配置。
+    provider = Column(String(24), primary_key=True)
+    encrypted_config = Column(LargeBinary, nullable=False)
+    # not_checked / remote_verified / local_valid / verification_failed
+    verify_status = Column(String(32), nullable=False, default="not_checked")
+    # 只保存经过我们归一化的安全摘要，不能落上游原始响应或密钥内容。
+    verify_message = Column(String(255), nullable=False, default="")
+    last_checked_ts = Column(BigInteger, nullable=True, default=None)
+    updated_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
 class NexusOemProfile(Base):
     """OEM 客户档案（注册强制采集：企业/联系人/联系方式；超管详情页数据源）。
 
