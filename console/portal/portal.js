@@ -385,6 +385,19 @@
     }).join("");
   }
 
+  // 更新公告只来自 Nexus 已确认成功的逐节点投放记录。前端不根据“节点当前版本”猜测，
+  // 这样人工安装、未完成更新都不会被误写成官方公告。
+  function renderAnnouncements(announcements) {
+    var panel = $("#panel-announcements");
+    panel.hidden = announcements.length === 0;
+    $("#oem-announcements").innerHTML = announcements.map(function (a) {
+      return '<article class="announcement-card"><div class="announcement-head"><h3>' +
+        esc(a.title || ("GuDuu OS " + a.version + " 更新")) + '</h3><div class="announcement-meta">' +
+        esc(a.domain) + " · 已运行 v" + esc(a.version) + " · " + fmtTime(a.finished_ts) +
+        '</div></div><div class="announcement-notes">' + esc(a.notes) + "</div></article>";
+    }).join("");
+  }
+
   // 创建订单 → mock 渠道给"模拟支付"按钮；真渠道(接入后)按返回类型跳转/出码
   function placeOrder(bodyData) {
     api("/nexus/oem/order", { body: bodyData }).then(function (r) {
@@ -417,6 +430,7 @@
       var r = rs[0];
       renderShop(rs[1], r.instances);
       renderOrders(r.orders || []);
+      renderAnnouncements(r.announcements || []);
       // 实例卡
       var box = $("#oem-instances");
       box.innerHTML = r.instances.map(function (i) {
@@ -488,6 +502,7 @@
     skipped: ["idle", "已跳过"],
   };
   var releaseInstanceCount = 0;
+  var releaseDraftChecked = false;
 
   function releaseBadge(status, mapping) {
     var item = mapping[status] || ["idle", status];
@@ -543,6 +558,40 @@
         '<div class="release-notes">' + esc(r.notes) + '</div><div class="release-counts">' + countText + "</div>" +
         detailBlock + "</article>";
     }).join("") || '<p class="empty">还没有版本记录。先保存一个未发布版本，再进行灰度监测。</p>';
+  }
+
+  function loadReleaseDraft(force) {
+    if (!force && releaseDraftChecked) return Promise.resolve();
+    releaseDraftChecked = true;
+    var form = $("#form-release");
+    var status = $("#release-draft-status");
+    var button = $("#btn-release-generate");
+    button.disabled = true;
+    status.textContent = "正在读取当前版本与 DEVLOG.md…";
+    return api("/nexus/admin/release_draft").then(function (draft) {
+      if (draft.already_exists) {
+        status.textContent = "当前版本 v" + draft.version + " 已存在于历史列表，无需重复创建。";
+        if (force) toast("当前版本已经保存过");
+        return;
+      }
+      var empty = !form.version.value && !form.git_ref.value && !form.title.value && !form.notes.value;
+      if (!force && !empty) {
+        status.textContent = "已找到 v" + draft.version + "，当前表单正在编辑，未自动覆盖。";
+        return;
+      }
+      form.version.value = draft.version;
+      form.git_ref.value = draft.git_ref;
+      form.title.value = draft.title;
+      form.notes.value = draft.notes;
+      form.version.dataset.previousTag = draft.git_ref;
+      status.textContent = "已根据 " + draft.source + " 自动生成 v" + draft.version + "，请审阅后保存为未发布。";
+      if (force) toast("最新版本信息已生成");
+    }).catch(function (err) {
+      status.textContent = "自动生成失败：" + err.message;
+      if (force) toast(err.message, true);
+    }).then(function () {
+      button.disabled = false;
+    });
   }
 
   function loadAdmin() {
@@ -656,11 +705,14 @@
           '<td class="zh"><button class="ghost small" data-detail="' + o.id + '">详情</button> ' +
           '<button class="ghost small" data-oemstatus="' + o.id + '" data-tostatus="' + (on ? "disabled" : "active") + '" data-email="' + esc(o.email) + '">' + (on ? "停用" : "启用") + "</button></td></tr>";
       }).join("") || '<tr><td colspan="8" class="zh empty">暂无注册客户</td></tr>';
+      // 首次进入后台时自动回填，之后刷新数据不覆盖管理员正在编辑的内容。
+      loadReleaseDraft(false);
     }).catch(function (err) { toast(err.message, true); });
   }
 
   $("#btn-refresh").addEventListener("click", loadAdmin);
   $("#btn-release-refresh").addEventListener("click", loadAdmin);
+  $("#btn-release-generate").addEventListener("click", function () { loadReleaseDraft(true); });
   $("#btn-admin-refresh").addEventListener("click", loadAdmin);
 
   // 输入版本号时自动补对应 tag；若管理员已经手动改过 tag，就不强行覆盖。

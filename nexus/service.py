@@ -17,7 +17,8 @@
         GET  /nexus/admin/instances                            实例列表（含余额）
         POST /nexus/admin/topup      {instance_id,tokens,note} 手动充值
         GET/POST /nexus/admin/releases                         版本发布中心
-                        POST /nexus/admin/release_action                       灰度/全量/回撤/暂停/重试
+        GET  /nexus/admin/release_draft                        从 DEVLOG 自动生成版本草稿
+        POST /nexus/admin/release_action                       灰度/全量/回撤/暂停/重试
 
 安全：
     - NEXUS_ADMIN_TOKEN 无默认值，未配置则管理端点一律 503（宁停不裸奔）；
@@ -212,6 +213,14 @@ class NexusHandler(BaseHTTPRequestHandler):
                     )
                 )
             return
+        if path == "/nexus/admin/release_draft":
+            # 自动生成只做“读当前版本 + 读 DEVLOG + 回填”，不直接创建发布记录。
+            # 超级管理员仍要在界面审阅后保存，避免提交代码时顺带误触全量发布流程。
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(200, releases.build_release_draft(s))
+                )
+            return
         if path == "/nexus/admin/oems":
             if self._check_admin():
                 self._with_session(
@@ -242,14 +251,18 @@ class NexusHandler(BaseHTTPRequestHandler):
                 oem = self._oem(s)
                 if oem is None:
                     return
+                instances = oem_svc.my_instances(s, oem.id)
                 self._json(
                     200,
                     {
                         "oem": oem_svc.public_oem(oem),
-                        "instances": oem_svc.my_instances(s, oem.id),
+                        "instances": instances,
                         "keys": oem_svc.my_keys(s, oem.id),
                         "requests": oem_svc.my_requests(s, oem.id),
                         "orders": pay.my_orders(s, oem.id),
+                        # 只返回该 OEM 名下节点已经成功安装的版本；它与上方 instances
+                        # 使用同一归属边，但在业务层再次强制过滤，避免依赖前端隐藏。
+                        "announcements": releases.list_oem_announcements(s, oem.id),
                     },
                 )
             self._with_session(_me)

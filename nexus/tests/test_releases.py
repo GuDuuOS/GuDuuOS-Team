@@ -9,8 +9,10 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from pathlib import Path
 
 from nexus import db, fleet, releases
+from nexus.db import NexusKeyClaim
 from nexus.fleet import FleetError
 
 
@@ -71,6 +73,70 @@ class ReleaseTest(unittest.TestCase):
                 notes="说明",
                 git_ref="v1.6.99",
             )
+
+    def test_build_release_draft_from_devlog(self):
+        """当前版本、标题和 OEM 公告正文应从 DEVLOG 稳定生成。"""
+        self.assertEqual(releases._merge_wrapped(["所属 OEM", "门户"]), "所属 OEM 门户")
+        self.assertEqual(releases._merge_wrapped(["客户业务群", "自动发送"]), "客户业务群自动发送")
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+            f.write(
+                "# 日志\n\n"
+                "## 2026-07-31 — GuDuu OS 2.3.4 (patch)\n\n"
+                "- 新增：版本后台可根据 `DEVLOG.md` 自动生成内容，管理员仍可审阅。\n"
+                "- 修复：公告只展示给**所属 OEM**，不会泄露其他节点。\n\n"
+                "## 2026-07-30 — GuDuu OS 2.3.3 (patch)\n\n"
+                "- 修复：旧内容。\n"
+            )
+            path = Path(f.name)
+        try:
+            draft = releases.build_release_draft(
+                self.s, version="2.3.4", devlog_path=path
+            )
+            self.assertEqual(draft["version"], "2.3.4")
+            self.assertEqual(draft["git_ref"], "v2.3.4")
+            self.assertEqual(draft["title"], "版本后台可根据 DEVLOG.md 自动生成内容")
+            self.assertIn("• 新增：版本后台", draft["notes"])
+            self.assertIn("所属 OEM", draft["notes"])
+            self.assertNotIn("`", draft["notes"])
+            self.assertNotIn("**", draft["notes"])
+            self.assertFalse(draft["already_exists"])
+
+            releases.create_release(
+                self.s,
+                version=draft["version"],
+                git_ref=draft["git_ref"],
+                title=draft["title"],
+                notes=draft["notes"],
+            )
+            existing = releases.build_release_draft(
+                self.s, version="2.3.4", devlog_path=path
+            )
+            self.assertTrue(existing["already_exists"])
+        finally:
+            os.unlink(path)
+
+    def test_oem_announcements_follow_successful_owned_deployments(self):
+        """公告只在安装成功后出现，而且 OEM 之间严格按 KEY 归属隔离。"""
+        release_id = self._create()["id"]
+        releases.publish(self.s, release_id)
+        key_a = fleet._key_by_plain(self.s, self.key_a)
+        key_b = fleet._key_by_plain(self.s, self.key_b)
+        self.s.add(NexusKeyClaim(key_id=key_a.id, oem_id=101))
+        self.s.add(NexusKeyClaim(key_id=key_b.id, oem_id=202))
+        releases.report_update(
+            self.s,
+            raw_key=self.key_a,
+            release_id=release_id,
+            status="success",
+            current_version="1.7.0",
+        )
+        # B 尚未成功，自己的门户不应提前出现公告。
+        self.assertEqual(releases.list_oem_announcements(self.s, 202), [])
+        announcements = releases.list_oem_announcements(self.s, 101)
+        self.assertEqual(len(announcements), 1)
+        self.assertEqual(announcements[0]["domain"], "a.example.com")
+        self.assertEqual(announcements[0]["version"], "1.7.0")
+        self.assertNotEqual(announcements[0]["domain"], "b.example.com")
 
     def test_canary_only_assigns_selected_instance(self):
         """灰度阶段只有被选择的节点能领取版本。"""

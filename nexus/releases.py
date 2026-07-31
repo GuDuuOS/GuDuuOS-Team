@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import re
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import select
 
+from cosmac import __version__ as PRODUCT_VERSION
 from nexus import fleet
 from nexus.db import (
     NexusInstance,
+    NexusKeyClaim,
     NexusRelease,
     NexusReleaseDeployment,
 )
@@ -23,11 +26,16 @@ from nexus.fleet import FleetError
 
 
 _VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+_DEVLOG_HEADER_RE = re.compile(
+    r"^##\s+\d{4}-\d{2}-\d{2}\s+—\s+GuDuu OS\s+"
+    r"(?P<version>\d+\.\d+\.\d+)\s+\([^)]+\)\s*$"
+)
 _REPORT_STATES = {"downloading", "installing", "success", "failed"}
 _ACTIVE_RELEASE_STATES = {"canary", "published", "rollback"}
 # 下载/构建被强制中断时，任务不能永久卡在 installing。超过一小时后允许同一节点
 # 再次领取；正常升级一般远低于一小时，这个阈值不会制造并发执行。
 _STALE_INSTALL_MS = 60 * 60 * 1000
+_DEFAULT_DEVLOG_PATH = Path(__file__).resolve().parents[1] / "DEVLOG.md"
 
 
 def _now_ms() -> int:
@@ -56,6 +64,117 @@ def _release(s, release_id: int) -> NexusRelease:
     if row is None:
         raise FleetError("NEXUS_RELEASE_NOT_FOUND", "版本记录不存在", 404)
     return row
+
+
+def _merge_wrapped(chunks: List[str]) -> str:
+    """把 Markdown 为控制行宽拆开的片段恢复为自然文本。
+
+    纯中文换行处不应凭空插入空格；边界任一侧是英文/数字时保留一个空格。这个小规则
+    既保住“OEM 门户”“Git tag”的中英文间距，也避免“业务群 自动”一类中文断句瑕疵。
+    """
+    if not chunks:
+        return ""
+    merged = chunks[0]
+    for chunk in chunks[1:]:
+        separator = " " if merged[-1:].isascii() or chunk[:1].isascii() else ""
+        merged += separator + chunk
+    return merged
+
+
+def _devlog_items(path: Path, version: str) -> List[str]:
+    """读取指定版本的 DEVLOG 条目，并把 Markdown 换行整理成公告短句。
+
+    Args:
+        path: 开发日志文件路径；独立参数便于单元测试使用临时文件。
+        version: 要提取的不带 ``v`` 的三段版本号。
+
+    Returns:
+        保持 DEVLOG 顺序的纯文本条目；每个跨行条目会合并为一行。
+
+    Raises:
+        FleetError: 文件不可读、找不到当前版本或当前版本没有对外条目时抛出。
+    """
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise FleetError(
+            "NEXUS_DEVLOG_UNAVAILABLE", "无法读取 DEVLOG.md，暂不能自动生成"
+        ) from exc
+
+    inside = False
+    current: List[str] = []
+    items: List[str] = []
+    for line in lines:
+        header = _DEVLOG_HEADER_RE.match(line)
+        if header:
+            if inside:
+                break
+            inside = header.group("version") == version
+            continue
+        if inside and line.startswith("## "):
+            break
+        if not inside:
+            continue
+        if line.startswith("- "):
+            if current:
+                items.append(_merge_wrapped(current))
+            current = [line[2:].strip()]
+        elif current and line.startswith("  "):
+            # DEVLOG 为控制行宽会折行；公告应恢复为一条连续的自然语言。
+            current.append(line.strip())
+    if current:
+        items.append(_merge_wrapped(current))
+    if not inside:
+        raise FleetError(
+            "NEXUS_DEVLOG_VERSION_MISSING",
+            f"DEVLOG.md 中没有 GuDuu OS {version} 的版本说明",
+        )
+    if not items:
+        raise FleetError(
+            "NEXUS_DEVLOG_EMPTY", f"GuDuu OS {version} 尚未填写可发布的更新内容"
+        )
+    # 门户展示的是纯文本公告，去掉日志中用于代码/强调的 Markdown 符号，避免 OEM
+    # 看到面向开发者的排版标记。其他标点与专有名词原样保留，避免改写造成信息失真。
+    return [item.replace("**", "").replace("`", "") for item in items]
+
+
+def build_release_draft(
+    s,
+    *,
+    version: Optional[str] = None,
+    devlog_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """根据当前产品版本和 DEVLOG 自动生成一份可审阅的未发布版本草稿。
+
+    这里刻意使用确定性的日志归纳，不依赖外部大模型：发布后台在断网、未配置 AI key
+    时仍可生成，且不会把内部版本日志发送给第三方。返回值只回填表单，真正落库仍要
+    超级管理员点击“保存为未发布”，保留人工审阅门禁。
+
+    Args:
+        s: Nexus SQLAlchemy Session，用于判断该版本是否已经创建。
+        version: 测试或运维指定版本；默认读取 ``cosmac.__version__``。
+        devlog_path: 测试指定日志路径；默认使用仓库根目录 ``DEVLOG.md``。
+    """
+    target = (version or PRODUCT_VERSION).strip()
+    _version_tuple(target)
+    items = _devlog_items(devlog_path or _DEFAULT_DEVLOG_PATH, target)
+    first = re.sub(r"^(新增|修复|优化|变更)(?:（[^）]+）)?：", "", items[0])
+    first_clause = re.split(r"[，；。]", first, maxsplit=1)[0].strip()
+    title = first_clause[:80] or f"GuDuu OS {target} 更新"
+    notes = "GuDuu OS " + target + " 更新公告\n\n" + "\n".join(
+        "• " + item for item in items
+    )
+    exists = s.execute(
+        select(NexusRelease.id).where(NexusRelease.version == target)
+    ).first()
+    return {
+        "version": target,
+        "git_ref": "v" + target,
+        "title": title,
+        "notes": notes,
+        "source": "DEVLOG.md",
+        "already_exists": exists is not None,
+    }
 
 
 def _ensure_deployment(
@@ -321,6 +440,66 @@ def list_releases(s) -> List[Dict[str, Any]]:
     """按最新在前列出所有版本与投放状态。"""
     rows = s.execute(select(NexusRelease).order_by(NexusRelease.id.desc())).scalars()
     return [get_release(s, row.id) for row in rows]
+
+
+def list_oem_announcements(s, oem_id: int) -> List[Dict[str, Any]]:
+    """列出一个 OEM 名下节点已经安装成功的版本公告。
+
+    公告不另建可漂移的数据副本，而是从“版本说明 + 成功投放记录”实时组合：节点没有
+    上报成功前不会出现；同一版本同一节点受复合主键约束只出现一次；查询先经 KEY
+    归属边收窄实例，服务端不会把其他 OEM 的版本或域名泄露出去。
+
+    Args:
+        s: Nexus SQLAlchemy Session。
+        oem_id: 当前已登录 OEM 账号编号。
+
+    Returns:
+        最新完成在前的公告列表，包含节点域名、版本、标题、正文和完成时间。
+    """
+    owned_key_ids = select(NexusKeyClaim.key_id).where(
+        NexusKeyClaim.oem_id == int(oem_id)
+    )
+    instances = s.execute(
+        select(NexusInstance).where(NexusInstance.key_id.in_(owned_key_ids))
+    ).scalars().all()
+    if not instances:
+        return []
+    instance_by_id = {row.id: row for row in instances}
+    rows = s.execute(
+        select(NexusReleaseDeployment)
+        .where(
+            NexusReleaseDeployment.instance_id.in_(instance_by_id),
+            NexusReleaseDeployment.status == "success",
+        )
+        .order_by(NexusReleaseDeployment.finished_ts.desc())
+        .limit(30)
+    ).scalars().all()
+    release_ids = {row.release_id for row in rows}
+    release_by_id = {
+        row.id: row
+        for row in s.execute(
+            select(NexusRelease).where(NexusRelease.id.in_(release_ids))
+        ).scalars()
+    } if release_ids else {}
+    announcements: List[Dict[str, Any]] = []
+    for row in rows:
+        release = release_by_id.get(row.release_id)
+        instance = instance_by_id.get(row.instance_id)
+        if release is None or instance is None:
+            continue
+        announcements.append(
+            {
+                "id": f"{row.release_id}:{row.instance_id}",
+                "release_id": row.release_id,
+                "instance_id": row.instance_id,
+                "domain": instance.domain,
+                "version": release.version,
+                "title": release.title,
+                "notes": release.notes,
+                "finished_ts": row.finished_ts,
+            }
+        )
+    return announcements
 
 
 def check_update(s, raw_key: str, current_version: str) -> Optional[Dict[str, Any]]:
