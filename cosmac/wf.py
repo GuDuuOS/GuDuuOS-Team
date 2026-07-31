@@ -78,15 +78,15 @@ def submit_background(fn: Callable[[], None], *, pool: str = "fast") -> bool:
 
 # ── 云元数据地址：SSRF 最值钱的目标，必须永远拒绝 ────────────────
 # 169.254.169.254（AWS/GCP/Azure/华为）落在链路本地段，下面的通用规则本就挡得住；
-# ⚠️ 但**阿里云的 100.100.100.200 挡不住**——它属 RFC 6598 运营商级 NAT
+# ⚠️ 但**已退役云环境的 100.100.100.200 挡不住**——它属 RFC 6598 运营商级 NAT
 # (100.64.0.0/10)，而 Python 的 ipaddress **不**把这一段判为 is_private，
-# 于是被当成普通公网地址放行。本项目生产就跑在阿里云上，等于给 SSRF 留了一条
+# 于是被当成普通公网地址放行。若部署环境暴露该端点，就会给 SSRF 留下一条
 # 直通元数据、可取 RAM 临时凭据的路（2026-07-27 排查 WebFetch 风险时发现）。
 _CARRIER_NAT_V4 = ipaddress.ip_network("100.64.0.0/10")
 
 
 def _is_metadata_addr(addr) -> bool:
-    """是不是云厂商的元数据地址（含阿里云所在的运营商级 NAT 段）。"""
+    """是不是云厂商的元数据地址（含RFC 6598 运营商级 NAT 段）。"""
     try:
         if addr.version == 4 and addr in _CARRIER_NAT_V4:
             return True

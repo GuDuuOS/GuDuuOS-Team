@@ -45,13 +45,13 @@ _ALLOWED_HOSTS = {
     "gist.github.com",
     # jsDelivr 的 GitHub CDN。**这条是国内部署的生命线**：实测本项目的国内服务器
     # 访问 raw.githubusercontent.com 直接读超时（12s 无响应），而 jsdelivr 1 秒返回
-    # （2026-07-27 在 guduu-cn 实测）。所以下面把 github.com 的网页地址统一转成
+    # （2026-07-27 在 retired-cloud 实测）。所以下面把 github.com 的网页地址统一转成
     # jsdelivr 直链，否则这个功能在生产上根本用不了。
     "cdn.jsdelivr.net",
     # GitHub 官方 Contents API。**Markdown 的唯一可行路径**：jsdelivr 只加速
     # JS/CSS 这类 web 资源，对 .md 会 301 跳回 raw.githubusercontent.com（国内不通），
     # 于是 SKILL.md 永远取不到。api.github.com 实测国内可达且支持任意文件
-    # （2026-07-27 在 guduu-cn 实测 55KB 的 SKILL.md 一次取回）。
+    # （2026-07-27 在 retired-cloud 实测 55KB 的 SKILL.md 一次取回）。
     # 代价：未认证有 60 次/小时/IP 的速率限制——对"偶尔装个技能"完全够用。
     "api.github.com",
 }

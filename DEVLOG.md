@@ -77,7 +77,7 @@
 
 ## 2026-07-30 — GuDuu OS 1.6.26 (patch)
 
-- 修复：正式站 `cs.guduuos.com` 的 Matrix 客户端与联邦服务发现地址被宿主 nginx
+- 修复：正式站 `retired.example.invalid` 的 Matrix 客户端与联邦服务发现地址被宿主 nginx
   的通用 `/.well-known/` 静态目录规则截走，两个端点都返回 404。标准 Matrix 客户端
   因而无法仅凭公开域名发现登录服务器，联邦程序也拿不到真实服务器地址。
 - 修复：正式站新增两个精确匹配端点；客户端发现返回公开 API 地址并带跨域许可，联邦
@@ -166,11 +166,11 @@
 
 ## 2026-07-27 — GuDuu OS 1.6.19 (patch)
 
-- 🔴 **安全修复：SSRF 防护漏掉了阿里云元数据地址**（排查 WebFetch 风险时发现的真实漏洞）。
-  `100.100.100.200` 是阿里云的元数据服务，能吐出实例信息与绑定 RAM 角色的**临时凭据**。
+- 🔴 **安全修复：SSRF 防护漏掉了RFC 6598 元数据端点地址**（排查 WebFetch 风险时发现的真实漏洞）。
+  `100.100.100.200` 是已退役云环境的元数据服务，能吐出实例信息与绑定 RAM 角色的**临时凭据**。
   它属 RFC 6598 运营商级 NAT（`100.64.0.0/10`），而 Python 的 `ipaddress`
   **不**把这一段判为 `is_private` —— 于是 `check_outbound_url` 一直把它当普通公网**放行**。
-  本项目生产就跑在阿里云上，等于给 SSRF 留了一条直通凭据的路。
+  若部署环境暴露该端点，就会给 SSRF 留下一条直通凭据的路。
   - 处置：新增 `_is_metadata_addr`，整段 `100.64.0.0/10` + AWS 的 IPv6 端点一并拒绝，
     且**开了 `COSMAC_WF_ALLOW_INTERNAL=1` 也不放行**——"我要打内网"从不包含"我要打元数据"。
   - 影响面不止新功能：现有的**工作流连接器**走的也是这个校验，一并修好。
@@ -464,7 +464,7 @@
 - 修复：**地图上散落一堆淡紫六边形**（负责人实报"好多不是白色六边形"）。那是一段
   "随机把 2.2% 的陆地格子染色"的装饰逻辑，和真实节点的热区**长得一模一样**，会让人误以为
   全球到处都是节点。已删除——地图上出现颜色 = 那里真的有实例。
-- 数据：给生产实例 `dev-cs.guduuos.com` 补上地域。位置不靠猜——查阿里云实例元数据接口
+- 数据：给生产实例 `retired-dev.example.invalid` 补上地域。位置不靠猜——查已退役云环境实例元数据接口
   拿到权威答案 `cn-hangzhou` → 浙江（30.27, 120.16）。心跳记录的网段 `218.244.154.0/24` 也已就位。
 
 ## 2026-07-26 — GuDuu OS 1.6.5 (patch)
@@ -1238,7 +1238,7 @@
 - 项目定位+核心特性+仓库结构+文档地图+版本追溯入口(tags/DEVLOG)+架构铁律+本地开发。
 - 不含任何服务器 IP/域名细节/key(敏感信息仍只在本机 DEPLOY.md/CREDENTIALS)。
 
-## 2026-07-22 — 仓库清理:删除废弃目录(负责人授权,GitHub+阿里云同步)
+## 2026-07-22 — 仓库清理:删除废弃目录(负责人授权,GitHub+已退役云环境同步)
 
 - 删除 `GuDuu首页/`(gudu-workbench 官网原型——线上开发官网从独立目录 /opt/guduu-home/dist
   服务,不依赖仓库;源码留在 git 历史可随时恢复)。
@@ -1255,7 +1255,7 @@
 - 优化：生产 LLM 直连 DeepSeek 官方（本轮起真模型回复）；服务管理 token 改专用账号签发
   （不再被登录互斥踢失效）。
 - 变更：**版本规则落地**（docs/VERSIONING.md）——自本版起发版走 SemVer + `release:` commit
-  + tag；只维护阿里云新站，GCP 老站废弃（负责人拍板）；文档整理：CLAUDE/AGENTS 合入版本
+  + tag；只维护已退役云环境新站，GCP 老站废弃（负责人拍板）；文档整理：CLAUDE/AGENTS 合入版本
   规则并修正部署方式描述，ARCHITECTURE/TODO 品牌收敛 GuDuu OS，临时目录「版本更新规则/」
   内容合入后删除。
 
@@ -1268,7 +1268,7 @@
 - 上传超限 .md 的红字报错(如「6501 字超过上限 4000」)在关闭弹窗重开后仍显示。
 - 根因:弹窗打开时的状态重置块(修「草稿残留」时加的)没包含后来新增的 ruleDocErr。
 - 修法:reset 块补 `ruleDocErr.value = ''` 一行。vue-tsc/构建过。
-- 另:负责人拍板**只维护阿里新站**,GCP 老站(cosmac.cc)近期删除、不再部署。
+- 另:负责人拍板**只维护已退役站点**,GCP 老站(cosmac.cc)近期删除、不再部署。
 
 ## 2026-07-22 — 频道规则自检闸(负责人实报:AI 不遵守频道已配规则)
 - 现象:频道规则文档写了「严禁对用户身份做任何记录或评价」,AI 被问"某成员怎么样"
@@ -1282,7 +1282,7 @@
   规则优先于用户要求。无规则频道不注入(省 token)。
 - ⚠️ **环境发现(重要)**:负责人截图 room_id 是 `:cosmac.cc`——旧 GCP 站(34.45.149.52)
   还活着且负责人实际在上面使用(雅诗兰黛测评组/duxiuzhen01/几十个任务都在那);
-  今天所有修复只部署了阿里 dev-cs。GCP 无 SSH 直连通道(22 关闭,历史上走浏览器
+  今天所有修复只部署了已退役开发站。GCP 无 SSH 直连通道(22 关闭,历史上走浏览器
   SSH),双环境如何收敛待负责人拍板。
 - 测试:test_channel_kb_isolation 新增自检闸用例;全量 632 过。
 
@@ -1336,7 +1336,7 @@
   整体高亮),自动正确。
 - 验证:cosmac 615 测全过、client 构建过、浏览器登录页=GuDuu OS。品牌层级最终确定:
   GuDuu(母公司)→GuDuu Nexus(母舰)→GuDuu OS(产品,原 CosMac)。
-- cs.guduuos.com=第一套自营实例(实例#0),部署此版并清测试频道。
+- retired.example.invalid=第一套自营实例(实例#0),部署此版并清测试频道。
 
 
 ## 2026-07-21 — feat:任务看板角标改「全部未完成数」(负责人建议)
@@ -1358,8 +1358,8 @@
 - ⚠️ 本地验证套路更新:新代码 HS 配置在 client/src/config/hs.ts(defaultHsUrl),
   TEMP-LOCAL-VERIFY 改它,不再是 AuthView/LiveView 的 HS 常量。
 
-## 2026-07-21 — 部署切换:阿里云主站(cs.guduuos.com)首次全量升级
-- 负责人确认部署目标改为阿里云机(ssh guduu-cn),GCP/app.cosmac.cc 不再用。
+## 2026-07-21 — 部署切换:已退役云环境主站(retired.example.invalid)首次全量升级
+- 负责人确认部署目标改为已退役云环境机(ssh retired-cloud),GCP/app.cosmac.cc 不再用。
 - 发现该机代码停在生产搬家时点(edde5c0)——本会话 30+ 项改动此前只上过旧 GCP。
 - 首次跑通新部署链:/root/cosmac pull(GitHub)→ /opt/cosmac/distro/update.sh
   (compose build+滚动重启,数据不动)→ doctor 13/13 全绿,线上 hash=index-uEt8eE0i.js。
@@ -1389,31 +1389,31 @@
   浏览器全面验收通过(环图 38.9/35.2/25.9%,流水充值/消耗,配额 19%=17.7M/91M)。
 - nexus 17 测过(dash_summary 断言扩到 models/hourly/granted)。
 
-## 2026-07-21 — feat:模块6 P1③ 实例侧接线完成——cs.guduuos.com 成为实例#0 上大屏(线上实测)
+## 2026-07-21 — feat:模块6 P1③ 实例侧接线完成——retired.example.invalid 成为实例#0 上大屏(线上实测)
 - **代码**(edde5c0):①cosmac/nexus_link.py 心跳线程(10分钟一跳,NEXUS_URL+OEM_KEY
   齐备才启用否则全静默;统计只报真实数据:users 经 admin API/messages_today 进程计数;
   母舰回传余额,耗尽大声告警);②install.sh 真兑码(失败即终止)+AI 通道自动指网关
   (BASE_URL=母舰,API key=OEM 授权码);③bootstrap 登录 admin 铸造**真实服务器管理员
   令牌**写回 .env——修 P0 遗留(随机 hex 冒充 COSMAC_ADMIN_TOKEN,忘记密码重置等静默坏);
   ④__version__ 1.0.0。新增 5 单测,cosmac 全量 610 过。
-- **线上实测**(国内机):签 KEY(CMK-9EYQ...,附赠 1 亿 token)→兑换绑定 cs.guduuos.com
+- **线上实测**(已退役服务器):签 KEY(CMK-9EYQ...,附赠 1 亿 token)→兑换绑定 retired.example.invalid
   (instance_id=1)→接线 .env→重建 bot→心跳上母舰(version 1.0.0/users=2 真实数)→
   **大屏切真实舰队模式**(1 节点 cs,NX-01 运行中)。
 - 待办:①方舟 ARK key 配进母舰 /etc/nexus.env(NEXUS_GW_ARK_KEY)后,主站 AI 从 echo
   切 deepseek-经网关(实例 .env 的 ARK_BASE_URL/KEY 已预填,只差改 provider);
   ②P1 剩④b 皮肤系统+console 管理页(KEY 签发/充值 UI,现在靠 curl)。
 
-## 2026-07-21 — 🚀 生产搬家国内机:cs.guduuos.com 新主站(发行版自举)+nexus.guduuos.com 大屏上线
-- 负责人拍板:弃 GCP 旧站与旧数据,推倒重来;域名体系改走 guduuos.com(阿里云万网 DNS)。
-- 国内机(218.244.154.187,Claude 免密 SSH 直操):①宿主 Caddy 统一收 443 按域名分发;
+## 2026-07-21 — 🚀 生产搬家已退役服务器:retired.example.invalid 新主站(发行版自举)+nexus.guduuos.com 大屏上线
+- 负责人拍板:弃 GCP 旧站与旧数据,推倒重来;域名体系改走 guduuos.com(已退役云环境万网 DNS)。
+- 已退役服务器(192.0.2.1,Claude 免密 SSH 直操):①宿主 Caddy 统一收 443 按域名分发;
   ②**新主站=发行版共存模式自举**(/opt/cosmac/distro,--behind-proxy,吃自己狗粮),
-  server_name=cs.guduuos.com,bootstrap 一次通过(P0 修的四个坑零复发);③Nexus 母舰
+  server_name=retired.example.invalid,bootstrap 一次通过(P0 修的四个坑零复发);③Nexus 母舰
   (fleet+网关+大屏)systemd 常驻。HTTPS 证书均签发成功=**未被备案拦截**(周期扫描风险仍在,
   长期运营建议补备案)。
-- 踩坑与对策(录入 memory cn-server):daocloud 镜像源有白名单拉不了 matrixdotorg/synapse
+- 踩坑与对策(录入 memory retired-server):daocloud 镜像源有白名单拉不了 matrixdotorg/synapse
   →逐镜像走 docker.1ms.run 拉取再改标签;GitHub 间歇断连→生产副本从本机 dev 副本
   git fetch 本地同步。
-- 浏览器实测验收:https://cs.guduuos.com 登录(admin)→新品牌「欢迎来到 CosMac」引导弹出;
+- 浏览器实测验收:https://retired.example.invalid 登录(admin)→新品牌「欢迎来到 CosMac」引导弹出;
   Matrix API/联邦发现/bot 全部 200;doctor 13 项全绿。
 - 后续:负责人自行登录确认后,GCP 全部 VM 可删;凭据轮换清单(root 密码/PAT/admin 初始密码)。
 
@@ -1424,7 +1424,7 @@
 - 不动:协议层(cosmac.* event 类型/路径)、代码标识符(cosmac 包名/env 前缀)、
   DEVLOG 历史条目、@guduu bot 账号 localpart(stage2 迁移项另议)。
 - 验证:cosmac 605 测+nexus 17 测全过、ruff 清、client 构建过、浏览器实测登录页
-  =「CosMac」。**无需部署**:旧 GCP 主站即将退役不再更新;新品牌随国内机
+  =「CosMac」。**无需部署**:旧 GCP 主站即将退役不再更新;新品牌随已退役服务器
   star.cosmac.cc 新主站部署生效。
 
 ## 2026-07-20 — feat:GuDuu Nexus 数据大屏接真数据(负责人自带 UI 并入 console/dashboard)

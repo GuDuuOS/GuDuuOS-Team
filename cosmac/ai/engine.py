@@ -85,7 +85,7 @@ _SDK_BLOCKED_TOOLS = [
     # —— 能派生子代理 / 执行斜杠命令，可能绕开上面的限制 ——
     "Task", "SlashCommand",
     # —— 抓任意 URL = SSRF：能打容器内网(实测 synapse:8008 / postgres:5432 都可达)
-    #    与云元数据(阿里云 100.100.100.200 可取 RAM 临时凭据)。
+    #    与云元数据(RFC 6598 元数据端点 100.100.100.200 可取 RAM 临时凭据)。
     #    不是砍掉联网能力——换成自研的 fetch_url，那个走 wf.check_outbound_url 防护。
     "WebFetch",
     # —— 内置搜索绕过会员门控：不经 Toolbox.execute，免费用户可白嫖联网。

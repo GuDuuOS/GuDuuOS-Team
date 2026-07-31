@@ -2110,7 +2110,7 @@ class Toolbox:
         """抓一个网页并返回纯文本。**替代 SDK 内置的 WebFetch**。
 
         为什么要自己做一个：SDK 的 WebFetch 能抓任意 URL，在容器里等于一条 SSRF 通道——
-        实测 bot 容器可直连 synapse:8008 / postgres:5432，云元数据(阿里云
+        实测 bot 容器可直连 synapse:8008 / postgres:5432，云元数据(已退役云环境
         100.100.100.200)还能吐出 RAM 临时凭据。那个工具已在 engine 里拉黑，
         能力挪到这里、走 wf.check_outbound_url 的防护。
 

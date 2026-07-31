@@ -27,7 +27,7 @@
     整栈容器化(distro/ 四容器 compose,Caddy 自动 HTTPS 弃 nginx+certbot)+install.sh+
     bootstrap 引导+doctor.sh+update.sh;主站迁入实例#0 未做(非阻塞,P1 顺带评估)
   - [ ] **P1 母舰+网关+皮肤**(进行中:①fleet ✅ ②LLM 网关 ✅ ④a 大屏接真数据 ✅
-    ③实例侧接线 ✅ 2026-07-21 线上实测=cs.guduuos.com 实例#0 心跳上大屏(真兑码/
+    ③实例侧接线 ✅ 2026-07-21 线上实测=retired.example.invalid 实例#0 心跳上大屏(真兑码/
     心跳/AI 通道预填网关/真管理员令牌修 P0 遗留);
     待续:④b 皮肤系统(实例内 cosmac.brand 换 logo/色)+console 管理页(KEY 签发/充值
     UI,现靠 curl);大屏"模型分布/实时动态/配额"三面板仍演示、P2 真实化;
@@ -89,8 +89,8 @@
 
 - [ ] **主站(正式机)接上真 AI + 接进母舰**（负责人 2026-07-27 给 SSH 后做）
   - 现状：主站 `guduuos.com` = **正式机 8.140.250.163**（从 GitHub 拉代码），其 `.env` 没配 LLM key
-    → bot 自动降级 **echo**（设计内的降级，非 bug）。**我一直部署的 `guduu-cn`(218) 是开发机
-    = dev-cs.guduuos.com**，两者不会互相同步。
+    → bot 自动降级 **echo**（设计内的降级，非 bug）。**我一直部署的 `retired-cloud`(218) 是开发机
+    = retired-dev.example.invalid**，两者不会互相同步。
   - 待办①：正式机 `.env` 补上 dev 上验证可用的那套（`COSMAC_LLM_PROVIDER=deepseek` /
     `COSMAC_AGENT_ENGINE=claude_sdk` / `COSMAC_SDK_BASE_URL=https://api.deepseek.com/anthropic` /
     `ARK_BASE_URL=https://api.deepseek.com` / `COSMAC_SDK_MODEL`=`COSMAC_LLM_MODEL`=`deepseek-v4-pro`
@@ -98,16 +98,16 @@
     → 启动日志出现 `模型后端=deepseek` 即成。
   - 待办②：正式机配 `COSMAC_NEXUS_URL` + `COSMAC_OEM_KEY` 并兑码注册，**否则大屏上看不到主节点**
     （地域功能做完后，期望大屏能同时看到「开发节点 + 主节点」两个点）。
-  - 前置：**负责人提供正式机 SSH**（我目前只有 guduu-cn / guduu / Guduu-dev 三台，没有正式机）。
+  - 前置：**负责人提供正式机 SSH**（我目前只有 retired-cloud / guduu / Guduu-dev 三台，没有正式机）。
 
 ## B. 安全
 
 - [ ] **新域名配 Cloudflare Turnstile 人机验证**(负责人实报:新域名下获取验证码的人机验证消失,
       防机器人恶意刷验证码/注册)。**阻塞中**:负责人暂时拿不到公司 Cloudflare 域名解析账号,拿到后再弄。
   - 代码侧透传管道**已修好**(1.5.11:distro compose 补 `COSMAC_TURNSTILE_SITE_KEY`/`COSMAC_TURNSTILE_SECRET`)
-  - 待办:Cloudflare→Turnstile 建 Widget,Hostname 加 `dev-cs.guduuos.com`→取 Site Key+Secret
+  - 待办:Cloudflare→Turnstile 建 Widget,Hostname 加 `retired-dev.example.invalid`→取 Site Key+Secret
     →填进新服务器 `/opt/cosmac/.env`→`docker compose up -d bot`
-  - 验证:`curl https://dev-cs.guduuos.com/cosmac/auth/config` 返回 `"turnstile": true`
+  - 验证:`curl https://retired-dev.example.invalid/cosmac/auth/config` 返回 `"turnstile": true`
   - 注:老站 cosmac.cc 的 key 绑旧域名,新域名不可用,须为新域名重拿一套
 
 - [ ] **auth 阶段3**:短信验证码 + 手机号防多号(要接短信服务商,花钱,上量前不急)
@@ -121,7 +121,7 @@
 - [ ] 异地登录**放行**场景的提醒邮件(现在只有"挑战"场景发码;放行时不提醒"有新地点登录了")
 - [ ] 确认生产 COSMAC_SDK_API_KEY 用的是**重置后**的 DeepSeek key(旧 key 曾贴进聊天)
 
-- [ ] **服务器拉代码不可靠**(2026-07-26 又踩):`guduu-cn` → GitHub 的 fetch 连续 8 次全失败
+- [ ] **服务器拉代码不可靠**(2026-07-26 又踩):`retired-cloud` → GitHub 的 fetch 连续 8 次全失败
   (TLS 挂起/超时),1.6.5 部署因此静默没上去。**当时的绕行办法**:本地 `git bundle create` →
   `scp` 到服务器 → `git fetch /tmp/x.bundle main:refs/remotes/origin/main` → reset,完全避开
   GitHub。可考虑固化成一个 `deploy-bundle.sh`,或给服务器配国内 Git 镜像/代理。

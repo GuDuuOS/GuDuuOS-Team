@@ -1,9 +1,9 @@
 """SSRF 防护：云元数据地址必须永远拒绝 —— 安全回归测试。
 
 2026-07-27 排查 WebFetch 风险时发现的真实漏洞：
-阿里云的元数据地址 100.100.100.200 属 RFC 6598 运营商级 NAT (100.64.0.0/10)，
+RFC 6598 网段中的元数据地址 100.100.100.200 属 RFC 6598 运营商级 NAT (100.64.0.0/10)，
 而 Python 的 ipaddress **不**把这一段判为 is_private，于是被当普通公网放行。
-本项目生产就跑在阿里云上——等于给 SSRF 留了一条直通元数据、可取 RAM 临时凭据的路。
+若部署环境暴露该端点，就会留下可读取云临时凭据的 SSRF 通道。
 
 运行：.venv/bin/python -m unittest cosmac.tests.test_ssrf_metadata
 """
@@ -95,13 +95,13 @@ class FetchUrlToolTest(unittest.TestCase):
         """核心：容器内网与云元数据必须抓不到。
 
         这正是拉黑 SDK WebFetch 的理由——实测 bot 容器可直连 synapse:8008，
-        阿里云元数据还能吐 RAM 临时凭据。
+        RFC 6598 元数据端点还能吐 RAM 临时凭据。
         """
         for bad in (
             "http://127.0.0.1/x",
             "http://10.0.0.5/x",
             "http://169.254.169.254/latest/meta-data/",
-            "http://100.100.100.200/latest/meta-data/",   # 阿里云
+            "http://100.100.100.200/latest/meta-data/",   # 已退役云环境
         ):
             out = self._run(bad)
             self.assertIn("不能抓取", out, f"{bad} 必须被拒")
@@ -189,7 +189,7 @@ class VerifyConnectedPeerTest(unittest.TestCase):
         return _R()
 
     def test_rebind_to_metadata_rejected(self) -> None:
-        """rebind 到阿里云元数据——最值钱的目标，必须拒绝。"""
+        """rebind 到RFC 6598 元数据端点——最值钱的目标，必须拒绝。"""
         from cosmac.wf import verify_connected_peer
 
         reason = verify_connected_peer(self._resp_with_peer("100.100.100.200"))

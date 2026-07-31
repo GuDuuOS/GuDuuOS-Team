@@ -179,7 +179,7 @@
    - ⓪ **按版本规则升号并写笔记**（详见 `docs/VERSIONING.md`、`.cursor/rules/versioning.mdc`）：SemVer 语义——**PATCH** 有交付就勤涨、**MINOR** 本周有可对外增量再涨（争取每周打包一次）、**MAJOR** 仅破坏性/代际（不强制每月涨）；对齐 `cosmac.__version__` 与 `client/package.json`；`DEVLOG.md` 顶条必须为 `## YYYY-MM-DD — GuDuu OS X.Y.Z (patch|minor|major)`，正文用「新增/修复/优化/变更」分类；不记敏感信息（key/IP 进 `DEPLOY.md`）。
    - ① 重建产物：`cd client && npm run build`（`client/dist` 被 .gitignore，提交用 `git add -f client/dist`）；
    - ② `git commit` + `git push origin main`：发版 commit 第一行必须为 `release: GuDuu OS X.Y.Z (patch|minor|major)`，正文与 DEVLOG 用户可见条目对齐；推荐打 tag `vX.Y.Z`。
-   - ③ **直接 SSH 部署阿里云生产**（负责人 2026-07-22 拍板：只维护阿里新站，GCP 老站已废弃）：`ssh guduu-cn` → `/root/cosmac` 拉代码（GitHub 间歇性 TLS 失败要带重试判真实退出码）→ `/opt/cosmac/distro/update.sh`（自动同步 /opt + docker 重建 + 滚动重启）→ `doctor.sh` 体检。Claude 直接执行，不再给负责人贴命令。细节见本机 `DEPLOY.md` 与 memory `cn-server`。
+   - ③ **直接 SSH 部署 Google Cloud 生产实例**（负责人 2026-07-31 拍板：停止向已退役云环境部署，只维护新建的 Google Cloud 实例）：通过负责人提供的固定外部 IP、SSH 用户与密钥登录 → 在确认后的生产仓库目录拉取 `main` → 执行部署更新脚本 → 运行体检脚本并核对公网服务。Claude 直接执行，不再给负责人贴命令。**新实例连接信息、部署路径和域名确认前，不得沿用 `DEPLOY.md` 中旧 GCP 实例的 IP 或路径。** 信息确认后同步更新 `DEPLOY.md`。
    - 纯后端操作（真建 / 整理 Matrix 频道等，只改服务器数据、不动 `client/` 代码）不必走部署，但要说明"无需部署"。
 7.5 **「拉取本周/本月变更说明」**：从区间内 `release:` commit + `DEVLOG.md` 归并，按新增/修复/优化/变更输出可直接对外用的更新文案并标明版本跨度（见 `docs/VERSIONING.md` §7）。**维护感靠勤 PATCH + 周报/月报**，月报不要求伴随 MAJOR。
 

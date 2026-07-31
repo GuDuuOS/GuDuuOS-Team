@@ -61,7 +61,7 @@ class SdkToolBlocklistTest(unittest.TestCase):
     def test_webfetch_is_blocked_and_replaced(self) -> None:
         """WebFetch 必须拉黑：它能抓任意 URL = SSRF 通道。
 
-        实测 bot 容器可直连 synapse:8008 / postgres:5432，阿里云元数据
+        实测 bot 容器可直连 synapse:8008 / postgres:5432，RFC 6598 元数据端点
         100.100.100.200 还能吐 RAM 临时凭据。能力不是砍掉而是挪到自研 fetch_url——
         那个走 wf.check_outbound_url 防护，所以这里同时断言替代品确实存在。
         """
