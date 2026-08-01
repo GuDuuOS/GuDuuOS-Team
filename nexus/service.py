@@ -12,7 +12,7 @@
         POST /nexus/user/attribution {key,referral_code,user_id} 用户归属上报
         POST /nexus/update/check   {key,current_version}  拉取已分配的版本更新
         POST /nexus/update/report  {key,release_id,status,...} 上报更新结果
-    管理（console 用，须 Authorization: Bearer <NEXUS_ADMIN_TOKEN>）：
+    管理（console 用，须具名管理员会话；服务器应急令牌仅用于首次建号和恢复）：
         POST /nexus/admin/keys       {count,note,token_grant}  签发 KEY（明文仅此一次）
         POST /nexus/admin/revoke     {key_id}                  吊销 KEY
         GET  /nexus/admin/keys                                 KEY 列表
@@ -32,7 +32,8 @@
         GET  /nexus/oem/network                             自己的下级 OEM 与归属用户清单
 
 安全：
-    - NEXUS_ADMIN_TOKEN 无默认值，未配置则管理端点一律 503（宁停不裸奔）；
+    - 具名管理员账号保存在 Nexus DB，会话可撤销且默认 12 小时过期；
+    - NEXUS_ADMIN_TOKEN 无默认值，仅作为首次建号和故障恢复入口；
     - 兑换端点按 IP 限频（内存桶），防 KEY 爆破；
     - 生产部署躲在 Caddy 后面收 TLS，本服务只听内网。
 """
@@ -51,6 +52,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import parse_qs, quote, urlsplit
 
 from nexus import (
+    admin_auth,
     audit,
     db,
     features,
@@ -131,6 +133,8 @@ class NexusHandler(BaseHTTPRequestHandler):
     # ---- 基础工具 ----
 
     def _json(self, status: int, payload: Dict[str, Any]) -> None:
+        # Session 包装会据此判断管理写操作是否真正成功，再追加全局审计事件。
+        self._last_response_status = int(status)
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -187,16 +191,49 @@ class NexusHandler(BaseHTTPRequestHandler):
         return fwd or (self.client_address[0] if self.client_address else "?")
 
     def _check_admin(self) -> bool:
-        """管理端点鉴权。token 未配置一律拒绝——宁可停摆不可裸奔。"""
+        """接受具名管理员短期会话，兼容服务器应急令牌。
+
+        具名会话优先承担日常操作；环境令牌只保留为灾难恢复和首个管理员引导入口。
+        每次成功鉴权都会把当前操作人写到 handler，后续业务审计直接使用真实姓名。
+        """
         expect = _admin_token()
-        if not expect:
-            self._err(503, "NEXUS_ADMIN_DISABLED", "NEXUS_ADMIN_TOKEN 未配置")
-            return False
-        got = self.headers.get("Authorization") or ""
-        if not (got.startswith("Bearer ") and hmac.compare_digest(got[7:], expect)):
-            self._err(401, "NEXUS_FORBIDDEN", "管理令牌无效")
-            return False
-        return True
+        token = self._bearer()
+        if expect and token and hmac.compare_digest(token, expect):
+            self._admin_actor_id = 0
+            self._admin_actor_label = "服务器应急令牌"
+            self._admin_auth_kind = "emergency_token"
+            return True
+        s = db.session()
+        try:
+            account = admin_auth.resolve_session(s, token)
+            if account is not None:
+                self._admin_actor_id = int(account.id)
+                self._admin_actor_label = account.display_name
+                self._admin_auth_kind = "named_session"
+                return True
+            has_named_admin = admin_auth.active_count(s) > 0
+        finally:
+            s.close()
+        if not expect and not has_named_admin:
+            self._err(503, "NEXUS_ADMIN_DISABLED", "平台主管鉴权尚未配置")
+        else:
+            self._err(401, "NEXUS_FORBIDDEN", "管理员登录已失效")
+        return False
+
+    def _admin_actor(self) -> str:
+        """返回当前管理员审计显示名；仅在 ``_check_admin`` 成功后调用。"""
+        return str(getattr(self, "_admin_actor_label", "平台超级管理员"))
+
+    def _reset_request_context(self) -> None:
+        """清空同一 HTTP keep-alive 连接上一个请求留下的身份信息。
+
+        ``BaseHTTPRequestHandler`` 会在同一 TCP 连接复用 handler；若不主动清理，先用
+        应急令牌访问、再提交公开登录请求时，后一个请求可能被错误记成应急管理员操作。
+        """
+        self._admin_actor_id = 0
+        self._admin_actor_label = ""
+        self._admin_auth_kind = ""
+        self._last_response_status = 0
 
     def _bearer(self) -> str:
         """取 Authorization: Bearer <token> 里的 token（无则空串）。"""
@@ -251,6 +288,7 @@ class NexusHandler(BaseHTTPRequestHandler):
     # ---- 路由 ----
 
     def do_GET(self) -> None:  # noqa: N802  # http.server 命名约定
+        self._reset_request_context()
         path = self.path.split("?", 1)[0]
         if path == "/nexus/health":
             self._json(200, {"ok": True, "ts": int(time.time() * 1000)})
@@ -259,6 +297,52 @@ class NexusHandler(BaseHTTPRequestHandler):
             qs = parse_qs(urlsplit(self.path).query)
             code = str((qs.get("code") or [""])[0])
             self._with_session(lambda s: self._json(200, oem_svc.referral_info(s, code)))
+            return
+        if path == "/nexus/admin/me":
+            if self._check_admin():
+                self._json(
+                    200,
+                    {
+                        "admin": {
+                            "id": int(getattr(self, "_admin_actor_id", 0)),
+                            "display_name": self._admin_actor(),
+                            "auth_kind": getattr(
+                                self, "_admin_auth_kind", "emergency_token"
+                            ),
+                        }
+                    },
+                )
+            return
+        if path == "/nexus/admin/admins":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200, {"admins": admin_auth.list_admins(s)}
+                    )
+                )
+            return
+        if path == "/nexus/admin/audit":
+            if self._check_admin():
+                qs = parse_qs(urlsplit(self.path).query)
+                try:
+                    limit = int((qs.get("limit") or ["200"])[0])
+                except ValueError:
+                    limit = 200
+                object_type = str((qs.get("object_type") or [""])[0])
+                actor = str((qs.get("actor") or [""])[0])
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "events": audit.recent(
+                                s,
+                                limit=limit,
+                                object_type=object_type,
+                                actor=actor,
+                            )
+                        },
+                    )
+                )
             return
         if path == "/nexus/admin/keys":
             if self._check_admin():
@@ -686,13 +770,14 @@ class NexusHandler(BaseHTTPRequestHandler):
             "Permissions-Policy",
             "camera=(), microphone=(), geolocation=(), payment=()",
         )
-        if base_dir == self._DASH_DIR:
-            # 大屏没有内联脚本，脚本来源可严格锁死到同源。样式保留 unsafe-inline 是因为
-            # 地图坐标、颜色、柱高都通过 style 属性动态设置；它不放宽 JavaScript 执行。
+        if base_dir in (self._DASH_DIR, self._PORTAL_DIR):
+            # 两个前端都不再使用内联脚本，因此脚本来源可严格锁死同源。样式仍保留
+            # unsafe-inline：大屏坐标/柱高和 Portal 少量表单布局依赖 style 属性；它不会
+            # 放宽 JavaScript 执行权限。Portal 的凭证预览使用本地 blob URL。
             self.send_header(
                 "Content-Security-Policy",
                 "default-src 'self'; script-src 'self'; "
-                "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
                 "font-src 'self' data:; connect-src 'self'; object-src 'none'; "
                 "base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
             )
@@ -701,6 +786,7 @@ class NexusHandler(BaseHTTPRequestHandler):
         return True
 
     def do_POST(self) -> None:  # noqa: N802
+        self._reset_request_context()
         path = self.path.split("?", 1)[0]
 
         # —— LLM 网关：/gw/<厂商>/<原厂路径后缀>（体大且可能流式，独立处理）——
@@ -907,6 +993,91 @@ class NexusHandler(BaseHTTPRequestHandler):
             return
 
         body = self._read_body()
+
+        # —— 具名平台主管登录与账号管理 ——
+        if path == "/nexus/admin/auth/login":
+            if not _auth_rate_ok(self._client_ip()):
+                self._err(429, "NEXUS_RATE_LIMIT", "尝试过于频繁，请稍后再试")
+                return
+            self._with_session(
+                lambda s: self._json(
+                    200,
+                    admin_auth.login(
+                        s,
+                        str(body.get("username", "")),
+                        str(body.get("password", "")),
+                        self._client_ip(),
+                    ),
+                )
+            )
+            return
+
+        if path == "/nexus/admin/auth/logout":
+            token = self._bearer()
+            if self._check_admin():
+                self._with_session(
+                    lambda s: (
+                        admin_auth.logout(s, token),
+                        self._json(200, {"ok": True}),
+                    )[-1]
+                )
+            return
+
+        if path == "/nexus/admin/admins":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        201,
+                        {
+                            "admin": admin_auth.create_admin(
+                                s,
+                                str(body.get("username", "")),
+                                str(body.get("password", "")),
+                                str(body.get("display_name", "")),
+                                actor_label=self._admin_actor(),
+                                source_ip=self._client_ip(),
+                            )
+                        },
+                    )
+                )
+            return
+
+        if path == "/nexus/admin/admin_status":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "admin": admin_auth.set_status(
+                                s,
+                                int(body.get("admin_id") or 0),
+                                str(body.get("status", "")),
+                                actor_id=int(getattr(self, "_admin_actor_id", 0)),
+                                actor_label=self._admin_actor(),
+                                source_ip=self._client_ip(),
+                            )
+                        },
+                    )
+                )
+            return
+
+        if path == "/nexus/admin/admin_password":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "admin": admin_auth.reset_password(
+                                s,
+                                int(body.get("admin_id") or 0),
+                                str(body.get("new_password", "")),
+                                actor_label=self._admin_actor(),
+                                source_ip=self._client_ip(),
+                            )
+                        },
+                    )
+                )
+            return
 
         if path == "/nexus/redeem":
             if not _rate_ok(self._client_ip()):
@@ -1359,7 +1530,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                                 token_grant=int(body.get("token_grant") or 0),
                                 decide_note=str(body.get("decide_note", "")),
                                 action=str(body.get("action", "")),
-                                actor_label="平台超级管理员",
+                                actor_label=self._admin_actor(),
                                 source_ip=self._client_ip(),
                             )
                         },
@@ -1377,7 +1548,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                             int(body.get("request_id") or 0),
                             bool(body.get("approve")),
                             str(body.get("note", "")),
-                            actor_label="平台超级管理员",
+                            actor_label=self._admin_actor(),
                             source_ip=self._client_ip(),
                         ),
                     )
@@ -1400,7 +1571,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                             object_id=item["id"],
                             action="issue",
                             actor_type="admin",
-                            actor_label="平台超级管理员",
+                            actor_label=self._admin_actor(),
                             source_ip=self._client_ip(),
                             to_state="active",
                             note=str(body.get("note", "")),
@@ -1429,7 +1600,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                         object_id=key_id,
                         action="revoke",
                         actor_type="admin",
-                        actor_label="平台超级管理员",
+                        actor_label=self._admin_actor(),
                         source_ip=self._client_ip(),
                         from_state=old_status,
                         to_state="revoked",
@@ -1454,7 +1625,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                         object_id=key_id,
                         action="resume" if target == "active" else "suspend",
                         actor_type="admin",
-                        actor_label="平台超级管理员",
+                        actor_label=self._admin_actor(),
                         source_ip=self._client_ip(),
                         from_state=str(changed.get("from_status", "")),
                         to_state=target,
@@ -1524,6 +1695,26 @@ class NexusHandler(BaseHTTPRequestHandler):
         s = db.session()
         try:
             fn(s)
+            # 每个成功的管理写请求都追加一条平台级审计。授权、KEY 等领域函数仍保留
+            # 自己的细粒度时间线；这里补齐定价、功能开关、支付配置等过去没有对象日志
+            # 的运营动作，形成可统一检索的完整后台操作轨迹。
+            path = self.path.split("?", 1)[0]
+            if (
+                self.command == "POST"
+                and path.startswith("/nexus/admin/")
+                and getattr(self, "_admin_actor_label", "")
+                and 200 <= int(getattr(self, "_last_response_status", 0)) < 400
+            ):
+                audit.record(
+                    s,
+                    object_type="admin_operation",
+                    object_id=int(getattr(self, "_admin_actor_id", 0)),
+                    action=path.rsplit("/", 1)[-1][:32],
+                    actor_type="admin",
+                    actor_label=self._admin_actor(),
+                    source_ip=self._client_ip(),
+                    metadata={"path": path},
+                )
             s.commit()
         except FleetError as e:
             s.rollback()
@@ -1542,7 +1733,12 @@ def run(host: str = "", port: int = 0) -> None:
     port = port or int(os.environ.get("NEXUS_LISTEN_PORT", "9100"))
     db.init_engine()
     if not _admin_token():
-        logger.warning("NEXUS_ADMIN_TOKEN 未配置——管理端点将全部返回 503")
+        s = db.session()
+        try:
+            if admin_auth.active_count(s) == 0:
+                logger.warning("平台主管账号与应急令牌均未配置——管理端点将返回 503")
+        finally:
+            s.close()
     srv = ThreadingHTTPServer((host, port), NexusHandler)
     logger.info("GuDuu Nexus fleet 服务监听 %s:%s", host, port)
     srv.serve_forever()

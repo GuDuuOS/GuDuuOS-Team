@@ -89,6 +89,14 @@ class DashboardSecurityTests(unittest.TestCase):
             self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
             self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")
 
+    def test_portal_page_has_strict_script_csp(self) -> None:
+        """控制台持有管理会话，必须禁止任何内联或第三方脚本执行。"""
+        with urlopen(f"{self.base_url}/portal/", timeout=3) as response:
+            policy = response.headers["Content-Security-Policy"]
+            self.assertIn("script-src 'self'", policy)
+            self.assertNotIn("script-src 'self' 'unsafe-inline'", policy)
+            self.assertIn("frame-ancestors 'none'", policy)
+
 
 if __name__ == "__main__":
     unittest.main()

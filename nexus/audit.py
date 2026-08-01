@@ -93,4 +93,50 @@ def timeline(s, object_type: str, object_id: int) -> List[Dict[str, Any]]:
     return out
 
 
-__all__ = ["record", "timeline"]
+def recent(
+    s,
+    *,
+    limit: int = 200,
+    object_type: str = "",
+    actor: str = "",
+) -> List[Dict[str, Any]]:
+    """返回平台全局最近操作，供具名超管审计页使用。
+
+    ``object_type`` 做精确过滤，``actor`` 做显示名模糊过滤；服务端最多返回 500 条，
+    防止有人通过浏览器参数把整张长期审计表一次拉入内存。
+    """
+    query = select(NexusAuditEvent)
+    if object_type:
+        query = query.where(NexusAuditEvent.object_type == object_type[:32])
+    if actor:
+        query = query.where(NexusAuditEvent.actor_label.ilike(f"%{actor[:120]}%"))
+    rows = s.execute(
+        query.order_by(NexusAuditEvent.created_ts.desc(), NexusAuditEvent.id.desc())
+        .limit(max(1, min(int(limit or 200), 500)))
+    ).scalars().all()
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        try:
+            metadata = json.loads(row.metadata_json or "{}")
+        except (TypeError, json.JSONDecodeError):
+            metadata = {}
+        out.append(
+            {
+                "id": row.id,
+                "object_type": row.object_type,
+                "object_id": row.object_id,
+                "action": row.action,
+                "actor_type": row.actor_type,
+                "actor_label": row.actor_label,
+                "source_ip": row.source_ip,
+                "from_state": row.from_state,
+                "to_state": row.to_state,
+                "note": row.note,
+                "metadata": metadata,
+                "created_ts": row.created_ts,
+            }
+        )
+    return out
+
+
+__all__ = ["recent", "record", "timeline"]

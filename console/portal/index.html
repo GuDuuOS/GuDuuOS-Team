@@ -4,19 +4,19 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>GuDuu Nexus · 控制台</title>
-<!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
-<script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=28" />
+<!-- 主题预置使用同源外部脚本，既防刷新闪色，也允许 Portal 开启严格脚本 CSP。 -->
+<script src="/portal/theme-init.js?v=1"></script>
+<link rel="stylesheet" href="/portal/portal.css?v=29" />
 </head>
 <body>
 <!--
   GuDuu Nexus 控制台（模块6 P1 第2片）
   ——————————————————————————————
   单页三视图（vanilla JS，与大屏同栈零构建）：
-    · 登录页：OEM 邮箱账号（登录/注册）+ 平台超管（粘贴 NEXUS_ADMIN_TOKEN）
+    · 登录页：OEM 邮箱账号（登录/注册）+ 平台具名超级管理员（应急令牌可恢复）
     · OEM 门户：我的实例 / 认领授权码 / 我的授权码
     · 超管视图：舰队实例 / KEY 签发与吊销 / 手动充值 / OEM 客户列表
-  权限全部由服务端强制（/nexus/admin/* 走超管令牌、/nexus/oem/* 走会话令牌），
+  权限全部由服务端强制（/nexus/admin/* 走管理员会话、/nexus/oem/* 走 OEM 会话），
   本页只是展示层。
 -->
 
@@ -61,9 +61,15 @@
     </form>
 
     <form id="form-admin" class="pane" data-pane="admin" hidden>
-      <label>超管令牌<input name="token" type="password" autocomplete="off" required placeholder="NEXUS_ADMIN_TOKEN" /></label>
-      <button class="primary">进入超管视图</button>
-      <p class="hint">令牌保存在母舰服务器 /etc/nexus.env，仅平台方持有。</p>
+      <label>管理员账号<input name="username" autocomplete="username" required placeholder="例如 admin" /></label>
+      <label>密码<input name="password" type="password" autocomplete="current-password" required placeholder="········" /></label>
+      <button class="primary">登录超管控制台</button>
+      <details class="emergency-login">
+        <summary>服务器应急令牌</summary>
+        <label>应急令牌<input name="emergency_token" type="password" autocomplete="off" placeholder="NEXUS_ADMIN_TOKEN" /></label>
+        <button id="btn-emergency-login" class="ghost" type="button">使用应急身份进入</button>
+        <p class="hint">仅用于首个管理员创建和账号故障恢复；日常操作请使用具名账号。</p>
+      </details>
     </form>
 
     <p id="login-err" class="err" hidden></p>
@@ -403,6 +409,9 @@
       <button class="admin-menu-item" data-admin-page="billing">
         <span class="admin-menu-icon">¥</span><span>支付与订单</span><em id="nav-count-orders">0</em>
       </button>
+      <button class="admin-menu-item" data-admin-page="security">
+        <span class="admin-menu-icon">⌾</span><span>平台安全</span><em id="nav-count-admins">0</em>
+      </button>
       <a class="admin-menu-item dashboard-link" href="/" target="_blank" rel="noopener" hidden>
         <span class="admin-menu-icon">◫</span><span>数据大屏</span><i>↗</i>
       </a>
@@ -596,6 +605,41 @@
         <div class="table-scroll"><table class="tbl" id="admin-withdrawals"><thead><tr><th>提现单</th><th>企业</th><th>金额</th><th>收款账户</th><th>状态</th><th>申请时间</th><th>操作</th></tr></thead><tbody></tbody></table></div>
       </section>
     </div>
+
+    <div class="admin-page" data-admin-view="security" hidden>
+      <section class="panel security-identity-panel">
+        <div class="panel-head">
+          <div><h2>当前登录身份</h2><p class="hint">日常操作使用具名管理员；应急令牌只用于恢复访问。</p></div>
+          <span id="admin-auth-kind" class="badge idle">读取中</span>
+        </div>
+        <div id="admin-current-identity" class="security-identity">正在读取…</div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><h2>具名管理员</h2><p class="hint">创建、停用或重置密码都会进入不可变审计记录；停用会立即撤销该账号全部会话。</p></div></div>
+        <form id="form-admin-create" class="admin-create-form">
+          <label>登录账号<input name="username" required minlength="3" maxlength="80" placeholder="例如 operations" /></label>
+          <label>显示名<input name="display_name" required minlength="2" maxlength="120" placeholder="例如 李明 · 平台运营" /></label>
+          <label>初始密码<input name="password" type="password" required minlength="8" autocomplete="new-password" /></label>
+          <button class="primary" type="submit">创建管理员</button>
+        </form>
+        <div class="table-scroll"><table class="tbl" id="admin-admins">
+          <thead><tr><th>#</th><th>账号</th><th>显示名</th><th>角色</th><th>状态</th><th>最近登录</th><th>创建时间</th><th>操作</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><h2>平台操作审计</h2><p class="hint">集中展示具名管理员、应急身份、OEM 和系统产生的最近操作；已有授权时间线继续保留。</p></div></div>
+        <div class="audit-filter-row">
+          <input id="admin-audit-actor" type="search" placeholder="按操作人筛选" />
+          <select id="admin-audit-type"><option value="">全部对象</option><option value="admin_operation">后台操作</option><option value="admin">管理员</option><option value="key">KEY</option><option value="key_request">授权申请</option></select>
+          <button id="btn-admin-audit-filter" class="ghost" type="button">筛选</button>
+        </div>
+        <div class="table-scroll"><table class="tbl" id="admin-audit">
+          <thead><tr><th>时间</th><th>操作人</th><th>对象</th><th>动作</th><th>状态变化</th><th>来源 IP</th><th>备注</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </section>
+    </div>
   </div>
 </main>
 
@@ -755,6 +799,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=38"></script>
+<script src="/portal/portal.js?v=39"></script>
 </body>
 </html>

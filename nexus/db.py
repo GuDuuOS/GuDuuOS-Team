@@ -157,6 +157,39 @@ class NexusSession(Base):
     expires_ts = Column(BigInteger, nullable=False)
 
 
+class NexusAdmin(Base):
+    """Nexus 平台具名超级管理员账号。
+
+    平台管理员与 OEM 客户完全分表，避免把平台主管误挂进 OEM 层级和收益关系。
+    当前第一阶段只有 ``superadmin`` 一个角色；先把共享令牌替换成可识别、可停用的
+    人员账号，等真实团队扩大后再在这个稳定边界上增加细分权限。
+    """
+
+    __tablename__ = "nexus_admin"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(80), nullable=False, unique=True, index=True)
+    display_name = Column(String(120), nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    role = Column(String(24), nullable=False, default="superadmin")
+    # active=可登录 / disabled=已停用；停用时同时清除其全部会话。
+    status = Column(String(16), nullable=False, default="active", index=True)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    password_changed_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    last_login_ts = Column(BigInteger, nullable=True, default=None)
+
+
+class NexusAdminSession(Base):
+    """具名管理员的可撤销短期会话，数据库只保存令牌 SHA-256。"""
+
+    __tablename__ = "nexus_admin_session"
+
+    token_hash = Column(String(64), primary_key=True)
+    admin_id = Column(Integer, nullable=False, index=True)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    expires_ts = Column(BigInteger, nullable=False, index=True)
+
+
 class NexusSetting(Base):
     """母舰级键值配置（首个用户：商品定价 pricing）。
 

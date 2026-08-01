@@ -938,6 +938,31 @@ select:focus { outline: none; border-color: var(--orange); }
 textarea { width: 100%; font: inherit; color: var(--ink); background: var(--input-bg); border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px; }
 textarea:focus { outline: none; border-color: var(--orange); }
 
+/* —— 平台安全：具名管理员与全局审计 —— */
+.emergency-login {
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
+}
+.emergency-login summary { color: var(--muted); font-size: 12px; cursor: pointer; }
+.emergency-login[open] summary { margin-bottom: 10px; }
+.security-identity {
+  display: flex; align-items: baseline; gap: 14px; padding: 14px 16px;
+  border: 1px solid var(--line); border-radius: 11px; background: var(--card);
+}
+.security-identity b { font-size: 16px; }
+.security-identity span { color: var(--muted); font-size: 12px; }
+.admin-create-form {
+  display: grid; grid-template-columns: 1fr 1.4fr 1fr auto;
+  align-items: end; gap: 12px; margin-bottom: 18px;
+}
+.admin-create-form label { margin: 0; }
+.admin-create-form button { min-height: 42px; }
+.audit-filter-row {
+  display: grid; grid-template-columns: minmax(180px, 1fr) 220px auto;
+  gap: 10px; margin-bottom: 14px;
+}
+#admin-audit td { max-width: 260px; overflow-wrap: anywhere; }
+.danger-text { color: var(--red); }
+
 @media (max-width: 620px) {
   .platform-feature-row { align-items: flex-start; flex-direction: column; gap: 14px; }
   .income-history-grid { grid-template-columns: 1fr; }
@@ -954,6 +979,8 @@ textarea:focus { outline: none; border-color: var(--orange); }
   .oem-instance-detail { padding: 16px 14px; }
   .oem-instance-detail-head { align-items: stretch; flex-direction: column; }
   .oem-instance-detail-head button { align-self: flex-start; }
+  .security-identity { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .admin-create-form, .audit-filter-row { grid-template-columns: 1fr; }
 }
 
 /* —— toast —— */

@@ -1,7 +1,7 @@
 /* GuDuu Nexus 控制台逻辑（vanilla，无构建）
  * ------------------------------------------------
  * 身份两种（登录后只存当前标签页 sessionStorage，刷新不丢、关页即清）：
- *   admin —— NEXUS_ADMIN_TOKEN，走 /nexus/admin/*（看全部/签发/充值）
+ *   admin —— 具名管理员短期会话；服务器令牌仅作应急入口
  *   oem   —— 会话令牌（邮箱登录签发），走 /nexus/oem/*（只见自己）
  * 所有权限由服务端强制；任何 401 一律清会话回登录页。
  */
@@ -280,6 +280,7 @@
     licenses: "授权与申请",
     customers: "OEM 客户",
     billing: "支付与订单",
+    security: "平台安全",
   };
   function adminPageFromHash() {
     var value = window.location.hash.replace(/^#/, "").trim();
@@ -320,7 +321,8 @@
     $("#btn-logout").hidden = !auth;
     if (auth) {
       $("#who").className = "who" + (auth.mode === "admin" ? " admin" : "");
-      $("#who").textContent = auth.mode === "admin" ? "平台超管" : (auth.email || "OEM");
+      $("#who").textContent = auth.mode === "admin"
+        ? (auth.display_name || "平台超管") : (auth.email || "OEM");
     }
   }
   function route() {
@@ -334,6 +336,7 @@
       show("#view-admin");
       selectAdminPage(adminPageFromHash(), false);
       loadAdmin();
+      loadAdminSecurity();
     }
     else {
       show("#view-oem");
@@ -389,16 +392,42 @@
 
   $("#form-admin").addEventListener("submit", function (e) {
     e.preventDefault();
-    var tok = e.target.token.value.trim();
-    // 用一次只读请求验证令牌有效性，有效才落库进入
-    api("/nexus/admin/instances", { token: tok, noKick: true })
-      .then(function () { setAuth({ mode: "admin", token: tok }); route(); })
-      .catch(function (err) { loginErr(err.message === "管理令牌无效" ? "令牌无效" : err.message); });
+    var f = e.target;
+    api("/nexus/admin/auth/login", {
+      body: { username: f.username.value, password: f.password.value }, noKick: true,
+    }).then(function (r) {
+      setAuth({
+        mode: "admin", token: r.token, admin_id: r.admin.id,
+        display_name: r.admin.display_name, auth_kind: "named_session",
+      });
+      // 登录成功后立刻清空 DOM 中的密码，避免共享屏幕或调试工具留下敏感信息。
+      f.password.value = "";
+      route();
+    }).catch(function (err) { loginErr(err.message); });
+  });
+
+  $("#btn-emergency-login").addEventListener("click", function () {
+    var f = $("#form-admin");
+    var tok = f.emergency_token.value.trim();
+    if (!tok) { loginErr("请填写服务器应急令牌"); return; }
+    api("/nexus/admin/me", { token: tok, noKick: true }).then(function (r) {
+      setAuth({
+        mode: "admin", token: tok, admin_id: 0,
+        display_name: r.admin.display_name || "服务器应急令牌",
+        auth_kind: "emergency_token",
+      });
+      // 应急令牌验证成功后立刻从输入框移除，只让它保留在当前浏览器会话中。
+      f.emergency_token.value = "";
+      route();
+    }).catch(function (err) { loginErr(err.message); });
   });
 
   $("#btn-logout").addEventListener("click", function () {
     var auth = getAuth();
     if (auth && auth.mode === "oem") api("/nexus/oem/logout", { method: "POST", body: {}, noKick: true }).catch(function () {});
+    if (auth && auth.mode === "admin" && auth.auth_kind === "named_session") {
+      api("/nexus/admin/auth/logout", { method: "POST", body: {}, noKick: true }).catch(function () {});
+    }
     clearAuth(); route();
   });
 
@@ -1693,6 +1722,65 @@
     });
   });
 
+  var currentAdminIdentity = { id: 0, auth_kind: "" };
+
+  function auditObjectLabel(event) {
+    var labels = {
+      admin_operation: "后台接口", admin: "管理员", key: "KEY",
+      key_request: "授权申请", oem: "OEM", withdrawal: "提现",
+    };
+    return (labels[event.object_type] || event.object_type || "—") +
+      (Number(event.object_id) ? " #" + event.object_id : "");
+  }
+
+  function loadAdminSecurity() {
+    var actor = encodeURIComponent($("#admin-audit-actor").value.trim());
+    var objectType = encodeURIComponent($("#admin-audit-type").value);
+    Promise.all([
+      api("/nexus/admin/me"),
+      api("/nexus/admin/admins"),
+      api("/nexus/admin/audit?limit=200&actor=" + actor + "&object_type=" + objectType),
+    ]).then(function (rs) {
+      var identity = rs[0].admin || {};
+      var admins = rs[1].admins || [];
+      var events = rs[2].events || [];
+      currentAdminIdentity = identity;
+      var emergency = identity.auth_kind === "emergency_token";
+      $("#admin-auth-kind").className = "badge " + (emergency ? "warning" : "active");
+      $("#admin-auth-kind").textContent = emergency ? "应急令牌" : "具名会话";
+      $("#admin-current-identity").innerHTML = emergency
+        ? "<b>服务器应急令牌</b><span>请创建具名管理员并重新登录；该身份的操作仍会写入审计。</span>"
+        : "<b>" + esc(identity.display_name || "—") + "</b><span>管理员 #" +
+          esc(identity.id) + " · 会话最长 12 小时，可主动退出。</span>";
+      $("#nav-count-admins").textContent = String(admins.filter(function (a) { return a.status === "active"; }).length);
+      $("#admin-admins tbody").innerHTML = admins.map(function (item) {
+        var self = Number(identity.id) === Number(item.id);
+        return "<tr><td>" + item.id + "</td><td><b>" + esc(item.username) +
+          "</b></td><td>" + esc(item.display_name) + "</td><td>超级管理员</td><td>" +
+          badge(item.status) + "</td><td>" + fmtTime(item.last_login_ts) + "</td><td>" +
+          fmtTime(item.created_ts) + "</td><td class=\"actions\">" +
+          '<button class="ghost small" data-admin-reset="' + item.id + '">重置密码</button>' +
+          (item.status === "active"
+            ? '<button class="ghost small danger-text" data-admin-status="' + item.id +
+              '" data-next="disabled"' + (self ? " disabled" : "") + '>停用</button>'
+            : '<button class="ghost small" data-admin-status="' + item.id +
+              '" data-next="active">启用</button>') + "</td></tr>";
+      }).join("") || '<tr><td colspan="8" class="empty">尚未创建具名管理员，请使用上方表单创建首个账号。</td></tr>';
+      $("#admin-audit tbody").innerHTML = events.map(function (event) {
+        var transition = event.from_state || event.to_state
+          ? esc(event.from_state || "—") + " → " + esc(event.to_state || "—") : "—";
+        return "<tr><td>" + fmtTime(event.created_ts) + "</td><td><b>" +
+          esc(event.actor_label || event.actor_type || "系统") + "</b></td><td>" +
+          esc(auditObjectLabel(event)) + "</td><td><code>" + esc(event.action) +
+          "</code></td><td>" + transition + "</td><td><code>" +
+          esc(event.source_ip || "—") + "</code></td><td>" + esc(event.note || "—") +
+          "</td></tr>";
+      }).join("") || '<tr><td colspan="7" class="empty">暂无符合条件的审计记录。</td></tr>';
+    }).catch(function (err) {
+      toast("平台安全数据读取失败：" + err.message, true);
+    });
+  }
+
   function loadAdmin() {
     Promise.all([
       api("/nexus/admin/instances"),
@@ -2060,9 +2148,62 @@
   $("#btn-refresh").addEventListener("click", loadAdmin);
   $("#btn-release-refresh").addEventListener("click", loadAdmin);
   $("#btn-release-generate").addEventListener("click", function () { loadReleaseDraft(true); });
-  $("#btn-admin-refresh").addEventListener("click", loadAdmin);
+  $("#btn-admin-refresh").addEventListener("click", function () {
+    loadAdmin(); loadAdminSecurity();
+  });
   $("#btn-oem-refresh").addEventListener("click", function () {
     loadOem();
+  });
+
+  $("#form-admin-create").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var form = e.target;
+    api("/nexus/admin/admins", { body: {
+      username: form.username.value,
+      display_name: form.display_name.value,
+      password: form.password.value,
+    } }).then(function () {
+      form.reset();
+      toast("具名管理员已创建，请让对方使用自己的账号登录");
+      loadAdminSecurity();
+    }).catch(function (err) { toast(err.message, true); });
+  });
+
+  $("#btn-admin-audit-filter").addEventListener("click", loadAdminSecurity);
+  $("#admin-audit-actor").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") loadAdminSecurity();
+  });
+
+  $("#admin-admins tbody").addEventListener("click", function (e) {
+    var button = e.target.closest("button");
+    if (!button) return;
+    if (button.dataset.adminStatus) {
+      var adminId = Number(button.dataset.adminStatus);
+      var next = button.dataset.next;
+      var label = next === "disabled" ? "停用" : "启用";
+      uiConfirm("确认" + label + "这个管理员账号？停用会立即撤销其全部会话。", next === "disabled", "确认" + label)
+        .then(function (ok) {
+          if (!ok) return;
+          return api("/nexus/admin/admin_status", { body: { admin_id: adminId, status: next } })
+            .then(function () { toast("管理员已" + label); loadAdminSecurity(); });
+        }).catch(function (err) { toast(err.message, true); });
+    }
+    if (button.dataset.adminReset) {
+      var resetId = Number(button.dataset.adminReset);
+      uiPrompt("输入该管理员的新密码（至少 8 位，需同时含字母和数字）", "新密码")
+        .then(function (password) {
+          if (password === null) return;
+          return api("/nexus/admin/admin_password", { body: { admin_id: resetId, new_password: password } })
+            .then(function () {
+              if (Number(currentAdminIdentity.id) === resetId) {
+                clearAuth(); route(); toast("密码已重置，请使用新密码重新登录");
+              } else {
+                toast("密码已重置，该管理员的旧会话已全部失效");
+                loadAdminSecurity();
+              }
+            });
+        }).catch(function (err) { toast(err.message, true); });
+    }
   });
 
   // 输入版本号时自动补对应 tag；若管理员已经手动改过 tag，就不强行覆盖。
