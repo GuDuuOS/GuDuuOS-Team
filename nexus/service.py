@@ -719,6 +719,55 @@ class NexusHandler(BaseHTTPRequestHandler):
             self._with_session(_create_transfer)
             return
 
+        # OEM 购买授权会在企业转账时携带最多 8MB 凭证，必须在通用
+        # JSON 体积限制前单独读取。登录态和 OEM 归属仍由服务端会话强制。
+        if path == "/nexus/oem/license_checkout":
+            checkout_body = self._read_large_json(12 * 1024 * 1024)
+            if checkout_body is None:
+                return
+            method = str(checkout_body.get("payment_method", "")).strip()
+            image_data = b""
+            content_type = ""
+            if method == "corporate_transfer":
+                try:
+                    image_data, content_type = manual_transfer.decode_image(
+                        str(checkout_body.get("image_base64", "")),
+                        str(checkout_body.get("content_type", "")),
+                    )
+                except FleetError as error:
+                    self._err(error.http_status, error.code, error.message)
+                    return
+
+            def _license_checkout(s):
+                account = self._oem(s)
+                if account is None:
+                    return
+                details = checkout_body.get("transfer_details")
+                result = pay.create_license_checkout(
+                    s,
+                    account.id,
+                    method,
+                    channel=str(checkout_body.get("channel", "")),
+                    note=str(checkout_body.get("note", "")),
+                    deployment_domain=str(
+                        checkout_body.get("deployment_domain", "")
+                    ),
+                    purpose=str(checkout_body.get("purpose", "")),
+                    expected_date=str(checkout_body.get("expected_date", "")),
+                    requested_tokens=int(
+                        checkout_body.get("requested_tokens") or 0
+                    ),
+                    image_data=image_data,
+                    content_type=content_type,
+                    filename=str(checkout_body.get("filename", "")),
+                    transfer_details=details if isinstance(details, dict) else {},
+                    source_ip=self._client_ip(),
+                )
+                self._json(201, result)
+
+            self._with_session(_license_checkout)
+            return
+
         body = self._read_body()
 
         if path == "/nexus/redeem":
@@ -912,13 +961,22 @@ class NexusHandler(BaseHTTPRequestHandler):
             self._with_session(_request_action)
             return
 
-        # —— 在线购买/充值（订单创建；topup 校验实例归属）——
+        # —— Token 充值订单（KEY 必须走上方 license_checkout）——
         if path == "/nexus/oem/order":
             def _order(s):
                 oem = self._oem(s)
                 if oem is None:
                     return
                 kind = str(body.get("kind", ""))
+                if kind != "topup":
+                    # 旧端点曾允许直接买 KEY，会绕过部署资料、付款关联和安全领取。
+                    # 新请求必须统一进入授权购买流程；旧的待支付订单仍可正常回调履约。
+                    self._err(
+                        409,
+                        "NEXUS_LICENSE_CHECKOUT_REQUIRED",
+                        "购买节点授权请使用统一授权购买流程",
+                    )
+                    return
                 inst = body.get("instance_id")
                 if kind == "topup" and not oem_svc.owns_instance(s, oem.id, int(inst or 0)):
                     self._err(403, "NEXUS_FORBIDDEN", "该实例不属于你的账号")
@@ -957,7 +1015,17 @@ class NexusHandler(BaseHTTPRequestHandler):
             def _notify(s):
                 provider = pay._PROVIDERS[channel]
                 info = provider.verify_notify(dict(self.headers), b"")
-                pay.mark_paid(s, info["order_no"], info.get("provider_txn", ""))
+                pay.mark_paid(
+                    s,
+                    info["order_no"],
+                    info.get("provider_txn", ""),
+                    paid_amount_cents=(
+                        int(info["amount_cents"])
+                        if info.get("amount_cents") is not None
+                        else None
+                    ),
+                    paid_currency=info.get("currency", "CNY"),
+                )
                 # 支付宝要求回 success 文本；这里统一 JSON,接真 API 时按渠道要求调整
                 self._json(200, {"ok": True})
             self._with_session(_notify)
@@ -1078,6 +1146,23 @@ class NexusHandler(BaseHTTPRequestHandler):
                                 source_ip=self._client_ip(),
                             )
                         },
+                    )
+                )
+            return
+
+        if path == "/nexus/admin/license_transfer_decide":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        pay.decide_license_transfer(
+                            s,
+                            int(body.get("request_id") or 0),
+                            bool(body.get("approve")),
+                            str(body.get("note", "")),
+                            actor_label="平台超级管理员",
+                            source_ip=self._client_ip(),
+                        ),
                     )
                 )
             return

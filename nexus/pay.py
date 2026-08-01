@@ -2,8 +2,9 @@
 
 商业定调（负责人 2026-08-01 更新）：
     - 国内市场：支付宝 + 微信；海外市场：Stripe + PayPal + USDT；
-    - 门户直接购买授权码（付款即出码）+ token 充值；
-    - 人工「申请→批准」通道保留（谈价/定制客户走它）。
+    - 节点授权统一走“申请 + 付款方式”：在线验签自动签发、企业转账到账确认
+      后签发、合同/免费客户人工审批；
+    - Token 充值继续使用独立订单，不需要重复提交部署资料。
 
 分层：
     - 定价（NexusSetting.pricing）：超管控制台可改、即改即生效；
@@ -15,8 +16,8 @@
       走通 下单→回调→履约 全链路，不碰真钱。
 
 履约（mark_paid，**幂等**）：
-    - kind=key   → 签发 KEY + 自动归属买家 + 明文挂单交付（装机兑换后清空，
-      与申请单同策略，见 oem.clear_plain_by_key）；
+    - kind=key   → 新流程必须关联授权申请，回调验签后自动批准并把 KEY
+      加密交付给所属 OEM；仅保留旧订单的明文兼容路径；
     - kind=topup → fleet.topup 入钱包（备注带订单号，流水可对账）。
 """
 
@@ -30,7 +31,13 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import case, func, select
 
-from nexus.db import NexusOrder, NexusSetting
+from nexus.db import (
+    NexusKeyRequest,
+    NexusLicensePayment,
+    NexusManualTransfer,
+    NexusOrder,
+    NexusSetting,
+)
 from nexus.fleet import FleetError
 
 # ---------- 定价 ----------
@@ -346,32 +353,242 @@ def create_order(
     return {"order": public_order(order, owner=True), "pay": pay}
 
 
-def mark_paid(s, order_no: str, provider_txn: str = "") -> Dict[str, Any]:
+def create_license_checkout(
+    s,
+    oem_id: int,
+    method: str,
+    *,
+    channel: str = "",
+    note: str = "",
+    deployment_domain: str = "",
+    purpose: str = "",
+    expected_date: str = "",
+    requested_tokens: int = 0,
+    image_data: bytes = b"",
+    content_type: str = "",
+    filename: str = "",
+    transfer_details: Optional[Dict[str, Any]] = None,
+    source_ip: str = "",
+) -> Dict[str, Any]:
+    """创建“授权申请 + 付款方式”的原子购买流程。
+
+    在线支付和企业转账的金额/Token 都取当前定价快照，不信任浏览器
+    传入的金额。任何一步失败由 HTTP 层回滚整个事务，不留孤儿申请。
+    """
+    from nexus import audit, manual_transfer, oem as oem_svc
+
+    selected = (method or "").strip().lower()
+    if selected not in ("online", "corporate_transfer", "manual_review"):
+        raise FleetError("NEXUS_BAD_PAYMENT_METHOD", "请选择有效的付款方式")
+    pricing = get_pricing(s)
+    price = int(pricing["key_price_cents"])
+    grant = int(pricing["key_token_grant"])
+    if selected in ("online", "corporate_transfer") and price <= 0:
+        raise FleetError(
+            "NEXUS_NOT_FOR_SALE",
+            "节点授权尚未设置售价，请选择合同/免费授权申请",
+        )
+    effective_tokens = grant if selected != "manual_review" else int(requested_tokens or 0)
+    request = oem_svc.request_key(
+        s,
+        int(oem_id),
+        note,
+        deployment_domain=deployment_domain,
+        purpose=purpose,
+        expected_date=expected_date,
+        requested_tokens=effective_tokens,
+        source_ip=source_ip,
+    )
+    request_id = int(request["id"])
+    now = int(time.time() * 1000)
+    result: Dict[str, Any] = {"request": request, "pay": None}
+    if selected == "online":
+        if not channel:
+            raise FleetError("NEXUS_BAD_CHANNEL", "请选择在线支付渠道")
+        checkout = create_order(s, int(oem_id), "key", channel)
+        order = s.execute(
+            select(NexusOrder).where(
+                NexusOrder.order_no == checkout["order"]["order_no"]
+            )
+        ).scalar_one()
+        link = NexusLicensePayment(
+            request_id=request_id,
+            oem_id=int(oem_id),
+            method="online",
+            status="pending_payment",
+            order_id=order.id,
+            amount_cents=price,
+            currency="CNY",
+            created_ts=now,
+            updated_ts=now,
+        )
+        s.add(link)
+        s.flush()
+        checkout["order"]["request_id"] = request_id
+        result.update(checkout)
+    elif selected == "corporate_transfer":
+        if not image_data:
+            raise FleetError(
+                "NEXUS_TRANSFER_VOUCHER_REQUIRED", "企业转账必须上传付款凭证"
+            )
+        clean_transfer_details = transfer_details or {}
+        payer_company = str(
+            clean_transfer_details.get("payer_company", "") or ""
+        ).strip()
+        if not payer_company:
+            # 浏览器的 required 只能改善交互，接口仍须独立校验，防止绕过页面
+            # 提交一张无法关联付款主体的图片给财务审核。
+            raise FleetError(
+                "NEXUS_TRANSFER_PAYER_REQUIRED", "请填写银行回单上的付款企业"
+            )
+        transfer = manual_transfer.create_transfer(
+            s,
+            amount_cents=price,
+            image_data=image_data,
+            content_type=content_type,
+            filename=filename,
+            oem_id=int(oem_id),
+            purpose=f"节点授权申请 #{request_id}",
+            details={**clean_transfer_details, "payer_company": payer_company},
+            confirmed=False,
+        )
+        s.add(
+            NexusLicensePayment(
+                request_id=request_id,
+                oem_id=int(oem_id),
+                method="corporate_transfer",
+                status="pending_review",
+                transfer_id=int(transfer["transfer_id"]),
+                amount_cents=price,
+                currency="CNY",
+                created_ts=now,
+                updated_ts=now,
+            )
+        )
+        result["transfer"] = transfer
+    else:
+        s.add(
+            NexusLicensePayment(
+                request_id=request_id,
+                oem_id=int(oem_id),
+                method="manual_review",
+                status="pending_review",
+                amount_cents=0,
+                currency="CNY",
+                created_ts=now,
+                updated_ts=now,
+            )
+        )
+    audit.record(
+        s,
+        object_type="key_request",
+        object_id=request_id,
+        action="checkout_created",
+        actor_type="oem",
+        actor_label=f"OEM #{oem_id}",
+        source_ip=source_ip,
+        from_state="pending",
+        to_state="pending",
+        metadata={
+            "method": selected,
+            "channel": channel if selected == "online" else "",
+            "amount_cents": price if selected != "manual_review" else 0,
+        },
+    )
+    s.flush()
+    result["request"] = oem_svc.request_detail(s, request_id)
+    return result
+
+
+def mark_paid(
+    s,
+    order_no: str,
+    provider_txn: str = "",
+    *,
+    paid_amount_cents: Optional[int] = None,
+    paid_currency: str = "CNY",
+) -> Dict[str, Any]:
     """支付成功履约（渠道回调 / mock 确认统一入口）。**幂等**：已 paid 直接返回。
 
     履约动作与人工批准（oem.decide_request）同构：付款=自动批准。
     """
     from nexus import fleet, oem as oem_svc  # 延迟导入避免环
 
-    order = s.execute(
+    # 新授权单涉及申请、付款关联和订单三张表。先无锁定位不可变主键，再统一按
+    # “申请 → 付款关联 → 订单”顺序加锁；撤回、拒绝和企业转账确认也遵循同一顺序，
+    # 防止支付回调与用户撤回同时到达时互相覆盖或形成数据库死锁。
+    located_order = s.execute(
         select(NexusOrder).where(NexusOrder.order_no == order_no)
     ).scalar_one_or_none()
+    if located_order is None:
+        raise FleetError("NEXUS_ORDER_NOT_FOUND", "订单不存在", 404)
+    located_link = s.execute(
+        select(NexusLicensePayment).where(
+            NexusLicensePayment.order_id == located_order.id
+        )
+    ).scalar_one_or_none()
+    if located_link is not None:
+        s.execute(
+            select(NexusKeyRequest)
+            .where(NexusKeyRequest.id == located_link.request_id)
+            .with_for_update()
+        ).scalar_one_or_none()
+        link = s.execute(
+            select(NexusLicensePayment)
+            .where(NexusLicensePayment.request_id == located_link.request_id)
+            .with_for_update()
+        ).scalar_one()
+    else:
+        link = None
+    order = s.execute(
+        select(NexusOrder)
+        .where(NexusOrder.id == located_order.id)
+        .with_for_update()
+    ).scalar_one()
     if order is None:
         raise FleetError("NEXUS_ORDER_NOT_FOUND", "订单不存在", 404)
     if order.status == "paid":
-        return public_order(order, owner=True)  # 渠道重复回调：幂等放行
+        return _public_order_with_link(s, order, owner=True)  # 重复回调幂等放行
     if order.status != "pending":
         raise FleetError("NEXUS_ORDER_CLOSED", "订单已关闭", 409)
+    if paid_amount_cents is not None and int(paid_amount_cents) != int(order.amount_cents):
+        raise FleetError("NEXUS_PAY_AMOUNT_MISMATCH", "支付回调金额与订单不一致", 409)
+    if (paid_currency or "CNY").strip().upper() != "CNY":
+        raise FleetError("NEXUS_PAY_CURRENCY_MISMATCH", "支付回调币种与订单不一致", 409)
 
     if order.kind == "key":
-        issued = fleet.issue_keys(
-            s, count=1, note=f"在线购买 订单{order.order_no}", token_grant=int(order.tokens)
-        )[0]
-        order.key_id = issued["id"]
-        order.key_plain = issued["key"]
-        # 自动归属买家（与申请批准同一动作），门户即见
-        from nexus.db import NexusKeyClaim
-        s.add(NexusKeyClaim(key_id=issued["id"], oem_id=order.oem_id))
+        if link is not None:
+            if link.status not in ("pending_payment", "paid"):
+                raise FleetError(
+                    "NEXUS_ORDER_CLOSED", "授权申请已撤回或关闭，不能继续履约", 409
+                )
+            link.status = "paid"
+            link.updated_ts = int(time.time() * 1000)
+            request = oem_svc.approve_paid_request(
+                s,
+                link.request_id,
+                int(order.tokens),
+                action="payment_auto_approve",
+                actor_label=f"支付回调 · {order.channel}",
+                note=f"在线订单 {order.order_no} 已验签到账",
+            )
+            order.key_id = int(request["key_id"])
+            order.key_plain = ""
+            link.status = "fulfilled"
+            link.updated_ts = int(time.time() * 1000)
+        else:
+            # 兼容 1.12 之前已创建但尚未付款的旧订单，避免升级后无法履约。
+            issued = fleet.issue_keys(
+                s,
+                count=1,
+                note=f"在线购买 订单{order.order_no}",
+                token_grant=int(order.tokens),
+            )[0]
+            order.key_id = issued["id"]
+            order.key_plain = issued["key"]
+            from nexus.db import NexusKeyClaim
+
+            s.add(NexusKeyClaim(key_id=issued["id"], oem_id=order.oem_id))
     else:  # topup
         fleet.topup(
             s, int(order.instance_id), int(order.tokens), note=f"在线充值 订单{order.order_no}"
@@ -382,7 +599,107 @@ def mark_paid(s, order_no: str, provider_txn: str = "") -> Dict[str, Any]:
     order.paid_ts = int(time.time() * 1000)
     # 静态检查友好：oem_svc 引用留给将来清明文用（redeem 时统一清 order.key_plain）
     _ = oem_svc
-    return public_order(order, owner=True)
+    return _public_order_with_link(s, order, owner=True)
+
+
+def decide_license_transfer(
+    s,
+    request_id: int,
+    approve: bool,
+    note: str,
+    *,
+    actor_label: str = "平台超级管理员",
+    source_ip: str = "",
+) -> Dict[str, Any]:
+    """超管核对企业转账真实到账后，原子记收入并签发 KEY。
+
+    凭证、支付关联、申请状态、KEY 与审计事件在同一数据库事务中提交；
+    任何一步失败都不会出现“计了收入但没发 KEY”的半完成状态。
+    """
+    from nexus import audit, manual_transfer, oem as oem_svc
+
+    located_link = s.execute(
+        select(NexusLicensePayment).where(
+            NexusLicensePayment.request_id == int(request_id)
+        )
+    ).scalar_one_or_none()
+    if located_link is None:
+        raise FleetError("NEXUS_TRANSFER_NOT_FOUND", "该申请没有待审企业转账", 404)
+    # 与支付回调、申请撤回共用锁顺序：申请 → 付款关联 → 凭证。
+    s.execute(
+        select(NexusKeyRequest)
+        .where(NexusKeyRequest.id == int(request_id))
+        .with_for_update()
+    ).scalar_one_or_none()
+    link = s.execute(
+        select(NexusLicensePayment)
+        .where(NexusLicensePayment.request_id == int(request_id))
+        .with_for_update()
+    ).scalar_one_or_none()
+    if link is None or link.method != "corporate_transfer" or not link.transfer_id:
+        raise FleetError("NEXUS_TRANSFER_NOT_FOUND", "该申请没有待审企业转账", 404)
+    transfer = s.execute(
+        select(NexusManualTransfer)
+        .where(NexusManualTransfer.id == int(link.transfer_id))
+        .with_for_update()
+    ).scalar_one_or_none()
+    if transfer is None:
+        raise FleetError("NEXUS_TRANSFER_NOT_FOUND", "企业转账凭证不存在", 404)
+    clean_note = (note or "").strip()[:500]
+    if not approve and not clean_note:
+        raise FleetError("NEXUS_DECIDE_NOTE_REQUIRED", "拒绝转账凭证必须填写原因")
+    if approve:
+        if link.status == "fulfilled":
+            return {
+                "request": oem_svc.request_detail(s, link.request_id),
+                "transfer": manual_transfer.public_transfer(transfer),
+            }
+        manual_transfer.decide_submission(s, transfer.id, True)
+        link.status = "paid"
+        link.updated_ts = int(time.time() * 1000)
+        request_snapshot = oem_svc.request_detail(s, link.request_id)
+        request = oem_svc.approve_paid_request(
+            s,
+            link.request_id,
+            int(request_snapshot.get("requested_tokens") or 0),
+            action="transfer_confirm",
+            actor_label=actor_label,
+            source_ip=source_ip,
+            note=clean_note or f"企业转账 {transfer.transfer_no} 已核对到账",
+        )
+        link.status = "fulfilled"
+        link.updated_ts = int(time.time() * 1000)
+        audit.record(
+            s,
+            object_type="manual_transfer",
+            object_id=transfer.id,
+            action="confirm_and_fulfill",
+            actor_type="admin",
+            actor_label=actor_label,
+            source_ip=source_ip,
+            from_state="pending_review",
+            to_state="confirmed",
+            note=clean_note,
+            metadata={"request_id": link.request_id, "key_id": request["key_id"]},
+        )
+    else:
+        manual_transfer.decide_submission(s, transfer.id, False)
+        request = oem_svc.decide_request(
+            s,
+            link.request_id,
+            False,
+            decide_note=clean_note,
+            action="reject",
+            actor_label=actor_label,
+            source_ip=source_ip,
+        )
+        link.status = "rejected"
+        link.updated_ts = int(time.time() * 1000)
+    s.flush()
+    return {
+        "request": oem_svc.request_detail(s, link.request_id),
+        "transfer": manual_transfer.public_transfer(transfer),
+    }
 
 
 def clear_order_plain_by_key_id(s, key_id: int) -> None:
@@ -414,15 +731,31 @@ def public_order(o: NexusOrder, owner: bool = False) -> Dict[str, Any]:
     return out
 
 
+def _public_order_with_link(
+    s, order: NexusOrder, owner: bool = False
+) -> Dict[str, Any]:
+    """在订单公开字段上补充授权申请关联，不暴露任何 KEY 密文。"""
+    out = public_order(order, owner=owner)
+    link = s.execute(
+        select(NexusLicensePayment).where(NexusLicensePayment.order_id == order.id)
+    ).scalar_one_or_none()
+    if link is not None:
+        out["request_id"] = int(link.request_id)
+        out["fulfillment_status"] = str(link.status)
+        # 新流程的 KEY 只在申请安全交付窗口领取，订单接口永不返回明文。
+        out.pop("key", None)
+    return out
+
+
 def my_orders(s, oem_id: int) -> List[Dict[str, Any]]:
-    """买家自己的订单（含已支付 KEY 单的明文——交付通道之一）。"""
+    """买家自己的订单；新授权单的 KEY 仅走申请安全交付窗口。"""
     rows = s.execute(
         select(NexusOrder)
         .where(NexusOrder.oem_id == int(oem_id))
         .order_by(NexusOrder.id.desc())
         .limit(50)
     ).scalars().all()
-    return [public_order(r, owner=True) for r in rows]
+    return [_public_order_with_link(s, r, owner=True) for r in rows]
 
 
 def list_orders(s) -> List[Dict[str, Any]]:
@@ -436,7 +769,7 @@ def list_orders(s) -> List[Dict[str, Any]]:
     rows = s.execute(
         select(NexusOrder).order_by(NexusOrder.id.desc()).limit(200)
     ).scalars().all()
-    combined = [public_order(r) for r in rows]
+    combined = [_public_order_with_link(s, r) for r in rows]
     combined.extend(manual_transfer.list_transfers(s, limit=200))
     combined.sort(key=lambda item: int(item.get("created_ts") or 0), reverse=True)
     return combined[:200]
@@ -498,9 +831,11 @@ def finance_summary(s) -> Dict[str, Any]:
         + manual["manual_transfer_revenue_cents"],
         "paid_revenue_30d_cents": online_revenue_30d
         + manual["manual_transfer_30d_cents"],
-        "pending_amount_cents": int(row[2] or 0),
+        "pending_amount_cents": int(row[2] or 0)
+        + manual["manual_transfer_pending_cents"],
         "paid_order_count": online_paid_count + manual["manual_transfer_count"],
-        "pending_order_count": int(row[4] or 0),
+        "pending_order_count": int(row[4] or 0)
+        + manual["manual_transfer_pending_count"],
         "online_paid_revenue_cents": online_revenue,
         "online_paid_order_count": online_paid_count,
         **manual,

@@ -366,6 +366,8 @@
     alipay: "支付宝", wechat: "微信支付", stripe: "Stripe", paypal: "PayPal",
     usdt: "USDT", mock: "模拟支付(开发)", corporate_transfer: "企业转账（人工）"
   };
+  var licensePricing = { key_price_cents: 0, key_token_grant: 0 };
+  var licenseChannels = {};
   function fmtYuan(cents) {
     var y = (Number(cents) || 0) / 100;
     return "¥" + (y % 1 ? y.toFixed(2) : String(y));
@@ -422,6 +424,8 @@
   // 渲染「购买与充值」区（定价 + 渠道可用性 + 我的实例下拉）
   function renderShop(products, instances) {
     var pricing = products.pricing, ch = products.channels;
+    licensePricing = pricing;
+    licenseChannels = ch || {};
     // 渠道按钮：可用=亮橙可点；未配凭据=灰禁用(开通中)
     function chButtons(attr, extra) {
       return ["alipay", "wechat", "mock"].filter(function (c) { return c !== "mock" || ch.mock; })
@@ -435,7 +439,7 @@
     var topupOn = pricing.topup_packs.length > 0 && instances.length > 0;
     $("#shop-key").hidden = !keyOn;
     if (keyOn) {
-      $("#shop-key-desc").textContent = "附赠 " + fmtTokens(pricing.key_token_grant) + " token · 付款后授权码即时出码";
+      $("#shop-key-desc").textContent = "附赠 " + fmtTokens(pricing.key_token_grant) + " token · 支付与部署资料统一进入授权申请";
       $("#shop-key-btns").innerHTML = '<span class="shop-price">' + fmtYuan(pricing.key_price_cents) + "</span>" + chButtons("buykey");
     }
     $("#shop-topup").hidden = !topupOn;
@@ -452,17 +456,69 @@
       $("#shop-topup-btns").innerHTML = chButtons("buytopup");
     }
     $("#shop-none").hidden = keyOn || topupOn;
+    var availableChannels = ["alipay", "wechat", "stripe", "paypal", "usdt", "mock"]
+      .filter(function (name) { return !!licenseChannels[name]; });
+    $("#license-channel").innerHTML = availableChannels.map(function (name) {
+      return '<option value="' + name + '">' + esc(CH_ZH[name] || name) + "</option>";
+    }).join("") || '<option value="">暂无可用在线渠道</option>';
+    var method = $("#license-payment-method");
+    if (method && !keyOn && method.value !== "manual_review") method.value = "manual_review";
+    syncLicensePaymentForm();
   }
 
+  function syncLicensePaymentForm() {
+    var form = $("#form-request");
+    if (!form) return;
+    var method = form.payment_method.value;
+    var editing = !!editingRequestId;
+    var transfer = method === "corporate_transfer" && !editing;
+    var online = method === "online" && !editing;
+    $("#license-transfer-fields").hidden = !transfer;
+    $("#license-online-channel").hidden = !online;
+    $("#license-manual-tokens").hidden = method !== "manual_review";
+    form.payer_company.required = transfer;
+    form.voucher.required = transfer;
+    form.payment_method.disabled = editing;
+    form.requested_tokens.disabled = editing && method !== "manual_review";
+    var priced = Number(licensePricing.key_price_cents) > 0;
+    var summary = $("#license-price-summary");
+    if (editing) {
+      summary.textContent = "正在修改申请资料，已选付款方式和金额不变。";
+    } else if (method === "manual_review") {
+      summary.textContent = "合同/免费授权不创建付款单，由超管人工决定是否签发。";
+    } else if (priced) {
+      summary.textContent = "应付 " + fmtYuan(licensePricing.key_price_cents) + " · 附赠 " +
+        fmtTokens(licensePricing.key_token_grant) + " Token";
+    } else {
+      summary.textContent = "平台尚未设置授权售价，请选择合同/免费授权。";
+    }
+    var submit = form.querySelector('button[type="submit"]');
+    if (!editing) {
+      submit.textContent = method === "corporate_transfer" ? "提交转账凭证" :
+        (method === "online" ? "创建订单并支付" : "提交人工授权申请");
+    }
+    submit.disabled = !editing && (
+      ((method === "online" || method === "corporate_transfer") && !priced) ||
+      (method === "online" && !form.channel.value)
+    );
+  }
+
+  $("#license-payment-method").addEventListener("change", syncLicensePaymentForm);
+
   // 渲染「我的订单」
-  var ORDER_ST = { pending: ["warning", "待支付"], paid: ["active", "已支付"], closed: ["idle", "已关闭"] };
+  var ORDER_ST = {
+    pending: ["warning", "待支付"], pending_review: ["warning", "待核对到账"],
+    paid: ["active", "已支付"], rejected: ["revoked", "已拒绝"],
+    cancelled: ["idle", "已撤回"], closed: ["idle", "已关闭"],
+  };
   function renderOrders(orders) {
     $("#panel-orders").hidden = orders.length === 0;
     $("#oem-orders tbody").innerHTML = orders.map(function (o) {
       var st = ORDER_ST[o.status] || ["idle", o.status];
       var what = o.kind === "key" ? "授权码 ×1" : "充值 " + fmtTokens(o.tokens) + "（实例 #" + o.instance_id + "）";
       var keyCell = o.key ? '<b style="user-select:all">' + esc(o.key) + "</b>"
-        : (o.kind === "key" && o.status === "paid" ? '<span class="zh">已使用</span>' : "—");
+        : (o.kind === "key" && o.status === "paid"
+          ? '<span class="zh">' + (o.request_id ? "请在授权申请中领取" : "已使用") + "</span>" : "—");
       return "<tr><td>" + esc(o.order_no) + '</td><td class="zh">' + what + "</td><td>" + fmtYuan(o.amount_cents) + "</td>" +
         '<td class="zh">' + (CH_ZH[o.channel] || o.channel) + '</td><td class="zh"><span class="badge ' + st[0] + '">' + st[1] + "</span></td>" +
         "<td>" + keyCell + "</td><td>" + fmtTime(o.created_ts) + "</td></tr>";
@@ -877,6 +933,14 @@
     pending: "warning", needs_info: "needs_info", approved: "active",
     rejected: "revoked", cancelled: "cancelled",
   };
+  var PAYMENT_METHOD_ZH = {
+    online: "在线支付", corporate_transfer: "企业转账", manual_review: "合同/免费授权",
+  };
+  var PAYMENT_STATUS_ZH = {
+    pending_payment: "待在线支付", pending_review: "待审核", paid: "已到账待履约",
+    fulfilled: "已到账并签发", rejected: "已拒绝", cancelled: "已撤回",
+    manual_review: "人工审批",
+  };
   var DELIVERY_LABEL = {
     none: "尚未生成", ready: "待客户领取", legacy_ready: "待客户领取",
     revealed: "领取窗口开启", locked: "查看窗口已结束", expired: "领取期已过",
@@ -905,14 +969,19 @@
       var message = q.decide_note && (q.status === "rejected" || q.status === "needs_info")
         ? '<div class="hint">' + esc(q.decide_note) + "</div>" : "";
       var actions = q.status === "pending"
-        ? '<button class="ghost small" data-edit-request="' + q.id + '">修改</button> <button class="ghost small" data-cancel-request="' + q.id + '">撤回</button>'
+        ? (q.payment_method === "manual_review" ? '<button class="ghost small" data-edit-request="' + q.id + '">修改</button> ' : "") +
+          '<button class="ghost small" data-cancel-request="' + q.id + '">撤回</button>'
         : q.status === "needs_info"
           ? '<button class="primary small" data-edit-request="' + q.id + '">补充资料</button>' : "—";
+      var payment = '<b>' + esc(PAYMENT_METHOD_ZH[q.payment_method] || q.payment_method || "人工审批") +
+        '</b><div class="hint">' + esc(PAYMENT_STATUS_ZH[q.payment_status] || q.payment_status || "—") +
+        (q.payment_amount_cents ? " · " + fmtYuan(q.payment_amount_cents) : "") + " · " +
+        fmtTokens(q.requested_tokens) + " Token</div>";
       return "<tr><td>#" + q.id + '</td><td class="zh"><span class="badge ' +
         (REQUEST_CLASS[q.status] || "idle") + '">' + (REQUEST_LABEL[q.status] || q.status) +
         "</span>" + message + '</td><td class="zh"><b>' + esc(q.deployment_domain || "待定") +
         '</b><div class="hint">' + esc(q.purpose || q.note || "—") + "</div></td><td>" +
-        fmtTokens(q.requested_tokens) + '</td><td class="zh">' + requestKeyCell(q) + "</td><td>" +
+        payment + '</td><td class="zh">' + requestKeyCell(q) + "</td><td>" +
         fmtTime(q.created_ts) + '</td><td class="zh">' + actions + "</td></tr>";
     }).join("");
   }
@@ -925,8 +994,24 @@
     f.expected_date.value = q.expected_date || "";
     f.requested_tokens.value = q.requested_tokens || 0;
     f.note.value = q.note || "";
+    f.payment_method.value = q.payment_method || "manual_review";
     f.querySelector("button[type=submit]").textContent = q.status === "needs_info" ? "补充并重新提交" : "保存修改";
+    syncLicensePaymentForm();
     f.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function fileAsBase64(file) {
+    return new Promise(function (resolve, reject) {
+      if (!file) return reject(new Error("请上传企业转账凭证"));
+      if (file.size > 8 * 1024 * 1024) return reject(new Error("转账凭证不能超过 8MB"));
+      var reader = new FileReader();
+      reader.onload = function () {
+        var value = String(reader.result || "");
+        resolve(value.indexOf(",") >= 0 ? value.split(",")[1] : value);
+      };
+      reader.onerror = function () { reject(new Error("无法读取转账凭证")); };
+      reader.readAsDataURL(file);
+    });
   }
 
   $("#form-request").addEventListener("submit", function (e) {
@@ -939,23 +1024,61 @@
       expected_date: f.expected_date.value,
       requested_tokens: Number(f.requested_tokens.value) || 0,
     };
-    var endpoint = editingRequestId ? "/nexus/oem/request_action" : "/nexus/oem/request_key";
     if (editingRequestId) {
       payload.action = "update";
       payload.request_id = editingRequestId;
+      api("/nexus/oem/request_action", { body: payload })
+        .then(function () {
+          toast("申请资料已更新");
+          editingRequestId = 0; f.reset(); f.requested_tokens.value = "100000000";
+          f.payment_method.disabled = false; syncLicensePaymentForm(); loadOem();
+        })
+        .catch(function (err) { toast(err.message, true); });
+      return;
     }
-    api(endpoint, { body: payload })
-      .then(function () {
-        toast(editingRequestId ? "申请资料已更新" : "申请已提交，等待平台处理");
-        editingRequestId = 0; f.reset(); f.requested_tokens.value = "100000000";
-        f.querySelector("button[type=submit]").textContent = "提交申请"; loadOem();
-      })
-      .catch(function (err) { toast(err.message, true); });
+    payload.payment_method = f.payment_method.value;
+    payload.channel = f.channel.value;
+    payload.transfer_details = {
+      payer_company: f.payer_company.value,
+      transaction_id: f.transaction_id.value,
+    };
+    var voucher = f.voucher.files && f.voucher.files[0];
+    var voucherPromise = payload.payment_method === "corporate_transfer"
+      ? fileAsBase64(voucher) : Promise.resolve("");
+    var submit = f.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    voucherPromise.then(function (encoded) {
+      payload.image_base64 = encoded;
+      payload.content_type = voucher ? voucher.type : "";
+      payload.filename = voucher ? voucher.name : "";
+      return api("/nexus/oem/license_checkout", { body: payload });
+    }).then(function (result) {
+      if (result.order) {
+        var box = $("#pay-pending");
+        $("#pay-pending-msg").textContent = result.order.order_no + "（" + fmtYuan(result.order.amount_cents) + "）";
+        box.hidden = false;
+        var mock = result.pay && result.pay.type === "mock";
+        $("#btn-mock-pay").hidden = !mock;
+        if (mock) $("#btn-mock-pay").dataset.orderNo = result.order.order_no;
+        if (result.pay && result.pay.type === "url") window.open(result.pay.url, "_blank");
+      }
+      var message = payload.payment_method === "corporate_transfer"
+        ? "转账凭证已提交，超管确认真实到账后自动发 KEY"
+        : (payload.payment_method === "online" ? "订单已创建，请完成支付" : "授权申请已提交");
+      toast(message);
+      f.reset(); f.requested_tokens.value = "100000000"; syncLicensePaymentForm(); loadOem();
+    }).catch(function (err) {
+      toast(err.message, true);
+    }).then(function () {
+      submit.disabled = false;
+      syncLicensePaymentForm();
+    });
   });
 
   var AUDIT_ACTION_ZH = {
-    submit: "提交申请", update: "修改申请", resubmit: "补充资料并重新提交",
+    submit: "提交申请", checkout_created: "选择付款方式", update: "修改申请", resubmit: "补充资料并重新提交",
     needs_info: "要求补充资料", approve: "批准并签发", reject: "拒绝申请",
+    payment_auto_approve: "在线支付到账自动签发", transfer_confirm: "企业转账到账签发",
     cancel: "申请人撤回", reveal: "申请人查看授权码", redeem: "节点完成兑换",
   };
 
@@ -970,6 +1093,10 @@
       var fields = [
         ["计划域名", q.deployment_domain || "待定"], ["使用场景", q.purpose || "—"],
         ["期望日期", q.expected_date || "—"], ["申请 Token", fmtTokens(q.requested_tokens)],
+        ["付款方式", PAYMENT_METHOD_ZH[q.payment_method] || q.payment_method || "人工审批"],
+        ["付款状态", PAYMENT_STATUS_ZH[q.payment_status] || q.payment_status || "—"],
+        ["应付金额", q.payment_amount_cents ? fmtYuan(q.payment_amount_cents) : "—"],
+        ["订单 / 转账单", q.order_no || q.transfer_no || "—"],
         ["联系人", q.contact_name || "—"], ["联系方式", q.contact_phone || "—"],
         ["申请时间", fmtTime(q.created_ts)], ["处理时间", fmtTime(q.decided_ts)],
         ["补充说明", q.note || "—"], ["处理意见", q.decide_note || "—"],
@@ -1265,7 +1392,8 @@
           : "—";
         return '<tr class="' + (manual ? "manual-transfer-row" : "") + '"><td>' + esc(o.order_no) + "</td><td>" + esc(customer) + "</td>" +
           '<td class="zh">' + what + payer + '</td><td class="' + (manual ? "manual-money" : "") + '">' + fmtYuan(o.amount_cents) + '</td><td class="zh">' + (CH_ZH[o.channel] || o.channel) + "</td>" +
-          '<td class="zh"><span class="badge ' + (manual ? "manual" : st[0]) + '">' + (manual ? "人工确认" : st[1]) + "</span></td><td class=\"zh\">" + voucher + "</td><td>" + fmtTime(o.created_ts) + "</td></tr>";
+          '<td class="zh"><span class="badge ' + (manual && o.status === "paid" ? "manual" : st[0]) + '">' +
+          (manual && o.status === "paid" ? "人工确认到账" : st[1]) + "</span></td><td class=\"zh\">" + voucher + "</td><td>" + fmtTime(o.created_ts) + "</td></tr>";
       }).join("");
 
       $all("[data-request-status]").forEach(function (button) {
@@ -1278,19 +1406,32 @@
 
       // 申请历史始终保留面板；空筛选也要明确展示，避免“处理完就消失”的旧体验。
       $("#admin-requests tbody").innerHTML = reqs.map(function (q) {
-        var pendingActions = q.status === "pending"
-          ? '<button class="primary small" data-approve="' + q.id + '">批准</button> ' +
+        var pendingActions = "";
+        if (q.status === "pending" && q.payment_method === "corporate_transfer") {
+          pendingActions = '<button class="primary small" data-confirm-transfer="' + q.id + '">确认到账并签发</button> ' +
             '<button class="ghost small" data-needs-info="' + q.id + '">补资料</button> ' +
-            '<button class="ghost small" data-reject="' + q.id + '">拒绝</button>' : "";
+            '<button class="ghost small" data-reject-transfer="' + q.id + '">拒绝</button>';
+        } else if (q.status === "pending" && q.payment_method === "online") {
+          pendingActions = '<span class="hint">等待支付回调</span> <button class="ghost small" data-reject="' + q.id + '">关闭申请</button>';
+        } else if (q.status === "pending") {
+          pendingActions = '<button class="primary small" data-approve="' + q.id + '">批准</button> ' +
+            '<button class="ghost small" data-needs-info="' + q.id + '">补资料</button> ' +
+            '<button class="ghost small" data-reject="' + q.id + '">拒绝</button>';
+        }
         var requested = q.requested_tokens || 100000000;
+        var paymentCell = q.payment_method === "manual_review"
+          ? '<input type="number" min="0" max="1000000000000" value="' + requested +
+            '" style="width:130px" data-grantfor="' + q.id + '" title="附赠 token" ' +
+            (q.status === "pending" ? "" : "disabled") + " />"
+          : '<b>' + esc(PAYMENT_METHOD_ZH[q.payment_method] || q.payment_method) + '</b><div class="hint">' +
+            esc(PAYMENT_STATUS_ZH[q.payment_status] || q.payment_status) + " · " + fmtYuan(q.payment_amount_cents) +
+            "<br>" + fmtTokens(requested) + " Token" + (q.transfer_no ? " · " + esc(q.transfer_no) : "") + "</div>";
         return "<tr><td>#" + q.id + '</td><td class="zh"><b>' + esc(q.company || "未补企业名") +
           '</b><div class="hint">' + esc(q.oem_email) + '</div></td><td class="zh"><b>' +
           esc(q.deployment_domain || "域名待定") + '</b><div class="hint">' + esc(q.purpose || q.note || "—") +
           '</div></td><td class="zh"><span class="badge ' + (REQUEST_CLASS[q.status] || "idle") + '">' +
           (REQUEST_LABEL[q.status] || q.status) + "</span></td><td>" + fmtTime(q.created_ts) +
-          '</td><td class="zh"><input type="number" min="0" max="1000000000000" value="' + requested +
-          '" style="width:130px" data-grantfor="' + q.id + '" title="附赠 token" ' +
-          (q.status === "pending" ? "" : "disabled") + ' /></td><td class="zh"><button class="ghost small" data-request-detail="' +
+          '</td><td class="zh">' + paymentCell + '</td><td class="zh"><button class="ghost small" data-request-detail="' +
           q.id + '">详情</button> ' + pendingActions + "</td></tr>";
       }).join("") || '<tr><td colspan="7" class="zh empty">当前筛选下没有申请记录</td></tr>';
 
@@ -1916,7 +2057,13 @@
       });
     }
     if (t.dataset && t.dataset.buykey) {
-      placeOrder({ kind: "key", channel: t.dataset.buykey });
+      var licenseForm = $("#form-request");
+      licenseForm.payment_method.value = "online";
+      licenseForm.channel.value = t.dataset.buykey;
+      syncLicensePaymentForm();
+      licenseForm.scrollIntoView({ behavior: "smooth", block: "center" });
+      toast("请填写部署资料后创建在线支付订单");
+      return;
     }
     // 卡片选择切换（同组单选；点击可能落在卡片内部的 small 上,向上找到卡片本体）
     var pickBtn = t.closest ? t.closest(".pick[data-pick]") : null;
@@ -1934,6 +2081,30 @@
         instance_id: Number(pickInst.dataset.val),
         pack_index: Number(pickPack.dataset.val),
       });
+    }
+    if (t.dataset && t.dataset.confirmTransfer) {
+      var transferRequestId = Number(t.dataset.confirmTransfer);
+      uiConfirm("确认已在银行端核对该笔转账真实到账？确认后将计入营收并只签发一把 KEY。", false, "确认到账并签发").then(function (ok) {
+        if (!ok) return;
+        t.disabled = true;
+        api("/nexus/admin/license_transfer_decide", {
+          body: { request_id: transferRequestId, approve: true, note: "已核对银行真实到账" },
+        }).then(function () {
+          toast("企业转账已确认，KEY 等待 OEM 安全领取"); loadAdmin();
+        }).catch(function (err) { t.disabled = false; toast(err.message, true); });
+      });
+      return;
+    }
+    if (t.dataset && t.dataset.rejectTransfer) {
+      var rejectTransferId = Number(t.dataset.rejectTransfer);
+      uiPrompt("拒绝这张转账凭证的原因（必填）", "例如：未查到到账 / 金额不符").then(function (reason) {
+        if (reason === null || !reason.trim()) return toast("请填写拒绝原因", true);
+        api("/nexus/admin/license_transfer_decide", {
+          body: { request_id: rejectTransferId, approve: false, note: reason },
+        }).then(function () { toast("转账凭证已拒绝"); loadAdmin(); })
+          .catch(function (err) { toast(err.message, true); });
+      });
+      return;
     }
     if (t.dataset && t.dataset.approve) {
       var rid = t.dataset.approve;

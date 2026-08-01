@@ -22,10 +22,16 @@ class PayTest(unittest.TestCase):
         db.init_engine("sqlite:///" + self._tmp.name)
         self.s = db.session()
         os.environ["NEXUS_PAY_MOCK"] = "1"  # 打开模拟渠道
+        self._old_secret = os.environ.get("NEXUS_SECRET_KEY")
+        os.environ["NEXUS_SECRET_KEY"] = "test-license-payment-secret-at-least-32-bytes"
         self.buyer = oem.register(self.s, "buyer@x.com", "abc12345", inviter="GUDUU", company="测试公司", contact_name="张三", phone="13800000000")["id"]
 
     def tearDown(self):
         os.environ.pop("NEXUS_PAY_MOCK", None)
+        if self._old_secret is None:
+            os.environ.pop("NEXUS_SECRET_KEY", None)
+        else:
+            os.environ["NEXUS_SECRET_KEY"] = self._old_secret
         self.s.close()
         os.unlink(self._tmp.name)
 
@@ -102,6 +108,151 @@ class PayTest(unittest.TestCase):
         fleet.redeem(self.s, paid["key"], "buyer-site.com")
         oem.clear_plain_by_key(self.s, paid["key"])
         self.assertIsNone(pay.my_orders(self.s, self.buyer)[0]["key"])
+
+    def test_license_checkout_online_payment_auto_fulfills_once(self):
+        """新购买流程要把申请和订单锁定，验签到账后只签发一把加密 KEY。"""
+        pay.set_pricing(
+            self.s,
+            {"key_price_cents": 19_900, "key_token_grant": 88_000_000},
+        )
+        checkout = pay.create_license_checkout(
+            self.s,
+            self.buyer,
+            "online",
+            channel="mock",
+            deployment_domain="paid.example.com",
+            purpose="客户交付",
+            source_ip="127.0.0.1",
+        )
+        request_id = checkout["request"]["id"]
+        order_no = checkout["order"]["order_no"]
+        self.assertEqual(checkout["request"]["payment_status"], "pending_payment")
+        self.assertEqual(checkout["order"]["request_id"], request_id)
+
+        paid = pay.mark_paid(
+            self.s,
+            order_no,
+            "PAYMENT-TXN-1",
+            paid_amount_cents=19_900,
+            paid_currency="CNY",
+        )
+        request = oem.request_detail(self.s, request_id)
+        self.assertEqual(request["status"], "approved")
+        self.assertEqual(request["payment_status"], "fulfilled")
+        self.assertEqual(request["delivery_status"], "ready")
+        self.assertNotIn("key", paid)  # 订单结果绝不交付明文。
+        self.assertEqual(len(oem.my_keys(self.s, self.buyer)), 1)
+
+        again = pay.mark_paid(self.s, order_no, "DUPLICATE-CALLBACK")
+        self.assertEqual(again["key_id"], paid["key_id"])
+        self.assertEqual(len(oem.my_keys(self.s, self.buyer)), 1)
+
+    def test_online_callback_amount_mismatch_never_issues_key(self):
+        """支付回调金额不匹配时必须保持待支付，不得产生 KEY。"""
+        pay.set_pricing(self.s, {"key_price_cents": 19_900})
+        checkout = pay.create_license_checkout(
+            self.s,
+            self.buyer,
+            "online",
+            channel="mock",
+            deployment_domain="amount.example.com",
+            purpose="金额校验",
+        )
+        with self.assertRaises(FleetError) as raised:
+            pay.mark_paid(
+                self.s,
+                checkout["order"]["order_no"],
+                "BAD-AMOUNT",
+                paid_amount_cents=1,
+            )
+        self.assertEqual(raised.exception.code, "NEXUS_PAY_AMOUNT_MISMATCH")
+        self.assertEqual(oem.request_detail(self.s, checkout["request"]["id"])["status"], "pending")
+        self.assertEqual(len(oem.my_keys(self.s, self.buyer)), 0)
+
+    def test_cancelled_checkout_cannot_be_fulfilled_by_late_callback(self):
+        """客户撤回后迟到的支付回调必须被拒绝，不能复活申请或签发 KEY。"""
+        pay.set_pricing(self.s, {"key_price_cents": 19_900})
+        checkout = pay.create_license_checkout(
+            self.s,
+            self.buyer,
+            "online",
+            channel="mock",
+            deployment_domain="cancelled.example.com",
+            purpose="撤回并发保护",
+        )
+        oem.cancel_request(self.s, self.buyer, checkout["request"]["id"])
+        with self.assertRaises(FleetError) as raised:
+            pay.mark_paid(self.s, checkout["order"]["order_no"], "LATE-CALLBACK")
+        self.assertEqual(raised.exception.code, "NEXUS_ORDER_CLOSED")
+        self.assertEqual(len(oem.my_keys(self.s, self.buyer)), 0)
+
+    def test_corporate_transfer_requires_admin_confirmation(self):
+        """企业转账凭证只是待审资料；超管核对到账前不计营收、不发 KEY。"""
+        pay.set_pricing(
+            self.s,
+            {"key_price_cents": 29_900, "key_token_grant": 66_000_000},
+        )
+        image = b"\x89PNG\r\n\x1a\n" + b"license-transfer-receipt"
+        checkout = pay.create_license_checkout(
+            self.s,
+            self.buyer,
+            "corporate_transfer",
+            deployment_domain="transfer.example.com",
+            purpose="企业协作",
+            image_data=image,
+            content_type="image/png",
+            filename="转账凭证.png",
+            transfer_details={"payer_company": "测试企业"},
+        )
+        request_id = checkout["request"]["id"]
+        pending = pay.finance_summary(self.s)
+        self.assertEqual(pending["paid_revenue_cents"], 0)
+        self.assertEqual(pending["pending_amount_cents"], 29_900)
+        self.assertEqual(len(oem.my_keys(self.s, self.buyer)), 0)
+        with self.assertRaises(FleetError) as raised:
+            oem.decide_request(self.s, request_id, True, token_grant=1)
+        self.assertEqual(raised.exception.code, "NEXUS_PAYMENT_CONFIRM_REQUIRED")
+
+        confirmed = pay.decide_license_transfer(
+            self.s,
+            request_id,
+            True,
+            "已核对银行到账",
+            source_ip="127.0.0.1",
+        )
+        self.assertEqual(confirmed["request"]["status"], "approved")
+        self.assertEqual(confirmed["request"]["payment_status"], "fulfilled")
+        self.assertEqual(len(oem.my_keys(self.s, self.buyer)), 1)
+        finance = pay.finance_summary(self.s)
+        self.assertEqual(finance["paid_revenue_cents"], 29_900)
+        self.assertEqual(finance["pending_amount_cents"], 0)
+
+        # 超管双击确认或首次响应丢失后重试，不得重复记收入或发码。
+        pay.decide_license_transfer(self.s, request_id, True, "重试")
+        self.assertEqual(len(oem.my_keys(self.s, self.buyer)), 1)
+        self.assertEqual(pay.finance_summary(self.s)["paid_revenue_cents"], 29_900)
+
+    def test_corporate_transfer_requires_payer_company(self):
+        """接口不能只依赖前端 required，缺付款主体时整笔申请必须回滚。"""
+        pay.set_pricing(self.s, {"key_price_cents": 29_900})
+        with self.assertRaises(FleetError) as raised:
+            pay.create_license_checkout(
+                self.s,
+                self.buyer,
+                "corporate_transfer",
+                deployment_domain="transfer.example.com",
+                purpose="缺少付款主体",
+                image_data=b"\x89PNG\r\n\x1a\nreceipt",
+                content_type="image/png",
+                filename="receipt.png",
+                transfer_details={},
+            )
+        self.assertEqual(raised.exception.code, "NEXUS_TRANSFER_PAYER_REQUIRED")
+        # 单元测试直接调用 service 函数时没有 HTTP 自动回滚，因此显式回滚，
+        # 再证明没有任何申请、转账或 KEY 被错误提交。
+        self.s.rollback()
+        self.assertEqual(oem.my_requests(self.s, self.buyer), [])
+        self.assertEqual(len(oem.my_keys(self.s, self.buyer)), 0)
 
     # ---- token 充值全链路 ----
 

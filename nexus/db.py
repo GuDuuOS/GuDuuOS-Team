@@ -224,7 +224,8 @@ class NexusManualTransfer(Base):
     # 当前人工企业转账只收人民币；和现有在线订单一致，以分为单位杜绝浮点误差。
     currency = Column(String(8), nullable=False, default="CNY")
     amount_cents = Column(BigInteger, nullable=False)
-    # confirmed=超管已核实银行到账。未来若开放 OEM 自助上传，再增加 pending_review。
+    # pending_review=OEM 已上传待核对；confirmed=超管已核实银行到账；
+    # rejected/cancelled 分别表示超管拒绝或 OEM 主动撤回。
     status = Column(String(24), nullable=False, default="confirmed", index=True)
     purpose = Column(String(255), nullable=False, default="企业转账收款")
     # 结构化详情（付款/收款企业、账号、银行、流水号、时间、备注、AI 结果）加密保存。
@@ -238,6 +239,32 @@ class NexusManualTransfer(Base):
     recognition_status = Column(String(24), nullable=False, default="not_run")
     created_ts = Column(BigInteger, nullable=False, default=_now_ms, index=True)
     confirmed_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
+class NexusLicensePayment(Base):
+    """节点授权申请与支付/转账的一对一履约关联。
+
+    这张表只记录业务关系和金额快照；支付流水仍在 ``nexus_order``，企业转账
+    凭证仍在 ``nexus_manual_transfer``，授权资料仍在申请表。用独立关联表而不是
+    给旧表加列，是因为生产依赖 SQLAlchemy ``create_all``，新表可无损上线。
+
+    ``method``：online=在线支付，corporate_transfer=企业转账，
+    manual_review=免费/合同等线下审批。
+    ``status``：pending_payment / pending_review / fulfilled / rejected / cancelled。
+    """
+
+    __tablename__ = "nexus_license_payment"
+
+    request_id = Column(Integer, primary_key=True)
+    oem_id = Column(Integer, nullable=False, index=True)
+    method = Column(String(32), nullable=False, index=True)
+    status = Column(String(32), nullable=False, index=True)
+    order_id = Column(Integer, nullable=True, unique=True, index=True)
+    transfer_id = Column(Integer, nullable=True, unique=True, index=True)
+    amount_cents = Column(BigInteger, nullable=False, default=0)
+    currency = Column(String(8), nullable=False, default="CNY")
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    updated_ts = Column(BigInteger, nullable=False, default=_now_ms)
 
 
 class NexusPaymentConfig(Base):

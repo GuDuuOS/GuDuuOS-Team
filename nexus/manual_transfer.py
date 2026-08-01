@@ -1,7 +1,7 @@
 """Nexus 企业转账人工入账与凭证 AI 识别。
 
 业务边界：
-    - 只有平台超级管理员能调用本模块对应的 HTTP 接口；
+    - 平台超管可直接登记已确认收款；OEM 也可在授权购买中上传待审凭证；
     - 凭证图片必须上传并通过真实图片魔数检查，图片和银行详情均加密入库；
     - AI 只负责从凭证中提取候选字段，绝不自动确认收入；
     - 超管核对银行实际到账并提交表单后，记录才以 ``confirmed`` 计入营收；
@@ -272,8 +272,9 @@ def create_transfer(
     purpose: str = "企业转账收款",
     details: Optional[Dict[str, Any]] = None,
     recognition: Optional[Dict[str, Any]] = None,
+    confirmed: bool = True,
 ) -> Dict[str, Any]:
-    """创建一笔已由超管核实到账的企业转账单。
+    """创建一笔企业转账凭证记录。
 
     Args:
         s: SQLAlchemy Session。
@@ -283,6 +284,8 @@ def create_transfer(
         purpose: 收款用途，出现在订单列表中。
         details: 付款/收款企业、账户、银行流水等人工确认字段。
         recognition: 本次 AI 候选结果，仅作为审计辅助一并加密保存。
+        confirmed: ``True`` 表示超管已核对真实到账；``False`` 表示 OEM
+            只上传了待审凭证，不得计入营收或触发授权。
 
     Returns:
         不含凭证二进制、但含管理员可见详情的公开记录。
@@ -331,7 +334,7 @@ def create_transfer(
         oem_id=linked_oem,
         amount_cents=cents,
         currency="CNY",
-        status="confirmed",
+        status="confirmed" if confirmed else "pending_review",
         purpose=(purpose or "企业转账收款").strip()[:255],
         encrypted_details=_encrypt_json(clean_details),
         voucher_filename=clean_name,
@@ -341,7 +344,7 @@ def create_transfer(
         encrypted_voucher=_fernet().encrypt(image_data),
         recognition_status="recognized" if clean_recognition else "not_run",
         created_ts=now,
-        confirmed_ts=now,
+        confirmed_ts=now if confirmed else 0,
     )
     s.add(row)
     s.flush()
@@ -369,8 +372,33 @@ def public_transfer(row: NexusManualTransfer) -> Dict[str, Any]:
         "voucher_filename": str(row.voucher_filename),
         "voucher_size": int(row.voucher_size),
         "created_ts": int(row.created_ts),
-        "paid_ts": int(row.confirmed_ts),
+        "paid_ts": int(row.confirmed_ts) if row.confirmed_ts else None,
     }
+
+
+def decide_submission(
+    s, transfer_id: int, approve: bool
+) -> NexusManualTransfer:
+    """锁定并处理 OEM 上传的待审转账凭证。
+
+    只允许 ``pending_review`` 进入 confirmed/rejected；已确认记录重复收到
+    “确认”时幂等返回，既防双击也防管理端响应丢失后误判。
+    """
+    row = s.execute(
+        select(NexusManualTransfer)
+        .where(NexusManualTransfer.id == int(transfer_id))
+        .with_for_update()
+    ).scalar_one_or_none()
+    if row is None:
+        raise FleetError("NEXUS_TRANSFER_NOT_FOUND", "企业转账凭证不存在", 404)
+    target = "confirmed" if approve else "rejected"
+    if row.status == target:
+        return row
+    if row.status != "pending_review":
+        raise FleetError("NEXUS_TRANSFER_DECIDED", "该转账凭证已处理", 409)
+    row.status = target
+    row.confirmed_ts = _now_ms() if approve else 0
+    return row
 
 
 def list_transfers(s, limit: int = 200) -> List[Dict[str, Any]]:
@@ -400,18 +428,16 @@ def voucher(s, transfer_id: int) -> Tuple[str, str, bytes]:
 
 
 def summary(s) -> Dict[str, int]:
-    """聚合全部已确认企业转账金额、笔数及近 30 天金额。"""
+    """聚合已确认营收和待核对转账；两种口径严格分开。"""
     since_30d = _now_ms() - 30 * 24 * 3600 * 1000
     # 聚合必须留在数据库侧执行；财务流水增长后不能把全部凭证元数据拉进服务内存。
     row = s.execute(
         select(
-            func.coalesce(func.sum(NexusManualTransfer.amount_cents), 0),
-            func.count(NexusManualTransfer.id),
             func.coalesce(
                 func.sum(
                     case(
                         (
-                            NexusManualTransfer.confirmed_ts >= since_30d,
+                            NexusManualTransfer.status == "confirmed",
                             NexusManualTransfer.amount_cents,
                         ),
                         else_=0,
@@ -419,10 +445,55 @@ def summary(s) -> Dict[str, int]:
                 ),
                 0,
             ),
-        ).where(NexusManualTransfer.status == "confirmed")
+            func.coalesce(
+                func.sum(
+                    case(
+                        (NexusManualTransfer.status == "confirmed", 1),
+                        else_=0,
+                    )
+                ),
+                0,
+            ),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            (NexusManualTransfer.status == "confirmed")
+                            & (NexusManualTransfer.confirmed_ts >= since_30d),
+                            NexusManualTransfer.amount_cents,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            NexusManualTransfer.status == "pending_review",
+                            NexusManualTransfer.amount_cents,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (NexusManualTransfer.status == "pending_review", 1),
+                        else_=0,
+                    )
+                ),
+                0,
+            ),
+        )
     ).one()
     return {
         "manual_transfer_revenue_cents": int(row[0] or 0),
         "manual_transfer_count": int(row[1] or 0),
         "manual_transfer_30d_cents": int(row[2] or 0),
+        "manual_transfer_pending_cents": int(row[3] or 0),
+        "manual_transfer_pending_count": int(row[4] or 0),
     }

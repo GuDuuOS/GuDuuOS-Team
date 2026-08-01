@@ -32,12 +32,15 @@ from nexus.db import (
     NexusKeyRequest,
     NexusKeyRequestDelivery,
     NexusKeyRequestProfile,
+    NexusLicensePayment,
+    NexusManualTransfer,
     NexusOem,
     NexusOemFile,
     NexusOemInvite,
     NexusOemProfile,
     NexusOemShare,
     NexusSession,
+    NexusOrder,
     NexusUserAttribution,
     NexusWallet,
 )
@@ -736,6 +739,13 @@ def _public_request(s, row: NexusKeyRequest) -> Dict[str, Any]:
     profile = s.get(NexusKeyRequestProfile, row.id)
     delivery = s.get(NexusKeyRequestDelivery, row.id)
     delivery_status = _delivery_status(row, delivery)
+    payment = s.get(NexusLicensePayment, row.id)
+    order = s.get(NexusOrder, payment.order_id) if payment and payment.order_id else None
+    transfer = (
+        s.get(NexusManualTransfer, payment.transfer_id)
+        if payment and payment.transfer_id
+        else None
+    )
     # 历史版本在节点兑换后只清旧明文，没有 V2 delivery 行；通过 KEY 绑定关系仍能准确
     # 还原“已使用”，避免升级后把老客户的正常节点误标成等待补发。
     if row.key_id:
@@ -760,6 +770,14 @@ def _public_request(s, row: NexusKeyRequest) -> Dict[str, Any]:
         "delivery_status": delivery_status,
         "delivery_expires_ts": delivery.expires_ts if delivery else None,
         "reveal_until_ts": delivery.reveal_until_ts if delivery else None,
+        # 旧申请没有支付关联表，兼容解释为“线下/免费人工审批”。
+        "payment_method": payment.method if payment else "manual_review",
+        "payment_status": payment.status if payment else "manual_review",
+        "payment_amount_cents": int(payment.amount_cents) if payment else 0,
+        "payment_currency": payment.currency if payment else "CNY",
+        "order_no": order.order_no if order else "",
+        "transfer_id": int(transfer.id) if transfer else None,
+        "transfer_no": transfer.transfer_no if transfer else "",
     }
 
 
@@ -851,7 +869,11 @@ def update_request(
     source_ip: str = "",
 ) -> Dict[str, Any]:
     """OEM 补充待审资料；needs_info 补完后自动回到 pending。"""
-    row = s.get(NexusKeyRequest, int(request_id))
+    row = s.execute(
+        select(NexusKeyRequest)
+        .where(NexusKeyRequest.id == int(request_id))
+        .with_for_update()
+    ).scalar_one_or_none()
     if row is None or int(row.oem_id) != int(oem_id):
         raise FleetError("NEXUS_REQUEST_NOT_FOUND", "申请不存在", 404)
     if row.status not in ("pending", "needs_info"):
@@ -870,7 +892,15 @@ def update_request(
     profile.deployment_domain = _clean_domain(deployment_domain)
     profile.purpose = clean_purpose
     profile.expected_date = (expected_date or "").strip()[:16]
-    profile.requested_tokens = _clean_tokens(requested_tokens)
+    payment = s.execute(
+        select(NexusLicensePayment)
+        .where(NexusLicensePayment.request_id == row.id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    # 付款单的 Token 来自下单时的定价快照，付款后不能通过改申请表
+    # 篡改商品内容；只有免费/合同人工审批仍允许修改申请额度。
+    if payment is None or payment.method == "manual_review":
+        profile.requested_tokens = _clean_tokens(requested_tokens)
     profile.updated_ts = _now_ms()
     account = s.get(NexusOem, int(oem_id))
     audit.record(
@@ -891,7 +921,11 @@ def cancel_request(
     s, oem_id: int, request_id: int, source_ip: str = ""
 ) -> Dict[str, Any]:
     """OEM 撤回尚未签发的申请，已批准申请不能自行撤销 KEY。"""
-    row = s.get(NexusKeyRequest, int(request_id))
+    row = s.execute(
+        select(NexusKeyRequest)
+        .where(NexusKeyRequest.id == int(request_id))
+        .with_for_update()
+    ).scalar_one_or_none()
     if row is None or int(row.oem_id) != int(oem_id):
         raise FleetError("NEXUS_REQUEST_NOT_FOUND", "申请不存在", 404)
     if row.status not in ("pending", "needs_info"):
@@ -899,6 +933,30 @@ def cancel_request(
     old_status = row.status
     row.status = "cancelled"
     row.decided_ts = _now_ms()
+    payment = s.execute(
+        select(NexusLicensePayment)
+        .where(NexusLicensePayment.request_id == row.id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if payment is not None and payment.status not in ("fulfilled", "rejected"):
+        payment.status = "cancelled"
+        payment.updated_ts = _now_ms()
+        if payment.order_id:
+            order = s.execute(
+                select(NexusOrder)
+                .where(NexusOrder.id == payment.order_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if order is not None and order.status == "pending":
+                order.status = "closed"
+        if payment.transfer_id:
+            transfer = s.execute(
+                select(NexusManualTransfer)
+                .where(NexusManualTransfer.id == payment.transfer_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if transfer is not None and transfer.status == "pending_review":
+                transfer.status = "cancelled"
     account = s.get(NexusOem, int(oem_id))
     audit.record(
         s,
@@ -912,6 +970,97 @@ def cancel_request(
         to_state="cancelled",
     )
     return _public_request(s, row)
+
+
+def _approve_request_locked(
+    s,
+    row: NexusKeyRequest,
+    token_grant: int,
+    *,
+    action: str,
+    actor_type: str,
+    actor_label: str,
+    source_ip: str = "",
+    note: str = "",
+) -> Dict[str, Any]:
+    """对已持有行锁的申请签发且加密交付唯一 KEY。
+
+    人工审批、在线支付回调和企业转账确认必须共用同一段履约逻辑，
+    否则三条路径容易产生不同的密文清理、归属或审计行为。
+    """
+    from nexus import fleet
+
+    if row.status != "pending":
+        raise FleetError("NEXUS_REQUEST_DECIDED", "该申请已处理", 409)
+    grant = _clean_tokens(token_grant)
+    issued = fleet.issue_keys(
+        s,
+        count=1,
+        note=f"申请单#{row.id} · {row.note[:60]}",
+        token_grant=grant,
+    )[0]
+    now = _now_ms()
+    row.status = "approved"
+    row.decided_ts = now
+    row.decide_note = (note or "").strip()[:500]
+    row.key_id = issued["id"]
+    row.key_plain = ""
+    s.add(NexusKeyClaim(key_id=issued["id"], oem_id=row.oem_id))
+    s.add(
+        NexusKeyRequestDelivery(
+            request_id=row.id,
+            key_id=issued["id"],
+            encrypted_key=_delivery_fernet().encrypt(issued["key"].encode("utf-8")),
+            expires_ts=now + _DELIVERY_TTL_MS,
+        )
+    )
+    audit.record(
+        s,
+        object_type="key_request",
+        object_id=row.id,
+        action=action,
+        actor_type=actor_type,
+        actor_label=actor_label,
+        source_ip=source_ip,
+        from_state="pending",
+        to_state="approved",
+        note=row.decide_note,
+        metadata={"token_grant": grant, "key_id": issued["id"]},
+    )
+    s.flush()
+    return _public_request(s, row)
+
+
+def approve_paid_request(
+    s,
+    request_id: int,
+    token_grant: int,
+    *,
+    action: str,
+    actor_label: str,
+    source_ip: str = "",
+    note: str = "",
+) -> Dict[str, Any]:
+    """支付或转账已被服务端确认后，原子审批并签发授权。"""
+    row = s.execute(
+        select(NexusKeyRequest)
+        .where(NexusKeyRequest.id == int(request_id))
+        .with_for_update()
+    ).scalar_one_or_none()
+    if row is None:
+        raise FleetError("NEXUS_REQUEST_NOT_FOUND", f"申请 #{request_id} 不存在", 404)
+    if row.status == "approved" and row.key_id:
+        return _public_request(s, row)
+    return _approve_request_locked(
+        s,
+        row,
+        token_grant,
+        action=action,
+        actor_type="system" if action == "payment_auto_approve" else "admin",
+        actor_label=actor_label,
+        source_ip=source_ip,
+        note=note,
+    )
 
 
 def decide_request(
@@ -930,8 +1079,6 @@ def decide_request(
     ``action`` 支持 approve/reject/needs_info；保留 ``approve`` 参数兼容旧客户端。
     批准时 KEY 明文只进入 Fernet 加密交付表，管理端响应永远不含明文。
     """
-    from nexus import fleet
-
     selected_action = (action or ("approve" if approve else "reject")).strip()
     if selected_action not in ("approve", "reject", "needs_info"):
         raise FleetError("NEXUS_BAD_ACTION", "不支持的申请处理动作")
@@ -946,6 +1093,28 @@ def decide_request(
         raise FleetError("NEXUS_REQUEST_DECIDED", "该申请已处理或正在等待补充资料", 409)
     note = (decide_note or "").strip()[:500]
     old_status = row.status
+    payment = s.get(NexusLicensePayment, row.id)
+    if (
+        selected_action == "approve"
+        and payment is not None
+        and payment.method in ("online", "corporate_transfer")
+    ):
+        raise FleetError(
+            "NEXUS_PAYMENT_CONFIRM_REQUIRED",
+            "付款申请必须由支付回调或企业转账到账确认自动签发",
+            409,
+        )
+    if selected_action == "approve":
+        return _approve_request_locked(
+            s,
+            row,
+            token_grant,
+            action="approve",
+            actor_type="admin",
+            actor_label=actor_label,
+            source_ip=source_ip,
+            note=note,
+        )
     row.decided_ts = _now_ms()
     row.decide_note = note
     if selected_action == "needs_info":
@@ -956,29 +1125,17 @@ def decide_request(
         if not note:
             raise FleetError("NEXUS_DECIDE_NOTE_REQUIRED", "拒绝申请必须填写原因")
         row.status = "rejected"
-    else:
-        grant = _clean_tokens(token_grant)
-        issued = fleet.issue_keys(
-            s,
-            count=1,
-            note=f"申请单#{row.id} · {row.note[:60]}",
-            token_grant=grant,
-        )[0]
-        now = _now_ms()
-        row.status = "approved"
-        row.key_id = issued["id"]
-        # 旧列保持为空；Fernet 验证主密钥缺失时会直接拒绝整个审批事务。
-        row.key_plain = ""
-        s.add(NexusKeyClaim(key_id=issued["id"], oem_id=row.oem_id))
-        s.add(
-            NexusKeyRequestDelivery(
-                request_id=row.id,
-                key_id=issued["id"],
-                encrypted_key=_delivery_fernet().encrypt(issued["key"].encode("utf-8")),
-                expires_ts=now + _DELIVERY_TTL_MS,
-            )
-        )
-        s.flush()
+    if payment is not None and selected_action == "reject":
+        payment.status = "rejected"
+        payment.updated_ts = _now_ms()
+        if payment.order_id:
+            order = s.get(NexusOrder, payment.order_id)
+            if order is not None and order.status == "pending":
+                order.status = "closed"
+        if payment.transfer_id:
+            transfer = s.get(NexusManualTransfer, payment.transfer_id)
+            if transfer is not None and transfer.status == "pending_review":
+                transfer.status = "rejected"
     audit.record(
         s,
         object_type="key_request",
@@ -990,7 +1147,7 @@ def decide_request(
         from_state=old_status,
         to_state=row.status,
         note=note,
-        metadata={"token_grant": int(token_grant or 0)} if selected_action == "approve" else {},
+        metadata={},
     )
     return _public_request(s, row)
 
