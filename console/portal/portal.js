@@ -1231,30 +1231,64 @@
       var reportedHint = function (nodeCount) {
         return nodeCount + " / " + insts.length + " 个节点已上报";
       };
+      var fleetLiveClass = insts.length && online === insts.length
+        ? "" : (online ? " warn" : " off");
+      // 舰队总览不再把二十多个指标铺成同等级大卡片。核心指标保留大字号，
+      // 其余按「用户与空间 / 内容与 AI 资产 / AI 用量」分组；所有值仍来自上面的
+      // 真实聚合结果，展示重构不会引入任何演示数据。
+      var fleetKpi = function (icon, label, value, note, accent) {
+        return '<div class="fleet-kpi' + (accent ? " accent" : "") + '">' +
+          '<span class="fleet-kpi-label"><i class="fleet-kpi-icon">' + esc(icon) + "</i>" + esc(label) + "</span>" +
+          "<b>" + esc(value) + "</b><small>" + esc(note) + "</small></div>";
+      };
+      var fleetMini = function (label, value, note, accent) {
+        return '<div class="fleet-mini' + (accent ? " accent" : "") + '">' +
+          '<span class="fleet-mini-label">' + esc(label) + "</span><b>" + esc(value) + "</b>" +
+          (note ? "<small>" + esc(note) + "</small>" : "") + "</div>";
+      };
+      var fleetGroup = function (mark, title, subtitle, metrics, foot, extraClass) {
+        return '<section class="fleet-group ' + (extraClass || "") + '"><div class="fleet-group-head"><div>' +
+          "<h3>" + esc(title) + "</h3><p>" + esc(subtitle) + "</p></div>" +
+          '<span class="fleet-group-mark">' + esc(mark) + '</span></div><div class="fleet-metrics">' +
+          metrics.join("") + '</div><p class="fleet-group-foot">' + esc(foot) + "</p></section>";
+      };
       $("#finance-wallet-balance").textContent = fmtTokens(balSum);
       $("#admin-stats").innerHTML =
-        '<div class="stat"><small>实例总数</small><b class="plain">' + insts.length + "</b></div>" +
-        '<div class="stat"><small>在线</small><b>' + online + "</b></div>" +
-        '<div class="stat"><small>OEM 客户</small><b class="plain">' + oems.length + "</b></div>" +
-        '<div class="stat"><small>KEY 已发/已兑换</small><b class="plain">' + keys.length + " / " + keys.filter(function (k) { return k.instance_id; }).length + "</b></div>" +
-        '<div class="stat"><small>钱包余额合计</small><b>' + fmtTokens(balSum) + "</b></div>" +
-        '<div class="stat"><small>节点账号总数</small><b class="plain">' + formatPeople(peopleTotals.accounts) + "</b></div>" +
-        '<div class="stat"><small>业务用户</small><b>' + detailedValue(peopleTotals.business) + '</b><span class="stat-note">' + detailedHint + "</span></div>" +
-        '<div class="stat"><small>管理员账号</small><b class="plain">' + detailedValue(peopleTotals.admins) + '</b><span class="stat-note">' + detailedHint + "</span></div>" +
-        '<div class="stat"><small>AI / 系统账号</small><b class="plain">' + detailedValue(peopleTotals.ai) + '</b><span class="stat-note">' + detailedHint + "</span></div>" +
-        '<div class="stat"><small>全部 Matrix 房间</small><b class="plain">' + reportedValue(peopleTotals.rooms, peopleTotals.roomNodes) + '</b><span class="stat-note">' + reportedHint(peopleTotals.roomNodes) + "</span></div>" +
-        '<div class="stat"><small>业务频道</small><b>' + reportedValue(peopleTotals.channels, peopleTotals.channelNodes) + '</b><span class="stat-note">已排除空间、私聊和 AI 会话 · ' + reportedHint(peopleTotals.channelNodes) + "</span></div>" +
-        '<div class="stat"><small>有内容的知识库</small><b class="plain">' + reportedValue(peopleTotals.knowledgeBases, peopleTotals.knowledgeBaseNodes) + '</b><span class="stat-note">共 ' + reportedValue(peopleTotals.kbDocs, peopleTotals.kbDocNodes) + " 篇文档 · " + reportedHint(peopleTotals.knowledgeBaseNodes) + "</span></div>" +
-        '<div class="stat"><small>平台可用技能</small><b class="plain">' + reportedValue(peopleTotals.skillsAvailable, peopleTotals.skillNodes) + '</b><span class="stat-note">内置与控制室启用目录 · ' + reportedHint(peopleTotals.skillNodes) + "</span></div>" +
-        '<div class="stat"><small>节点自建技能（启用）</small><b class="plain">' + reportedValue(peopleTotals.skillsCustomEnabled, peopleTotals.skillCustomNodes) + '</b><span class="stat-note">来自各节点 PostgreSQL · ' + reportedHint(peopleTotals.skillCustomNodes) + "</span></div>" +
-        '<div class="stat"><small>平台可用 AI Agent</small><b class="plain">' + reportedValue(peopleTotals.agentsAvailable, peopleTotals.agentNodes) + '</b><span class="stat-note">内置与控制室启用目录 · ' + reportedHint(peopleTotals.agentNodes) + "</span></div>" +
-        '<div class="stat"><small>节点自建 AI Agent（启用）</small><b class="plain">' + reportedValue(peopleTotals.agentsCustomEnabled, peopleTotals.agentCustomNodes) + '</b><span class="stat-note">来自各节点 PostgreSQL · ' + reportedHint(peopleTotals.agentCustomNodes) + "</span></div>" +
-        '<div class="stat"><small>启用工作流</small><b class="plain">' + reportedValue(peopleTotals.workflowsEnabled, peopleTotals.workflowNodes) + '</b><span class="stat-note">共 ' + reportedValue(peopleTotals.workflowsTotal, peopleTotals.workflowNodes) + " 个定义，累计运行 " + reportedValue(peopleTotals.workflowRuns, peopleTotals.workflowRunNodes) + " 次 · " + reportedHint(peopleTotals.workflowNodes) + "</span></div>" +
-        '<div class="stat"><small>有效会员</small><b class="plain">' + (peopleTotals.memberNodes ? formatPeople(peopleTotals.members) : "—") + '</b><span class="stat-note">' + peopleTotals.memberNodes + " / " + insts.length + " 个节点已上报</span></div>" +
-        '<div class="stat"><small>今日 Token 消耗</small><b>' + fmtTokens(peopleTotals.tokensToday) + "</b></div>" +
-        '<div class="stat"><small>累计 Token 消耗</small><b>' + fmtTokens(peopleTotals.tokensTotal) + "</b></div>" +
-        '<div class="stat"><small>今日 AI 请求</small><b class="plain">' + formatPeople(peopleTotals.requestsToday) + "</b></div>" +
-        '<div class="stat"><small>累计 AI 请求</small><b class="plain">' + formatPeople(peopleTotals.requestsTotal) + "</b></div>";
+        '<section class="fleet-summary"><div class="fleet-summary-head"><div>' +
+        '<span class="fleet-eyebrow">FLEET STATUS</span><h2>舰队运行状态</h2></div>' +
+        '<span class="fleet-live"><i class="fleet-live-dot' + fleetLiveClass + '"></i>' +
+        online + " / " + insts.length + " 个节点在线</span></div><div class=\"fleet-summary-grid\">" +
+        fleetKpi("◇", "实例总数", String(insts.length), "已接入 Nexus 的节点", false) +
+        fleetKpi("●", "在线节点", String(online), online === insts.length ? "全部运行正常" : "请检查离线节点", true) +
+        fleetKpi("◎", "OEM 客户", String(oems.length), "已建立企业档案", false) +
+        fleetKpi("⌁", "授权 KEY", keys.length + " / " + keys.filter(function (k) { return k.instance_id; }).length, "已发 / 已兑换", false) +
+        fleetKpi("◈", "钱包余额", fmtTokens(balSum), "全舰队 Token 余额", true) +
+        "</div></section><div class=\"fleet-groups\">" +
+        fleetGroup("人", "节点与用户", "账号构成及协作空间", [
+          fleetMini("节点账号总数", formatPeople(peopleTotals.accounts), "含管理员与系统账号", false),
+          fleetMini("业务用户", detailedValue(peopleTotals.business), "真实业务账号", true),
+          fleetMini("管理员账号", detailedValue(peopleTotals.admins), "服务器管理员", false),
+          fleetMini("AI / 系统账号", detailedValue(peopleTotals.ai), "主 AI 与协作 AI", false),
+          fleetMini("全部 Matrix 房间", reportedValue(peopleTotals.rooms, peopleTotals.roomNodes), "完整房间口径", false),
+          fleetMini("业务频道", reportedValue(peopleTotals.channels, peopleTotals.channelNodes), "已排除空间、私聊和 AI 会话", true),
+        ], "账号分类：" + detailedHint + " · 频道：" + reportedHint(peopleTotals.channelNodes), "") +
+        fleetGroup("AI", "内容与 AI 资产", "可复用的知识与自动化能力", [
+          fleetMini("有内容的知识库", reportedValue(peopleTotals.knowledgeBases, peopleTotals.knowledgeBaseNodes), "共 " + reportedValue(peopleTotals.kbDocs, peopleTotals.kbDocNodes) + " 篇文档", false),
+          fleetMini("平台可用技能", reportedValue(peopleTotals.skillsAvailable, peopleTotals.skillNodes), "内置 + 控制室目录", true),
+          fleetMini("自建技能（启用）", reportedValue(peopleTotals.skillsCustomEnabled, peopleTotals.skillCustomNodes), "节点 PostgreSQL", false),
+          fleetMini("平台 AI Agent", reportedValue(peopleTotals.agentsAvailable, peopleTotals.agentNodes), "内置 + 控制室目录", true),
+          fleetMini("自建 AI Agent", reportedValue(peopleTotals.agentsCustomEnabled, peopleTotals.agentCustomNodes), "节点 PostgreSQL", false),
+          fleetMini("启用工作流", reportedValue(peopleTotals.workflowsEnabled, peopleTotals.workflowNodes), "共 " + reportedValue(peopleTotals.workflowsTotal, peopleTotals.workflowNodes) + " 个定义", false),
+          fleetMini("工作流累计运行", reportedValue(peopleTotals.workflowRuns, peopleTotals.workflowRunNodes), "真实运行记录", false),
+          fleetMini("有效会员", peopleTotals.memberNodes ? formatPeople(peopleTotals.members) : "—", "当前有效订阅", false),
+        ], "资产指标来自节点 Matrix 状态与 PostgreSQL；未读取到时显示 —", "") +
+        fleetGroup("↗", "AI 用量", "Token 与模型请求趋势", [
+          fleetMini("今日 Token", fmtTokens(peopleTotals.tokensToday), "今日累计消耗", true),
+          fleetMini("累计 Token", fmtTokens(peopleTotals.tokensTotal), "历史累计消耗", false),
+          fleetMini("今日 AI 请求", formatPeople(peopleTotals.requestsToday), "成功与失败请求", true),
+          fleetMini("累计 AI 请求", formatPeople(peopleTotals.requestsTotal), "历史请求总数", false),
+        ], "用量来自 Nexus 账本，不依赖节点进程内计数", "fleet-usage") +
+        "</div>";
 
       // 实例表（行内充值按钮）
       $("#admin-instances tbody").innerHTML = insts.map(function (i) {

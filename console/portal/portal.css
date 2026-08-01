@@ -311,6 +311,103 @@ label input { margin-top: 5px; }
 .stat b.plain { color: var(--ink); }
 .stat-note { display: block; margin-top: 3px; color: var(--muted); font-size: 11.5px; }
 
+/* —— 舰队总览：把大量同级数字收敛为「核心状态 → 分组详情 → 用量」三层。
+ * 指标仍由 portal.js 使用真实接口数据生成；这里只改善信息层级，不隐藏任何口径。 */
+.fleet-overview { display: grid; gap: 14px; margin-bottom: 20px; }
+.fleet-summary {
+  position: relative; overflow: hidden; padding: 20px;
+  border: 1px solid color-mix(in srgb, var(--orange) 24%, var(--line));
+  border-radius: 16px;
+  background: linear-gradient(135deg, var(--panel-strong), var(--panel));
+}
+.fleet-summary::after {
+  content: ""; position: absolute; width: 280px; height: 280px; right: -120px; top: -170px;
+  border-radius: 50%; background: var(--badge-orange-bg); filter: blur(2px); pointer-events: none;
+}
+.fleet-summary-head, .fleet-group-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 18px;
+}
+.fleet-eyebrow {
+  display: block; color: var(--orange); font: 10px/1.4 var(--mono); letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.fleet-summary-head h2 { margin-top: 3px; font-size: 17px; letter-spacing: .02em; }
+.fleet-live {
+  position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--muted); background: var(--card); font-size: 11.5px; white-space: nowrap;
+}
+.fleet-live-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+  box-shadow: 0 0 0 4px var(--badge-green-bg);
+}
+.fleet-live-dot.warn { background: var(--orange); box-shadow: 0 0 0 4px var(--badge-orange-bg); }
+.fleet-live-dot.off { background: var(--red); box-shadow: 0 0 0 4px var(--badge-red-bg); }
+.fleet-summary-grid {
+  position: relative; z-index: 1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0; margin-top: 18px;
+}
+.fleet-kpi { min-width: 0; padding: 4px 18px; border-left: 1px solid var(--line); }
+.fleet-kpi:first-child { padding-left: 0; border-left: 0; }
+.fleet-kpi:last-child { padding-right: 0; }
+.fleet-kpi-label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11.5px; }
+.fleet-kpi-icon {
+  display: inline-grid; place-items: center; width: 22px; height: 22px;
+  border-radius: 7px; color: var(--orange); background: var(--badge-orange-bg); font: 12px/1 var(--mono);
+}
+.fleet-kpi b {
+  display: block; margin-top: 7px; color: var(--ink); font: 700 27px/1.15 var(--mono);
+  letter-spacing: -.03em;
+}
+.fleet-kpi.accent b { color: var(--orange); }
+.fleet-kpi small { display: block; margin-top: 5px; color: var(--muted); font-size: 10.5px; }
+.fleet-groups { display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.38fr); gap: 14px; }
+.fleet-group {
+  min-width: 0; padding: 17px 18px 15px; border: 1px solid var(--line);
+  border-radius: 15px; background: var(--panel);
+}
+.fleet-group-head h3 { font-size: 14px; letter-spacing: .02em; }
+.fleet-group-head p { margin-top: 2px; color: var(--muted); font-size: 11px; }
+.fleet-group-mark {
+  display: grid; place-items: center; flex: 0 0 auto; width: 30px; height: 30px;
+  border-radius: 9px; color: var(--orange); background: var(--badge-orange-bg); font: 14px/1 var(--mono);
+}
+.fleet-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 13px; }
+.fleet-mini {
+  min-width: 0; min-height: 79px; padding: 11px 12px; border-radius: 10px;
+  background: var(--card); transition: transform .16s ease, background .16s ease;
+}
+.fleet-mini:hover { transform: translateY(-1px); background: var(--hover-row); }
+.fleet-mini-label { display: block; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.fleet-mini b { display: block; margin-top: 4px; color: var(--ink); font: 700 20px/1.25 var(--mono); }
+.fleet-mini.accent b { color: var(--orange); }
+.fleet-mini small { display: block; margin-top: 3px; color: var(--muted); font-size: 9.5px; line-height: 1.35; }
+.fleet-group-foot { margin-top: 10px; color: var(--muted); font-size: 10px; }
+.fleet-usage { grid-column: 1 / -1; }
+.fleet-usage .fleet-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.fleet-usage .fleet-mini { min-height: 68px; }
+
+@media (max-width: 1120px) {
+  .fleet-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 16px; }
+  .fleet-kpi:nth-child(4) { padding-left: 0; border-left: 0; }
+}
+
+@media (max-width: 820px) {
+  .fleet-groups { grid-template-columns: 1fr; }
+  .fleet-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fleet-kpi:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .fleet-kpi:nth-child(4) { padding-left: 18px; border-left: 1px solid var(--line); }
+  .fleet-usage .fleet-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 520px) {
+  .fleet-summary { padding: 16px; }
+  .fleet-summary-head { display: block; }
+  .fleet-live { margin-top: 10px; }
+  .fleet-kpi { padding-inline: 11px; }
+  .fleet-metrics { grid-template-columns: 1fr 1fr; }
+}
+
 /* —— 舰队总览：资金经营区 —— */
 .finance-panel-head { align-items: flex-start; }
 .finance-panel-head .hint { margin-top: 3px; }
