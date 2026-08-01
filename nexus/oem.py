@@ -405,6 +405,149 @@ def share_summary(s, oem_id: int, portal_base: str) -> Dict[str, Any]:
     }
 
 
+def network_directory(s, oem_id: int, limit: int = 500) -> Dict[str, Any]:
+    """返回当前 OEM 可见的下属企业与普通用户明细。
+
+    参数 ``oem_id`` 是当前登录企业，``limit`` 是每类明细的最大返回行数；
+    返回值包含全量计数、下级 OEM 列表和归属用户列表。服务端只允许查看
+    自己及后代网络，并且故意不返回下级企业的邮箱、联系人、电话和密码等
+    隐私字段。
+
+    这个目录直接使用 ``NexusOemInvite`` 与 ``NexusUserAttribution``
+    的真实关系边，不另建统计表，因此下级新注册或归属上报后会立即
+    反映到列表。
+    """
+    owner_id = int(oem_id)
+    owner = s.get(NexusOem, owner_id)
+    if owner is None:
+        raise FleetError("NEXUS_OEM_NOT_FOUND", "OEM 不存在", 404)
+
+    parents, children, accounts = _hierarchy_maps(s)
+    descendants = _descendant_ids(children, owner_id)
+    network_ids = [owner_id] + descendants
+
+    # 广度遍历时同步记录相对层数：1=直属下级，2+=间接下级。
+    # 带 seen 是为了让历史坏数据即使存在环也不会拖死门户请求。
+    relative_depth: Dict[int, int] = {}
+    queue = [(child_id, 1) for child_id in children.get(owner_id, [])]
+    seen = {owner_id}
+    while queue:
+        current, depth = queue.pop(0)
+        if current in seen:
+            continue
+        seen.add(current)
+        relative_depth[current] = depth
+        queue.extend((child_id, depth + 1) for child_id in children.get(current, []))
+
+    profiles = {
+        int(row.oem_id): row
+        for row in s.execute(
+            select(NexusOemProfile).where(NexusOemProfile.oem_id.in_(network_ids))
+        ).scalars().all()
+    }
+
+    # 直属用户数一次 group by 拉齐，避免每个下级 OEM 再发一条 SQL。
+    direct_user_counts: Dict[int, int] = {
+        int(oid): int(count)
+        for oid, count in s.execute(
+            select(
+                NexusUserAttribution.oem_id,
+                func.count(NexusUserAttribution.id),
+            )
+            .where(NexusUserAttribution.oem_id.in_(network_ids))
+            .group_by(NexusUserAttribution.oem_id)
+        ).all()
+    }
+
+    def _display_name(target_id: Optional[int]) -> str:
+        """返回可向上级展示的企业名；不用邮箱做降级值，避免泄露账号。"""
+        if target_id is None:
+            return "GuDuu"
+        account = accounts.get(int(target_id))
+        profile = profiles.get(int(target_id))
+        if profile is not None and profile.company:
+            return profile.company
+        if account is not None and account.name:
+            return account.name
+        return f"OEM #{int(target_id)}"
+
+    oem_rows: List[Dict[str, Any]] = []
+    for child_id in descendants[:limit]:
+        account = accounts.get(child_id)
+        if account is None:
+            continue
+        own_descendants = _descendant_ids(children, child_id)
+        depth = relative_depth.get(child_id, 1)
+        oem_rows.append(
+            {
+                "id": child_id,
+                "company": _display_name(child_id),
+                "status": account.status,
+                "relation": "direct" if depth == 1 else "indirect",
+                "depth": depth,
+                "level": len(_ancestor_ids(parents, child_id)) + 1,
+                "parent_id": parents.get(child_id),
+                "parent_company": _display_name(parents.get(child_id)),
+                "direct_users": direct_user_counts.get(child_id, 0),
+                "network_users": sum(
+                    direct_user_counts.get(network_id, 0)
+                    for network_id in [child_id] + own_descendants
+                ),
+                "direct_oems": len(children.get(child_id, [])),
+                "total_downline_oems": len(own_descendants),
+                "created_ts": account.created_ts,
+            }
+        )
+
+    # 用户明细按最新归属倒序。返回的是 Matrix user_id，不是密码、手机号
+    # 或聊天内容；它本来就是 Nexus 归属边的业务标识。
+    user_rows = s.execute(
+        select(NexusUserAttribution)
+        .where(NexusUserAttribution.oem_id.in_(network_ids))
+        .order_by(NexusUserAttribution.id.desc())
+        .limit(limit)
+    ).scalars().all()
+    instance_ids = list({int(row.instance_id) for row in user_rows})
+    instances = {
+        int(row.id): row
+        for row in (
+            s.execute(
+                select(NexusInstance).where(NexusInstance.id.in_(instance_ids))
+            ).scalars().all()
+            if instance_ids
+            else []
+        )
+    }
+    users = []
+    for row in user_rows:
+        direct_owner_id = int(row.oem_id)
+        depth = 0 if direct_owner_id == owner_id else relative_depth.get(direct_owner_id, 0)
+        instance = instances.get(int(row.instance_id))
+        users.append(
+            {
+                "id": int(row.id),
+                "user_id": row.user_id,
+                "instance_id": int(row.instance_id),
+                "instance_domain": instance.domain if instance is not None else "",
+                "oem_id": direct_owner_id,
+                "oem_company": _display_name(direct_owner_id),
+                "relation": "direct" if direct_owner_id == owner_id else "indirect",
+                "depth": depth,
+                "created_ts": row.created_ts,
+            }
+        )
+
+    total_users = sum(direct_user_counts.values())
+    return {
+        "oem_total": len(descendants),
+        "user_total": total_users,
+        "oems_truncated": len(descendants) > limit,
+        "users_truncated": total_users > limit,
+        "oems": oem_rows,
+        "users": users,
+    }
+
+
 def qr_target(s, oem_id: int, portal_base: str, kind: str, instance_id: int = 0) -> str:
     """按当前登录 OEM 重新计算二维码目标，拒绝把二维码端点当任意 URL 生成器。"""
     summary = share_summary(s, oem_id, portal_base)
@@ -1403,6 +1546,7 @@ __all__ = [
     "public_oem",
     "referral_info",
     "share_summary",
+    "network_directory",
     "qr_target",
     "record_user_attribution",
     "hierarchy_snapshot",

@@ -302,6 +302,105 @@ class InviteTest(unittest.TestCase):
         snapshot = oem.hierarchy_snapshot(self.s)
         self.assertEqual(snapshot["user_edges"][0]["user_id"], "@alice:owner.example.com")
 
+    def test_network_directory_only_returns_own_downline(self):
+        """OEM 目录可见自己整棵下级树，不得泄露旁支企业与联系资料。"""
+        top = oem.register(
+            self.s,
+            "directory-top@x.com",
+            "abc12345",
+            inviter="GUDUU",
+            company="甲集团",
+            contact_name="甲联系人",
+            phone="13800000001",
+        )
+        top_share = oem.share_summary(self.s, top["id"], "https://nexus.test")
+        sub = oem.register(
+            self.s,
+            "directory-sub@x.com",
+            "abc12345",
+            inviter=top_share["code"],
+            company="乙公司",
+            contact_name="乙联系人",
+            phone="13800000002",
+        )
+        sub_share = oem.share_summary(self.s, sub["id"], "https://nexus.test")
+        leaf = oem.register(
+            self.s,
+            "directory-leaf@x.com",
+            "abc12345",
+            inviter=sub_share["code"],
+            company="丙公司",
+            contact_name="丙联系人",
+            phone="13800000003",
+        )
+        unrelated = oem.register(
+            self.s,
+            "directory-other@x.com",
+            "abc12345",
+            inviter="GUDUU",
+            company="旁支公司",
+            contact_name="旁支联系人",
+            phone="13800000004",
+        )
+
+        # 给顶层与叶子各开一个真实实例，再从各自分享码上报用户归属。
+        # 这样同时验证“我的直属用户”与“下级网络用户”两种关系。
+        top_key = fleet.issue_keys(self.s, token_grant=10)[0]["key"]
+        oem.claim_key(self.s, top["id"], top_key)
+        fleet.redeem(self.s, top_key, "top-directory.example.com")
+        oem.record_user_attribution(
+            self.s,
+            top_key,
+            top_share["code"],
+            "@alice:top-directory.example.com",
+        )
+
+        leaf_key = fleet.issue_keys(self.s, token_grant=10)[0]["key"]
+        oem.claim_key(self.s, leaf["id"], leaf_key)
+        fleet.redeem(self.s, leaf_key, "leaf-directory.example.com")
+        leaf_share = oem.share_summary(self.s, leaf["id"], "https://nexus.test")
+        oem.record_user_attribution(
+            self.s,
+            leaf_key,
+            leaf_share["code"],
+            "@bob:leaf-directory.example.com",
+        )
+
+        directory = oem.network_directory(self.s, top["id"])
+        self.assertEqual(directory["oem_total"], 2)
+        self.assertEqual(directory["user_total"], 2)
+        by_company = {row["company"]: row for row in directory["oems"]}
+        self.assertEqual(set(by_company), {"乙公司", "丙公司"})
+        self.assertEqual(by_company["乙公司"]["relation"], "direct")
+        self.assertEqual(by_company["乙公司"]["depth"], 1)
+        self.assertEqual(by_company["丙公司"]["relation"], "indirect")
+        self.assertEqual(by_company["丙公司"]["depth"], 2)
+        self.assertEqual(by_company["丙公司"]["parent_company"], "乙公司")
+        self.assertEqual(by_company["乙公司"]["network_users"], 1)
+        # 开放给上级的目录明确不含下级账号和联系资料。
+        for row in directory["oems"]:
+            self.assertNotIn("email", row)
+            self.assertNotIn("contact_name", row)
+            self.assertNotIn("phone", row)
+
+        users = {row["user_id"]: row for row in directory["users"]}
+        self.assertEqual(users["@alice:top-directory.example.com"]["relation"], "direct")
+        self.assertEqual(users["@bob:leaf-directory.example.com"]["relation"], "indirect")
+        self.assertEqual(users["@bob:leaf-directory.example.com"]["depth"], 2)
+        self.assertEqual(
+            users["@bob:leaf-directory.example.com"]["instance_domain"],
+            "leaf-directory.example.com",
+        )
+
+        # 二层 OEM 只能看到自己的叶子和其用户，既看不到上级，也看不到旁支。
+        sub_directory = oem.network_directory(self.s, sub["id"])
+        self.assertEqual([row["id"] for row in sub_directory["oems"]], [leaf["id"]])
+        self.assertEqual(
+            [row["user_id"] for row in sub_directory["users"]],
+            ["@bob:leaf-directory.example.com"],
+        )
+        self.assertNotIn(unrelated["id"], [row["id"] for row in directory["oems"]])
+
 
 class ProfileAndFilesTest(unittest.TestCase):
     """客户档案(注册强制三项)与合同附件(上传/下载/删除/白名单/上限)。"""

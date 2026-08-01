@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
 <script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=20" />
+<link rel="stylesheet" href="/portal/portal.css?v=21" />
 </head>
 <body>
 <!--
@@ -82,7 +82,7 @@
         <span class="admin-menu-icon">⌂</span><span>我的首页</span><em id="nav-oem-instances">0</em>
       </button>
       <button class="admin-menu-item" data-oem-page="network">
-        <span class="admin-menu-icon">◎</span><span>邀请与层级</span>
+        <span class="admin-menu-icon">◎</span><span>邀请与层级</span><em id="nav-oem-network">0</em>
       </button>
       <button class="admin-menu-item" data-oem-page="announcements">
         <span class="admin-menu-icon">↻</span><span>版本公告</span><em id="nav-oem-announcements">0</em>
@@ -113,6 +113,7 @@
     <div id="oem-instances" class="cards"></div>
     <p id="oem-noinst" class="empty" hidden>还没有已开通的实例——认领授权码后，在你的服务器上运行安装命令即可开通。</p>
   </section>
+
     </div>
 
     <div class="admin-page" data-oem-view="network" hidden>
@@ -143,6 +144,43 @@
         <div id="oem-partner-share"></div>
       </div>
     </div>
+  </section>
+
+  <section class="panel network-directory-panel" id="panel-network-directory">
+    <div class="panel-head">
+      <div>
+        <h2>我的下属清单</h2>
+        <p class="hint">这里展示你的直属与间接下级 OEM，以及挂靠在你整个网络内的普通用户。只显示业务归属信息，不公开下级企业的联系方式。</p>
+      </div>
+      <span class="network-total" id="oem-network-total">0 家企业 · 0 个用户</span>
+    </div>
+
+    <div class="network-list-block">
+      <div class="network-list-head">
+        <div><h3>下级 OEM</h3><p class="hint">企业层级与人数均来自 Nexus 真实归属数据。</p></div>
+        <span class="badge idle" id="oem-downline-count">0 家</span>
+      </div>
+      <div class="table-scroll">
+        <table class="tbl network-table" id="oem-downline-oems">
+          <thead><tr><th>企业</th><th>关系 / 层级</th><th>直属上级</th><th>直属用户</th><th>网络用户</th><th>下级 OEM</th><th>注册时间</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="network-list-block">
+      <div class="network-list-head">
+        <div><h3>归属用户</h3><p class="hint">只保存 Matrix 用户 ID 与归属边，不保存用户密码或聊天内容。</p></div>
+        <span class="badge idle" id="oem-downline-user-count">0 人</span>
+      </div>
+      <div class="table-scroll">
+        <table class="tbl network-table network-user-table" id="oem-downline-users">
+          <thead><tr><th>用户 ID</th><th>直属企业</th><th>注册实例</th><th>与我的关系</th><th>归属时间</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <p id="oem-network-limit-note" class="hint network-limit-note" hidden>当前网络较大，页面只展示最新的 500 条明细；上方总数仍是完整数据。</p>
   </section>
     </div>
 
@@ -602,6 +640,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=31"></script>
+<script src="/portal/portal.js?v=32"></script>
 </body>
 </html>

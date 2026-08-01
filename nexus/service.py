@@ -25,6 +25,9 @@
         GET/POST /nexus/admin/releases                         版本发布中心
         GET  /nexus/admin/release_draft                        从 DEVLOG 自动生成版本草稿
         POST /nexus/admin/release_action                       灰度/全量/回撤/暂停/重试
+    OEM 门户（须 OEM 会话，且所有数据按当前企业服务端隔离）：
+        GET  /nexus/oem/me                                  自有实例/KEY/订单等总览
+        GET  /nexus/oem/network                             自己的下级 OEM 与归属用户清单
 
 安全：
     - NEXUS_ADMIN_TOKEN 无默认值，未配置则管理端点一律 503（宁停不裸奔）；
@@ -339,6 +342,16 @@ class NexusHandler(BaseHTTPRequestHandler):
                     },
                 )
             self._with_session(_me)
+            return
+        if path == "/nexus/oem/network":
+            def _network(s):
+                """仅返回当前登录 OEM 自己的下属网络明细。"""
+                account = self._oem(s)
+                if account is None:
+                    return
+                self._json(200, oem_svc.network_directory(s, account.id))
+
+            self._with_session(_network)
             return
         if path == "/nexus/oem/share_qr":
             def _share_qr(s):

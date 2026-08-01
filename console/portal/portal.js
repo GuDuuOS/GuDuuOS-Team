@@ -469,6 +469,47 @@
     if (partner) loadShareQr($("#partner-share-qr"), "/nexus/oem/share_qr?kind=partner");
   }
 
+  // 渲染当前 OEM 自己的下属目录。企业与用户范围已在服务端按层级树
+  // 裁剪，前端不做“隐藏别家数据”这种不可靠的权限控制，只负责展示。
+  function renderNetworkDirectory(directory) {
+    var d = directory || {};
+    var oems = d.oems || [];
+    var users = d.users || [];
+    var oemTotal = Number(d.oem_total || 0);
+    var userTotal = Number(d.user_total || 0);
+
+    $("#nav-oem-network").textContent = String(oemTotal + userTotal);
+    $("#oem-network-total").textContent = oemTotal + " 家企业 · " + userTotal + " 个用户";
+    $("#oem-downline-count").textContent = oemTotal + " 家";
+    $("#oem-downline-user-count").textContent = userTotal + " 人";
+    $("#oem-network-limit-note").hidden = !(d.oems_truncated || d.users_truncated);
+
+    $("#oem-downline-oems tbody").innerHTML = oems.map(function (item) {
+      var relation = item.relation === "direct"
+        ? '<span class="badge active">直属下级</span>'
+        : '<span class="badge idle">间接 · ' + Number(item.depth || 0) + " 级</span>";
+      var status = item.status === "active"
+        ? '<span class="network-status-dot active" title="企业账号正常"></span>'
+        : '<span class="network-status-dot disabled" title="企业账号已停用"></span>';
+      return '<tr><td class="zh"><div class="network-company">' + status + '<b>' + esc(item.company || ("OEM #" + item.id)) + '</b></div></td>' +
+        '<td class="zh"><div class="network-relation">' + relation + '<small>全局第 ' + Number(item.level || 0) + " 层</small></div></td>" +
+        '<td class="zh">' + esc(item.parent_company || "GuDuu") + "</td>" +
+        "<td>" + Number(item.direct_users || 0) + "</td>" +
+        "<td>" + Number(item.network_users || 0) + "</td>" +
+        '<td><b>' + Number(item.direct_oems || 0) + '</b><small class="network-cell-note"> / 全部 ' + Number(item.total_downline_oems || 0) + "</small></td>" +
+        "<td>" + fmtTime(item.created_ts) + "</td></tr>";
+    }).join("") || '<tr><td colspan="7" class="zh empty network-empty">暂无下级 OEM。分享上方“OEM 合作伙伴注册链接”，对方完成注册后会自动出现在这里。</td></tr>';
+
+    $("#oem-downline-users tbody").innerHTML = users.map(function (item) {
+      var relation = item.relation === "direct"
+        ? '<span class="badge active">直属我的企业</span>'
+        : '<span class="badge idle">下级网络 · ' + Number(item.depth || 0) + " 级</span>";
+      return "<tr><td>" + esc(item.user_id || "—") + '</td><td class="zh">' + esc(item.oem_company || "—") +
+        "</td><td>" + esc(item.instance_domain || ("#" + item.instance_id)) +
+        '</td><td class="zh">' + relation + "</td><td>" + fmtTime(item.created_ts) + "</td></tr>";
+    }).join("") || '<tr><td colspan="5" class="zh empty network-empty">暂无归属用户。用户通过上方带分享码的实例链接注册后，会自动出现在这里。</td></tr>';
+  }
+
   // 渲染「购买与充值」区（定价 + 渠道可用性 + 我的实例下拉）
   function renderShop(products, instances) {
     var pricing = products.pricing, ch = products.channels;
@@ -945,7 +986,11 @@
   });
 
   function loadOem() {
-    Promise.all([api("/nexus/oem/me"), api("/nexus/oem/products")]).then(function (rs) {
+    Promise.all([
+      api("/nexus/oem/me"),
+      api("/nexus/oem/products"),
+      api("/nexus/oem/network"),
+    ]).then(function (rs) {
       var r = rs[0];
       var orders = r.orders || [];
       var announcements = r.announcements || [];
@@ -955,6 +1000,7 @@
       renderOrders(orders);
       renderAnnouncements(announcements);
       renderReferral(r.referral || {});
+      renderNetworkDirectory(rs[2]);
       // 左栏数字全部来自当前 OEM 的服务端过滤结果，不混入平台或其他企业数据。
       $("#nav-oem-instances").textContent = String(r.instances.length);
       $("#nav-oem-announcements").textContent = String(announcements.length);
