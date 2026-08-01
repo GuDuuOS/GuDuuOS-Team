@@ -111,6 +111,20 @@ class DashboardSecurityTests(unittest.TestCase):
             self.assertIn('id="form-admin"', html)
             self.assertNotIn('data-tab="admin"', html)
 
+    def test_admin_portal_has_copyable_security_guide(self) -> None:
+        """超管教程必须有独立导航、正文容器和 Markdown 复制入口。"""
+        with urlopen(f"{self.base_url}/portal/admin/", timeout=3) as response:
+            html = response.read().decode("utf-8")
+        self.assertIn('data-admin-page="guide"', html)
+        self.assertIn('data-admin-view="guide"', html)
+        self.assertIn('id="btn-copy-admin-guide"', html)
+        self.assertIn('id="admin-guide-content"', html)
+
+        with urlopen(f"{self.base_url}/portal/portal.js", timeout=3) as response:
+            script = response.read().decode("utf-8")
+        self.assertIn("function adminGuideMarkdown()", script)
+        self.assertIn("copyText(adminGuideMarkdown())", script)
+
     def test_admin_api_is_rejected_on_oem_host_after_domain_cutover(self) -> None:
         """启用管理域名后，OEM 主机不能绕过 Cloudflare Access 直接调用管理 API。"""
         os.environ["NEXUS_ADMIN_PUBLIC_URL"] = "https://admin-nexus.guduu.co"

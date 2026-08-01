@@ -370,7 +370,155 @@
     customers: "OEM 客户",
     billing: "支付与订单",
     security: "平台安全",
+    guide: "使用教程",
   };
+
+  // 超管教程只维护这一份结构化数据：页面渲染和“复制 Markdown”都从这里生成，
+  // 避免运维规则更新后出现网页与对外文档内容不一致。
+  var ADMIN_GUIDE = {
+    title: "GuDuu Nexus 超级管理员安全操作指南",
+    summary: "用于平台主管的日常登录、管理员开通、MFA、Passkey、应急恢复与离职撤权。",
+    updated: "2026-08-02",
+    sections: [
+      {
+        title: "1. 先理解两层安全边界",
+        paragraphs: [
+          "超管入口由 Cloudflare Access 和 GuDuu Nexus 两层独立鉴权共同保护。通过其中一层，不代表自动获得另一层权限。",
+        ],
+        items: [
+          "Cloudflare Access：校验被允许的精确邮箱，并要求该用户完成 MFA。",
+          "GuDuu Nexus：校验每位管理员自己的具名账号、密码或 Passkey，并记录操作审计。",
+          "正式超管入口使用 https://admin-nexus.guduu.co；普通 OEM 域名不能直接调用超管接口。",
+        ],
+      },
+      {
+        title: "2. 创建首个具名管理员",
+        ordered: true,
+        items: [
+          "仅在首次建号或故障恢复时使用服务器应急令牌进入控制台。",
+          "打开“平台安全”，填写独立登录账号、显示名和高强度初始密码，创建具名管理员。",
+          "退出应急身份，使用刚创建的具名账号重新登录。",
+          "重新进入“平台安全”，为该账号登记 Passkey；建议至少准备两个不同恢复设备。",
+        ],
+        note: "应急令牌、密码、动态验证码和 Passkey 二维码都不得通过聊天、截图或邮件传播。",
+      },
+      {
+        title: "3. 日常登录流程",
+        ordered: true,
+        items: [
+          "访问独立超管域名，先通过 Cloudflare 邮箱验证。",
+          "使用手机验证器、Passkey 或安全密钥完成 Cloudflare MFA。",
+          "进入 Nexus 登录页后，使用自己的具名管理员账号和密码；已经登记 Passkey 时可改用 Passkey 登录。",
+          "完成工作后主动退出，公共或临时设备不得保存密码和会话。",
+        ],
+      },
+      {
+        title: "4. 添加第二位及后续管理员",
+        ordered: true,
+        items: [
+          "在 Cloudflare 的 GuDuu Nexus Admin 应用中，为新管理员创建仅包含其精确邮箱的 Allow 策略。",
+          "在 App Launcher 中为同一邮箱添加精确邮箱策略，使其能够首次登记 MFA。",
+          "在 Nexus“平台安全”中为对方创建独立具名账号和初始密码，禁止多人共用 owner 账号。",
+          "由新管理员本人完成邮箱验证、MFA 登记、首次登录和自己的 Passkey 登记。",
+        ],
+        note: "不要使用 Everyone、邮箱域名后缀或其他宽泛规则；每人一条策略更便于单独撤权。",
+      },
+      {
+        title: "5. Cloudflare MFA 与 App Launcher",
+        items: [
+          "超管应用应使用自定义 MFA，并设置合理的重新验证周期。",
+          "首次登记 MFA 时，App Launcher 可在短暂开通窗口内只允许精确邮箱通过；登记完成后应恢复自定义 MFA。",
+          "没有 Touch ID 的 Mac 可使用手机验证器；有 iPhone、密码管理器或实体安全密钥时，也可登记 Passkey 或安全密钥。",
+          "MFA 设备丢失时应先撤销旧设备，再登记新设备，并检查近期 Access 登录记录。",
+        ],
+      },
+      {
+        title: "6. Nexus Passkey 建议",
+        items: [
+          "Passkey 只能由已经登录的具名管理员为自己登记，应急身份不能登记。",
+          "Mac 没有 Touch ID 时，可在浏览器提示中选择“使用其他设备”，用 iPhone 扫码并通过 Face ID 保存。",
+          "建议至少登记两个不同恢复路径，例如 iPhone Passkey 加密码管理器或实体安全密钥。",
+          "设备遗失后立即从“我的 Passkey”移除对应凭据；服务器只保存公钥，不保存设备私钥。",
+        ],
+      },
+      {
+        title: "7. 忘记账号或密码时",
+        ordered: true,
+        items: [
+          "先确认 Cloudflare Access 仍能通过；它只保护入口，不会替你恢复 Nexus 密码。",
+          "通过 Google Cloud SSH 在服务器本机读取应急凭据，不要把凭据发送给任何人。",
+          "用应急身份进入“平台安全”，创建具名管理员或为现有管理员重置密码。",
+          "应急会话只用于恢复；完成后立即退出，再用具名账号登录并检查平台操作审计。",
+        ],
+        note: "如果应急凭据疑似泄露，应立即轮换，并同时检查 Cloudflare 与 Nexus 的审计记录。",
+      },
+      {
+        title: "8. 管理员离职或撤权",
+        ordered: true,
+        items: [
+          "先从 Cloudflare GuDuu Nexus Admin 和 App Launcher 策略中移除该管理员邮箱。",
+          "再到 Nexus“平台安全”停用其具名管理员账号，系统会立即撤销该账号的全部 Nexus 会话。",
+          "确认其 Passkey 不再可用，并核对近期登录、密码重置、KEY、支付和版本发布审计。",
+          "不要删除最后一个有效管理员；应始终保留至少两位可独立恢复的平台主管。",
+        ],
+      },
+      {
+        title: "9. 上线检查清单",
+        items: [
+          "Cloudflare 只允许明确列出的管理员邮箱。",
+          "每位管理员均已登记 MFA，且没有共用验证器。",
+          "每位管理员均使用独立 Nexus 账号，不共享密码。",
+          "至少两位管理员拥有可用的 Passkey 或独立恢复路径。",
+          "日常登录不使用服务器应急令牌。",
+          "管理员变更、版本发布、支付配置和 KEY 操作均可在审计中追溯。",
+        ],
+      },
+    ],
+  };
+
+  function adminGuideMarkdown() {
+    var lines = [
+      "# " + ADMIN_GUIDE.title,
+      "",
+      ADMIN_GUIDE.summary,
+      "",
+      "> 更新日期：" + ADMIN_GUIDE.updated,
+    ];
+    ADMIN_GUIDE.sections.forEach(function (section) {
+      lines.push("", "## " + section.title, "");
+      (section.paragraphs || []).forEach(function (paragraph) {
+        lines.push(paragraph, "");
+      });
+      (section.items || []).forEach(function (item, index) {
+        lines.push((section.ordered ? String(index + 1) + ". " : "- ") + item);
+      });
+      if (section.note) lines.push("", "> 注意：" + section.note);
+    });
+    return lines.join("\n").trim() + "\n";
+  }
+
+  function renderAdminGuide() {
+    var target = $("#admin-guide-content");
+    if (target.dataset.rendered === "true") return;
+    $("#admin-guide-title").textContent = ADMIN_GUIDE.title;
+    $("#admin-guide-summary").textContent = ADMIN_GUIDE.summary;
+    $("#admin-guide-updated").textContent = "更新于 " + ADMIN_GUIDE.updated;
+    target.innerHTML = ADMIN_GUIDE.sections.map(function (section) {
+      var paragraphs = (section.paragraphs || []).map(function (paragraph) {
+        return "<p>" + esc(paragraph) + "</p>";
+      }).join("");
+      var tag = section.ordered ? "ol" : "ul";
+      var items = (section.items || []).map(function (item) {
+        return "<li>" + esc(item) + "</li>";
+      }).join("");
+      var note = section.note
+        ? '<aside class="admin-guide-note"><b>注意</b><span>' + esc(section.note) + "</span></aside>"
+        : "";
+      return '<section class="admin-guide-section"><h3>' + esc(section.title) +
+        "</h3>" + paragraphs + "<" + tag + ">" + items + "</" + tag + ">" + note + "</section>";
+    }).join("");
+    target.dataset.rendered = "true";
+  }
   function adminPageFromHash() {
     var value = window.location.hash.replace(/^#/, "").trim();
     return Object.prototype.hasOwnProperty.call(ADMIN_PAGE_TITLES, value) ? value : "overview";
@@ -387,6 +535,10 @@
       else button.removeAttribute("aria-current");
     });
     $("#admin-page-title").textContent = ADMIN_PAGE_TITLES[page];
+    var guideOpen = page === "guide";
+    $("#btn-admin-refresh").hidden = guideOpen;
+    $("#btn-copy-admin-guide").hidden = !guideOpen;
+    if (guideOpen) renderAdminGuide();
     if (resetScroll) window.scrollTo(0, 0);
   }
   $all("button[data-admin-page]").forEach(function (button) {
@@ -2332,6 +2484,11 @@
   $("#btn-release-generate").addEventListener("click", function () { loadReleaseDraft(true); });
   $("#btn-admin-refresh").addEventListener("click", function () {
     loadAdmin(); loadAdminSecurity();
+  });
+  $("#btn-copy-admin-guide").addEventListener("click", function () {
+    copyText(adminGuideMarkdown())
+      .then(function () { toast("教程 Markdown 已复制"); })
+      .catch(function () { toast("复制失败，请检查浏览器剪贴板权限", true); });
   });
   $("#btn-oem-refresh").addEventListener("click", function () {
     loadOem();

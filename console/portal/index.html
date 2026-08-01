@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置使用同源外部脚本，既防刷新闪色，也允许 Portal 开启严格脚本 CSP。 -->
 <script src="/portal/theme-init.js?v=1"></script>
-<link rel="stylesheet" href="/portal/portal.css?v=30" />
+<link rel="stylesheet" href="/portal/portal.css?v=31" />
 </head>
 <body>
 <!--
@@ -415,6 +415,9 @@
       <button class="admin-menu-item" data-admin-page="security">
         <span class="admin-menu-icon">⌾</span><span>平台安全</span><em id="nav-count-admins">0</em>
       </button>
+      <button class="admin-menu-item" data-admin-page="guide">
+        <span class="admin-menu-icon">?</span><span>使用教程</span>
+      </button>
       <a class="admin-menu-item dashboard-link" href="/" target="_blank" rel="noopener" hidden>
         <span class="admin-menu-icon">◫</span><span>数据大屏</span><i>↗</i>
       </a>
@@ -425,7 +428,10 @@
   <div class="admin-workspace">
     <header class="admin-workspace-head">
       <div><small>平台控制台</small><h1 id="admin-page-title">舰队总览</h1></div>
-      <button id="btn-admin-refresh" class="ghost small">刷新当前数据</button>
+      <div class="admin-workspace-actions">
+        <button id="btn-admin-refresh" class="ghost small">刷新当前数据</button>
+        <button id="btn-copy-admin-guide" class="primary small" type="button" hidden>复制 Markdown</button>
+      </div>
     </header>
 
     <div class="admin-page" data-admin-view="overview">
@@ -650,6 +656,24 @@
         </table></div>
       </section>
     </div>
+
+    <!--
+      超管教程使用 JS 中的同一份结构化内容生成页面与 Markdown，防止“网页已更新但
+      复制出的文档仍是旧版”。教程本身不包含令牌、密码、IP 或其他部署秘密。
+    -->
+    <div class="admin-page" data-admin-view="guide" hidden>
+      <section class="panel admin-guide-panel">
+        <div class="admin-guide-hero">
+          <div>
+            <small>ADMIN SECURITY HANDBOOK</small>
+            <h2 id="admin-guide-title">超级管理员安全操作指南</h2>
+            <p id="admin-guide-summary" class="hint"></p>
+          </div>
+          <span id="admin-guide-updated" class="admin-guide-updated"></span>
+        </div>
+        <article id="admin-guide-content" class="admin-guide-content" aria-labelledby="admin-guide-title"></article>
+      </section>
+    </div>
   </div>
 </main>
 
@@ -809,6 +833,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=40"></script>
+<script src="/portal/portal.js?v=41"></script>
 </body>
 </html>
