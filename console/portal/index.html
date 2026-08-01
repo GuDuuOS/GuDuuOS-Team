@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
 <script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=26" />
+<link rel="stylesheet" href="/portal/portal.css?v=27" />
 </head>
 <body>
 <!--
@@ -307,16 +307,16 @@
       <div><h2>购买节点授权</h2><p class="hint">一张申请、一笔付款、一把 KEY；在线到账自动签发，企业转账需超管确认。</p></div>
     </div>
     <form id="form-request" class="license-request-form">
-      <label>计划部署域名<input name="deployment_domain" required placeholder="例如 im.my-brand.com" /></label>
-      <label>使用场景<input name="purpose" required maxlength="255" placeholder="例如企业内部协作 / 客户交付" /></label>
-      <label>期望部署日期<input name="expected_date" type="date" /></label>
-      <label>付款方式<select name="payment_method" id="license-payment-method">
+      <label class="license-domain">计划部署域名<input name="deployment_domain" required placeholder="例如 im.my-brand.com" /></label>
+      <label class="license-purpose">使用场景<input name="purpose" required maxlength="255" placeholder="例如企业内部协作 / 客户交付" /></label>
+      <label class="license-date">期望部署日期<input name="expected_date" type="date" /></label>
+      <label class="license-payment">付款方式<select name="payment_method" id="license-payment-method">
         <option value="corporate_transfer">企业转账（到账后人工审核）</option>
         <option value="online">在线支付（验签后自动签发）</option>
         <option value="manual_review">合同 / 免费授权（人工审批）</option>
       </select></label>
-      <label id="license-online-channel" hidden>在线支付渠道<select name="channel" id="license-channel"></select></label>
-      <label id="license-manual-tokens" hidden>申请附赠 Token<input name="requested_tokens" type="number" min="0" max="1000000000000" value="100000000" /></label>
+      <label id="license-online-channel" class="license-conditional" hidden>在线支付渠道<select name="channel" id="license-channel"></select></label>
+      <label id="license-manual-tokens" class="license-conditional" hidden>申请附赠 Token<input name="requested_tokens" type="number" min="0" max="1000000000000" value="100000000" /></label>
       <div id="license-transfer-fields" class="license-transfer-fields">
         <label>付款企业<input name="payer_company" maxlength="200" required placeholder="银行回单上的付款企业" /></label>
         <label>银行流水号<input name="transaction_id" maxlength="200" placeholder="可留空，以凭证为准" /></label>
