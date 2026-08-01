@@ -214,6 +214,49 @@
     });
   });
 
+  // ---------- OEM 左侧功能导航 ----------
+  // OEM 门户和超管控制台都属于页面级工作台，因此同样使用 hash 保留当前功能页。
+  // OEM 路径加 ``oem-`` 前缀，避免与超管已有的 overview/billing 等地址冲突。
+  var OEM_PAGE_TITLES = {
+    overview: "我的首页",
+    network: "邀请与层级",
+    announcements: "版本公告",
+    commerce: "购买与充值",
+    licenses: "授权申请",
+    keys: "我的 KEY",
+  };
+  function oemPageFromHash() {
+    var value = window.location.hash.replace(/^#oem-/, "").trim();
+    return Object.prototype.hasOwnProperty.call(OEM_PAGE_TITLES, value) ? value : "overview";
+  }
+  function selectOemPage(page, resetScroll) {
+    if (!Object.prototype.hasOwnProperty.call(OEM_PAGE_TITLES, page)) page = "overview";
+    $all("[data-oem-view]").forEach(function (view) {
+      view.hidden = view.dataset.oemView !== page;
+    });
+    $all("button[data-oem-page]").forEach(function (button) {
+      var active = button.dataset.oemPage === page;
+      button.classList.toggle("on", active);
+      if (active) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
+    });
+    $("#oem-page-title").textContent = OEM_PAGE_TITLES[page];
+    if (resetScroll) window.scrollTo(0, 0);
+  }
+  function openOemPage(page, resetScroll) {
+    var targetHash = "oem-" + page;
+    if (window.location.hash.replace(/^#/, "") === targetHash) {
+      selectOemPage(page, resetScroll);
+    } else {
+      window.location.hash = targetHash;
+    }
+  }
+  $all("button[data-oem-page]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      openOemPage(button.dataset.oemPage, true);
+    });
+  });
+
   // ---------- 超管左侧功能导航 ----------
   // 控制台不用前端框架，但页面级功能仍要支持刷新、前进/后退和深链。因此用一个很小的
   // hash 状态机维护当前功能页；这里只切展示区域，所有权限和数据仍由服务端接口控制。
@@ -253,6 +296,7 @@
   window.addEventListener("hashchange", function () {
     var auth = getAuth();
     if (auth && auth.mode === "admin") selectAdminPage(adminPageFromHash(), true);
+    if (auth && auth.mode === "oem") selectOemPage(oemPageFromHash(), true);
   });
 
   // ---------- 视图切换 ----------
@@ -278,7 +322,11 @@
       selectAdminPage(adminPageFromHash(), false);
       loadAdmin();
     }
-    else { show("#view-oem"); loadOem(); }
+    else {
+      show("#view-oem");
+      selectOemPage(oemPageFromHash(), false);
+      loadOem();
+    }
     prepareDashboardLinks();
   }
 
@@ -856,6 +904,7 @@
   function renderAnnouncements(announcements) {
     var panel = $("#panel-announcements");
     panel.hidden = announcements.length === 0;
+    $("#oem-no-announcements").hidden = announcements.length > 0;
     $("#oem-announcements").innerHTML = announcements.map(function (a) {
       var platform = a.target === "nexus";
       var meta = platform
@@ -898,10 +947,22 @@
   function loadOem() {
     Promise.all([api("/nexus/oem/me"), api("/nexus/oem/products")]).then(function (rs) {
       var r = rs[0];
+      var orders = r.orders || [];
+      var announcements = r.announcements || [];
+      var requests = r.requests || [];
+      var keys = r.keys || [];
       renderShop(rs[1], r.instances);
-      renderOrders(r.orders || []);
-      renderAnnouncements(r.announcements || []);
+      renderOrders(orders);
+      renderAnnouncements(announcements);
       renderReferral(r.referral || {});
+      // 左栏数字全部来自当前 OEM 的服务端过滤结果，不混入平台或其他企业数据。
+      $("#nav-oem-instances").textContent = String(r.instances.length);
+      $("#nav-oem-announcements").textContent = String(announcements.length);
+      $("#nav-oem-orders").textContent = String(orders.length);
+      // 授权页同时承担申请与完整历史，因此角标显示全部申请数；待处理状态仍在
+      // 表格中用颜色单独提示，避免“已批准后角标归零”让客户误以为没有记录。
+      $("#nav-oem-requests").textContent = String(requests.length);
+      $("#nav-oem-keys").textContent = String(keys.length);
       // 实例卡
       var box = $("#oem-instances");
       box.innerHTML = r.instances.map(function (i) {
@@ -915,12 +976,12 @@
       }).join("");
       $("#oem-noinst").hidden = r.instances.length > 0;
       // KEY 表
-      $("#oem-keys tbody").innerHTML = r.keys.map(function (k) {
+      $("#oem-keys tbody").innerHTML = keys.map(function (k) {
         var st = k.status === "suspended" ? "suspended" : (k.status !== "active" ? "revoked" : (k.instance_id ? "active" : "idle"));
         return "<tr><td>#" + k.id + "</td><td>···" + esc(k.tail) + "</td><td class=\"zh\">" + badge(st) + "</td>" +
           "<td>" + fmtTokens(k.token_grant) + "</td><td class=\"zh\">" + (k.instance_id ? "#" + k.instance_id : "—") + "</td></tr>";
       }).join("") || '<tr><td colspan="5" class="zh empty">尚未认领任何授权码</td></tr>';
-      oemRequests = r.requests || [];
+      oemRequests = requests;
       renderOemRequests();
     }).catch(function (err) { toast(err.message, true); });
   }
@@ -1646,6 +1707,9 @@
   $("#btn-release-refresh").addEventListener("click", loadAdmin);
   $("#btn-release-generate").addEventListener("click", function () { loadReleaseDraft(true); });
   $("#btn-admin-refresh").addEventListener("click", loadAdmin);
+  $("#btn-oem-refresh").addEventListener("click", function () {
+    loadOem();
+  });
 
   // 输入版本号时自动补对应 tag；若管理员已经手动改过 tag，就不强行覆盖。
   $("#form-release").version.addEventListener("input", function () {
@@ -2061,7 +2125,11 @@
       licenseForm.payment_method.value = "online";
       licenseForm.channel.value = t.dataset.buykey;
       syncLicensePaymentForm();
-      licenseForm.scrollIntoView({ behavior: "smooth", block: "center" });
+      openOemPage("licenses", false);
+      // hashchange 与 hidden 切换需要一个渲染帧；延后滚动确保表单已经可见。
+      setTimeout(function () {
+        licenseForm.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 30);
       toast("请填写部署资料后创建在线支付订单");
       return;
     }

@@ -71,14 +71,51 @@
 </main>
 
 <!-- ====== OEM 门户 ====== -->
-<main id="view-oem" class="page" hidden>
-  <h1 class="page-title">我的 GuDuu OS</h1>
+<main id="view-oem" class="admin-shell oem-shell" hidden>
+  <aside class="admin-sidebar oem-sidebar" aria-label="OEM 客户功能导航">
+    <div class="admin-sidebar-head">
+      <small>OEM CONSOLE</small>
+      <b>企业控制台</b>
+    </div>
+    <nav class="admin-menu">
+      <button class="admin-menu-item on" data-oem-page="overview" aria-current="page">
+        <span class="admin-menu-icon">⌂</span><span>我的首页</span><em id="nav-oem-instances">0</em>
+      </button>
+      <button class="admin-menu-item" data-oem-page="network">
+        <span class="admin-menu-icon">◎</span><span>邀请与层级</span>
+      </button>
+      <button class="admin-menu-item" data-oem-page="announcements">
+        <span class="admin-menu-icon">↻</span><span>版本公告</span><em id="nav-oem-announcements">0</em>
+      </button>
+      <button class="admin-menu-item" data-oem-page="commerce">
+        <span class="admin-menu-icon">¥</span><span>购买与充值</span><em id="nav-oem-orders">0</em>
+      </button>
+      <button class="admin-menu-item" data-oem-page="licenses">
+        <span class="admin-menu-icon">⌁</span><span>授权申请</span><em id="nav-oem-requests">0</em>
+      </button>
+      <button class="admin-menu-item" data-oem-page="keys">
+        <span class="admin-menu-icon">◇</span><span>我的 KEY</span><em id="nav-oem-keys">0</em>
+      </button>
+    </nav>
+    <p class="admin-sidebar-foot">管理实例、授权与企业增长关系</p>
+  </aside>
+
+  <div class="admin-workspace">
+    <header class="admin-workspace-head">
+      <div><small>OEM 企业控制台</small><h1 id="oem-page-title">我的首页</h1></div>
+      <button id="btn-oem-refresh" class="ghost small">刷新当前数据</button>
+    </header>
+
+    <div class="admin-page" data-oem-view="overview">
 
   <section class="panel">
     <div class="panel-head"><h2>我的实例</h2></div>
     <div id="oem-instances" class="cards"></div>
     <p id="oem-noinst" class="empty" hidden>还没有已开通的实例——认领授权码后，在你的服务器上运行安装命令即可开通。</p>
   </section>
+    </div>
+
+    <div class="admin-page" data-oem-view="network" hidden>
 
   <section class="panel" id="panel-referral">
     <div class="panel-head">
@@ -107,6 +144,9 @@
       </div>
     </div>
   </section>
+    </div>
+
+    <div class="admin-page" data-oem-view="announcements" hidden>
 
   <section class="panel" id="panel-announcements" hidden>
     <div class="panel-head">
@@ -114,6 +154,10 @@
     </div>
     <div id="oem-announcements" class="announcement-list"></div>
   </section>
+    <p id="oem-no-announcements" class="empty panel">当前还没有与你相关的版本更新公告。</p>
+    </div>
+
+    <div class="admin-page" data-oem-view="commerce" hidden>
 
   <section class="panel" id="panel-shop">
     <div class="panel-head"><h2>购买与充值</h2></div>
@@ -151,6 +195,9 @@
       <tbody></tbody>
     </table>
   </section>
+    </div>
+
+    <div class="admin-page" data-oem-view="licenses" hidden>
 
   <section class="panel">
     <div class="panel-head">
@@ -184,6 +231,9 @@
       </table>
     </div>
   </section>
+    </div>
+
+    <div class="admin-page" data-oem-view="keys" hidden>
 
   <section class="panel">
     <div class="panel-head"><h2>认领授权码</h2></div>
@@ -202,6 +252,8 @@
       <tbody></tbody>
     </table>
   </section>
+    </div>
+  </div>
 </main>
 
 <!-- ====== 超管视图 ====== -->
@@ -550,6 +602,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=30"></script>
+<script src="/portal/portal.js?v=31"></script>
 </body>
 </html>
