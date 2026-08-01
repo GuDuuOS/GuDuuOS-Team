@@ -128,15 +128,33 @@ class TestCreateTasksAutoInvite(unittest.TestCase):
         admin_join.assert_called_once_with("https://matrix.test", "!team:h", "@duxz01:h")
         self.assertIn("已自动加入", out)
 
-    def test_ai_room_no_invite_but_reminds(self) -> None:
-        """私聊(AI会话房)拆任务：无频道可邀 → 不邀请，返回提醒让模型转告。"""
+    def test_ai_room_human_assignment_is_rejected_before_insert(self) -> None:
+        """私聊派给第三人必须整批拒绝，强制走建频道+拉人的专班链路。"""
         c = _Client(ai_room=True)
         tb = Toolbox(c)
         out = _create(tb, [{
             "title": "复盘", "executor_kind": "human", "executor_ref": "duxz01",
         }], room="!aichat:h")
         self.assertEqual(c.invited, [])
-        self.assertIn("不会收到频道通知", out)
+        self.assertIn("本次没有登记任何任务", out)
+        self.assertIn("assemble_team", out)
+        from cosmac.db import session_scope
+        from cosmac.db.task_repo import list_tasks
+        with session_scope() as s:
+            self.assertEqual(list_tasks(s, room_ids=["!aichat:h"]), [])
+
+    def test_ai_room_agent_only_task_remains_allowed(self) -> None:
+        """私人会话仍允许用户自己/AI 待办，不要误伤轻量 create_tasks 场景。"""
+        c = _Client(ai_room=True)
+        tb = Toolbox(c)
+        out = _create(tb, [{
+            "title": "AI 汇总资料", "executor_kind": "agent", "executor_ref": "analyst",
+        }], room="!aichat:h")
+        self.assertIn("登记到「任务看板」", out)
+        from cosmac.db import session_scope
+        from cosmac.db.task_repo import list_tasks
+        with session_scope() as s:
+            self.assertEqual(len(list_tasks(s, room_ids=["!aichat:h"])), 1)
 
     def test_invite_failure_reported(self) -> None:
         """邀请失败必须如实回报(带真实原因)，让模型转告用户改派或找管理员。"""

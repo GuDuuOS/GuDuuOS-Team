@@ -564,6 +564,10 @@ class Toolbox:
                 "『我交代的事进行到哪了』，而不是做完就无影无踪。做完记得用 update_task 标 done。\n"
                 "（纯聊天/问答/查询这类没有交付物的**不要**建，会把看板刷满噪音。）\n"
                 "适用于『不开专班、就在当前对话/频道列待办』的轻量场景。\n"
+                "⚠️ 在与中枢 AI 的**私人会话**里，create_tasks 只能记自己/AI 待办；"
+                "只要要派给其他真人，必须改用 assemble_team 先建共享频道并拉人。"
+                "建专班如果被会员权限拒绝，就如实告知用户，不得退而用 create_tasks "
+                "生成一个没有真实频道的假专班/悬空任务。\n"
                 "⚠️ 若这个目标要**拉团队/建专班**，请**直接用 assemble_team**（它会建频道+派单），"
                 "**不要**先 create_tasks 再 assemble_team——否则任务会重复登记两份。\n"
                 "当用户『下达目标/让你拆解任务/安排分工/拆成几步』时调用。"
@@ -2036,6 +2040,43 @@ class Toolbox:
         items = args.get("tasks") or []
         if not isinstance(items, list) or not items:
             return "没有可登记的子任务。"
+        # 私人 AI 会话不是共享频道：在这里直接把任务派给第三人，只会产生一张
+        # 带着对方名字的卡片，却没有可供 TA 加入的频道。截图中“三伏贴活动”正是这种
+        # 假项目：AI 查频道成员当然查无 duxz01，对方侧栏也不可能凭空出现频道。
+        # 因此在**任何落库之前**整批拒绝，强制模型改用 assemble_team 的原子链路。
+        private_room = ctx.is_dm or self._room_kind(ctx.room_id) in ("ai", "dm")
+        sender_lp = ctx.sender.lstrip("@").split(":")[0].lower()
+        outside_humans: Set[str] = set()
+        if private_room:
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("executor_kind") or "") == "human":
+                    ref = str(item.get("executor_ref") or "").strip()
+                    lp = ref.lstrip("@").split(":")[0].lower()
+                    if lp and lp != sender_lp:
+                        outside_humans.add(ref or lp)
+                # AI 执行+真人共同负责的用户名会写在 assignee；切词与
+                # 任务看板归属及频道自动加入保持同一口径，避免只拦住显式 human。
+                for word in re.split(
+                    r"[^A-Za-z0-9._=@:\-]+", str(item.get("assignee") or "")
+                ):
+                    lp = word.strip().lstrip("@").split(":")[0].lower()
+                    if (
+                        lp
+                        and len(lp) >= 2
+                        and lp != sender_lp
+                        and lp not in self._TASK_HUMAN_NOISE
+                    ):
+                        outside_humans.add(word.strip())
+        if outside_humans:
+            who = "、".join(sorted(outside_humans))
+            return (
+                f"拒绝登记：当前是私人会话，不能把任务直接派给其他真人（{who}），"
+                "因为这里没有对方能加入和看到的共享频道。本次没有登记任何任务。"
+                "请改用 assemble_team 一次完成“建频道→拉真人→派单”；如果建专班"
+                "被会员权限拒绝，必须如实告知用户，不要再用 create_tasks 兜底造假专班。"
+            )
         # 把每条的截止时间 due(字符串) 解析成 due_ts(epoch 秒)，交给 create_tasks 落库；解析不了忽略。
         for it in items:
             if isinstance(it, dict) and it.get("due"):
