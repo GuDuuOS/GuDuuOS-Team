@@ -15,6 +15,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -149,6 +150,20 @@ class GatewayTest(unittest.TestCase):
         finally:
             s.close()
 
+    def _wait_balance(self, key: str, expected: int, timeout: float = 2.0) -> int:
+        """等待网关的响应后记账完成，返回最后一次读取的余额。
+
+        网关会先把模型响应交给客户端，再在同一请求处理线程内完成统计和
+        扣费；HTTP 客户端有可能在记账事务提交前数毫秒收齐响应体。测试等待
+        最终一致的余额，避免把线程调度差异误报为计费失败。
+        """
+        deadline = time.monotonic() + timeout
+        balance = self._balance(key)
+        while balance != expected and time.monotonic() < deadline:
+            time.sleep(0.01)
+            balance = self._balance(key)
+        return balance
+
     # ---- 正向 ----
 
     def test_openai_nonstream_meter_and_debit(self):
@@ -166,7 +181,7 @@ class GatewayTest(unittest.TestCase):
             _FakeUpstream.seen_headers[-1]["authorization"], "Bearer vk-openai-real"
         )
         # 扣账：100+50
-        self.assertEqual(self._balance(key), 850)
+        self.assertEqual(self._wait_balance(key, 850), 850)
         s = db.session()
         try:
             notes = [
@@ -230,7 +245,7 @@ class GatewayTest(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertEqual(first_result["response"].status_code, 200)
         # 第一单用量 150，可按既定后付语义把 100 扣到 -50；第二单没有打到原厂、没有扣费。
-        self.assertEqual(self._balance(key), -50)
+        self.assertEqual(self._wait_balance(key, -50), -50)
 
     # ---- 拒绝矩阵 ----
 

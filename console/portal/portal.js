@@ -59,7 +59,11 @@
     if (age > 15 * 60e3) return "warning";
     return "active";
   }
-  var STATUS_ZH = { active: "在线", warning: "迟滞", offline: "离线", revoked: "已吊销", disabled: "停用", idle: "未兑换" };
+  var STATUS_ZH = {
+    active: "在线", warning: "迟滞", offline: "离线", revoked: "已吊销",
+    suspended: "已暂停", disabled: "停用", idle: "未兑换", needs_info: "待补资料",
+    cancelled: "已撤回",
+  };
   function badge(st) { return '<span class="badge ' + esc(st) + '">' + esc(STATUS_ZH[st] || st) + "</span>"; }
 
   var toastTimer = null;
@@ -856,32 +860,152 @@
       $("#oem-noinst").hidden = r.instances.length > 0;
       // KEY 表
       $("#oem-keys tbody").innerHTML = r.keys.map(function (k) {
-        var st = k.status !== "active" ? "revoked" : (k.instance_id ? "active" : "idle");
+        var st = k.status === "suspended" ? "suspended" : (k.status !== "active" ? "revoked" : (k.instance_id ? "active" : "idle"));
         return "<tr><td>#" + k.id + "</td><td>···" + esc(k.tail) + "</td><td class=\"zh\">" + badge(st) + "</td>" +
           "<td>" + fmtTokens(k.token_grant) + "</td><td class=\"zh\">" + (k.instance_id ? "#" + k.instance_id : "—") + "</td></tr>";
       }).join("") || '<tr><td colspan="5" class="zh empty">尚未认领任何授权码</td></tr>';
-      // 申请单列表（approved 且未装机时展示明文——即交付通道；装机后明文被服务端清空）
-      var reqs = r.requests || [];
-      var REQ_ZH = { pending: "待处理", approved: "已批准", rejected: "已拒绝" };
-      var REQ_CLS = { pending: "warning", approved: "active", rejected: "revoked" };
-      $("#oem-requests").hidden = reqs.length === 0;
-      $("#oem-requests tbody").innerHTML = reqs.map(function (q) {
-        var keyCell = q.key
-          ? '<b style="user-select:all">' + esc(q.key) + "</b>"
-          : (q.status === "approved" ? '<span class="zh">已使用（实例开通）</span>' : "—");
-        return "<tr><td>#" + q.id + '</td><td class="zh"><span class="badge ' + (REQ_CLS[q.status] || "idle") + '">' + (REQ_ZH[q.status] || q.status) + "</span>" +
-          (q.status === "rejected" && q.decide_note ? '<div class="hint">' + esc(q.decide_note) + "</div>" : "") + "</td>" +
-          '<td class="zh">' + esc(q.note || "—") + "</td><td>" + keyCell + "</td><td>" + fmtTime(q.created_ts) + "</td></tr>";
-      }).join("");
+      oemRequests = r.requests || [];
+      renderOemRequests();
     }).catch(function (err) { toast(err.message, true); });
+  }
+
+  var REQUEST_LABEL = {
+    pending: "待处理", needs_info: "待补资料", approved: "已批准",
+    rejected: "已拒绝", cancelled: "已撤回",
+  };
+  var REQUEST_CLASS = {
+    pending: "warning", needs_info: "needs_info", approved: "active",
+    rejected: "revoked", cancelled: "cancelled",
+  };
+  var DELIVERY_LABEL = {
+    none: "尚未生成", ready: "待客户领取", legacy_ready: "待客户领取",
+    revealed: "领取窗口开启", locked: "查看窗口已结束", expired: "领取期已过",
+    used: "已用于节点开通", unavailable: "等待平台补发",
+  };
+
+  function requestKeyCell(q) {
+    var plain = revealedRequestKeys[q.id];
+    if (plain) {
+      return '<span class="request-key-value">' + esc(plain) + '</span> ' +
+        '<button class="ghost small" data-copy-request-key="' + q.id + '">复制</button>';
+    }
+    if (q.delivery_status === "ready" || q.delivery_status === "legacy_ready" || q.delivery_status === "revealed") {
+      return '<button class="primary small" data-reveal-request="' + q.id + '">查看授权码</button>';
+    }
+    var text = {
+      used: "已使用（节点开通）", expired: "领取期已过", locked: "查看窗口已结束",
+      unavailable: "等待平台补发",
+    }[q.delivery_status];
+    return '<span class="zh">' + esc(text || "—") + "</span>";
+  }
+
+  function renderOemRequests() {
+    $("#oem-requests").hidden = oemRequests.length === 0;
+    $("#oem-requests tbody").innerHTML = oemRequests.map(function (q) {
+      var message = q.decide_note && (q.status === "rejected" || q.status === "needs_info")
+        ? '<div class="hint">' + esc(q.decide_note) + "</div>" : "";
+      var actions = q.status === "pending"
+        ? '<button class="ghost small" data-edit-request="' + q.id + '">修改</button> <button class="ghost small" data-cancel-request="' + q.id + '">撤回</button>'
+        : q.status === "needs_info"
+          ? '<button class="primary small" data-edit-request="' + q.id + '">补充资料</button>' : "—";
+      return "<tr><td>#" + q.id + '</td><td class="zh"><span class="badge ' +
+        (REQUEST_CLASS[q.status] || "idle") + '">' + (REQUEST_LABEL[q.status] || q.status) +
+        "</span>" + message + '</td><td class="zh"><b>' + esc(q.deployment_domain || "待定") +
+        '</b><div class="hint">' + esc(q.purpose || q.note || "—") + "</div></td><td>" +
+        fmtTokens(q.requested_tokens) + '</td><td class="zh">' + requestKeyCell(q) + "</td><td>" +
+        fmtTime(q.created_ts) + '</td><td class="zh">' + actions + "</td></tr>";
+    }).join("");
+  }
+
+  function fillRequestForm(q) {
+    var f = $("#form-request");
+    editingRequestId = q.id;
+    f.deployment_domain.value = q.deployment_domain || "";
+    f.purpose.value = q.purpose || "";
+    f.expected_date.value = q.expected_date || "";
+    f.requested_tokens.value = q.requested_tokens || 0;
+    f.note.value = q.note || "";
+    f.querySelector("button[type=submit]").textContent = q.status === "needs_info" ? "补充并重新提交" : "保存修改";
+    f.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
   $("#form-request").addEventListener("submit", function (e) {
     e.preventDefault();
     var f = e.target;
-    api("/nexus/oem/request_key", { body: { note: f.note.value } })
-      .then(function () { toast("申请已提交，等待平台处理"); f.reset(); loadOem(); })
+    var payload = {
+      note: f.note.value,
+      deployment_domain: f.deployment_domain.value,
+      purpose: f.purpose.value,
+      expected_date: f.expected_date.value,
+      requested_tokens: Number(f.requested_tokens.value) || 0,
+    };
+    var endpoint = editingRequestId ? "/nexus/oem/request_action" : "/nexus/oem/request_key";
+    if (editingRequestId) {
+      payload.action = "update";
+      payload.request_id = editingRequestId;
+    }
+    api(endpoint, { body: payload })
+      .then(function () {
+        toast(editingRequestId ? "申请资料已更新" : "申请已提交，等待平台处理");
+        editingRequestId = 0; f.reset(); f.requested_tokens.value = "100000000";
+        f.querySelector("button[type=submit]").textContent = "提交申请"; loadOem();
+      })
       .catch(function (err) { toast(err.message, true); });
+  });
+
+  var AUDIT_ACTION_ZH = {
+    submit: "提交申请", update: "修改申请", resubmit: "补充资料并重新提交",
+    needs_info: "要求补充资料", approve: "批准并签发", reject: "拒绝申请",
+    cancel: "申请人撤回", reveal: "申请人查看授权码", redeem: "节点完成兑换",
+  };
+
+  function openRequestDetail(requestId) {
+    api("/nexus/admin/request_detail?request_id=" + encodeURIComponent(requestId)).then(function (result) {
+      var q = result.request || {};
+      $("#request-detail-title").textContent = "授权申请 #" + q.id;
+      $("#request-detail-summary").textContent = (q.company || "未补企业名") + " · " + (q.oem_email || "");
+      $("#request-detail-state").innerHTML = '<span class="badge ' + (REQUEST_CLASS[q.status] || "idle") + '">' +
+        esc(REQUEST_LABEL[q.status] || q.status) + "</span><span>KEY " + (q.key_id ? "#" + q.key_id : "尚未签发") +
+        " · 交付状态 " + esc(DELIVERY_LABEL[q.delivery_status] || DELIVERY_LABEL.none) + "</span>";
+      var fields = [
+        ["计划域名", q.deployment_domain || "待定"], ["使用场景", q.purpose || "—"],
+        ["期望日期", q.expected_date || "—"], ["申请 Token", fmtTokens(q.requested_tokens)],
+        ["联系人", q.contact_name || "—"], ["联系方式", q.contact_phone || "—"],
+        ["申请时间", fmtTime(q.created_ts)], ["处理时间", fmtTime(q.decided_ts)],
+        ["补充说明", q.note || "—"], ["处理意见", q.decide_note || "—"],
+      ];
+      $("#request-detail-kv").innerHTML = fields.map(function (field) {
+        return "<small>" + esc(field[0]) + "</small><b>" + esc(field[1]) + "</b>";
+      }).join("");
+      var timeline = q.timeline || [];
+      $("#request-detail-timeline").innerHTML = timeline.map(function (event) {
+        var transition = event.from_state || event.to_state
+          ? '<span> · ' + esc(event.from_state || "创建") + " → " + esc(event.to_state || "—") + "</span>" : "";
+        return '<div class="audit-event"><div class="audit-event-head"><b>' +
+          esc(AUDIT_ACTION_ZH[event.action] || event.action) + '</b><time>' + fmtTime(event.created_ts) +
+          '</time></div><p>' + esc(event.actor_label || event.actor_type || "系统") + transition +
+          (event.note ? " · " + esc(event.note) : "") + "</p></div>";
+      }).join("") || '<p class="empty">历史记录尚未生成审计事件</p>';
+      $("#request-detail-mask").hidden = false;
+    }).catch(function (err) { toast(err.message, true); });
+  }
+
+  $("#request-detail-close").addEventListener("click", function () {
+    $("#request-detail-mask").hidden = true;
+  });
+  $("#request-detail-mask").addEventListener("click", function (event) {
+    if (event.target === this) this.hidden = true;
+  });
+
+  $all("[data-request-status]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      adminRequestStatus = button.dataset.requestStatus;
+      loadAdmin();
+    });
+  });
+  $("#request-search").addEventListener("input", function () {
+    clearTimeout(requestSearchTimer);
+    requestSearchTimer = setTimeout(loadAdmin, 280);
   });
 
   $("#form-claim").addEventListener("submit", function (e) {
@@ -921,6 +1045,12 @@
   // 节点详情使用最近一次管理列表快照，打开弹窗时无需再发请求。
   var adminInstances = [];
   var releaseDraftChecked = false;
+  // KEY 明文只保留在当前页面内存，刷新或关闭标签页即消失，绝不写入 Storage。
+  var revealedRequestKeys = {};
+  var oemRequests = [];
+  var editingRequestId = 0;
+  var adminRequestStatus = "pending";
+  var requestSearchTimer = null;
 
   function releaseBadge(status, mapping) {
     var item = mapping[status] || ["idle", status];
@@ -1059,12 +1189,18 @@
     });
   }
 
+  function requestListPath() {
+    var query = $("#request-search") ? $("#request-search").value.trim() : "";
+    return "/nexus/admin/requests?status=" + encodeURIComponent(adminRequestStatus) +
+      "&q=" + encodeURIComponent(query);
+  }
+
   function loadAdmin() {
     Promise.all([
       api("/nexus/admin/instances"),
       api("/nexus/admin/keys"),
       api("/nexus/admin/oems"),
-      api("/nexus/admin/requests"),
+      api(requestListPath()),
       api("/nexus/admin/pricing"),
       api("/nexus/admin/orders"),
       api("/nexus/admin/releases"),
@@ -1072,7 +1208,7 @@
       api("/nexus/admin/payment_configs"),
     ]).then(function (rs) {
       var insts = rs[0].instances, keys = rs[1].keys, oems = rs[2].oems;
-      var reqs = rs[3].requests || [];
+      var reqs = rs[3].requests || [], requestCounts = rs[3].counts || {};
       var pricing = rs[4].pricing, orders = rs[5].orders || [];
       var releases = rs[6].releases || [];
       var finance = rs[7] || {};
@@ -1098,7 +1234,7 @@
       // 被埋在授权列表里。这里只展示已有接口返回的计数，不额外增加轮询请求。
       $("#nav-count-releases").textContent = String(releases.length);
       $("#nav-count-instances").textContent = String(insts.length);
-      $("#nav-count-requests").textContent = String(reqs.length);
+      $("#nav-count-requests").textContent = String((requestCounts.pending || 0) + (requestCounts.needs_info || 0));
       $("#nav-count-customers").textContent = String(oems.length);
       $("#nav-count-orders").textContent = String(orders.length);
 
@@ -1132,15 +1268,31 @@
           '<td class="zh"><span class="badge ' + (manual ? "manual" : st[0]) + '">' + (manual ? "人工确认" : st[1]) + "</span></td><td class=\"zh\">" + voucher + "</td><td>" + fmtTime(o.created_ts) + "</td></tr>";
       }).join("");
 
-      // 待处理申请（无申请时整个面板隐藏，不占版面）
-      $("#panel-requests").hidden = reqs.length === 0;
+      $all("[data-request-status]").forEach(function (button) {
+        var status = button.dataset.requestStatus;
+        var key = status || "all";
+        var count = button.querySelector("em");
+        if (count) count.textContent = String(requestCounts[key] || 0);
+        button.classList.toggle("on", status === adminRequestStatus);
+      });
+
+      // 申请历史始终保留面板；空筛选也要明确展示，避免“处理完就消失”的旧体验。
       $("#admin-requests tbody").innerHTML = reqs.map(function (q) {
-        return "<tr><td>#" + q.id + "</td><td>" + esc(q.oem_email) + '</td><td class="zh">' + esc(q.note || "—") + "</td>" +
-          "<td>" + fmtTime(q.created_ts) + "</td>" +
-          '<td class="zh"><input type="number" min="0" value="100000000" style="width:130px" data-grantfor="' + q.id + '" title="附赠 token" /></td>' +
-          '<td class="zh"><button class="ghost small" data-approve="' + q.id + '">批准签发</button> ' +
-          '<button class="ghost small" data-reject="' + q.id + '">拒绝</button></td></tr>';
-      }).join("");
+        var pendingActions = q.status === "pending"
+          ? '<button class="primary small" data-approve="' + q.id + '">批准</button> ' +
+            '<button class="ghost small" data-needs-info="' + q.id + '">补资料</button> ' +
+            '<button class="ghost small" data-reject="' + q.id + '">拒绝</button>' : "";
+        var requested = q.requested_tokens || 100000000;
+        return "<tr><td>#" + q.id + '</td><td class="zh"><b>' + esc(q.company || "未补企业名") +
+          '</b><div class="hint">' + esc(q.oem_email) + '</div></td><td class="zh"><b>' +
+          esc(q.deployment_domain || "域名待定") + '</b><div class="hint">' + esc(q.purpose || q.note || "—") +
+          '</div></td><td class="zh"><span class="badge ' + (REQUEST_CLASS[q.status] || "idle") + '">' +
+          (REQUEST_LABEL[q.status] || q.status) + "</span></td><td>" + fmtTime(q.created_ts) +
+          '</td><td class="zh"><input type="number" min="0" max="1000000000000" value="' + requested +
+          '" style="width:130px" data-grantfor="' + q.id + '" title="附赠 token" ' +
+          (q.status === "pending" ? "" : "disabled") + ' /></td><td class="zh"><button class="ghost small" data-request-detail="' +
+          q.id + '">详情</button> ' + pendingActions + "</td></tr>";
+      }).join("") || '<tr><td colspan="7" class="zh empty">当前筛选下没有申请记录</td></tr>';
 
       // 统计条
       var online = insts.filter(function (i) { return hbStatus(i) !== "offline"; }).length;
@@ -1312,12 +1464,21 @@
 
       // KEY 表（吊销）
       $("#admin-keys tbody").innerHTML = keys.map(function (k) {
-        var st = k.status !== "active" ? "revoked" : (k.instance_id ? "active" : "idle");
-        return "<tr><td>#" + k.id + "</td><td>···" + esc(k.tail) + "</td><td class=\"zh\">" + badge(st) + "</td>" +
+        var st = k.status === "suspended" ? "suspended" : (k.status !== "active" ? "revoked" : (k.instance_id ? "active" : "idle"));
+        // 超管要能够直接核对 KEY 的企业归属；历史手工签发但未认领的 KEY 明确标记为未归属。
+        var owner = k.company_name || k.oem_email || "未归属";
+        var statusAction = k.status === "active"
+          ? '<button class="ghost small" data-key-status="suspended" data-key-id="' + k.id + '">暂停</button> '
+          : k.status === "suspended"
+            ? '<button class="ghost small" data-key-status="active" data-key-id="' + k.id + '">恢复</button> ' : "";
+        var revokeAction = k.status !== "revoked"
+          ? '<button class="ghost small" data-revoke="' + k.id + '">吊销</button>' : "";
+        return "<tr><td>#" + k.id + "</td><td>···" + esc(k.tail) + '</td><td class="zh">' + esc(owner) +
+          "</td><td class=\"zh\">" + badge(st) + "</td>" +
           "<td>" + fmtTokens(k.token_grant) + "</td><td class=\"zh\">" + esc(k.note || "—") + "</td>" +
           "<td class=\"zh\">" + (k.instance_id ? "#" + k.instance_id : "—") + "</td>" +
-          '<td class="zh">' + (k.status === "active" ? '<button class="ghost small" data-revoke="' + k.id + '">吊销</button>' : "—") + "</td></tr>";
-      }).join("") || '<tr><td colspan="7" class="zh empty">尚未签发</td></tr>';
+          '<td class="zh">' + (statusAction + revokeAction || "—") + "</td></tr>";
+      }).join("") || '<tr><td colspan="8" class="zh empty">尚未签发</td></tr>';
 
       // OEM 客户表（自助注册模式：超管唯一管控 = 停用/启用；账号状态用"正常/停用"措辞）
       $("#admin-oems tbody").innerHTML = oems.map(function (o) {
@@ -1633,6 +1794,45 @@
   // 表格行内操作（事件代理：详情 / 吊销 / 充值）
   document.addEventListener("click", function (e) {
     var t = e.target;
+    if (t.dataset && t.dataset.requestDetail) {
+      openRequestDetail(Number(t.dataset.requestDetail));
+      return;
+    }
+    if (t.dataset && t.dataset.revealRequest) {
+      var revealId = Number(t.dataset.revealRequest);
+      t.disabled = true;
+      api("/nexus/oem/request_action", { body: { action: "reveal", request_id: revealId } })
+        .then(function (result) {
+          revealedRequestKeys[revealId] = result.request.key;
+          toast("授权码已显示，请立即复制并安全保存");
+          loadOem();
+        })
+        .catch(function (err) { t.disabled = false; toast(err.message, true); });
+      return;
+    }
+    if (t.dataset && t.dataset.copyRequestKey) {
+      var copyId = Number(t.dataset.copyRequestKey);
+      copyText(revealedRequestKeys[copyId] || "")
+        .then(function () { toast("授权码已复制"); })
+        .catch(function () { toast("复制失败，请手动选择", true); });
+      return;
+    }
+    if (t.dataset && t.dataset.editRequest) {
+      var editId = Number(t.dataset.editRequest);
+      var requestRow = oemRequests.find(function (item) { return Number(item.id) === editId; });
+      if (requestRow) fillRequestForm(requestRow);
+      return;
+    }
+    if (t.dataset && t.dataset.cancelRequest) {
+      var cancelId = Number(t.dataset.cancelRequest);
+      uiConfirm("确认撤回申请 #" + cancelId + "？撤回后如仍需要授权，须重新提交。", true, "确认撤回").then(function (ok) {
+        if (!ok) return;
+        api("/nexus/oem/request_action", { body: { action: "cancel", request_id: cancelId } })
+          .then(function () { toast("申请已撤回"); loadOem(); })
+          .catch(function (err) { toast(err.message, true); });
+      });
+      return;
+    }
     if (t.dataset && t.dataset.instanceDetail) {
       openInstanceDetail(Number(t.dataset.instanceDetail));
       return;
@@ -1678,12 +1878,31 @@
       return;
     }
     if (t.dataset && t.dataset.revoke) {
-      uiConfirm("确认吊销 KEY #" + t.dataset.revoke + "？吊销后该码立即失效。", true, "确认吊销").then(function (ok) {
-        if (!ok) return;
-        api("/nexus/admin/revoke", { body: { key_id: Number(t.dataset.revoke) } })
-          .then(function () { toast("已吊销"); loadAdmin(); })
+      var revokeId = Number(t.dataset.revoke);
+      uiPrompt("填写永久吊销 KEY #" + revokeId + " 的原因", "例如：授权替换 / KEY 泄露").then(function (reason) {
+        if (reason === null) return;
+        if (!reason.trim()) return toast("永久吊销必须填写原因", true);
+        uiConfirm("确认永久吊销 KEY #" + revokeId + "？吊销后不可恢复。", true, "确认永久吊销").then(function (ok) {
+          if (!ok) return;
+          api("/nexus/admin/revoke", { body: { key_id: revokeId, reason: reason } })
+            .then(function () { toast("已永久吊销"); loadAdmin(); })
+            .catch(function (err) { toast(err.message, true); });
+        });
+      });
+      return;
+    }
+    if (t.dataset && t.dataset.keyStatus) {
+      var keyId = Number(t.dataset.keyId);
+      var targetStatus = t.dataset.keyStatus;
+      var statusText = targetStatus === "active" ? "恢复" : "暂停";
+      uiPrompt(statusText + " KEY #" + keyId + " 的原因", "用于审计记录，可简要填写").then(function (reason) {
+        if (reason === null) return;
+        if (!reason.trim()) return toast(statusText + "操作必须填写原因", true);
+        api("/nexus/admin/key_status", { body: { key_id: keyId, status: targetStatus, reason: reason } })
+          .then(function () { toast("KEY 已" + statusText); loadAdmin(); })
           .catch(function (err) { toast(err.message, true); });
       });
+      return;
     }
     if (t.dataset && t.dataset.topup) {
       var topupId = Number(t.dataset.topup);
@@ -1720,18 +1939,35 @@
       var rid = t.dataset.approve;
       var grantInput = document.querySelector('input[data-grantfor="' + rid + '"]');
       var grant = grantInput ? Number(grantInput.value) || 0 : 0;
-      api("/nexus/admin/request_decide", { body: { request_id: Number(rid), approve: true, token_grant: grant } })
-        .then(function () { toast("已批准，授权码已交付到对方门户"); loadAdmin(); })
-        .catch(function (err) { toast(err.message, true); });
+      uiConfirm("确认批准申请 #" + rid + " 并附赠 " + fmtTokens(grant) + " Token？系统只会签发一把 KEY。", false, "批准并签发").then(function (ok) {
+        if (!ok) return;
+        t.disabled = true;
+        api("/nexus/admin/request_decide", { body: { request_id: Number(rid), action: "approve", approve: true, token_grant: grant } })
+          .then(function () { toast("已批准，授权码等待对方安全领取"); loadAdmin(); })
+          .catch(function (err) { t.disabled = false; toast(err.message, true); });
+      });
+      return;
+    }
+    if (t.dataset && t.dataset.needsInfo) {
+      var infoId = Number(t.dataset.needsInfo);
+      uiPrompt("需要申请人补充什么资料？", "例如：请确认计划部署域名").then(function (reason) {
+        if (reason === null || !reason.trim()) return toast("请填写需要补充的资料", true);
+        api("/nexus/admin/request_decide", { body: { request_id: infoId, action: "needs_info", decide_note: reason } })
+          .then(function () { toast("已通知申请人补充资料"); loadAdmin(); })
+          .catch(function (err) { toast(err.message, true); });
+      });
+      return;
     }
     if (t.dataset && t.dataset.reject) {
       var rejectId = Number(t.dataset.reject);
-      uiPrompt("拒绝理由（会展示给申请人，可留空）", "如：请先联系商务").then(function (reason) {
+      uiPrompt("拒绝理由（会展示给申请人，必填）", "如：请先联系商务").then(function (reason) {
         if (reason === null) return; // 点了取消 = 中止，不是"空理由拒绝"
-        api("/nexus/admin/request_decide", { body: { request_id: rejectId, approve: false, decide_note: reason } })
+        if (!reason.trim()) return toast("拒绝申请必须填写原因", true);
+        api("/nexus/admin/request_decide", { body: { request_id: rejectId, action: "reject", approve: false, decide_note: reason } })
           .then(function () { toast("已拒绝"); loadAdmin(); })
           .catch(function (err) { toast(err.message, true); });
       });
+      return;
     }
     if (t.dataset && t.dataset.detail) {
       openDetail(Number(t.dataset.detail));

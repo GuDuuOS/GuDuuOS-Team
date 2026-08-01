@@ -12,20 +12,26 @@ pbkdf2 派生，不引三方库（与项目「栈越少越好」一致）。
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
+import os
 import re
 import secrets
 import time
 from typing import Any, Dict, List, Optional
 
+from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import func, select
 
+from nexus import audit
 from nexus.db import (
     NexusInstance,
     NexusKey,
     NexusKeyClaim,
     NexusKeyRequest,
+    NexusKeyRequestDelivery,
+    NexusKeyRequestProfile,
     NexusOem,
     NexusOemFile,
     NexusOemInvite,
@@ -43,10 +49,24 @@ _SESSION_TTL_MS = 7 * 24 * 3600 * 1000
 # pbkdf2 迭代次数：兼顾安全与单机 CPU（同步服务，别把登录搞太慢）
 _PBKDF2_ITERS = 200_000
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_DOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,253}[a-z0-9])?$")
 
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _delivery_fernet() -> Fernet:
+    """从 Nexus 主密钥派生授权交付专用 Fernet；缺失时绝不明文降级。"""
+    raw = os.environ.get("NEXUS_SECRET_KEY", "").strip()
+    if len(raw) < 32:
+        raise FleetError(
+            "NEXUS_SECRET_KEY_MISSING",
+            "授权码交付加密主密钥未配置，请先设置 NEXUS_SECRET_KEY",
+            503,
+        )
+    derived = base64.urlsafe_b64encode(hashlib.sha256(raw.encode("utf-8")).digest())
+    return Fernet(derived)
 
 
 # ---------- 密码哈希（pbkdf2，标准库）----------
@@ -607,109 +627,451 @@ def hierarchy_snapshot(s) -> Dict[str, Any]:
     }
 
 
-# ---------- 授权码申请闭环（OEM 申请 → 超管签发 → 门户交付明文）----------
+# ---------- 授权中心 V2（申请 → 审核 → 加密交付 → 审计）----------
 
-# 同一 OEM 最多同时挂起的申请数（防手滑/刷单；正常客户一次买一两把）
+# 同一 OEM 最多同时挂起三张申请；needs_info 仍占名额，避免反复开新单绕过审核。
 _MAX_PENDING_REQUESTS = 3
+# 管理员可调整附赠额度，但服务端必须有硬上限，避免输入错误把钱包写入异常巨量。
+_MAX_TOKEN_GRANT = 1_000_000_000_000
+# 获批后七天内必须首次领取；首次领取后保留三十分钟重复查看窗口，防网络响应丢失。
+_DELIVERY_TTL_MS = 7 * 24 * 3600 * 1000
+_REVEAL_WINDOW_MS = 30 * 60 * 1000
 
 
-def request_key(s, oem_id: int, note: str = "") -> Dict[str, Any]:
-    """OEM 在门户提交一张授权码申请单（一单=一把 KEY）。"""
+def _clean_domain(value: str) -> str:
+    """校验申请中的计划域名；允许留空，但禁止把 URL/路径当成域名入库。"""
+    domain = (value or "").strip().lower().rstrip(".")[:255]
+    if domain and (not _DOMAIN_RE.fullmatch(domain) or ".." in domain):
+        raise FleetError("NEXUS_BAD_DOMAIN", "计划部署域名格式不正确")
+    return domain
+
+
+def _clean_tokens(value: int) -> int:
+    """把申请/审批额度收敛到数据库和产品允许的安全范围。"""
+    tokens = int(value or 0)
+    if tokens < 0 or tokens > _MAX_TOKEN_GRANT:
+        raise FleetError(
+            "NEXUS_BAD_GRANT",
+            f"Token 额度须在 0~{_MAX_TOKEN_GRANT} 之间",
+        )
+    return tokens
+
+
+def request_key(
+    s,
+    oem_id: int,
+    note: str = "",
+    *,
+    deployment_domain: str = "",
+    purpose: str = "",
+    expected_date: str = "",
+    requested_tokens: int = 0,
+    source_ip: str = "",
+) -> Dict[str, Any]:
+    """OEM 提交一张结构化授权申请（一张申请对应一个节点 KEY）。"""
     pending = s.execute(
         select(NexusKeyRequest).where(
             NexusKeyRequest.oem_id == int(oem_id),
-            NexusKeyRequest.status == "pending",
+            NexusKeyRequest.status.in_(("pending", "needs_info")),
         )
     ).scalars().all()
     if len(pending) >= _MAX_PENDING_REQUESTS:
         raise FleetError(
             "NEXUS_TOO_MANY_REQUESTS",
-            f"已有 {len(pending)} 张待处理申请，请等待平台处理后再提交",
+            f"已有 {len(pending)} 张处理中申请，请等待处理或撤回后再提交",
             429,
         )
+    account = s.get(NexusOem, int(oem_id))
+    if account is None:
+        raise FleetError("NEXUS_OEM_NOT_FOUND", "OEM 账号不存在", 404)
+    profile = s.get(NexusOemProfile, int(oem_id))
+    clean_purpose = (purpose or note or "").strip()[:255]
+    if not clean_purpose:
+        raise FleetError("NEXUS_REQUEST_PURPOSE_REQUIRED", "请填写使用场景")
     row = NexusKeyRequest(oem_id=int(oem_id), note=(note or "").strip()[:500])
     s.add(row)
     s.flush()
-    return _public_request(row)
+    s.add(
+        NexusKeyRequestProfile(
+            request_id=row.id,
+            deployment_domain=_clean_domain(deployment_domain),
+            purpose=clean_purpose,
+            expected_date=(expected_date or "").strip()[:16],
+            requested_tokens=_clean_tokens(requested_tokens),
+            contact_name=(profile.contact_name if profile else account.name)[:80],
+            contact_phone=(profile.phone if profile else "")[:60],
+        )
+    )
+    audit.record(
+        s,
+        object_type="key_request",
+        object_id=row.id,
+        action="submit",
+        actor_type="oem",
+        actor_label=account.email,
+        source_ip=source_ip,
+        to_state="pending",
+    )
+    return _public_request(s, row)
+
+
+def _delivery_status(
+    row: NexusKeyRequest, delivery: Optional[NexusKeyRequestDelivery]
+) -> str:
+    """把交付记录转换成前端稳定状态，不暴露任何密文。"""
+    if row.status != "approved":
+        return "none"
+    if delivery is None:
+        return "legacy_ready" if row.key_plain else "unavailable"
+    if delivery.cleared_ts or not delivery.encrypted_key:
+        return "used"
+    now = _now_ms()
+    if delivery.first_revealed_ts and delivery.reveal_until_ts:
+        return "revealed" if now <= delivery.reveal_until_ts else "locked"
+    return "ready" if now <= delivery.expires_ts else "expired"
+
+
+def _public_request(s, row: NexusKeyRequest) -> Dict[str, Any]:
+    """返回不含 KEY 明文/密文的申请摘要，OEM 与超管共用。"""
+    profile = s.get(NexusKeyRequestProfile, row.id)
+    delivery = s.get(NexusKeyRequestDelivery, row.id)
+    delivery_status = _delivery_status(row, delivery)
+    # 历史版本在节点兑换后只清旧明文，没有 V2 delivery 行；通过 KEY 绑定关系仍能准确
+    # 还原“已使用”，避免升级后把老客户的正常节点误标成等待补发。
+    if row.key_id:
+        key = s.get(NexusKey, row.key_id)
+        if key is not None and key.instance_id is not None:
+            delivery_status = "used"
+    return {
+        "id": row.id,
+        "oem_id": row.oem_id,
+        "note": row.note,
+        "status": row.status,
+        "created_ts": row.created_ts,
+        "decided_ts": row.decided_ts,
+        "key_id": row.key_id,
+        "decide_note": row.decide_note,
+        "deployment_domain": profile.deployment_domain if profile else "",
+        "purpose": profile.purpose if profile else (row.note or ""),
+        "expected_date": profile.expected_date if profile else "",
+        "requested_tokens": int(profile.requested_tokens) if profile else 0,
+        "contact_name": profile.contact_name if profile else "",
+        "contact_phone": profile.contact_phone if profile else "",
+        "delivery_status": delivery_status,
+        "delivery_expires_ts": delivery.expires_ts if delivery else None,
+        "reveal_until_ts": delivery.reveal_until_ts if delivery else None,
+    }
 
 
 def my_requests(s, oem_id: int) -> List[Dict[str, Any]]:
-    """该 OEM 的申请单列表（含已批准单的 KEY 明文——这就是交付通道）。"""
+    """返回 OEM 的完整申请历史；授权码须另调 reveal 接口主动领取。"""
     rows = s.execute(
         select(NexusKeyRequest)
         .where(NexusKeyRequest.oem_id == int(oem_id))
         .order_by(NexusKeyRequest.id.desc())
     ).scalars().all()
-    return [_public_request(r) for r in rows]
+    return [_public_request(s, row) for row in rows]
 
 
-def _public_request(r: NexusKeyRequest) -> Dict[str, Any]:
-    return {
-        "id": r.id,
-        "oem_id": r.oem_id,
-        "note": r.note,
-        "status": r.status,
-        "created_ts": r.created_ts,
-        "decided_ts": r.decided_ts,
-        "key_id": r.key_id,
-        # 明文只在「已批准且尚未装机兑换」窗口内可见，兑换后被清空
-        "key": r.key_plain or None,
-        "decide_note": r.decide_note,
+def request_counts(s) -> Dict[str, int]:
+    """返回各申请状态数量，供超管标签和导航角标使用。"""
+    counts = {
+        "pending": 0,
+        "needs_info": 0,
+        "approved": 0,
+        "rejected": 0,
+        "cancelled": 0,
+        "all": 0,
     }
+    for status, count in s.execute(
+        select(NexusKeyRequest.status, func.count(NexusKeyRequest.id)).group_by(
+            NexusKeyRequest.status
+        )
+    ).all():
+        counts[str(status)] = int(count)
+        counts["all"] += int(count)
+    return counts
 
 
-def list_requests(s, status: str = "pending") -> List[Dict[str, Any]]:
-    """超管视角的申请列表（默认只看待处理；带申请人邮箱便于辨认）。"""
+def list_requests(
+    s, status: str = "", query: str = "", limit: int = 200
+) -> List[Dict[str, Any]]:
+    """超管查询申请历史，支持状态和企业/域名/用途关键词筛选。"""
+    allowed = {"pending", "needs_info", "approved", "rejected", "cancelled"}
     q = select(NexusKeyRequest).order_by(NexusKeyRequest.id.desc())
-    if status:
+    if status in allowed:
         q = q.where(NexusKeyRequest.status == status)
-    rows = s.execute(q).scalars().all()
-    emails: Dict[int, str] = {}
-    for r in rows:
-        if r.oem_id not in emails:
-            acc = s.get(NexusOem, r.oem_id)
-            emails[r.oem_id] = acc.email if acc else f"#{r.oem_id}"
-    out = []
-    for r in rows:
-        item = _public_request(r)
-        item.pop("key", None)  # 超管列表不需要明文（交付走 OEM 门户）
-        item["oem_email"] = emails.get(r.oem_id, "")
+    rows = s.execute(q.limit(max(1, min(int(limit or 200), 500)))).scalars().all()
+    needle = (query or "").strip().lower()[:120]
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        account = s.get(NexusOem, row.oem_id)
+        profile = s.get(NexusOemProfile, row.oem_id)
+        item = _public_request(s, row)
+        item["oem_email"] = account.email if account else f"#{row.oem_id}"
+        item["company"] = profile.company if profile else ""
+        haystack = " ".join(
+            str(item.get(field) or "")
+            for field in ("oem_email", "company", "deployment_domain", "purpose", "note")
+        ).lower()
+        if needle and needle not in haystack:
+            continue
         out.append(item)
     return out
 
 
-def decide_request(
-    s, request_id: int, approve: bool, token_grant: int = 0, decide_note: str = ""
-) -> Dict[str, Any]:
-    """超管裁决申请：批准=签发一把 KEY 并自动认领到申请人名下 + 明文存单交付。
-
-    延迟导入 fleet 避免模块级循环依赖（fleet 不知道 oem 层，反向单向依赖）。
-    """
-    from nexus import fleet
-
+def request_detail(s, request_id: int) -> Dict[str, Any]:
+    """返回申请详情和不可变审计时间线（超管详情弹窗数据源）。"""
     row = s.get(NexusKeyRequest, int(request_id))
     if row is None:
         raise FleetError("NEXUS_REQUEST_NOT_FOUND", f"申请 #{request_id} 不存在", 404)
-    if row.status != "pending":
-        raise FleetError("NEXUS_REQUEST_DECIDED", "该申请已处理过", 409)
+    account = s.get(NexusOem, row.oem_id)
+    profile = s.get(NexusOemProfile, row.oem_id)
+    item = _public_request(s, row)
+    item.update(
+        {
+            "oem_email": account.email if account else f"#{row.oem_id}",
+            "company": profile.company if profile else "",
+            "timeline": audit.timeline(s, "key_request", row.id),
+        }
+    )
+    return item
+
+
+def update_request(
+    s,
+    oem_id: int,
+    request_id: int,
+    *,
+    note: str = "",
+    deployment_domain: str = "",
+    purpose: str = "",
+    expected_date: str = "",
+    requested_tokens: int = 0,
+    source_ip: str = "",
+) -> Dict[str, Any]:
+    """OEM 补充待审资料；needs_info 补完后自动回到 pending。"""
+    row = s.get(NexusKeyRequest, int(request_id))
+    if row is None or int(row.oem_id) != int(oem_id):
+        raise FleetError("NEXUS_REQUEST_NOT_FOUND", "申请不存在", 404)
+    if row.status not in ("pending", "needs_info"):
+        raise FleetError("NEXUS_REQUEST_DECIDED", "该申请当前不能修改", 409)
+    old_status = row.status
+    clean_purpose = (purpose or "").strip()[:255]
+    if not clean_purpose:
+        raise FleetError("NEXUS_REQUEST_PURPOSE_REQUIRED", "请填写使用场景")
+    row.note = (note or "").strip()[:500]
+    row.status = "pending"
+    row.decide_note = ""
+    profile = s.get(NexusKeyRequestProfile, row.id)
+    if profile is None:
+        profile = NexusKeyRequestProfile(request_id=row.id)
+        s.add(profile)
+    profile.deployment_domain = _clean_domain(deployment_domain)
+    profile.purpose = clean_purpose
+    profile.expected_date = (expected_date or "").strip()[:16]
+    profile.requested_tokens = _clean_tokens(requested_tokens)
+    profile.updated_ts = _now_ms()
+    account = s.get(NexusOem, int(oem_id))
+    audit.record(
+        s,
+        object_type="key_request",
+        object_id=row.id,
+        action="resubmit" if old_status == "needs_info" else "update",
+        actor_type="oem",
+        actor_label=account.email if account else f"#{oem_id}",
+        source_ip=source_ip,
+        from_state=old_status,
+        to_state="pending",
+    )
+    return _public_request(s, row)
+
+
+def cancel_request(
+    s, oem_id: int, request_id: int, source_ip: str = ""
+) -> Dict[str, Any]:
+    """OEM 撤回尚未签发的申请，已批准申请不能自行撤销 KEY。"""
+    row = s.get(NexusKeyRequest, int(request_id))
+    if row is None or int(row.oem_id) != int(oem_id):
+        raise FleetError("NEXUS_REQUEST_NOT_FOUND", "申请不存在", 404)
+    if row.status not in ("pending", "needs_info"):
+        raise FleetError("NEXUS_REQUEST_DECIDED", "该申请当前不能撤回", 409)
+    old_status = row.status
+    row.status = "cancelled"
     row.decided_ts = _now_ms()
-    row.decide_note = (decide_note or "").strip()[:200]
-    if not approve:
+    account = s.get(NexusOem, int(oem_id))
+    audit.record(
+        s,
+        object_type="key_request",
+        object_id=row.id,
+        action="cancel",
+        actor_type="oem",
+        actor_label=account.email if account else f"#{oem_id}",
+        source_ip=source_ip,
+        from_state=old_status,
+        to_state="cancelled",
+    )
+    return _public_request(s, row)
+
+
+def decide_request(
+    s,
+    request_id: int,
+    approve: bool,
+    token_grant: int = 0,
+    decide_note: str = "",
+    *,
+    action: str = "",
+    actor_label: str = "平台超级管理员",
+    source_ip: str = "",
+) -> Dict[str, Any]:
+    """超管处理申请，并用行锁保证并发点击只会签发一把 KEY。
+
+    ``action`` 支持 approve/reject/needs_info；保留 ``approve`` 参数兼容旧客户端。
+    批准时 KEY 明文只进入 Fernet 加密交付表，管理端响应永远不含明文。
+    """
+    from nexus import fleet
+
+    selected_action = (action or ("approve" if approve else "reject")).strip()
+    if selected_action not in ("approve", "reject", "needs_info"):
+        raise FleetError("NEXUS_BAD_ACTION", "不支持的申请处理动作")
+    row = s.execute(
+        select(NexusKeyRequest)
+        .where(NexusKeyRequest.id == int(request_id))
+        .with_for_update()
+    ).scalar_one_or_none()
+    if row is None:
+        raise FleetError("NEXUS_REQUEST_NOT_FOUND", f"申请 #{request_id} 不存在", 404)
+    if row.status != "pending":
+        raise FleetError("NEXUS_REQUEST_DECIDED", "该申请已处理或正在等待补充资料", 409)
+    note = (decide_note or "").strip()[:500]
+    old_status = row.status
+    row.decided_ts = _now_ms()
+    row.decide_note = note
+    if selected_action == "needs_info":
+        if not note:
+            raise FleetError("NEXUS_DECIDE_NOTE_REQUIRED", "请填写需要客户补充的资料")
+        row.status = "needs_info"
+    elif selected_action == "reject":
+        if not note:
+            raise FleetError("NEXUS_DECIDE_NOTE_REQUIRED", "拒绝申请必须填写原因")
         row.status = "rejected"
-        return _public_request(row)
-    issued = fleet.issue_keys(
-        s, count=1, note=f"申请单#{row.id} · {row.note[:60]}", token_grant=token_grant
-    )[0]
-    row.status = "approved"
-    row.key_id = issued["id"]
-    row.key_plain = issued["key"]
-    # 自动认领到申请人名下：申请→签发→归属一步到位，OEM 无需再手动认领
-    s.add(NexusKeyClaim(key_id=issued["id"], oem_id=row.oem_id))
-    return _public_request(row)
+    else:
+        grant = _clean_tokens(token_grant)
+        issued = fleet.issue_keys(
+            s,
+            count=1,
+            note=f"申请单#{row.id} · {row.note[:60]}",
+            token_grant=grant,
+        )[0]
+        now = _now_ms()
+        row.status = "approved"
+        row.key_id = issued["id"]
+        # 旧列保持为空；Fernet 验证主密钥缺失时会直接拒绝整个审批事务。
+        row.key_plain = ""
+        s.add(NexusKeyClaim(key_id=issued["id"], oem_id=row.oem_id))
+        s.add(
+            NexusKeyRequestDelivery(
+                request_id=row.id,
+                key_id=issued["id"],
+                encrypted_key=_delivery_fernet().encrypt(issued["key"].encode("utf-8")),
+                expires_ts=now + _DELIVERY_TTL_MS,
+            )
+        )
+        s.flush()
+    audit.record(
+        s,
+        object_type="key_request",
+        object_id=row.id,
+        action=selected_action,
+        actor_type="admin",
+        actor_label=actor_label,
+        source_ip=source_ip,
+        from_state=old_status,
+        to_state=row.status,
+        note=note,
+        metadata={"token_grant": int(token_grant or 0)} if selected_action == "approve" else {},
+    )
+    return _public_request(s, row)
+
+
+def _migrate_legacy_delivery(s, row: NexusKeyRequest) -> Optional[NexusKeyRequestDelivery]:
+    """把升级前 ``key_plain`` 明文原子迁入加密交付表，随后清空旧列。"""
+    delivery = s.get(NexusKeyRequestDelivery, row.id)
+    if delivery is not None or not row.key_plain or not row.key_id:
+        return delivery
+    delivery = NexusKeyRequestDelivery(
+        request_id=row.id,
+        key_id=row.key_id,
+        encrypted_key=_delivery_fernet().encrypt(row.key_plain.encode("utf-8")),
+        expires_ts=_now_ms() + _DELIVERY_TTL_MS,
+    )
+    s.add(delivery)
+    row.key_plain = ""
+    s.flush()
+    return delivery
+
+
+def reveal_request_key(
+    s, oem_id: int, request_id: int, source_ip: str = ""
+) -> Dict[str, Any]:
+    """OEM 主动领取获批 KEY；首次领取后仅可在三十分钟内重复查看。"""
+    row = s.get(NexusKeyRequest, int(request_id))
+    if row is None or int(row.oem_id) != int(oem_id):
+        raise FleetError("NEXUS_REQUEST_NOT_FOUND", "申请不存在", 404)
+    if row.status != "approved" or not row.key_id:
+        raise FleetError("NEXUS_DELIVERY_NOT_READY", "该申请尚未生成授权码", 409)
+    key = s.get(NexusKey, row.key_id)
+    if key is None or key.status != "active":
+        raise FleetError("NEXUS_KEY_REVOKED", "授权码已失效，请联系平台", 403)
+    if key.instance_id is not None:
+        raise FleetError("NEXUS_KEY_ALREADY_USED", "授权码已完成节点开通", 409)
+    delivery = _migrate_legacy_delivery(s, row)
+    if delivery is None or delivery.cleared_ts or not delivery.encrypted_key:
+        raise FleetError("NEXUS_DELIVERY_UNAVAILABLE", "授权码已领取或已清除", 410)
+    now = _now_ms()
+    first_reveal = delivery.first_revealed_ts is None
+    if delivery.first_revealed_ts is None:
+        if now > delivery.expires_ts:
+            raise FleetError("NEXUS_DELIVERY_EXPIRED", "领取期限已过，请联系平台补发", 410)
+        delivery.first_revealed_ts = now
+        delivery.reveal_until_ts = min(delivery.expires_ts, now + _REVEAL_WINDOW_MS)
+    elif not delivery.reveal_until_ts or now > delivery.reveal_until_ts:
+        raise FleetError(
+            "NEXUS_DELIVERY_LOCKED",
+            "授权码查看窗口已结束；如未保存，请联系平台补发",
+            410,
+        )
+    try:
+        plain = _delivery_fernet().decrypt(delivery.encrypted_key).decode("utf-8")
+    except (InvalidToken, UnicodeDecodeError):
+        raise FleetError(
+            "NEXUS_SECRET_KEY_INVALID",
+            "授权码无法解密，请联系平台检查加密主密钥",
+            503,
+        )
+    account = s.get(NexusOem, int(oem_id))
+    audit.record(
+        s,
+        object_type="key_request",
+        object_id=row.id,
+        action="reveal",
+        actor_type="oem",
+        actor_label=account.email if account else f"#{oem_id}",
+        source_ip=source_ip,
+        from_state="approved",
+        to_state="approved",
+        metadata={"first_reveal": first_reveal},
+    )
+    return {
+        "request_id": row.id,
+        "key": plain,
+        "reveal_until_ts": delivery.reveal_until_ts,
+    }
 
 
 def clear_plain_by_key(s, raw_key: str) -> None:
-    """按明文 KEY 清空交付明文（申请单 + 订单，实例兑换成功后调用，幂等）。"""
+    """节点兑换成功后清除申请交付密文和旧版明文；在线订单仍走原有清理逻辑。"""
     if not looks_like_key(raw_key):
         return
     key = s.execute(
@@ -717,12 +1079,27 @@ def clear_plain_by_key(s, raw_key: str) -> None:
     ).scalar_one_or_none()
     if key is None:
         return
-    for r in s.execute(
+    for row in s.execute(
         select(NexusKeyRequest).where(NexusKeyRequest.key_id == key.id)
     ).scalars():
-        r.key_plain = ""
-    # 在线购买的订单同策略销毁明文（延迟导入避免 oem↔pay 环）
+        row.key_plain = ""
+        delivery = s.get(NexusKeyRequestDelivery, row.id)
+        if delivery is not None and not delivery.cleared_ts:
+            delivery.encrypted_key = b""
+            delivery.cleared_ts = _now_ms()
+            audit.record(
+                s,
+                object_type="key_request",
+                object_id=row.id,
+                action="redeem",
+                actor_type="system",
+                actor_label="节点安装程序",
+                from_state="approved",
+                to_state="approved",
+                metadata={"key_id": key.id, "instance_id": key.instance_id},
+            )
     from nexus import pay
+
     pay.clear_order_plain_by_key_id(s, key.id)
 
 
@@ -884,8 +1261,13 @@ __all__ = [
     "delete_oem_file",
     "request_key",
     "my_requests",
+    "request_counts",
     "list_requests",
+    "request_detail",
+    "update_request",
+    "cancel_request",
     "decide_request",
+    "reveal_request_key",
     "clear_plain_by_key",
     "owns_instance",
     "normalize_key",

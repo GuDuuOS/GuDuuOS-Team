@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
 <script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=18" />
+<link rel="stylesheet" href="/portal/portal.css?v=19" />
 </head>
 <body>
 <!--
@@ -153,16 +153,24 @@
   </section>
 
   <section class="panel">
-    <div class="panel-head"><h2>申请授权码</h2></div>
-    <form id="form-request" class="inline-form">
-      <input name="note" placeholder="用途说明（如：部署到 my-brand.com）" style="flex:1" />
-      <button class="primary">提交申请</button>
+    <div class="panel-head">
+      <div><h2>申请节点授权</h2><p class="hint">一张申请对应一套 OEM 节点；审批通过后授权码加密交付。</p></div>
+    </div>
+    <form id="form-request" class="license-request-form">
+      <label>计划部署域名<input name="deployment_domain" required placeholder="例如 im.my-brand.com" /></label>
+      <label>使用场景<input name="purpose" required maxlength="255" placeholder="例如企业内部协作 / 客户交付" /></label>
+      <label>期望部署日期<input name="expected_date" type="date" /></label>
+      <label>申请附赠 Token<input name="requested_tokens" type="number" min="0" max="1000000000000" value="100000000" /></label>
+      <label class="license-request-note">补充说明<textarea name="note" rows="3" maxlength="500" placeholder="商务约定、特殊部署要求等"></textarea></label>
+      <div class="license-request-submit"><button class="primary" type="submit">提交申请</button></div>
     </form>
-    <p class="hint">提交后由 GuDuu 平台处理；批准后授权码会直接出现在下方列表，复制即可用于安装。</p>
-    <table class="tbl" id="oem-requests" hidden>
-      <thead><tr><th>#</th><th>状态</th><th>用途</th><th>授权码</th><th>申请时间</th></tr></thead>
-      <tbody></tbody>
-    </table>
+    <p class="hint">获批后请在 7 天内主动领取；首次查看后有 30 分钟重复查看窗口。请立即复制到安全位置。</p>
+    <div class="table-scroll">
+      <table class="tbl" id="oem-requests" hidden>
+        <thead><tr><th>#</th><th>状态</th><th>节点 / 场景</th><th>申请额度</th><th>授权码</th><th>申请时间</th><th>操作</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
   </section>
 
   <section class="panel">
@@ -301,13 +309,26 @@
     </div>
 
     <div class="admin-page" data-admin-view="licenses" hidden>
-      <section class="panel" id="panel-requests" hidden>
-        <div class="panel-head"><h2>待处理申请</h2></div>
-        <table class="tbl" id="admin-requests">
-          <thead><tr><th>#</th><th>申请人</th><th>用途</th><th>申请时间</th><th>附赠 Token</th><th>操作</th></tr></thead>
-          <tbody></tbody>
-        </table>
-        <p class="hint">批准 = 自动签发一把 KEY 并归属申请人，授权码直接出现在对方门户（无需人肉传码）。</p>
+      <section class="panel" id="panel-requests">
+        <div class="panel-head license-admin-head">
+          <div><h2>授权申请中心</h2><p class="hint">查看完整历史、处理申请并追踪每一次操作。</p></div>
+          <input id="request-search" class="request-search" type="search" placeholder="搜索企业、邮箱、域名或用途" />
+        </div>
+        <div id="request-filters" class="request-filters">
+          <button class="tab on" type="button" data-request-status="pending">待处理 <em>0</em></button>
+          <button class="tab" type="button" data-request-status="needs_info">待补资料 <em>0</em></button>
+          <button class="tab" type="button" data-request-status="approved">已批准 <em>0</em></button>
+          <button class="tab" type="button" data-request-status="rejected">已拒绝 <em>0</em></button>
+          <button class="tab" type="button" data-request-status="cancelled">已撤回 <em>0</em></button>
+          <button class="tab" type="button" data-request-status="">全部 <em>0</em></button>
+        </div>
+        <div class="table-scroll">
+          <table class="tbl" id="admin-requests">
+            <thead><tr><th>#</th><th>OEM 企业</th><th>节点 / 场景</th><th>状态</th><th>申请时间</th><th>审批额度</th><th>操作</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="hint">批准会原子签发一把 KEY 并自动归属申请企业；明文只在 OEM 主动领取时短暂显示，超管不可查看。</p>
       </section>
       <section class="panel">
         <div class="panel-head"><h2>授权码（KEY）</h2></div>
@@ -321,7 +342,7 @@
           <b>⚠️ 明文仅此一次显示，请立即复制发给客户：</b><pre id="issued-keys"></pre>
         </div>
         <table class="tbl" id="admin-keys">
-          <thead><tr><th>#</th><th>尾号</th><th>状态</th><th>附赠</th><th>备注</th><th>实例</th><th>操作</th></tr></thead>
+          <thead><tr><th>#</th><th>尾号</th><th>归属企业</th><th>状态</th><th>附赠</th><th>备注</th><th>实例</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </section>
@@ -360,6 +381,19 @@
     </div>
   </div>
 </main>
+
+<!-- 授权申请详情：结构化资料、交付状态与完整审计时间线 -->
+<div id="request-detail-mask" class="mask" hidden>
+  <div class="modal request-detail-modal" role="dialog" aria-modal="true" aria-labelledby="request-detail-title">
+    <div class="modal-head">
+      <div><b id="request-detail-title">授权申请详情</b><p id="request-detail-summary" class="hint"></p></div>
+      <button id="request-detail-close" class="ghost small" type="button">关闭</button>
+    </div>
+    <div id="request-detail-state" class="instance-detail-state"></div>
+    <div id="request-detail-kv" class="kv"></div>
+    <div class="modal-sec"><h3>审批与交付时间线</h3><div id="request-detail-timeline" class="audit-timeline"></div></div>
+  </div>
+</div>
 
 <!-- 节点详情弹窗（超管）：使用实例列表已返回的快照，不重复请求服务端 -->
 <div id="instance-detail-mask" class="mask" hidden>
@@ -504,6 +538,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=28"></script>
+<script src="/portal/portal.js?v=29"></script>
 </body>
 </html>

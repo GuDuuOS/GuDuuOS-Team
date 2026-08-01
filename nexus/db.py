@@ -352,13 +352,12 @@ class NexusUserAttribution(Base):
 
 
 class NexusKeyRequest(Base):
-    """OEM 的授权码申请单（P1 手动闭环：申请→超管签发→门户交付明文）。
+    """OEM 的授权码申请单（兼容早期版本的主记录）。
 
-    明文交付策略（负责人"够用即止"原则下的务实解）：
-      - 批准时把新 KEY 的明文存进 ``key_plain``，申请人登录门户即可看到并复制
-        （这就是交付通道，替代邮件/微信人肉传码）；
-      - 实例**兑换成功后自动清空** key_plain（装机后明文再无保存价值）；
-      - 拖库风险窗口 = 「已签发未装机」的码，且每码只绑定一个 OEM，可接受。
+    V2 不再把新签发 KEY 的明文写入 ``key_plain``；安全交付改由
+    :class:`NexusKeyRequestDelivery` 使用 ``NEXUS_SECRET_KEY`` 加密保存。这个旧列只用于
+    把升级前尚未安装的历史申请迁移到新交付表，迁移后立即清空，避免生产升级丢失客户
+    已经获批但尚未复制的授权码。
     """
 
     __tablename__ = "nexus_key_request"
@@ -367,7 +366,8 @@ class NexusKeyRequest(Base):
     oem_id = Column(Integer, nullable=False, index=True)
     # 申请留言（用途/域名计划），给超管审batch时看
     note = Column(Text, nullable=False, default="")
-    # pending=待处理 / approved=已签发 / rejected=已拒绝
+    # pending=待处理 / needs_info=待补资料 / approved=已签发 / rejected=已拒绝 /
+    # cancelled=申请人撤回。历史表列宽足够，无需 ALTER。
     status = Column(String(16), nullable=False, default="pending")
     created_ts = Column(BigInteger, nullable=False, default=_now_ms)
     decided_ts = Column(BigInteger, nullable=True, default=None)
@@ -375,6 +375,70 @@ class NexusKeyRequest(Base):
     key_id = Column(Integer, nullable=True, default=None)
     key_plain = Column(String(64), nullable=False, default="")
     decide_note = Column(Text, nullable=False, default="")
+
+
+class NexusKeyRequestProfile(Base):
+    """授权申请的结构化资料（一对一扩展表，兼容已有生产数据库）。
+
+    ``nexus_key_request.note`` 继续保存自由备注；本表只放需要搜索、展示或审批校验的字段。
+    采用新表而不是给旧表加列，是因为 Nexus 目前依赖 ``create_all``，无法自动给生产旧表
+    执行 ``ALTER TABLE``。
+    """
+
+    __tablename__ = "nexus_key_request_profile"
+
+    request_id = Column(Integer, primary_key=True)
+    deployment_domain = Column(String(255), nullable=False, default="", index=True)
+    purpose = Column(String(255), nullable=False, default="")
+    expected_date = Column(String(16), nullable=False, default="")
+    requested_tokens = Column(BigInteger, nullable=False, default=0)
+    contact_name = Column(String(80), nullable=False, default="")
+    contact_phone = Column(String(60), nullable=False, default="")
+    updated_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
+class NexusKeyRequestDelivery(Base):
+    """获批申请的 KEY 安全交付记录。
+
+    KEY 明文用 ``NEXUS_SECRET_KEY`` 派生的 Fernet 密钥加密；OEM 必须主动点击“查看授权码”
+    才会得到明文。首次查看后只保留一个短暂的重复查看窗口，防止响应丢失；超过窗口或
+    七天领取期后不再返回明文，需要平台补发。节点成功兑换时密文立即清空。
+    """
+
+    __tablename__ = "nexus_key_request_delivery"
+
+    request_id = Column(Integer, primary_key=True)
+    key_id = Column(Integer, nullable=False, unique=True, index=True)
+    encrypted_key = Column(LargeBinary, nullable=False)
+    expires_ts = Column(BigInteger, nullable=False, index=True)
+    first_revealed_ts = Column(BigInteger, nullable=True, default=None)
+    reveal_until_ts = Column(BigInteger, nullable=True, default=None)
+    cleared_ts = Column(BigInteger, nullable=True, default=None)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
+class NexusAuditEvent(Base):
+    """Nexus 运营操作审计事件。
+
+    当前超管仍使用单一环境令牌，因此 ``actor_label`` 先记录“平台超级管理员”；接口同时
+    保存来源 IP。以后升级为具名管理员账号时，可以无损写入真实操作人，而无需再改审计表。
+    事件只追加不修改，便于还原授权审批、KEY 暂停/恢复/吊销等完整时间线。
+    """
+
+    __tablename__ = "nexus_audit_event"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    object_type = Column(String(32), nullable=False, index=True)
+    object_id = Column(Integer, nullable=False, index=True)
+    action = Column(String(32), nullable=False, index=True)
+    actor_type = Column(String(16), nullable=False, default="system")
+    actor_label = Column(String(120), nullable=False, default="")
+    source_ip = Column(String(64), nullable=False, default="")
+    from_state = Column(String(32), nullable=False, default="")
+    to_state = Column(String(32), nullable=False, default="")
+    note = Column(Text, nullable=False, default="")
+    metadata_json = Column(Text, nullable=False, default="{}")
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms, index=True)
 
 
 class NexusKeyClaim(Base):
@@ -506,6 +570,12 @@ class NexusReleaseDeployment(Base):
 # 组合索引：按实例翻流水/心跳是最高频查询
 Index("ix_nexus_ledger_inst_ts", NexusLedger.instance_id, NexusLedger.ts)
 Index("ix_nexus_hb_inst_ts", NexusHeartbeat.instance_id, NexusHeartbeat.ts)
+Index(
+    "ix_nexus_audit_object_ts",
+    NexusAuditEvent.object_type,
+    NexusAuditEvent.object_id,
+    NexusAuditEvent.created_ts,
+)
 Index(
     "ix_nexus_release_deploy_inst_status",
     NexusReleaseDeployment.instance_id,

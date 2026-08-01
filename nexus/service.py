@@ -46,6 +46,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import parse_qs, quote, urlsplit
 
 from nexus import (
+    audit,
     db,
     fleet,
     geo,
@@ -433,9 +434,31 @@ class NexusHandler(BaseHTTPRequestHandler):
 
         if path == "/nexus/admin/requests":
             if self._check_admin():
+                qs = parse_qs(urlsplit(self.path).query)
+                status = str((qs.get("status") or [""])[0])
+                query = str((qs.get("q") or [""])[0])
                 self._with_session(
                     lambda s: self._json(
-                        200, {"requests": oem_svc.list_requests(s, status="pending")}
+                        200,
+                        {
+                            "requests": oem_svc.list_requests(
+                                s, status=status, query=query
+                            ),
+                            "counts": oem_svc.request_counts(s),
+                        },
+                    )
+                )
+            return
+        if path == "/nexus/admin/request_detail":
+            if self._check_admin():
+                qs = parse_qs(urlsplit(self.path).query)
+                try:
+                    request_id = int((qs.get("request_id") or ["0"])[0])
+                except ValueError:
+                    request_id = 0
+                self._with_session(
+                    lambda s: self._json(
+                        200, {"request": oem_svc.request_detail(s, request_id)}
                     )
                 )
             return
@@ -839,9 +862,54 @@ class NexusHandler(BaseHTTPRequestHandler):
                     return
                 self._json(
                     200,
-                    {"request": oem_svc.request_key(s, oem.id, str(body.get("note", "")))},
+                    {
+                        "request": oem_svc.request_key(
+                            s,
+                            oem.id,
+                            str(body.get("note", "")),
+                            deployment_domain=str(body.get("deployment_domain", "")),
+                            purpose=str(body.get("purpose", "")),
+                            expected_date=str(body.get("expected_date", "")),
+                            requested_tokens=int(body.get("requested_tokens") or 0),
+                            source_ip=self._client_ip(),
+                        )
+                    },
                 )
             self._with_session(_req)
+            return
+
+        if path == "/nexus/oem/request_action":
+            def _request_action(s):
+                account = self._oem(s)
+                if account is None:
+                    return
+                action = str(body.get("action", ""))
+                request_id = int(body.get("request_id") or 0)
+                if action == "cancel":
+                    result = oem_svc.cancel_request(
+                        s, account.id, request_id, self._client_ip()
+                    )
+                elif action == "update":
+                    result = oem_svc.update_request(
+                        s,
+                        account.id,
+                        request_id,
+                        note=str(body.get("note", "")),
+                        deployment_domain=str(body.get("deployment_domain", "")),
+                        purpose=str(body.get("purpose", "")),
+                        expected_date=str(body.get("expected_date", "")),
+                        requested_tokens=int(body.get("requested_tokens") or 0),
+                        source_ip=self._client_ip(),
+                    )
+                elif action == "reveal":
+                    result = oem_svc.reveal_request_key(
+                        s, account.id, request_id, self._client_ip()
+                    )
+                else:
+                    raise FleetError("NEXUS_BAD_ACTION", "不支持的申请操作")
+                self._json(200, {"request": result})
+
+            self._with_session(_request_action)
             return
 
         # —— 在线购买/充值（订单创建；topup 校验实例归属）——
@@ -1005,6 +1073,9 @@ class NexusHandler(BaseHTTPRequestHandler):
                                 bool(body.get("approve")),
                                 token_grant=int(body.get("token_grant") or 0),
                                 decide_note=str(body.get("decide_note", "")),
+                                action=str(body.get("action", "")),
+                                actor_label="平台超级管理员",
+                                source_ip=self._client_ip(),
                             )
                         },
                     )
@@ -1013,27 +1084,83 @@ class NexusHandler(BaseHTTPRequestHandler):
 
         if path == "/nexus/admin/keys":
             if self._check_admin():
-                self._with_session(
-                    lambda s: self._json(
-                        200,
-                        {
-                            "keys": fleet.issue_keys(
-                                s,
-                                count=int(body.get("count") or 1),
-                                note=str(body.get("note", "")),
-                                token_grant=int(body.get("token_grant") or 0),
-                            )
-                        },
+                def _issue(s):
+                    issued = fleet.issue_keys(
+                        s,
+                        count=int(body.get("count") or 1),
+                        note=str(body.get("note", "")),
+                        token_grant=int(body.get("token_grant") or 0),
                     )
-                )
+                    for item in issued:
+                        audit.record(
+                            s,
+                            object_type="key",
+                            object_id=item["id"],
+                            action="issue",
+                            actor_type="admin",
+                            actor_label="平台超级管理员",
+                            source_ip=self._client_ip(),
+                            to_state="active",
+                            note=str(body.get("note", "")),
+                            metadata={
+                                "token_grant": int(body.get("token_grant") or 0)
+                            },
+                        )
+                    self._json(200, {"keys": issued})
+
+                self._with_session(_issue)
             return
 
         if path == "/nexus/admin/revoke":
             if self._check_admin():
                 def _do(s):
-                    fleet.revoke_key(s, int(body.get("key_id") or 0))
+                    key_id = int(body.get("key_id") or 0)
+                    reason = str(body.get("reason", "")).strip()
+                    if not reason:
+                        raise FleetError("NEXUS_REASON_REQUIRED", "永久吊销必须填写原因")
+                    key_row = s.get(db.NexusKey, key_id)
+                    old_status = key_row.status if key_row else ""
+                    fleet.revoke_key(s, key_id)
+                    audit.record(
+                        s,
+                        object_type="key",
+                        object_id=key_id,
+                        action="revoke",
+                        actor_type="admin",
+                        actor_label="平台超级管理员",
+                        source_ip=self._client_ip(),
+                        from_state=old_status,
+                        to_state="revoked",
+                        note=reason,
+                    )
                     self._json(200, {"ok": True})
                 self._with_session(_do)
+            return
+
+        if path == "/nexus/admin/key_status":
+            if self._check_admin():
+                def _key_status(s):
+                    key_id = int(body.get("key_id") or 0)
+                    target = str(body.get("status", ""))
+                    reason = str(body.get("reason", "")).strip()
+                    if not reason:
+                        raise FleetError("NEXUS_REASON_REQUIRED", "暂停或恢复必须填写原因")
+                    changed = fleet.set_key_status(s, key_id, target)
+                    audit.record(
+                        s,
+                        object_type="key",
+                        object_id=key_id,
+                        action="resume" if target == "active" else "suspend",
+                        actor_type="admin",
+                        actor_label="平台超级管理员",
+                        source_ip=self._client_ip(),
+                        from_state=str(changed.get("from_status", "")),
+                        to_state=target,
+                        note=reason,
+                    )
+                    self._json(200, {"key": changed})
+
+                self._with_session(_key_status)
             return
 
         if path == "/nexus/admin/oem_note":

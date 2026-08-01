@@ -48,6 +48,8 @@ def _now_ms() -> int:
 
 # ---------- KEY 签发 / 吊销（管理员操作）----------
 
+_MAX_TOKEN_GRANT = 1_000_000_000_000
+
 def issue_keys(
     s, count: int = 1, note: str = "", token_grant: int = 0
 ) -> List[Dict[str, Any]]:
@@ -60,8 +62,11 @@ def issue_keys(
     """
     if not (1 <= count <= 100):
         raise FleetError("NEXUS_BAD_COUNT", "count 须在 1~100 之间")
-    if token_grant < 0:
-        raise FleetError("NEXUS_BAD_GRANT", "token_grant 不能为负")
+    if token_grant < 0 or token_grant > _MAX_TOKEN_GRANT:
+        raise FleetError(
+            "NEXUS_BAD_GRANT",
+            f"token_grant 须在 0~{_MAX_TOKEN_GRANT} 之间",
+        )
     out: List[Dict[str, Any]] = []
     for _ in range(count):
         plain = generate_key()
@@ -78,11 +83,32 @@ def issue_keys(
 
 
 def revoke_key(s, key_id: int) -> None:
-    """吊销一把 KEY：兑换与（P2 起的）网关鉴权立即失效。幂等。"""
+    """永久吊销一把 KEY，并同步暂停已绑定实例。幂等且不可恢复。"""
+    set_key_status(s, key_id, "revoked")
+
+
+def set_key_status(s, key_id: int, status: str) -> Dict[str, Any]:
+    """暂停、恢复或永久吊销 KEY，并让实例状态与授权状态保持一致。
+
+    ``suspended`` 用于合同/安全事件临时止用，可恢复；``revoked`` 是不可逆终态，防止
+    管理员误点“恢复”让已经泄露或被替换的 KEY 重新取得网关权限。
+    """
+    if status not in ("active", "suspended", "revoked"):
+        raise FleetError("NEXUS_BAD_STATUS", "KEY 状态不受支持")
     row = s.get(NexusKey, int(key_id))
     if row is None:
         raise FleetError("NEXUS_KEY_NOT_FOUND", f"KEY id={key_id} 不存在", 404)
-    row.status = "revoked"
+    old_status = row.status
+    if old_status == "revoked" and status != "revoked":
+        raise FleetError("NEXUS_KEY_REVOKED", "已吊销 KEY 不能恢复", 409)
+    if status == "active" and old_status != "suspended":
+        raise FleetError("NEXUS_KEY_NOT_SUSPENDED", "只有已暂停 KEY 可以恢复", 409)
+    row.status = status
+    if row.instance_id is not None:
+        instance = s.get(NexusInstance, row.instance_id)
+        if instance is not None:
+            instance.status = "active" if status == "active" else "suspended"
+    return {"id": row.id, "from_status": old_status, "status": row.status}
 
 
 def _key_by_plain(s, raw_key: str) -> NexusKey:
@@ -94,6 +120,8 @@ def _key_by_plain(s, raw_key: str) -> NexusKey:
     ).scalar_one_or_none()
     if row is None:
         raise FleetError("NEXUS_KEY_NOT_FOUND", "授权码不存在", 404)
+    if row.status == "suspended":
+        raise FleetError("NEXUS_KEY_SUSPENDED", "授权码已被平台暂停", 403)
     if row.status != "active":
         raise FleetError("NEXUS_KEY_REVOKED", "授权码已被吊销", 403)
     return row
@@ -443,21 +471,45 @@ def _usage_by_instance(
 # ---------- 列表（console 用）----------
 
 def list_keys(s) -> List[Dict[str, Any]]:
-    """全部 KEY（不含任何可还原明文的信息）。"""
+    """全部 KEY + 归属企业（不含任何可还原明文的信息）。"""
     rows = s.execute(select(NexusKey).order_by(NexusKey.id.desc())).scalars().all()
-    return [
-        {
-            "id": r.id,
-            "tail": r.key_tail,
-            "status": r.status,
-            "note": r.note,
-            "token_grant": int(r.token_grant),
-            "instance_id": r.instance_id,
-            "created_ts": r.created_ts,
-            "redeemed_ts": r.redeemed_ts,
-        }
-        for r in rows
-    ]
+    key_ids = [int(row.id) for row in rows]
+    claims = {
+        int(claim.key_id): int(claim.oem_id)
+        for claim in s.execute(
+            select(NexusKeyClaim).where(NexusKeyClaim.key_id.in_(key_ids or [-1]))
+        ).scalars().all()
+    }
+    owner_ids = sorted(set(claims.values()))
+    accounts = {
+        int(account.id): account.email
+        for account in s.execute(
+            select(NexusOem).where(NexusOem.id.in_(owner_ids or [-1]))
+        ).scalars().all()
+    }
+    profiles = {
+        int(profile.oem_id): profile.company
+        for profile in s.execute(
+            select(NexusOemProfile).where(NexusOemProfile.oem_id.in_(owner_ids or [-1]))
+        ).scalars().all()
+    }
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        owner_id = claims.get(int(row.id))
+        out.append({
+            "id": row.id,
+            "tail": row.key_tail,
+            "status": row.status,
+            "note": row.note,
+            "token_grant": int(row.token_grant),
+            "instance_id": row.instance_id,
+            "created_ts": row.created_ts,
+            "redeemed_ts": row.redeemed_ts,
+            "oem_id": owner_id,
+            "oem_email": accounts.get(owner_id, "") if owner_id else "",
+            "company_name": profiles.get(owner_id, "") if owner_id else "",
+        })
+    return out
 
 
 def list_instances(s) -> List[Dict[str, Any]]:

@@ -72,6 +72,8 @@ class FleetTest(unittest.TestCase):
             fleet.issue_keys(self.s, count=101)
         with self.assertRaises(FleetError):
             fleet.issue_keys(self.s, token_grant=-1)
+        with self.assertRaises(FleetError):
+            fleet.issue_keys(self.s, token_grant=1_000_000_000_001)
 
     # ---- 兑换 ----
 
@@ -125,6 +127,23 @@ class FleetTest(unittest.TestCase):
             fleet.redeem(self.s, "not-a-key", "im.x.com")
         with self.assertRaises(FleetError):
             fleet.redeem(self.s, generate_key(), "bad domain!")
+
+    def test_suspend_resume_and_irreversible_revoke(self):
+        """暂停可恢复并同步实例；永久吊销后不能误恢复。"""
+        issued = fleet.issue_keys(self.s)[0]
+        instance_id = fleet.redeem(self.s, issued["key"], "im.lifecycle.test")[
+            "instance_id"
+        ]
+        fleet.set_key_status(self.s, issued["id"], "suspended")
+        self.assertEqual(self.s.get(db.NexusInstance, instance_id).status, "suspended")
+        with self.assertRaises(FleetError) as suspended:
+            fleet.heartbeat(self.s, issued["key"])
+        self.assertEqual(suspended.exception.code, "NEXUS_KEY_SUSPENDED")
+        fleet.set_key_status(self.s, issued["id"], "active")
+        self.assertEqual(self.s.get(db.NexusInstance, instance_id).status, "active")
+        fleet.revoke_key(self.s, issued["id"])
+        with self.assertRaises(FleetError):
+            fleet.set_key_status(self.s, issued["id"], "active")
 
     # ---- 心跳 ----
 

@@ -375,9 +375,11 @@ class ProfileAndFilesTest(unittest.TestCase):
 
 
 class KeyRequestTest(unittest.TestCase):
-    """授权码申请闭环：申请→批准(签发+归属+明文交付)→装机兑换后明文销毁。"""
+    """授权中心 V2：结构化申请、加密交付、补资料、撤回与审计。"""
 
     def setUp(self):
+        self._old_secret = os.environ.get("NEXUS_SECRET_KEY")
+        os.environ["NEXUS_SECRET_KEY"] = "unit-test-license-delivery-secret-32-bytes"
         self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
         self._tmp.close()
         db.init_engine("sqlite:///" + self._tmp.name)
@@ -387,29 +389,47 @@ class KeyRequestTest(unittest.TestCase):
     def tearDown(self):
         self.s.close()
         os.unlink(self._tmp.name)
+        if self._old_secret is None:
+            os.environ.pop("NEXUS_SECRET_KEY", None)
+        else:
+            os.environ["NEXUS_SECRET_KEY"] = self._old_secret
 
     def test_request_and_approve_delivers_key(self):
-        req = oem.request_key(self.s, self.a, "部署到 my-brand.com")
+        req = oem.request_key(
+            self.s,
+            self.a,
+            "首个正式节点",
+            deployment_domain="my-brand.com",
+            purpose="企业内部协作",
+            requested_tokens=5000,
+        )
         self.assertEqual(req["status"], "pending")
-        # 超管批准：签发 + 自动归属 + 明文交付
+        self.assertEqual(req["deployment_domain"], "my-brand.com")
+        # 超管批准：签发 + 自动归属 + Fernet 加密交付，管理响应不含明文。
         out = oem.decide_request(self.s, req["id"], True, token_grant=5000)
         self.assertEqual(out["status"], "approved")
-        self.assertTrue(out["key"].startswith("CMK-"))
-        # 申请人门户可见明文；KEY 已在其名下
+        self.assertNotIn("key", out)
+        self.assertEqual(out["delivery_status"], "ready")
+        # 门户摘要也不带明文；必须显式领取，KEY 已自动归属。
         mine = oem.my_requests(self.s, self.a)
-        self.assertEqual(mine[0]["key"], out["key"])
+        self.assertNotIn("key", mine[0])
         self.assertEqual(oem.my_keys(self.s, self.a)[0]["id"], out["key_id"])
-        # 超管列表不含明文
+        revealed = oem.reveal_request_key(self.s, self.a, req["id"])
+        self.assertTrue(revealed["key"].startswith("CMK-"))
+        delivery = self.s.get(db.NexusKeyRequestDelivery, req["id"])
+        self.assertNotIn(revealed["key"].encode("utf-8"), bytes(delivery.encrypted_key))
         self.assertNotIn("key", oem.list_requests(self.s, status="approved")[0])
-        # 装机兑换成功 → 明文销毁,其余字段保留
-        fleet.redeem(self.s, out["key"], "my-brand.com")
-        oem.clear_plain_by_key(self.s, out["key"])
+        # 装机兑换成功 → 密文销毁，其余申请与审计保留。
+        fleet.redeem(self.s, revealed["key"], "my-brand.com")
+        oem.clear_plain_by_key(self.s, revealed["key"])
         after = oem.my_requests(self.s, self.a)[0]
-        self.assertIsNone(after["key"])
+        self.assertEqual(after["delivery_status"], "used")
         self.assertEqual(after["status"], "approved")
+        actions = [event["action"] for event in oem.request_detail(self.s, req["id"])["timeline"]]
+        self.assertEqual(actions, ["submit", "approve", "reveal", "redeem"])
 
     def test_reject_and_pending_cap(self):
-        req = oem.request_key(self.s, self.a, "")
+        req = oem.request_key(self.s, self.a, "拒绝测试")
         out = oem.decide_request(self.s, req["id"], False, decide_note="请先联系商务")
         self.assertEqual(out["status"], "rejected")
         self.assertEqual(out["decide_note"], "请先联系商务")
@@ -418,9 +438,34 @@ class KeyRequestTest(unittest.TestCase):
             oem.decide_request(self.s, req["id"], True)
         # 挂起上限 3 张
         for _ in range(3):
-            oem.request_key(self.s, self.a, "")
+            oem.request_key(self.s, self.a, "容量测试")
         with self.assertRaises(FleetError):
             oem.request_key(self.s, self.a, "第4张")
+
+    def test_needs_info_update_and_cancel(self):
+        req = oem.request_key(
+            self.s, self.a, "待确认", purpose="客户交付", deployment_domain="old.test"
+        )
+        asked = oem.decide_request(
+            self.s,
+            req["id"],
+            False,
+            action="needs_info",
+            decide_note="请确认正式域名",
+        )
+        self.assertEqual(asked["status"], "needs_info")
+        updated = oem.update_request(
+            self.s,
+            self.a,
+            req["id"],
+            purpose="客户交付",
+            deployment_domain="new.test",
+        )
+        self.assertEqual(updated["status"], "pending")
+        self.assertEqual(updated["deployment_domain"], "new.test")
+        cancelled = oem.cancel_request(self.s, self.a, req["id"])
+        self.assertEqual(cancelled["status"], "cancelled")
+        self.assertEqual(oem.request_counts(self.s)["cancelled"], 1)
 
 
 if __name__ == "__main__":
