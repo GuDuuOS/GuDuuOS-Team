@@ -1539,7 +1539,8 @@ class Toolbox:
         名册给的是**全局名册**，AI 把任务派给了不在该频道的 duxz01——任务落库了，但
         TA 侧边栏看不到频道、频道成员里也查无此人，任务悬空没人知道。
         修法=服务端兜底(不靠提示词)：登记/改派后逐个检查真人执行者与 assignee 挂名
-        真人，不在频道的自动邀请进来(复用 invite_user_status + 403 提权重试)。
+        真人，不在频道的先标准邀请，再用 Synapse 管理 API 完成 join。只有
+        invite 会让用户留在“待接受”，仍不会出现在已加入真人成员和侧栏里。
 
         参数:
             room_id: 任务所属房间(create_tasks=当前房;update_task=**任务自己的房**,
@@ -1560,15 +1561,30 @@ class Toolbox:
                     "但**不会收到频道通知**。建议转告 TA，或改在具体频道里拆解。"
                 )
             return notes
-        # 现有成员的 localpart 集合(查失败就整体放弃——别因一次抖动把人乱邀一通)
+        # 分开已加入与待接受：旧版可能已把负责人留在 invite，此时不应
+        # 依赖“重复邀请是否幂等”，而应直接继续管理 join，才能修复存量悬空任务。
+        # 查失败则整体放弃，别因一次抖动把人乱邀一通。
         try:
-            members = {
+            if hasattr(self.client, "get_members_with_state"):
+                member_rows = self.client.get_members_with_state(room_id) or []
+            else:
+                member_rows = [
+                    dict(m, membership="join")
+                    for m in (self.client.get_members(room_id) or [])
+                ]
+            joined_members = {
                 str(m.get("user_id") or "").lstrip("@").split(":")[0].lower()
-                for m in (self.client.get_members(room_id) or [])
+                for m in member_rows
+                if m.get("membership") != "invite"
+            }
+            invited_members = {
+                str(m.get("user_id") or "").lstrip("@").split(":")[0].lower()
+                for m in member_rows
+                if m.get("membership") == "invite"
             }
         except Exception:
             return notes
-        if not members:
+        if not joined_members and not invited_members:
             return notes
         # 单 homeserver:完整 id 的域名从发起人身上取(@boss:cosmac.cc → cosmac.cc)
         domain = ctx.sender.split(":", 1)[1] if ":" in ctx.sender else ""
@@ -1579,7 +1595,7 @@ class Toolbox:
             if not lp or len(lp) < 2 or lp in self._TASK_HUMAN_NOISE or lp in seen:
                 continue
             seen.add(lp)
-            if lp in members:
+            if lp in joined_members:
                 continue
             raw = str(raw).strip()
             uid = raw if (raw.startswith("@") and ":" in raw) else (
@@ -1587,20 +1603,42 @@ class Toolbox:
             )
             if not uid:
                 continue
-            try:
-                if hasattr(self.client, "invite_user_status"):
-                    ok, status, err = self.client.invite_user_status(room_id, uid)
-                    # 403=bot 在该频道无邀请权限 → 提权重试(与 invite_to_room 同套路)
-                    if not ok and status == 403 and self._promote_bot_in_room(room_id):
+            if lp in invited_members:
+                ok, status, err = True, 200, ""
+            else:
+                try:
+                    if hasattr(self.client, "invite_user_status"):
                         ok, status, err = self.client.invite_user_status(room_id, uid)
-                else:
-                    ok, status, err = bool(self.client.invite_user(room_id, uid)), 0, ""
-            except Exception:
-                ok, status, err = False, 0, "网络异常"
+                        # 403=bot 在该频道无邀请权限 → 提权重试(与 invite_to_room 同套路)
+                        if not ok and status == 403 and self._promote_bot_in_room(room_id):
+                            ok, status, err = self.client.invite_user_status(room_id, uid)
+                    else:
+                        ok, status, err = bool(self.client.invite_user(room_id, uid)), 0, ""
+                except Exception:
+                    ok, status, err = False, 0, "网络异常"
             if ok:
-                notes.append(
-                    f"✅ {uid} 原不在本频道，已自动邀请进来（TA 接受后即可看到频道和任务）。"
-                )
+                # 指派任务是明确的业务动作，不能只停在 invite：否则 AI 查“已加入
+                # 真人”仍查无此人，当事人登录也看不到频道。管理 join 失败时保留
+                # 已发出的标准邀请，并如实告知模型“尚未真正加入”。
+                try:
+                    from cosmac import registration
+
+                    join_status, join_payload = registration.admin_join_room(
+                        self.client.homeserver_url, room_id, uid
+                    )
+                except Exception:
+                    join_status, join_payload = 0, {"error": "管理加入调用异常"}
+                if join_status == 200:
+                    notes.append(
+                        f"✅ {uid} 原不在本频道，已自动加入，"
+                        "TA 现在可在侧栏看到频道和任务。"
+                    )
+                else:
+                    join_error = str(join_payload.get("error") or "未知原因")
+                    notes.append(
+                        f"⚠️ {uid} 已邀请，但自动加入失败（{join_status or '-'}: "
+                        f"{join_error}），目前仍是待接受状态。"
+                    )
             else:
                 detail = f"{status}: {err}" if status else (err or "未知原因")
                 notes.append(

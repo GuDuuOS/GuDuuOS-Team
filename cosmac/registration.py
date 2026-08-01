@@ -1084,6 +1084,55 @@ def make_room_admin(hs_url: str, room_id: str, user_id: str) -> Tuple[int, Dict[
         return 502, {"error": "接管频道服务暂不可用，请稍后重试"}
 
 
+def admin_join_room(hs_url: str, room_id: str, user_id: str) -> Tuple[int, Dict[str, Any]]:
+    """用 Synapse 服务器管理员令牌让本地真人账号立即加入频道。
+
+    参数:
+        hs_url: Synapse homeserver 的根地址。
+        room_id: 要加入的 Matrix 房间 id。
+        user_id: 要加入的完整本地 Matrix 用户 id。
+    返回:
+        ``(HTTP 状态码, 结果字典)``；200 表示用户已是 join 状态。
+
+    这个能力只给“AI 把真人指派为频道任务负责人”的服务端兜底使用。
+    标准 invite 只会产生待接受状态，用户仍不在频道真人成员中，任务也会
+    因为看不到频道而悬空。管理 API 仅能处理本地账号，不会绕过联邦用户的同意。
+    """
+    token = _env("ADMIN_TOKEN")
+    if not token:
+        return 503, {"error": "服务器未配置管理员令牌"}
+    from urllib.parse import quote
+
+    base = hs_url.rstrip("/")
+    url = f"{base}/_synapse/admin/v1/join/{quote(room_id, safe='')}"
+    try:
+        rr = requests.post(
+            url,
+            json={"user_id": user_id},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=_HS_TIMEOUT,
+        )
+        if rr.status_code == 200:
+            return 200, {"ok": True, "room_id": room_id}
+        try:
+            detail = str(rr.json().get("error") or "")[:160]
+        except Exception:
+            detail = (rr.text or "")[:160]
+        logger.warning(
+            "管理员强制加入频道失败 user=%s room=%s: %s %s",
+            user_id,
+            room_id,
+            rr.status_code,
+            detail,
+        )
+        return (rr.status_code if rr.status_code >= 400 else 502), {
+            "error": detail or "加入频道失败"
+        }
+    except requests.RequestException:
+        logger.exception("调用 Synapse 管理员加入频道失败")
+        return 502, {"error": "加入频道服务暂不可用"}
+
+
 def query_user_deactivated(hs_url: str, user_id: str) -> Optional[bool]:
     """查某账号是否已被**停用**（deactivated）。返回 True=已停用 / False=正常或不存在 / None=查不了。
 

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from cosmac.ai.tools import Toolbox, ToolCall, ToolContext
 from cosmac.db import init_engine
@@ -33,6 +34,7 @@ class _Client:
         self.invite_ok = invite_ok
         self.invited = []   # [(room_id, user_id)]
         self.sent = []      # [(room_id, text)]
+        self.homeserver_url = "https://matrix.test"
 
     def resolve_alias(self, a):
         return "!ctrl:h"
@@ -45,6 +47,9 @@ class _Client:
 
     def get_members(self, room):
         return self.members
+
+    def get_members_with_state(self, room):
+        return [dict(m, membership=m.get("membership", "join")) for m in self.members]
 
     def is_joined_member(self, room, uid):
         return any(m.get("user_id") == uid for m in self.members)
@@ -69,8 +74,9 @@ class TestCreateTasksAutoInvite(unittest.TestCase):
     def setUp(self) -> None:
         init_engine("sqlite://", create_all=True)
 
-    def test_outsider_human_gets_invited(self) -> None:
-        """核心回归：派给频道外真人(裸 localpart) → 自动邀请 + 归一化 @ 通知。"""
+    @patch("cosmac.registration.admin_join_room", return_value=(200, {"ok": True}))
+    def test_outsider_human_gets_invited_and_joined(self, admin_join) -> None:
+        """核心回归：派给频道外真人后邀请并立即 join，不再停在待接受。"""
         c = _Client()
         tb = Toolbox(c)
         out = _create(tb, [{
@@ -79,7 +85,8 @@ class TestCreateTasksAutoInvite(unittest.TestCase):
         }])
         # 自动邀请:归一成 @duxz01:h 邀进任务所在频道
         self.assertIn(("!team:h", "@duxz01:h"), c.invited)
-        self.assertIn("已自动邀请", out)
+        admin_join.assert_called_once_with("https://matrix.test", "!team:h", "@duxz01:h")
+        self.assertIn("已自动加入", out)
         # @ 通知也发了(此前裸 localpart 不带 @ 会静默跳过)
         self.assertTrue(any("@duxz01:h" in t for _, t in c.sent), c.sent)
 
@@ -98,12 +105,28 @@ class TestCreateTasksAutoInvite(unittest.TestCase):
         """截图原样场景：AI 执行(agent) + assignee 挂真人 → 挂名真人也要被邀请。"""
         c = _Client()
         tb = Toolbox(c)
-        _create(tb, [{
-            "title": "三伏贴科普与临床证据审核",
-            "executor_kind": "agent", "executor_ref": "copywriter",
-            "assignee": "文案+duxz01",
-        }])
+        with patch("cosmac.registration.admin_join_room", return_value=(200, {"ok": True})):
+            _create(tb, [{
+                "title": "三伏贴科普与临床证据审核",
+                "executor_kind": "agent", "executor_ref": "copywriter",
+                "assignee": "文案+duxz01",
+            }])
         self.assertIn(("!team:h", "@duxz01:h"), c.invited)
+
+    @patch("cosmac.registration.admin_join_room", return_value=(200, {"ok": True}))
+    def test_existing_pending_invite_is_promoted_without_reinvite(self, admin_join) -> None:
+        """旧版遗留的 invite 状态直接推进为 join，不要把重复邀请当前置条件。"""
+        c = _Client(members=[
+            {"user_id": "@boss:h", "membership": "join"},
+            {"user_id": "@duxz01:h", "membership": "invite"},
+        ])
+        tb = Toolbox(c)
+        out = _create(tb, [{
+            "title": "存量任务", "executor_kind": "human", "executor_ref": "duxz01",
+        }])
+        self.assertEqual(c.invited, [])
+        admin_join.assert_called_once_with("https://matrix.test", "!team:h", "@duxz01:h")
+        self.assertIn("已自动加入", out)
 
     def test_ai_room_no_invite_but_reminds(self) -> None:
         """私聊(AI会话房)拆任务：无频道可邀 → 不邀请，返回提醒让模型转告。"""
@@ -126,6 +149,21 @@ class TestCreateTasksAutoInvite(unittest.TestCase):
         }])
         self.assertIn("邀请失败", out)
         self.assertIn("403", out)
+
+    @patch(
+        "cosmac.registration.admin_join_room",
+        return_value=(503, {"error": "服务器未配置管理员令牌"}),
+    )
+    def test_join_failure_keeps_invite_and_reports_pending(self, _admin_join) -> None:
+        """join 失败不得谎报已入频道；标准邀请仍保留作为降级路径。"""
+        c = _Client()
+        tb = Toolbox(c)
+        out = _create(tb, [{
+            "title": "审核", "executor_kind": "human", "executor_ref": "duxz01",
+        }])
+        self.assertIn(("!team:h", "@duxz01:h"), c.invited)
+        self.assertIn("自动加入失败", out)
+        self.assertIn("待接受状态", out)
 
     def test_noise_words_not_invited(self) -> None:
         """assignee 里的噪音词(AI 等)不能被当账号去邀请。"""
@@ -154,7 +192,8 @@ class TestUpdateTaskReassignInvite(unittest.TestCase):
         with session_scope() as s:
             self.tid = list_tasks(s, room_ids=["!team:h"])[0].id
 
-    def test_reassign_to_outsider_invites_into_task_room(self) -> None:
+    @patch("cosmac.registration.admin_join_room", return_value=(200, {"ok": True}))
+    def test_reassign_to_outsider_invites_into_task_room(self, admin_join) -> None:
         # 在**另一个房间**发起改派——邀请必须落在任务自己的房(!team:h),不是发起房。
         # 真实环境 bot 注入 can_access_task(下达者放行);桩里注入同语义回调,
         # 否则会回落到"必须同房"的兜底口径把改派本身拦掉。
@@ -167,7 +206,8 @@ class TestUpdateTaskReassignInvite(unittest.TestCase):
             ToolContext("!other:h", "@boss:h"),
         )
         self.assertIn(("!team:h", "@duxz01:h"), self.c.invited)
-        self.assertIn("已自动邀请", out)
+        admin_join.assert_called_once_with("https://matrix.test", "!team:h", "@duxz01:h")
+        self.assertIn("已自动加入", out)
 
 
 if __name__ == "__main__":
