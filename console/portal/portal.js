@@ -1015,15 +1015,27 @@
       box.innerHTML = r.instances.map(function (i) {
         var st = hbStatus(i);
         var low = i.balance_tokens < 1e6; // 余额低于 100 万 token 标红提醒充值
-        return '<button type="button" class="inst-card inst-card-button" data-oem-instance-detail="' + i.id +
-          '" aria-label="查看节点 ' + esc(i.domain) + ' 的详细数据"><h3>' + esc(i.domain) + " " + badge(st) + "</h3>" +
+        var selected = Number(oemInstanceDetailId) === Number(i.id);
+        return '<button type="button" class="inst-card inst-card-button' + (selected ? " selected" : "") +
+          '" data-oem-instance-detail="' + i.id + '" aria-expanded="' + (selected ? "true" : "false") +
+          '" aria-controls="oem-instance-detail" aria-label="在下方查看节点 ' + esc(i.domain) +
+          ' 的详细数据"><h3>' + esc(i.domain) + " " + badge(st) + "</h3>" +
           '<div class="row"><span>Token 余额</span><b class="' + (low ? "low" : "") + '">' + fmtTokens(i.balance_tokens) + "</b></div>" +
           '<div class="row"><span>版本</span><b>' + esc(i.version || "—") + "</b></div>" +
           '<div class="row"><span>最近心跳</span><b>' + fmtTime(i.last_seen_ts) + "</b></div>" +
           '<div class="row"><span>开通时间</span><b>' + fmtTime(i.created_ts) + "</b></div>" +
-          '<span class="inst-card-open">查看详细运行数据</span></button>';
+          '<span class="inst-card-open">' + (selected ? "收起详细运行数据" : "在下方查看详细运行数据") + "</span></button>";
       }).join("");
       $("#oem-noinst").hidden = r.instances.length > 0;
+      // 用户主动刷新首页时保留当前选中的节点，并重新请求最新心跳快照。
+      // 如果 KEY 归属已经变化，则立即收起，避免页面残留上一归属状态的数据。
+      if (oemInstanceDetailId) {
+        var stillOwned = oemInstances.some(function (item) {
+          return Number(item.id) === Number(oemInstanceDetailId);
+        });
+        if (stillOwned) fetchOemInstanceDetail(oemInstanceDetailId);
+        else closeOemInstanceDetail();
+      }
       // KEY 表
       $("#oem-keys tbody").innerHTML = keys.map(function (k) {
         var st = k.status === "suspended" ? "suspended" : (k.status !== "active" ? "revoked" : (k.instance_id ? "active" : "idle"));
@@ -1284,6 +1296,8 @@
   // OEM 实例列表只用于点击前快速确认卡片仍属于当前页面；
   // 真正的归属校验仍在服务端做，不信任这个前端数组。
   var oemInstances = [];
+  var oemInstanceDetailId = 0;
+  var oemInstanceDetailRequest = 0;
   var releaseDraftChecked = false;
   // KEY 明文只保留在当前页面内存，刷新或关闭标签页即消失，绝不写入 Storage。
   var revealedRequestKeys = {};
@@ -1858,19 +1872,15 @@
     $("#instance-detail-mask").hidden = true;
   }
 
-  function renderInstanceDetail(inst, viewer) {
-    // 超管和 OEM 共用一套数据标签，避免同一个心跳字段在两个页面变成
-    // 不同口径。只有企业档案入口属于超管能力，OEM 查看时必须隐藏。
+  function buildInstanceDetail(inst, viewer) {
+    // 超管弹窗和 OEM 页面内展开区共用这一份展示模型，避免同一个心跳字段
+    // 在两个页面变成不同口径；这里只整理数据，不直接操作任何界面节点。
     var isOem = viewer === "oem";
     var status = hbStatus(inst);
     var company = inst.company_name || "未绑定企业";
     var region = inst.region_label
       ? inst.region_label + (inst.region ? "（" + inst.region + "）" : "")
       : "未设置";
-    $("#instance-detail-title").textContent = isOem ? inst.domain : company;
-    $("#instance-detail-summary").textContent = (isOem ? "我的节点 #" : "节点 #") + inst.id + " · " + inst.domain;
-    $("#instance-detail-state").innerHTML = badge(status) +
-      "<span>" + (status === "active" ? "节点心跳正常" : (status === "warning" ? "心跳已超过 15 分钟" : "节点离线或已停用")) + "</span>";
     var rows = isOem ? [
       ["节点编号", "#" + inst.id],
     ] : [
@@ -1894,9 +1904,6 @@
       ["累计 AI 请求", String(Number(inst.requests_total) || 0)],
       ["服务状态", STATUS_ZH[status] || status],
     ]);
-    $("#instance-detail-kv").innerHTML = rows.map(function (row) {
-      return "<small>" + esc(row[0]) + "</small><b>" + esc(row[1]) + "</b>";
-    }).join("");
     var stats = inst.stats && typeof inst.stats === "object" ? inst.stats : {};
     var hasBreakdown = stats.users_business !== undefined;
     var keys = Object.keys(stats).sort(function (a, b) {
@@ -1909,22 +1916,38 @@
       }
       return (INSTANCE_STAT_LABELS[a] || a).localeCompare(INSTANCE_STAT_LABELS[b] || b, "zh-CN");
     });
-    $("#instance-detail-stats").innerHTML = keys.map(function (key) {
+    var statsHtml = keys.map(function (key) {
       return '<div class="instance-stat"><small>' + esc(INSTANCE_STAT_LABELS[key] || key) +
         "</small><b>" + esc(instanceStatText(stats[key])) + "</b></div>";
     }).join("") || '<p class="empty">暂无心跳统计</p>';
     if (!hasBreakdown && stats.users !== undefined) {
-      $("#instance-detail-stats").insertAdjacentHTML(
-        "beforeend",
-        '<p class="instance-stat-note">当前是旧版节点的合计口径；升级后会自动拆分业务用户、管理员和 AI 账号。</p>'
-      );
+      statsHtml += '<p class="instance-stat-note">当前是旧版节点的合计口径；升级后会自动拆分业务用户、管理员和 AI 账号。</p>';
     }
+    return {
+      title: isOem ? inst.domain : company,
+      summary: (isOem ? "我的节点 #" : "节点 #") + inst.id + " · " + inst.domain,
+      stateHtml: badge(status) + "<span>" + (status === "active"
+        ? "节点心跳正常" : (status === "warning" ? "心跳已超过 15 分钟" : "节点离线或已停用")) + "</span>",
+      rowsHtml: rows.map(function (row) {
+        return "<small>" + esc(row[0]) + "</small><b>" + esc(row[1]) + "</b>";
+      }).join(""),
+      statsHtml: statsHtml,
+      oemId: Number(inst.oem_id) || 0,
+    };
+  }
+
+  function renderInstanceDetail(inst, viewer) {
+    // 超管继续使用弹窗；OEM 则由 renderOemInstanceDetail 渲染到首页正文。
+    var detail = buildInstanceDetail(inst, viewer);
+    $("#instance-detail-title").textContent = detail.title;
+    $("#instance-detail-summary").textContent = detail.summary;
+    $("#instance-detail-state").innerHTML = detail.stateHtml;
+    $("#instance-detail-kv").innerHTML = detail.rowsHtml;
+    $("#instance-detail-stats").innerHTML = detail.statsHtml;
     var oemButton = $("#instance-detail-oem");
-    oemButton.hidden = isOem || !inst.oem_id;
-    oemButton.dataset.oemId = inst.oem_id ? String(inst.oem_id) : "";
-    $("#instance-detail-source").textContent = isOem
-      ? "详情只来自你自己的节点心跳和 Nexus 账本。"
-      : "详情来自 Nexus 最近一次节点心跳和 OEM 档案。";
+    oemButton.hidden = !detail.oemId;
+    oemButton.dataset.oemId = detail.oemId ? String(detail.oemId) : "";
+    $("#instance-detail-source").textContent = "详情来自 Nexus 最近一次节点心跳和 OEM 档案。";
     $("#instance-detail-mask").hidden = false;
   }
 
@@ -1934,14 +1957,70 @@
     renderInstanceDetail(inst, "admin");
   }
 
-  function openOemInstanceDetail(instanceId) {
+  function syncOemInstanceCards() {
+    $all("[data-oem-instance-detail]").forEach(function (card) {
+      var selected = Number(card.dataset.oemInstanceDetail) === Number(oemInstanceDetailId);
+      card.classList.toggle("selected", selected);
+      card.setAttribute("aria-expanded", selected ? "true" : "false");
+      var label = card.querySelector(".inst-card-open");
+      if (label) label.textContent = selected ? "收起详细运行数据" : "在下方查看详细运行数据";
+    });
+  }
+
+  function closeOemInstanceDetail() {
+    // 递增请求序号，使已经发出的旧请求即使稍后返回也不能重新打开详情区。
+    oemInstanceDetailRequest += 1;
+    oemInstanceDetailId = 0;
+    $("#oem-instance-detail").hidden = true;
+    syncOemInstanceCards();
+  }
+
+  function renderOemInstanceDetail(inst) {
+    var detail = buildInstanceDetail(inst, "oem");
+    $("#oem-instance-detail-title").textContent = detail.title;
+    $("#oem-instance-detail-summary").textContent = detail.summary;
+    $("#oem-instance-detail-state").innerHTML = detail.stateHtml;
+    $("#oem-instance-detail-kv").innerHTML = detail.rowsHtml;
+    $("#oem-instance-detail-stats").innerHTML = detail.statsHtml;
+    $("#oem-instance-detail").hidden = false;
+  }
+
+  function fetchOemInstanceDetail(instanceId) {
     // 前端先拒绝已不在当前卡片列表的编号，只是为了更友好的错误提示；
     // API 依然会根据会话与 KEY 归属再做一次强制校验。
     var owned = oemInstances.some(function (item) { return Number(item.id) === Number(instanceId); });
     if (!owned) return toast("该节点已不在你的实例列表，请刷新后重试", true);
+    var requestId = ++oemInstanceDetailRequest;
+    var summary = oemInstances.find(function (item) { return Number(item.id) === Number(instanceId); });
+    $("#oem-instance-detail-title").textContent = summary ? summary.domain : "节点详情";
+    $("#oem-instance-detail-summary").textContent = "正在读取节点最新心跳与账本数据…";
+    $("#oem-instance-detail-state").innerHTML = '<span class="badge warning">读取中</span><span>请稍候</span>';
+    $("#oem-instance-detail-kv").innerHTML = "";
+    $("#oem-instance-detail-stats").innerHTML = '<p class="empty">正在加载真实运营数据…</p>';
+    $("#oem-instance-detail").hidden = false;
     api("/nexus/oem/instance?instance_id=" + encodeURIComponent(instanceId))
-      .then(function (result) { renderInstanceDetail(result.instance, "oem"); })
-      .catch(function (err) { toast(err.message, true); });
+      .then(function (result) {
+        if (requestId !== oemInstanceDetailRequest || Number(instanceId) !== Number(oemInstanceDetailId)) return;
+        renderOemInstanceDetail(result.instance);
+      })
+      .catch(function (err) {
+        if (requestId !== oemInstanceDetailRequest) return;
+        $("#oem-instance-detail-summary").textContent = "节点数据读取失败";
+        $("#oem-instance-detail-state").innerHTML = '<span class="badge offline">读取失败</span><span>' + esc(err.message) + "</span>";
+        $("#oem-instance-detail-kv").innerHTML = "";
+        $("#oem-instance-detail-stats").innerHTML = "";
+        toast(err.message, true);
+      });
+  }
+
+  function openOemInstanceDetail(instanceId) {
+    if (Number(oemInstanceDetailId) === Number(instanceId) && !$("#oem-instance-detail").hidden) {
+      closeOemInstanceDetail();
+      return;
+    }
+    oemInstanceDetailId = Number(instanceId);
+    syncOemInstanceCards();
+    fetchOemInstanceDetail(instanceId);
   }
 
   $("#instance-detail-close").addEventListener("click", closeInstanceDetail);
@@ -1954,6 +2033,7 @@
     closeInstanceDetail();
     openDetail(oemId);
   });
+  $("#oem-instance-detail-close").addEventListener("click", closeOemInstanceDetail);
 
   // ---------- 客户详情弹窗（档案/资产/合同附件/备注） ----------
   var detailOemId = 0; // 当前弹窗对应的客户 id

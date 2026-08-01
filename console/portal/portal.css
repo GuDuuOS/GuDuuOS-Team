@@ -619,6 +619,10 @@ label input { margin-top: 5px; }
   transform: translateY(-2px); border-color: var(--orange); outline: none;
   box-shadow: 0 10px 26px var(--bg-glow-a);
 }
+.inst-card-button.selected {
+  border-color: var(--orange); background: var(--badge-orange-bg);
+  box-shadow: 0 0 0 1px var(--orange);
+}
 .inst-card h3 { font-size: 15px; margin-bottom: 6px; font-family: var(--mono); }
 .inst-card .row { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted); padding: 2.5px 0; }
 .inst-card .row b { color: var(--ink); font-family: var(--mono); font-weight: 500; }
@@ -628,7 +632,25 @@ label input { margin-top: 5px; }
   padding-top: 9px; border-top: 1px solid var(--line); color: var(--orange); font-size: 12px;
 }
 .inst-card-open::after { content: "→"; font: 15px var(--mono); }
+.inst-card-button.selected .inst-card-open::after { content: "↓"; }
 .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
+
+/* OEM 节点详情属于首页正文的一部分，不使用遮罩和弹窗。实例较多时仍只展示
+ * 当前选中节点，避免纵向堆叠多份心跳快照造成误读。 */
+.oem-instance-detail {
+  margin-top: 18px; padding: 20px; border: 1px solid var(--line);
+  border-radius: 14px; background: var(--panel-soft);
+}
+.oem-instance-detail-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 16px; margin-bottom: 14px;
+}
+.oem-instance-detail-head small {
+  color: var(--orange); font: 11px var(--mono); letter-spacing: .08em;
+}
+.oem-instance-detail-head h3 { margin-top: 3px; font-size: 18px; }
+.oem-instance-detail-head .hint { margin-top: 2px; }
+.oem-instance-detail-source { margin: 16px 0 0; }
 
 /* —— OEM 下属目录：清单与邀请区分开，让层级关系可以直接核对 —— */
 .network-directory-panel { margin-top: 16px; }
@@ -765,9 +787,14 @@ textarea { width: 100%; font: inherit; color: var(--ink); background: var(--inpu
 textarea:focus { outline: none; border-color: var(--orange); }
 
 @media (max-width: 620px) {
-  .instance-detail-modal .kv { grid-template-columns: 88px minmax(0, 1fr); }
+  .instance-detail-modal .kv, .oem-instance-detail .kv {
+    grid-template-columns: 88px minmax(0, 1fr);
+  }
   .instance-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .instance-detail-actions { align-items: stretch; flex-direction: column; }
+  .oem-instance-detail { padding: 16px 14px; }
+  .oem-instance-detail-head { align-items: stretch; flex-direction: column; }
+  .oem-instance-detail-head button { align-self: flex-start; }
 }
 
 /* —— toast —— */
