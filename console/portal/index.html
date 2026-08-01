@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
 <script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=25" />
+<link rel="stylesheet" href="/portal/portal.css?v=26" />
 </head>
 <body>
 <!--
@@ -268,14 +268,14 @@
     <div id="oem-reseller-terms" class="reseller-terms"></div>
     <form id="form-oem-withdraw" class="withdraw-form">
       <h3>申请提现</h3>
-      <div class="inline-form">
-        <label>提现金额（元）<input name="amount_yuan" type="number" min="1" step="0.01" required /></label>
-        <label>收款方式<select name="method"><option value="bank">银行卡</option><option value="alipay">支付宝</option><option value="wechat">微信</option><option value="paypal">PayPal</option></select></label>
-        <label>收款人 / 企业<input name="account_name" maxlength="120" required /></label>
-        <label>收款账号<input name="account_no" maxlength="255" autocomplete="off" required /></label>
-        <label>开户行<input name="bank_name" maxlength="160" placeholder="银行卡必填" /></label>
-        <label>备注<input name="note" maxlength="500" /></label>
-        <button class="primary" type="submit">提交提现申请</button>
+      <div class="withdraw-grid">
+        <label class="withdraw-amount">提现金额（元）<input name="amount_yuan" type="number" min="1" step="0.01" required /></label>
+        <label class="withdraw-method">收款方式<select name="method"><option value="bank">银行卡</option><option value="alipay">支付宝</option><option value="wechat">微信</option><option value="paypal">PayPal</option></select></label>
+        <label class="withdraw-recipient">收款人 / 企业<input name="account_name" maxlength="120" required /></label>
+        <label class="withdraw-account">收款账号<input name="account_no" maxlength="255" autocomplete="off" required /></label>
+        <label class="withdraw-bank">开户行<input name="bank_name" maxlength="160" placeholder="银行卡必填" /></label>
+        <label class="withdraw-note">备注<input name="note" maxlength="500" /></label>
+        <div class="withdraw-submit"><button class="primary" type="submit">提交提现申请</button></div>
       </div>
       <p class="hint">收款账户加密保存；第一阶段由平台人工审核并线下打款。</p>
     </form>
