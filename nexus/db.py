@@ -190,6 +190,44 @@ class NexusAdminSession(Base):
     expires_ts = Column(BigInteger, nullable=False, index=True)
 
 
+class NexusAdminPasskey(Base):
+    """平台管理员登记的 WebAuthn / Passkey 凭据。
+
+    ``credential_id`` 是公开标识，``public_key`` 是验证签名用的 COSE 公钥；两者都
+    不能反推出设备私钥。私钥始终留在 Touch ID、安全密钥或密码管理器中。计数器用于
+    发现不支持多设备同步的传统认证器被克隆，设备名称只供管理员自己辨认。
+    """
+
+    __tablename__ = "nexus_admin_passkey"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    admin_id = Column(Integer, nullable=False, index=True)
+    credential_id = Column(String(1024), nullable=False, unique=True, index=True)
+    public_key = Column(LargeBinary, nullable=False)
+    sign_count = Column(BigInteger, nullable=False, default=0)
+    name = Column(String(120), nullable=False, default="Passkey")
+    transports_json = Column(Text, nullable=False, default="[]")
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    last_used_ts = Column(BigInteger, nullable=True, default=None)
+
+
+class NexusAdminWebAuthnChallenge(Base):
+    """一次 WebAuthn 仪式的短期挑战。
+
+    浏览器只拿到随机 ``ceremony_id``；数据库保存其 SHA-256 与挑战原文。挑战最长
+    五分钟、验证时先删除再校验，因此重放同一个注册或登录响应不会再次成功。
+    """
+
+    __tablename__ = "nexus_admin_webauthn_challenge"
+
+    ceremony_hash = Column(String(64), primary_key=True)
+    admin_id = Column(Integer, nullable=False, index=True)
+    kind = Column(String(16), nullable=False)
+    challenge_b64 = Column(String(256), nullable=False)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    expires_ts = Column(BigInteger, nullable=False, index=True)
+
+
 class NexusSetting(Base):
     """母舰级键值配置（首个用户：商品定价 pricing）。
 

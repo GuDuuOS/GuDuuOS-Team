@@ -105,6 +105,66 @@
     return Promise.resolve();
   }
 
+  // WebAuthn 的 ArrayBuffer 不能直接放进 JSON；统一使用规范要求的无填充 base64url。
+  function b64urlToBuffer(value) {
+    var base64 = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+    while (base64.length % 4) base64 += "=";
+    var raw = atob(base64);
+    var bytes = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+    return bytes.buffer;
+  }
+  function bufferToB64url(value) {
+    var bytes = new Uint8Array(value || new ArrayBuffer(0));
+    var raw = "";
+    for (var i = 0; i < bytes.length; i += 1) raw += String.fromCharCode(bytes[i]);
+    return btoa(raw).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function decodeCreationOptions(options) {
+    options.challenge = b64urlToBuffer(options.challenge);
+    options.user.id = b64urlToBuffer(options.user.id);
+    (options.excludeCredentials || []).forEach(function (item) {
+      item.id = b64urlToBuffer(item.id);
+    });
+    return options;
+  }
+  function decodeRequestOptions(options) {
+    options.challenge = b64urlToBuffer(options.challenge);
+    (options.allowCredentials || []).forEach(function (item) {
+      item.id = b64urlToBuffer(item.id);
+    });
+    return options;
+  }
+  function registrationCredentialJson(credential) {
+    return {
+      id: credential.id,
+      rawId: bufferToB64url(credential.rawId),
+      type: credential.type,
+      authenticatorAttachment: credential.authenticatorAttachment || null,
+      response: {
+        clientDataJSON: bufferToB64url(credential.response.clientDataJSON),
+        attestationObject: bufferToB64url(credential.response.attestationObject),
+        transports: credential.response.getTransports
+          ? credential.response.getTransports() : [],
+      },
+    };
+  }
+  function authenticationCredentialJson(credential) {
+    return {
+      id: credential.id,
+      rawId: bufferToB64url(credential.rawId),
+      type: credential.type,
+      authenticatorAttachment: credential.authenticatorAttachment || null,
+      response: {
+        clientDataJSON: bufferToB64url(credential.response.clientDataJSON),
+        authenticatorData: bufferToB64url(credential.response.authenticatorData),
+        signature: bufferToB64url(credential.response.signature),
+        userHandle: credential.response.userHandle
+          ? bufferToB64url(credential.response.userHandle) : null,
+      },
+    };
+  }
+
   // ---------- 自家对话框（替代浏览器原生 confirm/prompt，风格统一） ----------
   var dlgResolve = null;
   function uiDialog(opts) {
@@ -223,7 +283,8 @@
     api("/nexus/admin/dashboard-token").then(function (result) {
       if (!result || !result.token) throw new Error("服务端未返回只读大屏令牌");
       links.forEach(function (link) {
-        link.href = "/#token=" + encodeURIComponent(result.token);
+        var base = result.url || "/";
+        link.href = base.replace(/\/$/, "") + "/#token=" + encodeURIComponent(result.token);
         link.dataset.ready = "true";
       });
       dashboardTokenLoading = false;
@@ -454,6 +515,48 @@
       f.password.value = "";
       route();
     }).catch(function (err) { loginErr(err.message); });
+  });
+
+  $("#btn-passkey-login").addEventListener("click", function () {
+    var form = $("#form-admin");
+    var username = form.username.value.trim();
+    if (!username) { loginErr("请先填写管理员账号"); return; }
+    if (!window.PublicKeyCredential || !navigator.credentials) {
+      loginErr("当前浏览器不支持 Passkey，请使用密码登录");
+      return;
+    }
+    var ceremonyId = "";
+    var button = this;
+    button.disabled = true;
+    api("/nexus/admin/auth/passkey/options", {
+      body: { username: username }, noKick: true,
+    }).then(function (result) {
+      ceremonyId = result.ceremony_id;
+      return navigator.credentials.get({
+        publicKey: decodeRequestOptions(result.public_key),
+      });
+    }).then(function (credential) {
+      if (!credential) throw new Error("未选择 Passkey");
+      return api("/nexus/admin/auth/passkey/verify", {
+        body: {
+          ceremony_id: ceremonyId,
+          credential: authenticationCredentialJson(credential),
+        },
+        noKick: true,
+      });
+    }).then(function (result) {
+      adminRestoreTried = true;
+      setAuth({
+        mode: "admin", token: "", admin_id: result.admin.id,
+        display_name: result.admin.display_name, auth_kind: "passkey_cookie",
+      });
+      form.password.value = "";
+      route();
+    }).catch(function (err) {
+      // 用户主动取消时浏览器通常返回 NotAllowedError，也要给出可继续操作的提示。
+      loginErr(err.name === "NotAllowedError"
+        ? "Passkey 操作已取消或超时" : err.message);
+    }).finally(function () { button.disabled = false; });
   });
 
   $("#btn-emergency-login").addEventListener("click", function () {
@@ -1787,7 +1890,7 @@
 
   function auditObjectLabel(event) {
     var labels = {
-      admin_operation: "后台接口", admin: "管理员", key: "KEY",
+      admin_operation: "后台接口", admin: "管理员", admin_passkey: "Passkey", key: "KEY",
       key_request: "授权申请", oem: "OEM", withdrawal: "提现",
     };
     return (labels[event.object_type] || event.object_type || "—") +
@@ -1801,18 +1904,36 @@
       api("/nexus/admin/me"),
       api("/nexus/admin/admins"),
       api("/nexus/admin/audit?limit=200&actor=" + actor + "&object_type=" + objectType),
+      api("/nexus/admin/passkeys"),
     ]).then(function (rs) {
       var identity = rs[0].admin || {};
       var admins = rs[1].admins || [];
       var events = rs[2].events || [];
+      var passkeyData = rs[3] || {};
+      var myPasskeys = passkeyData.passkeys || [];
       currentAdminIdentity = identity;
-      var emergency = identity.auth_kind === "emergency_token";
+      var emergency = String(identity.auth_kind || "").indexOf("emergency") >= 0 ||
+        identity.auth_kind === "recovery_cookie";
+      var passkeySession = identity.auth_kind === "passkey_cookie";
       $("#admin-auth-kind").className = "badge " + (emergency ? "warning" : "active");
-      $("#admin-auth-kind").textContent = emergency ? "应急令牌" : "具名会话";
+      $("#admin-auth-kind").textContent = emergency
+        ? "应急恢复" : (passkeySession ? "Passkey" : "密码会话");
       $("#admin-current-identity").innerHTML = emergency
         ? "<b>服务器应急令牌</b><span>请创建具名管理员并重新登录；该身份的操作仍会写入审计。</span>"
         : "<b>" + esc(identity.display_name || "—") + "</b><span>管理员 #" +
-          esc(identity.id) + " · 会话最长 12 小时，可主动退出。</span>";
+          esc(identity.id) + " · " + (passkeySession ? "Passkey 登录" : "密码备用登录") +
+          " · 会话最长 12 小时。</span>";
+      $("#btn-add-passkey").hidden = emergency || !passkeyData.enabled;
+      $("#admin-passkeys").innerHTML = !passkeyData.enabled
+        ? '<p class="empty">Passkey 尚未绑定正式管理域名，完成域名配置后即可添加。</p>'
+        : (emergency
+          ? '<p class="empty">请先使用具名管理员账号登录，再为自己的账号添加 Passkey。</p>'
+          : (myPasskeys.map(function (item) {
+            return '<div class="passkey-item"><div><b>' + esc(item.name) +
+              '</b><span>添加于 ' + fmtTime(item.created_ts) + ' · 最近使用 ' +
+              fmtTime(item.last_used_ts) + '</span></div><button class="ghost small danger-text" data-passkey-delete="' +
+              item.id + '">移除</button></div>';
+          }).join("") || '<p class="empty">尚未添加 Passkey；建议至少登记两个不同设备用于恢复。</p>'));
       $("#nav-count-admins").textContent = String(admins.filter(function (a) { return a.status === "active"; }).length);
       $("#admin-admins tbody").innerHTML = admins.map(function (item) {
         var self = Number(identity.id) === Number(item.id);
@@ -2233,6 +2354,55 @@
   $("#btn-admin-audit-filter").addEventListener("click", loadAdminSecurity);
   $("#admin-audit-actor").addEventListener("keydown", function (e) {
     if (e.key === "Enter") loadAdminSecurity();
+  });
+
+  $("#btn-add-passkey").addEventListener("click", function () {
+    if (!window.PublicKeyCredential || !navigator.credentials) {
+      toast("当前浏览器不支持 Passkey", true);
+      return;
+    }
+    var button = this;
+    var ceremonyId = "";
+    var credentialJson = null;
+    button.disabled = true;
+    api("/nexus/admin/passkey/register/options", { body: {} }).then(function (result) {
+      ceremonyId = result.ceremony_id;
+      return navigator.credentials.create({
+        publicKey: decodeCreationOptions(result.public_key),
+      });
+    }).then(function (credential) {
+      if (!credential) throw new Error("未创建 Passkey");
+      credentialJson = registrationCredentialJson(credential);
+      return uiPrompt("给这个 Passkey 起一个容易辨认的名称", "例如：MacBook Touch ID");
+    }).then(function (name) {
+      if (name === null) throw new Error("已取消保存 Passkey");
+      return api("/nexus/admin/passkey/register/verify", { body: {
+        ceremony_id: ceremonyId,
+        credential: credentialJson,
+        name: name,
+      } });
+    }).then(function () {
+      toast("Passkey 已添加，下次可免输密码登录");
+      loadAdminSecurity();
+    }).catch(function (err) {
+      toast(err.name === "NotAllowedError"
+        ? "Passkey 操作已取消或超时" : err.message, true);
+    }).finally(function () { button.disabled = false; });
+  });
+
+  $("#admin-passkeys").addEventListener("click", function (e) {
+    var button = e.target.closest("button[data-passkey-delete]");
+    if (!button) return;
+    uiConfirm("确认移除这个 Passkey？移除后该设备不能再用于登录。", true, "确认移除")
+      .then(function (ok) {
+        if (!ok) return;
+        return api("/nexus/admin/passkey/delete", {
+          body: { passkey_id: Number(button.dataset.passkeyDelete) },
+        }).then(function () {
+          toast("Passkey 已移除");
+          loadAdminSecurity();
+        });
+      }).catch(function (err) { toast(err.message, true); });
   });
 
   $("#admin-admins tbody").addEventListener("click", function (e) {

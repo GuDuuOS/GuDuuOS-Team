@@ -65,6 +65,8 @@
       <label>管理员账号<input name="username" autocomplete="username" required placeholder="例如 admin" /></label>
       <label>密码<input name="password" type="password" autocomplete="current-password" required placeholder="········" /></label>
       <button class="primary">登录超管控制台</button>
+      <button id="btn-passkey-login" class="ghost passkey-login" type="button">使用 Passkey 登录</button>
+      <p id="passkey-login-hint" class="hint">先填写管理员账号，再使用 Touch ID、安全密钥或已同步的 Passkey。</p>
       <details class="emergency-login">
         <summary>服务器应急令牌</summary>
         <label>应急令牌<input name="emergency_token" type="password" autocomplete="off" placeholder="NEXUS_ADMIN_TOKEN" /></label>
@@ -616,6 +618,13 @@
         <div id="admin-current-identity" class="security-identity">正在读取…</div>
       </section>
       <section class="panel">
+        <div class="panel-head">
+          <div><h2>我的 Passkey</h2><p class="hint">推荐使用 Touch ID、安全密钥或密码管理器登录；私钥只保存在你的设备中。</p></div>
+          <button id="btn-add-passkey" class="primary small" type="button">添加 Passkey</button>
+        </div>
+        <div id="admin-passkeys" class="passkey-list"><p class="hint">正在读取…</p></div>
+      </section>
+      <section class="panel">
         <div class="panel-head"><div><h2>具名管理员</h2><p class="hint">创建、停用或重置密码都会进入不可变审计记录；停用会立即撤销该账号全部会话。</p></div></div>
         <form id="form-admin-create" class="admin-create-form">
           <label>登录账号<input name="username" required minlength="3" maxlength="80" placeholder="例如 operations" /></label>
@@ -632,7 +641,7 @@
         <div class="panel-head"><div><h2>平台操作审计</h2><p class="hint">集中展示具名管理员、应急身份、OEM 和系统产生的最近操作；已有授权时间线继续保留。</p></div></div>
         <div class="audit-filter-row">
           <input id="admin-audit-actor" type="search" placeholder="按操作人筛选" />
-          <select id="admin-audit-type"><option value="">全部对象</option><option value="admin_operation">后台操作</option><option value="admin">管理员</option><option value="key">KEY</option><option value="key_request">授权申请</option></select>
+          <select id="admin-audit-type"><option value="">全部对象</option><option value="admin_operation">后台操作</option><option value="admin">管理员</option><option value="admin_passkey">Passkey</option><option value="key">KEY</option><option value="key_request">授权申请</option></select>
           <button id="btn-admin-audit-filter" class="ghost" type="button">筛选</button>
         </div>
         <div class="table-scroll"><table class="tbl" id="admin-audit">

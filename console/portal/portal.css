@@ -948,6 +948,15 @@ textarea:focus { outline: none; border-color: var(--orange); }
 }
 .emergency-login summary { color: var(--muted); font-size: 12px; cursor: pointer; }
 .emergency-login[open] summary { margin-bottom: 10px; }
+.passkey-login { width: 100%; margin-top: 10px; }
+.passkey-list { display: grid; gap: 10px; }
+.passkey-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 13px 15px; border: 1px solid var(--line); border-radius: 11px;
+  background: var(--card);
+}
+.passkey-item div { display: grid; gap: 4px; }
+.passkey-item span { color: var(--muted); font-size: 12px; }
 .security-identity {
   display: flex; align-items: baseline; gap: 14px; padding: 14px 16px;
   border: 1px solid var(--line); border-radius: 11px; background: var(--card);

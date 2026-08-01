@@ -33,6 +33,8 @@ ENVF=/etc/nexus.env
 # ---------- 1. 收集配置 ----------
 read -rp "Nexus 域名（如 nexus.guduu.co，需已解析到本机公网 IP）: " DOMAIN
 [ -n "$DOMAIN" ] || die "域名不能为空。"
+read -rp "独立超管域名（如 admin-nexus.guduu.co，需用 Cloudflare Access 保护）: " ADMIN_DOMAIN
+[ -n "$ADMIN_DOMAIN" ] || die "独立超管域名不能为空。"
 if [ ! -d "$APP/.git" ]; then
   read -rp "GitHub token（拉私有仓库用）: " GH_TOKEN
   [ -n "$GH_TOKEN" ] || die "token 不能为空。"
@@ -74,6 +76,12 @@ if [ ! -f "$ENVF" ]; then
 NEXUS_DATABASE_URL=sqlite:///$DATA/nexus.db
 NEXUS_LISTEN_HOST=127.0.0.1
 NEXUS_LISTEN_PORT=9100
+# OEM 门户/数据大屏与超管分域；服务端会拒绝从普通域名调用 /nexus/admin/*。
+NEXUS_ADMIN_PUBLIC_URL=https://$ADMIN_DOMAIN
+NEXUS_DASHBOARD_PUBLIC_URL=https://$DOMAIN
+NEXUS_WEBAUTHN_RP_ID=$ADMIN_DOMAIN
+NEXUS_WEBAUTHN_ORIGIN=https://$ADMIN_DOMAIN
+NEXUS_WEBAUTHN_RP_NAME=GuDuu Nexus
 # 管理令牌（console/命令行管理用）与只读大屏令牌（分权：大屏挂墙只能看）
 NEXUS_ADMIN_TOKEN=$(openssl rand -hex 32)
 NEXUS_DASH_TOKEN=$(openssl rand -hex 24)
@@ -120,6 +128,14 @@ cat > /etc/caddy/Caddyfile <<EOF
 # GuDuu Nexus：自动 HTTPS，全部流量反代给本机 Nexus 服务
 $DOMAIN {
 	encode zstd gzip
+	reverse_proxy 127.0.0.1:9100
+}
+
+# 独立超管站：Cloudflare Access 必须覆盖整个主机名，应用自身仍做第二层鉴权。
+$ADMIN_DOMAIN {
+	encode zstd gzip
+	@root path /
+	redir @root /portal/admin/ 302
 	reverse_proxy 127.0.0.1:9100
 }
 EOF

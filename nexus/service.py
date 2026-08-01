@@ -63,6 +63,7 @@ from nexus import (
     oem as oem_svc,
     oem_finance,
     pay,
+    passkeys,
     payment_config,
     releases,
 )
@@ -220,7 +221,11 @@ class NexusHandler(BaseHTTPRequestHandler):
                 self._admin_auth_kind = (
                     "recovery_cookie"
                     if int(account.id) == 0
-                    else ("named_cookie" if cookie_token else "named_session")
+                    else (
+                        "passkey_cookie"
+                        if cookie_token.startswith("nxp_")
+                        else ("named_cookie" if cookie_token else "named_session")
+                    )
                 )
                 self._admin_session_token = token
                 # Cookie 会由浏览器自动携带，因此所有管理写操作额外要求自定义请求头。
@@ -351,11 +356,51 @@ class NexusHandler(BaseHTTPRequestHandler):
         )
         return f"{scheme}://{host}"
 
+    def _request_host(self) -> str:
+        """返回不含端口的小写请求主机名，用于管理域名的服务端边界判断。"""
+        host = (
+            self.headers.get("X-Forwarded-Host")
+            or self.headers.get("Host")
+            or ""
+        ).split(",", 1)[0].strip().lower()
+        # 当前生产只使用普通 DNS 主机名；测试里的 127.0.0.1:port 也可稳定去端口。
+        return host.rsplit(":", 1)[0] if ":" in host else host
+
+    @staticmethod
+    def _admin_public_url() -> str:
+        """读取独立管理站公开地址；留空代表兼容尚未迁移的单域名环境。"""
+        return os.environ.get("NEXUS_ADMIN_PUBLIC_URL", "").strip().rstrip("/")
+
+    def _is_admin_host(self) -> bool:
+        """判断当前请求是否来自配置好的独立管理主机。"""
+        public_url = self._admin_public_url()
+        if not public_url:
+            return True
+        return self._request_host() == (urlsplit(public_url).hostname or "").lower()
+
+    def _require_admin_host(self, path: str) -> bool:
+        """启用独立域名后，阻止从 OEM 域名绕过 Cloudflare Access 调管理 API。"""
+        if not path.startswith("/nexus/admin/") or self._is_admin_host():
+            return True
+        # 返回 404 而非暴露管理域名或鉴权状态，降低普通入口的信息泄露。
+        self._err(404, "NEXUS_UNKNOWN", "未知端点")
+        return False
+
+    def _redirect(self, location: str) -> None:
+        """发送不缓存的 302；用于两个控制台域名之间的安全入口分流。"""
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     # ---- 路由 ----
 
     def do_GET(self) -> None:  # noqa: N802  # http.server 命名约定
         self._reset_request_context()
         path = self.path.split("?", 1)[0]
+        if not self._require_admin_host(path):
+            return
         if path == "/nexus/health":
             self._json(200, {"ok": True, "ts": int(time.time() * 1000)})
             return
@@ -377,6 +422,24 @@ class NexusHandler(BaseHTTPRequestHandler):
                             ),
                         }
                     },
+                )
+            return
+        if path == "/nexus/admin/passkeys":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "enabled": passkeys.enabled(),
+                            "passkeys": (
+                                passkeys.list_passkeys(
+                                    s, int(getattr(self, "_admin_actor_id", 0))
+                                )
+                                if int(getattr(self, "_admin_actor_id", 0)) > 0
+                                else []
+                            ),
+                        },
+                    )
                 )
             return
         if path == "/nexus/admin/admins":
@@ -459,7 +522,15 @@ class NexusHandler(BaseHTTPRequestHandler):
             if self._check_admin():
                 token = _dash_token()
                 if token:
-                    self._json(200, {"token": token})
+                    # 管理页面位于独立子域名后，大屏必须跳回公开 Nexus 域名；否则
+                    # Cloudflare Access 会把挂墙大屏也误保护，且相对链接会落错站点。
+                    dashboard_url = os.environ.get(
+                        "NEXUS_DASHBOARD_PUBLIC_URL", ""
+                    ).strip()
+                    payload = {"token": token}
+                    if dashboard_url:
+                        payload["url"] = dashboard_url
+                    self._json(200, payload)
                 else:
                     self._err(
                         503,
@@ -798,6 +869,14 @@ class NexusHandler(BaseHTTPRequestHandler):
         路由：``/portal`` 前缀 → console/portal（控制台）；其余 → console/dashboard（大屏）。
         安全：normpath 后必须仍在对应目录内（掐死 ../ 穿越）；扩展名白名单。
         """
+        admin_url = self._admin_public_url()
+        admin_entry = path in ("/portal/admin", "/portal/admin/")
+        if admin_entry and admin_url and not self._is_admin_host():
+            self._redirect(admin_url + "/portal/admin/")
+            return True
+        if self._is_admin_host() and admin_url and path in ("/", "/portal", "/portal/"):
+            self._redirect("/portal/admin/")
+            return True
         # —— 控制台：/portal 或 /portal/xxx → console/portal/ ——
         if path == "/portal" or path.startswith("/portal/"):
             base_dir = self._PORTAL_DIR
@@ -839,7 +918,9 @@ class NexusHandler(BaseHTTPRequestHandler):
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.send_header(
             "Permissions-Policy",
-            "camera=(), microphone=(), geolocation=(), payment=()",
+            "camera=(), microphone=(), geolocation=(), payment=(), "
+            "publickey-credentials-create=(self), "
+            "publickey-credentials-get=(self)",
         )
         if path in ("/portal/admin", "/portal/admin/"):
             # 避免搜索引擎把超管入口作为普通产品页面收录；它不是鉴权边界，但没有必要
@@ -863,6 +944,8 @@ class NexusHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         self._reset_request_context()
         path = self.path.split("?", 1)[0]
+        if not self._require_admin_host(path):
+            return
 
         # —— LLM 网关：/gw/<厂商>/<原厂路径后缀>（体大且可能流式，独立处理）——
         if path.startswith("/gw/"):
@@ -1091,6 +1174,46 @@ class NexusHandler(BaseHTTPRequestHandler):
             self._with_session(_admin_login)
             return
 
+        if path == "/nexus/admin/auth/passkey/options":
+            if not _auth_rate_ok(self._client_ip()):
+                self._err(429, "NEXUS_RATE_LIMIT", "尝试过于频繁，请稍后再试")
+                return
+            self._with_session(
+                lambda s: self._json(
+                    200,
+                    passkeys.authentication_options(
+                        s, str(body.get("username", ""))
+                    ),
+                )
+            )
+            return
+
+        if path == "/nexus/admin/auth/passkey/verify":
+            if not _auth_rate_ok(self._client_ip()):
+                self._err(429, "NEXUS_RATE_LIMIT", "尝试过于频繁，请稍后再试")
+                return
+
+            def _passkey_login(s):
+                credential = body.get("credential")
+                if not isinstance(credential, dict):
+                    raise FleetError(
+                        "NEXUS_PASSKEY_RESPONSE_INVALID",
+                        "浏览器未返回有效 Passkey 响应",
+                    )
+                result = passkeys.verify_authentication(
+                    s,
+                    str(body.get("ceremony_id", "")),
+                    credential,
+                    source_ip=self._client_ip(),
+                )
+                token = str(result.pop("token"))
+                result["admin"]["auth_kind"] = "passkey_cookie"
+                self._set_admin_cookie(token)
+                self._json(200, result)
+
+            self._with_session(_passkey_login)
+            return
+
         if path == "/nexus/admin/auth/emergency":
             if not _auth_rate_ok(self._client_ip()):
                 self._err(429, "NEXUS_RATE_LIMIT", "尝试过于频繁，请稍后再试")
@@ -1148,6 +1271,83 @@ class NexusHandler(BaseHTTPRequestHandler):
                 self._with_session(
                     _admin_logout
                 )
+            return
+
+        if path == "/nexus/admin/passkey/register/options":
+            if self._check_admin():
+                actor_id = int(getattr(self, "_admin_actor_id", 0))
+                if actor_id <= 0:
+                    self._err(
+                        403,
+                        "NEXUS_NAMED_ADMIN_REQUIRED",
+                        "请先使用具名管理员账号登录再登记 Passkey",
+                    )
+                    return
+                self._with_session(
+                    lambda s: self._json(
+                        200, passkeys.registration_options(s, actor_id)
+                    )
+                )
+            return
+
+        if path == "/nexus/admin/passkey/register/verify":
+            if self._check_admin():
+                actor_id = int(getattr(self, "_admin_actor_id", 0))
+                if actor_id <= 0:
+                    self._err(
+                        403,
+                        "NEXUS_NAMED_ADMIN_REQUIRED",
+                        "应急身份不能登记 Passkey",
+                    )
+                    return
+                credential = body.get("credential")
+                if not isinstance(credential, dict):
+                    self._err(
+                        400,
+                        "NEXUS_PASSKEY_RESPONSE_INVALID",
+                        "浏览器未返回有效 Passkey 响应",
+                    )
+                    return
+                self._with_session(
+                    lambda s: self._json(
+                        201,
+                        {
+                            "passkey": passkeys.verify_registration(
+                                s,
+                                actor_id,
+                                str(body.get("ceremony_id", "")),
+                                credential,
+                                str(body.get("name", "")),
+                                actor_label=self._admin_actor(),
+                                source_ip=self._client_ip(),
+                            )
+                        },
+                    )
+                )
+            return
+
+        if path == "/nexus/admin/passkey/delete":
+            if self._check_admin():
+                actor_id = int(getattr(self, "_admin_actor_id", 0))
+                if actor_id <= 0:
+                    self._err(
+                        403,
+                        "NEXUS_NAMED_ADMIN_REQUIRED",
+                        "应急身份不能管理 Passkey",
+                    )
+                    return
+
+                def _delete_passkey(s):
+                    passkeys.delete_passkey(
+                        s,
+                        actor_id,
+                        int(body.get("passkey_id") or 0),
+                        actor_label=self._admin_actor(),
+                        source_ip=self._client_ip(),
+                    )
+                    self._json(200, {"ok": True})
+
+                self._with_session(_delete_passkey)
             return
 
         if path == "/nexus/admin/admins":

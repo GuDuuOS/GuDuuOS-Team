@@ -106,6 +106,16 @@
 从 `/etc/nexus.env` 注入。SQLite 仅保留为本地开发回退，不能再作为生产主库。生产每天
 生成 custom-format `pg_dump`，保留 30 天；迁移前 SQLite 停机快照长期保留用于灾备。
 
+**Nexus 超管安全边界（2026-08）**：OEM 门户继续使用
+`dev-nexus.guduu.co`；平台超级管理员迁到独立的 `admin-nexus.guduu.co`，两个入口
+不共享前端登录页面与浏览器 Cookie。管理域名外层必须由 Cloudflare Access 保护，只
+允许平台主管明确加入白名单的邮箱，并启用独立 MFA；应用层仍保留自己的具名管理员
+鉴权，不能把 Access 当成唯一权限边界。日常首选 WebAuthn / Passkey，密码只作为
+备用方式；RP ID 与 Origin 由服务端环境变量锁定为正式管理域名，禁止信任请求 Host
+动态生成。Passkey 完成真实设备注册和恢复演练后，网页不得再接收长期
+`NEXUS_ADMIN_TOKEN`；灾难恢复改为从服务器 SSH 生成短期、单次使用的恢复码，数据库
+只保存恢复码哈希，使用或过期后立即作废并写审计。
+
 ---
 
 ## 4. 功能路线图（一次只推一个）
@@ -262,7 +272,7 @@
    - ⓪ **按版本规则升号并写笔记**（详见 `docs/VERSIONING.md`、`.cursor/rules/versioning.mdc`）：SemVer 语义——**PATCH** 有交付就勤涨、**MINOR** 本周有可对外增量再涨（争取每周打包一次）、**MAJOR** 仅破坏性/代际（不强制每月涨）；对齐 `cosmac.__version__` 与 `client/package.json`；`DEVLOG.md` 顶条必须为 `## YYYY-MM-DD — GuDuu OS X.Y.Z (patch|minor|major)`，正文用「新增/修复/优化/变更」分类；不记敏感信息（key/IP 进 `DEPLOY.md`）。
    - ① 重建产物：`cd client && npm run build`（`client/dist` 被 .gitignore，提交用 `git add -f client/dist`）；
    - ② `git commit` + `git push origin main`：发版 commit 第一行必须为 `release: GuDuu OS X.Y.Z (patch|minor|major)`，正文与 DEVLOG 用户可见条目对齐；推荐打 tag `vX.Y.Z`。
-   - ③ **直接 SSH 部署 Google Cloud 生产实例**（负责人 2026-07-31 拍板：停止向已退役云环境部署，只维护新建的 Google Cloud 实例）：通过负责人提供的固定外部 IP、SSH 用户与密钥登录 → 在确认后的生产仓库目录拉取 `main` → 执行部署更新脚本 → 运行体检脚本并核对公网服务。AI 直接执行，不再给负责人贴命令。**新实例连接信息、部署路径和域名确认前，不得沿用 `DEPLOY.md` 中旧 GCP 实例的 IP 或路径。** 信息确认后同步更新 `DEPLOY.md`。
+   - ③ **直接 SSH 部署 Google Cloud 生产实例**（负责人 2026-08-01 拍板：停止维护旧云环境，只维护当前 Google Cloud 实例）：中央 Nexus 与 OEM 节点分别按本机 `DEPLOY.md` 中已确认的主机、用户和目录执行更新；先验证 Nexus 管理/API，再按版本范围更新 OEM 节点，最后运行各自体检。AI 直接执行，不再给负责人贴命令。IP、密钥、数据库连接和服务器路径只保留在被忽略的 `DEPLOY.md`，不得写进提交或更新说明。
    - 纯后端操作（真建 / 整理 Matrix 频道等，只改服务器数据、不动 `client/` 代码）不必走部署，但要说明"无需部署"。
 7.5 **「拉取本周/本月变更说明」**：从区间内 `release:` commit + `DEVLOG.md` 归并，按新增/修复/优化/变更输出可直接对外用的更新文案并标明版本跨度（见 `docs/VERSIONING.md` §7）。**维护感靠勤 PATCH + 周报/月报**，月报不要求伴随 MAJOR。
 

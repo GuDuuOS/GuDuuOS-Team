@@ -121,18 +121,21 @@ def create_admin(
     return public_admin(row)
 
 
-def login(s, username: str, password: str, source_ip: str = "") -> Dict[str, Any]:
-    """验证账号密码并签发 12 小时会话，成功登录同时记录真实操作人。"""
-    normalized = (username or "").strip().lower()
-    row = s.execute(
-        select(NexusAdmin).where(NexusAdmin.username == normalized)
-    ).scalar_one_or_none()
-    if row is None or not verify_password(password, row.password_hash):
-        raise FleetError("NEXUS_BAD_CREDENTIALS", "账号或密码不正确", 401)
-    if row.status != "active":
-        raise FleetError("NEXUS_ADMIN_DISABLED", "管理员账号已停用", 403)
+def issue_session(
+    s,
+    row: NexusAdmin,
+    *,
+    source_ip: str = "",
+    token_prefix: str = "nxa_",
+    login_action: str = "login",
+) -> Dict[str, Any]:
+    """为已完成身份验证的管理员签发 12 小时会话。
+
+    密码和 Passkey 共用这一个出口，确保会话时长、审计、最后登录时间完全一致；
+    ``nxp_`` 前缀只用于后续向管理员展示当前登录方式，不改变权限。
+    """
     now = _now_ms()
-    token = "nxa_" + secrets.token_urlsafe(36)
+    token = token_prefix + secrets.token_urlsafe(36)
     s.add(
         NexusAdminSession(
             token_hash=_token_hash(token),
@@ -146,7 +149,7 @@ def login(s, username: str, password: str, source_ip: str = "") -> Dict[str, Any
         s,
         object_type="admin",
         object_id=row.id,
-        action="login",
+        action=login_action,
         actor_type="admin",
         actor_label=row.display_name,
         source_ip=source_ip,
@@ -154,6 +157,19 @@ def login(s, username: str, password: str, source_ip: str = "") -> Dict[str, Any
         to_state="active",
     )
     return {"admin": public_admin(row), "token": token, "expires_ts": now + _SESSION_TTL_MS}
+
+
+def login(s, username: str, password: str, source_ip: str = "") -> Dict[str, Any]:
+    """验证账号密码并签发 12 小时会话，成功登录同时记录真实操作人。"""
+    normalized = (username or "").strip().lower()
+    row = s.execute(
+        select(NexusAdmin).where(NexusAdmin.username == normalized)
+    ).scalar_one_or_none()
+    if row is None or not verify_password(password, row.password_hash):
+        raise FleetError("NEXUS_BAD_CREDENTIALS", "账号或密码不正确", 401)
+    if row.status != "active":
+        raise FleetError("NEXUS_ADMIN_DISABLED", "管理员账号已停用", 403)
+    return issue_session(s, row, source_ip=source_ip)
 
 
 def issue_emergency_session(s) -> Dict[str, Any]:
@@ -180,7 +196,7 @@ def resolve_session(
     ``allow_emergency`` 由 HTTP 层根据服务器是否仍配置应急令牌决定。这样运维删除或
     轮换静态令牌后，已经签发的恢复 Cookie 也会立即失效。
     """
-    if not token or not token.startswith(("nxa_", "nxr_")):
+    if not token or not token.startswith(("nxa_", "nxp_", "nxr_")):
         return None
     session_row = s.get(NexusAdminSession, _token_hash(token))
     if session_row is None:
@@ -206,7 +222,7 @@ def resolve_session(
 
 def logout(s, token: str) -> None:
     """撤销当前具名管理员会话；重复退出保持幂等。"""
-    if token and token.startswith(("nxa_", "nxr_")):
+    if token and token.startswith(("nxa_", "nxp_", "nxr_")):
         row = s.get(NexusAdminSession, _token_hash(token))
         if row is not None:
             s.delete(row)

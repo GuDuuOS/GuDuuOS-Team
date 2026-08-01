@@ -8,3 +8,5 @@ cryptography>=42.0
 qrcode>=7.4
 # 生产连 Postgres 用；本地 SQLite 时不装也能跑
 psycopg[binary]>=3.1; platform_system != "Windows"
+# 平台超管 Passkey：2.7.1 是最后一代仍兼容项目 Python 3.9 基线的稳定版本。
+webauthn==2.7.1

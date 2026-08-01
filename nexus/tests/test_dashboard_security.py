@@ -40,6 +40,7 @@ class DashboardSecurityTests(unittest.TestCase):
         """为每条用例配置互不相同的管理/只读令牌。"""
         self.original_admin = os.environ.get("NEXUS_ADMIN_TOKEN")
         self.original_dash = os.environ.get("NEXUS_DASH_TOKEN")
+        self.original_admin_url = os.environ.get("NEXUS_ADMIN_PUBLIC_URL")
         os.environ["NEXUS_ADMIN_TOKEN"] = "test-admin-write-token"
         os.environ["NEXUS_DASH_TOKEN"] = "test-dashboard-read-token"
 
@@ -47,6 +48,7 @@ class DashboardSecurityTests(unittest.TestCase):
         """恢复调用测试前的环境变量，避免污染其它 Nexus 用例。"""
         self._restore_env("NEXUS_ADMIN_TOKEN", self.original_admin)
         self._restore_env("NEXUS_DASH_TOKEN", self.original_dash)
+        self._restore_env("NEXUS_ADMIN_PUBLIC_URL", self.original_admin_url)
 
     @staticmethod
     def _restore_env(name: str, value: Optional[str]) -> None:
@@ -108,6 +110,31 @@ class DashboardSecurityTests(unittest.TestCase):
             )
             self.assertIn('id="form-admin"', html)
             self.assertNotIn('data-tab="admin"', html)
+
+    def test_admin_api_is_rejected_on_oem_host_after_domain_cutover(self) -> None:
+        """启用管理域名后，OEM 主机不能绕过 Cloudflare Access 直接调用管理 API。"""
+        os.environ["NEXUS_ADMIN_PUBLIC_URL"] = "https://admin-nexus.guduu.co"
+        ordinary = Request(
+            f"{self.base_url}/nexus/admin/dashboard-token",
+            headers={
+                "Authorization": "Bearer test-admin-write-token",
+                "Host": "dev-nexus.guduu.co",
+            },
+        )
+        with self.assertRaises(HTTPError) as raised:
+            urlopen(ordinary, timeout=3)
+        self.assertEqual(raised.exception.code, 404)
+
+        protected = Request(
+            f"{self.base_url}/nexus/admin/dashboard-token",
+            headers={
+                "Authorization": "Bearer test-admin-write-token",
+                "Host": "admin-nexus.guduu.co",
+            },
+        )
+        with urlopen(protected, timeout=3) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(payload["token"], "test-dashboard-read-token")
 
 
 if __name__ == "__main__":
