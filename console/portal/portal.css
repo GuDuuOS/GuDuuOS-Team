@@ -390,6 +390,34 @@ label input { margin-top: 5px; }
 /* —— 舰队总览：把大量同级数字收敛为「核心状态 → 分组详情 → 用量」三层。
  * 指标仍由 portal.js 使用真实接口数据生成；这里只改善信息层级，不隐藏任何口径。 */
 .fleet-overview { display: grid; gap: 14px; margin-bottom: 20px; }
+.platform-feature-panel { background: var(--panel-strong); }
+.platform-feature-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--card);
+}
+.platform-feature-row h3 { font-size: 14px; }
+.platform-feature-row p { margin-top: 3px; color: var(--muted); font-size: 12px; }
+.feature-switch {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 9px;
+  min-width: 108px; padding: 7px 10px; border: 1px solid var(--line);
+  border-radius: 999px; color: var(--muted); background: var(--input-bg);
+}
+.feature-switch:hover:not(:disabled) { border-color: var(--line-strong); color: var(--ink); }
+.feature-switch:disabled { opacity: .58; cursor: not-allowed; }
+.feature-switch-track {
+  position: relative; width: 36px; height: 20px; border-radius: 999px;
+  background: var(--badge-idle-bg); border: 1px solid var(--line-strong);
+  transition: background .18s ease, border-color .18s ease;
+}
+.feature-switch-track i {
+  position: absolute; width: 14px; height: 14px; left: 2px; top: 2px;
+  border-radius: 50%; background: var(--muted); transition: transform .18s ease, background .18s ease;
+}
+.feature-switch.on { color: var(--green); border-color: var(--green); }
+.feature-switch.on .feature-switch-track { background: var(--badge-green-bg); border-color: var(--green); }
+.feature-switch.on .feature-switch-track i { transform: translateX(16px); background: var(--green); }
+.feature-switch b { min-width: 42px; font-size: 12px; text-align: left; }
 .fleet-summary {
   position: relative; overflow: hidden; padding: 20px;
   border: 1px solid color-mix(in srgb, var(--orange) 24%, var(--line));
@@ -787,6 +815,7 @@ textarea { width: 100%; font: inherit; color: var(--ink); background: var(--inpu
 textarea:focus { outline: none; border-color: var(--orange); }
 
 @media (max-width: 620px) {
+  .platform-feature-row { align-items: flex-start; flex-direction: column; gap: 14px; }
   .instance-detail-modal .kv, .oem-instance-detail .kv {
     grid-template-columns: 88px minmax(0, 1fr);
   }

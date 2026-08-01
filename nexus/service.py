@@ -21,6 +21,7 @@
         GET  /nexus/admin/finance_summary                      资金经营汇总
         GET  /nexus/admin/payment_configs                      支付配置字段与验证状态
         POST /nexus/admin/payment_config {provider,config|action} 加密保存/重新验证
+        GET/POST /nexus/admin/features                         OEM 功能可见性开关
         GET  /nexus/admin/hierarchy                            OEM/用户完整归属边
         GET/POST /nexus/admin/releases                         版本发布中心
         GET  /nexus/admin/release_draft                        从 DEVLOG 自动生成版本草稿
@@ -52,6 +53,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 from nexus import (
     audit,
     db,
+    features,
     fleet,
     geo,
     manual_transfer,
@@ -325,6 +327,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                 if oem is None:
                     return
                 instances = oem_svc.my_instances(s, oem.id)
+                feature_flags = features.get_flags(s)
                 self._json(
                     200,
                     {
@@ -336,9 +339,13 @@ class NexusHandler(BaseHTTPRequestHandler):
                         # 只返回该 OEM 名下节点已经成功安装的版本；它与上方 instances
                         # 使用同一归属边，但在业务层再次强制过滤，避免依赖前端隐藏。
                         "announcements": releases.list_oem_announcements(s, oem.id),
-                        # 分享码与层级统计只在 OEM 登录后返回；链接按当前 Nexus 公网域名生成。
-                        "referral": oem_svc.share_summary(
-                            s, oem.id, self._public_origin()
+                        # 功能关闭时连汇总和分享码都不返回，不能只隐藏菜单后仍把
+                        # 层级/用户数据留在浏览器网络响应里。
+                        "features": feature_flags,
+                        "referral": (
+                            oem_svc.share_summary(s, oem.id, self._public_origin())
+                            if feature_flags["oem_network_visible"]
+                            else {}
                         ),
                     },
                 )
@@ -350,6 +357,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                 account = self._oem(s)
                 if account is None:
                     return
+                features.require_oem_network_visible(s)
                 self._json(200, oem_svc.network_directory(s, account.id))
 
             self._with_session(_network)
@@ -381,6 +389,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                 account = self._oem(s)
                 if account is None:
                     return
+                features.require_oem_network_visible(s)
                 qs = parse_qs(urlsplit(self.path).query)
                 kind = str((qs.get("kind") or [""])[0])
                 try:
@@ -465,6 +474,13 @@ class NexusHandler(BaseHTTPRequestHandler):
             if self._check_admin():
                 self._with_session(
                     lambda s: self._json(200, {"pricing": pay.get_pricing(s)})
+                )
+            return
+        if path == "/nexus/admin/features":
+            # 只返回非敏感布尔开关；超管令牌仍由统一鉴权拦截。
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(200, {"features": features.get_flags(s)})
                 )
             return
 
@@ -1072,6 +1088,15 @@ class NexusHandler(BaseHTTPRequestHandler):
                 self._with_session(
                     lambda s: self._json(
                         200, {"pricing": pay.set_pricing(s, body)}
+                    )
+                )
+            return
+
+        if path == "/nexus/admin/features":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200, {"features": features.set_flags(s, body)}
                     )
                 )
             return

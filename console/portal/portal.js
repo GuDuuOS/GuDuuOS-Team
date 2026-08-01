@@ -225,12 +225,15 @@
     licenses: "授权申请",
     keys: "我的 KEY",
   };
+  // 服务端返回开关之前采用安全默认值 false，避免页面初始渲染时短暂露出入口。
+  var oemNetworkVisible = false;
   function oemPageFromHash() {
     var value = window.location.hash.replace(/^#oem-/, "").trim();
     return Object.prototype.hasOwnProperty.call(OEM_PAGE_TITLES, value) ? value : "overview";
   }
   function selectOemPage(page, resetScroll) {
     if (!Object.prototype.hasOwnProperty.call(OEM_PAGE_TITLES, page)) page = "overview";
+    if (page === "network" && !oemNetworkVisible) page = "overview";
     $all("[data-oem-view]").forEach(function (view) {
       view.hidden = view.dataset.oemView !== page;
     });
@@ -249,6 +252,19 @@
       selectOemPage(page, resetScroll);
     } else {
       window.location.hash = targetHash;
+    }
+  }
+  function applyOemFeatureFlags(flags) {
+    oemNetworkVisible = !!(flags && flags.oem_network_visible);
+    var networkButton = $('button[data-oem-page="network"]');
+    networkButton.hidden = !oemNetworkVisible;
+    if (!oemNetworkVisible) {
+      // 不仅隐藏页面，也清空浏览器 DOM 里的旧数据；用户即使此前打开过该页，
+      // 超管关闭功能并刷新后也不能从元素检查器继续看到旧的下属清单。
+      clearOemNetworkData();
+      if (window.location.hash.replace(/^#/, "") === "oem-network") {
+        openOemPage("overview", false);
+      }
     }
   }
   $all("button[data-oem-page]").forEach(function (button) {
@@ -436,6 +452,28 @@
     }).catch(function (err) {
       img.alt = err.message;
     });
+  }
+
+  function clearOemNetworkData() {
+    "use strict";
+    // 释放已生成二维码的 Object URL，避免关闭开关后图片内容仍驻留在当前标签页内存。
+    $all("#oem-user-share img, #oem-partner-share img").forEach(function (img) {
+      if (img.dataset.objectUrl) URL.revokeObjectURL(img.dataset.objectUrl);
+    });
+    $("#oem-referral-code").textContent = "—";
+    $("#oem-ref-level").textContent = "—";
+    $("#oem-ref-users").textContent = "0";
+    $("#oem-ref-direct").textContent = "0";
+    $("#oem-ref-network").textContent = "0 / 0";
+    $("#oem-user-share").innerHTML = "";
+    $("#oem-partner-share").innerHTML = "";
+    $("#nav-oem-network").textContent = "0";
+    $("#oem-network-total").textContent = "0 家企业 · 0 个用户";
+    $("#oem-downline-count").textContent = "0 家";
+    $("#oem-downline-user-count").textContent = "0 人";
+    $("#oem-downline-oems tbody").innerHTML = "";
+    $("#oem-downline-users tbody").innerHTML = "";
+    $("#oem-network-limit-note").hidden = true;
   }
 
   function renderReferral(referral) {
@@ -989,8 +1027,17 @@
     Promise.all([
       api("/nexus/oem/me"),
       api("/nexus/oem/products"),
-      api("/nexus/oem/network"),
-    ]).then(function (rs) {
+    ]).then(function (base) {
+      // 先读 /me 中的服务端开关；关闭时绝不请求层级目录接口，避免把受控数据
+      // 下载到浏览器后再依赖 CSS 隐藏。
+      applyOemFeatureFlags(base[0].features || {});
+      var networkRequest = oemNetworkVisible
+        ? api("/nexus/oem/network")
+        : Promise.resolve({});
+      return networkRequest.then(function (network) {
+        return [base[0], base[1], network];
+      });
+    }).then(function (rs) {
       var r = rs[0];
       var orders = r.orders || [];
       var announcements = r.announcements || [];
@@ -1000,8 +1047,10 @@
       renderShop(rs[1], r.instances);
       renderOrders(orders);
       renderAnnouncements(announcements);
-      renderReferral(r.referral || {});
-      renderNetworkDirectory(rs[2]);
+      if (oemNetworkVisible) {
+        renderReferral(r.referral || {});
+        renderNetworkDirectory(rs[2]);
+      }
       // 左栏数字全部来自当前 OEM 的服务端过滤结果，不混入平台或其他企业数据。
       $("#nav-oem-instances").textContent = String(r.instances.length);
       $("#nav-oem-announcements").textContent = String(announcements.length);
@@ -1449,6 +1498,39 @@
       "&q=" + encodeURIComponent(query);
   }
 
+  var adminFeatureFlags = { oem_network_visible: false };
+  function renderPlatformFeatures(flags) {
+    // 超管看到的是服务端最终持久化状态；按钮文字、颜色和 aria-checked
+    // 三处同步，便于视觉与辅助技术都能准确判断开关。
+    adminFeatureFlags = {
+      oem_network_visible: !!(flags && flags.oem_network_visible),
+    };
+    var button = $("#toggle-oem-network");
+    var enabled = adminFeatureFlags.oem_network_visible;
+    button.disabled = false;
+    button.classList.toggle("on", enabled);
+    button.setAttribute("aria-checked", enabled ? "true" : "false");
+    button.querySelector("b").textContent = enabled ? "已开启" : "已关闭";
+  }
+
+  $("#toggle-oem-network").addEventListener("click", function () {
+    var button = this;
+    var nextValue = !adminFeatureFlags.oem_network_visible;
+    button.disabled = true;
+    button.querySelector("b").textContent = "保存中";
+    api("/nexus/admin/features", {
+      body: { oem_network_visible: nextValue },
+    }).then(function (result) {
+      renderPlatformFeatures(result.features || {});
+      toast(nextValue
+        ? "OEM 邀请、层级与用户数据已开放"
+        : "OEM 邀请、层级与用户数据已隐藏");
+    }).catch(function (error) {
+      renderPlatformFeatures(adminFeatureFlags);
+      toast(error.message, true);
+    });
+  });
+
   function loadAdmin() {
     Promise.all([
       api("/nexus/admin/instances"),
@@ -1460,6 +1542,7 @@
       api("/nexus/admin/releases"),
       api("/nexus/admin/finance_summary"),
       api("/nexus/admin/payment_configs"),
+      api("/nexus/admin/features"),
     ]).then(function (rs) {
       var insts = rs[0].instances, keys = rs[1].keys, oems = rs[2].oems;
       var reqs = rs[3].requests || [], requestCounts = rs[3].counts || {};
@@ -1467,9 +1550,11 @@
       var releases = rs[6].releases || [];
       var finance = rs[7] || {};
       var configs = rs[8].payment_configs || [];
+      var featureFlags = rs[9].features || {};
       adminInstances = insts.slice();
       manualTransferOems = oems.slice();
       renderFinanceOverview(finance, configs);
+      renderPlatformFeatures(featureFlags);
 
       // 灰度节点选择器随实例列表更新，但保留管理员当前已选值。
       var canarySelect = $("#release-canary");
