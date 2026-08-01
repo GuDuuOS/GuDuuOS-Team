@@ -32,8 +32,8 @@
         GET  /nexus/oem/network                             自己的下级 OEM 与归属用户清单
 
 安全：
-    - 具名管理员账号保存在 Nexus DB，会话可撤销且默认 12 小时过期；
-    - NEXUS_ADMIN_TOKEN 无默认值，仅作为首次建号和故障恢复入口；
+    - 具名管理员账号保存在 Nexus DB；浏览器会话走安全 Cookie，可撤销且 12 小时过期；
+    - NEXUS_ADMIN_TOKEN 无默认值，仅换取 30 分钟恢复 Cookie 或供服务器侧应急；
     - 兑换端点按 IP 限频（内存桶），防 KEY 爆破；
     - 生产部署躲在 Caddy 后面收 TLS，本服务只听内网。
 """
@@ -48,6 +48,7 @@ import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.cookies import SimpleCookie
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qs, quote, urlsplit
 
@@ -142,6 +143,8 @@ class NexusHandler(BaseHTTPRequestHandler):
         # API 响应可能包含会话令牌、余额等敏感数据，任何层级都不应缓存。
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        for cookie in getattr(self, "_pending_set_cookies", []):
+            self.send_header("Set-Cookie", cookie)
         self.end_headers()
         self.wfile.write(body)
 
@@ -197,19 +200,38 @@ class NexusHandler(BaseHTTPRequestHandler):
         每次成功鉴权都会把当前操作人写到 handler，后续业务审计直接使用真实姓名。
         """
         expect = _admin_token()
-        token = self._bearer()
-        if expect and token and hmac.compare_digest(token, expect):
+        bearer_token = self._bearer()
+        if expect and bearer_token and hmac.compare_digest(bearer_token, expect):
             self._admin_actor_id = 0
             self._admin_actor_label = "服务器应急令牌"
             self._admin_auth_kind = "emergency_token"
+            self._admin_session_token = ""
             return True
+        cookie_token = self._cookie_value(self._admin_cookie_name())
+        token = bearer_token or cookie_token
         s = db.session()
         try:
-            account = admin_auth.resolve_session(s, token)
+            account = admin_auth.resolve_session(
+                s, token, allow_emergency=bool(expect)
+            )
             if account is not None:
                 self._admin_actor_id = int(account.id)
                 self._admin_actor_label = account.display_name
-                self._admin_auth_kind = "named_session"
+                self._admin_auth_kind = (
+                    "recovery_cookie"
+                    if int(account.id) == 0
+                    else ("named_cookie" if cookie_token else "named_session")
+                )
+                self._admin_session_token = token
+                # Cookie 会由浏览器自动携带，因此所有管理写操作额外要求自定义请求头。
+                # 跨站表单不能设置该头，配合 SameSite=Strict 形成双层 CSRF 防护。
+                if (
+                    cookie_token
+                    and self.command == "POST"
+                    and self.headers.get("X-Nexus-CSRF") != "1"
+                ):
+                    self._err(403, "NEXUS_CSRF", "管理请求缺少安全校验头")
+                    return False
                 return True
             has_named_admin = admin_auth.active_count(s) > 0
         finally:
@@ -224,6 +246,48 @@ class NexusHandler(BaseHTTPRequestHandler):
         """返回当前管理员审计显示名；仅在 ``_check_admin`` 成功后调用。"""
         return str(getattr(self, "_admin_actor_label", "平台超级管理员"))
 
+    @staticmethod
+    def _admin_cookie_name() -> str:
+        """生产使用 ``__Host-`` 前缀；本机 HTTP 浏览器测试可显式关闭 Secure。"""
+        secure = os.environ.get("NEXUS_COOKIE_SECURE", "1").strip() != "0"
+        return "__Host-NexusAdmin" if secure else "NexusAdminTest"
+
+    def _cookie_value(self, name: str) -> str:
+        """安全解析指定 Cookie；畸形请求按未携带处理。"""
+        raw = self.headers.get("Cookie") or ""
+        if not raw:
+            return ""
+        try:
+            jar = SimpleCookie()
+            jar.load(raw)
+            item = jar.get(name)
+            return item.value if item is not None else ""
+        except Exception:
+            return ""
+
+    def _set_admin_cookie(self, token: str, max_age: Optional[int] = None) -> None:
+        """下发 JavaScript 无法读取的管理员会话 Cookie。
+
+        正常登录不设置 ``Max-Age``，关闭浏览器即清除；服务端仍执行 12 小时或
+        30 分钟绝对过期。只有退出时传 0，让浏览器立即删除现有 Cookie。
+        """
+        secure = os.environ.get("NEXUS_COOKIE_SECURE", "1").strip() != "0"
+        parts = [
+            f"{self._admin_cookie_name()}={token}",
+            "Path=/",
+            "HttpOnly",
+            "SameSite=Strict",
+        ]
+        if max_age is not None:
+            parts.append(f"Max-Age={max(0, int(max_age))}")
+        if secure:
+            parts.append("Secure")
+        self._pending_set_cookies.append("; ".join(parts))
+
+    def _clear_admin_cookie(self) -> None:
+        """退出时让浏览器立即删除管理员 Cookie。"""
+        self._set_admin_cookie("", 0)
+
     def _reset_request_context(self) -> None:
         """清空同一 HTTP keep-alive 连接上一个请求留下的身份信息。
 
@@ -233,7 +297,9 @@ class NexusHandler(BaseHTTPRequestHandler):
         self._admin_actor_id = 0
         self._admin_actor_label = ""
         self._admin_auth_kind = ""
+        self._admin_session_token = ""
         self._last_response_status = 0
+        self._pending_set_cookies = []
 
     def _bearer(self) -> str:
         """取 Authorization: Bearer <token> 里的 token（无则空串）。"""
@@ -735,7 +801,12 @@ class NexusHandler(BaseHTTPRequestHandler):
         # —— 控制台：/portal 或 /portal/xxx → console/portal/ ——
         if path == "/portal" or path.startswith("/portal/"):
             base_dir = self._PORTAL_DIR
-            rel = path[len("/portal"):].lstrip("/") or "index.html"
+            # 超管使用独立、可收藏的入口；页面代码仍复用同一套控制台资产，避免复制
+            # 数千行后台 DOM。独立 URL 只是入口隔离，真正权限始终由管理 API 校验。
+            if path in ("/portal/admin", "/portal/admin/"):
+                rel = "index.html"
+            else:
+                rel = path[len("/portal"):].lstrip("/") or "index.html"
         else:
             base_dir = self._DASH_DIR
             rel = path.lstrip("/") or "index.html"
@@ -770,6 +841,10 @@ class NexusHandler(BaseHTTPRequestHandler):
             "Permissions-Policy",
             "camera=(), microphone=(), geolocation=(), payment=()",
         )
+        if path in ("/portal/admin", "/portal/admin/"):
+            # 避免搜索引擎把超管入口作为普通产品页面收录；它不是鉴权边界，但没有必要
+            # 主动扩大入口曝光。浏览器和反向代理仍会按正常 HTTPS 页面访问。
+            self.send_header("X-Robots-Tag", "noindex, nofollow, noarchive")
         if base_dir in (self._DASH_DIR, self._PORTAL_DIR):
             # 两个前端都不再使用内联脚本，因此脚本来源可严格锁死同源。样式仍保留
             # unsafe-inline：大屏坐标/柱高和 Portal 少量表单布局依赖 style 属性；它不会
@@ -999,27 +1074,79 @@ class NexusHandler(BaseHTTPRequestHandler):
             if not _auth_rate_ok(self._client_ip()):
                 self._err(429, "NEXUS_RATE_LIMIT", "尝试过于频繁，请稍后再试")
                 return
-            self._with_session(
-                lambda s: self._json(
-                    200,
-                    admin_auth.login(
-                        s,
-                        str(body.get("username", "")),
-                        str(body.get("password", "")),
-                        self._client_ip(),
-                    ),
+
+            def _admin_login(s):
+                result = admin_auth.login(
+                    s,
+                    str(body.get("username", "")),
+                    str(body.get("password", "")),
+                    self._client_ip(),
                 )
-            )
+                # 明文会话令牌只进入 HttpOnly Cookie，不再返回给 JavaScript。
+                token = str(result.pop("token"))
+                result["admin"]["auth_kind"] = "named_cookie"
+                self._set_admin_cookie(token)
+                self._json(200, result)
+
+            self._with_session(_admin_login)
+            return
+
+        if path == "/nexus/admin/auth/emergency":
+            if not _auth_rate_ok(self._client_ip()):
+                self._err(429, "NEXUS_RATE_LIMIT", "尝试过于频繁，请稍后再试")
+                return
+            expect = _admin_token()
+            submitted = str(body.get("emergency_token", ""))
+            if not expect:
+                self._err(503, "NEXUS_ADMIN_DISABLED", "服务器应急入口未配置")
+                return
+            if not submitted or not hmac.compare_digest(submitted, expect):
+                self._err(401, "NEXUS_FORBIDDEN", "服务器应急令牌无效")
+                return
+
+            def _emergency_login(s):
+                result = admin_auth.issue_emergency_session(s)
+                token = str(result.pop("token"))
+                self._set_admin_cookie(token)
+                self._admin_actor_id = 0
+                self._admin_actor_label = "服务器应急恢复"
+                self._admin_auth_kind = "recovery_cookie"
+                audit.record(
+                    s,
+                    object_type="admin",
+                    object_id=0,
+                    action="emergency_login",
+                    actor_type="admin",
+                    actor_label="服务器应急恢复",
+                    source_ip=self._client_ip(),
+                    to_state="active",
+                )
+                self._json(
+                    200,
+                    {
+                        "admin": {
+                            "id": 0,
+                            "display_name": "服务器应急恢复",
+                            "auth_kind": "recovery_cookie",
+                        },
+                        "expires_ts": result["expires_ts"],
+                    },
+                )
+
+            self._with_session(_emergency_login)
             return
 
         if path == "/nexus/admin/auth/logout":
-            token = self._bearer()
             if self._check_admin():
+                token = str(getattr(self, "_admin_session_token", ""))
+
+                def _admin_logout(s):
+                    admin_auth.logout(s, token)
+                    self._clear_admin_cookie()
+                    self._json(200, {"ok": True})
+
                 self._with_session(
-                    lambda s: (
-                        admin_auth.logout(s, token),
-                        self._json(200, {"ok": True}),
-                    )[-1]
+                    _admin_logout
                 )
             return
 

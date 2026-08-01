@@ -1,16 +1,18 @@
 /* GuDuu Nexus 控制台逻辑（vanilla，无构建）
  * ------------------------------------------------
- * 身份两种（登录后只存当前标签页 sessionStorage，刷新不丢、关页即清）：
- *   admin —— 具名管理员短期会话；服务器令牌仅作应急入口
+ * 身份两种（OEM token / 管理员非敏感显示信息只存当前标签页）：
+ *   admin —— 具名管理员短期会话放 HttpOnly Cookie；服务器令牌仅提交一次作应急入口
  *   oem   —— 会话令牌（邮箱登录签发），走 /nexus/oem/*（只见自己）
  * 所有权限由服务端强制；任何 401 一律清会话回登录页。
  */
 (function () {
   "use strict";
 
-  var AUTH_KEY = "nexus_portal_auth"; // {mode:'admin'|'oem', token:'...'}
+  var AUTH_KEY = "nexus_portal_auth"; // admin 只存显示身份，OEM 才含会话 token
   var THEME_KEY = "nexus_portal_theme"; // 'dark'(默认,与大屏一致) | 'light'(白色风格)
+  var ADMIN_ENTRY_PATH = "/portal/admin/";
   var volatileAuth = null; // 浏览器禁用 Storage 时的当前页面兜底，绝不回落长期存储
+  var adminRestoreTried = false;
 
   // ---------- 主题（白色/暗色双风格,同一设计语言,只换明暗;选择持久化） ----------
   function applyTheme(theme) {
@@ -25,6 +27,26 @@
   // ---------- 小工具 ----------
   function $(sel) { return document.querySelector(sel); }
   function $all(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
+  function isAdminEntry() {
+    // 同时兼容有无末尾斜杠；服务端会把两种地址都稳定映射到 Portal 首页。
+    return window.location.pathname === "/portal/admin" ||
+      window.location.pathname === ADMIN_ENTRY_PATH;
+  }
+  function configureLoginEntry() {
+    var adminEntry = isAdminEntry();
+    document.body.classList.toggle("admin-entry", adminEntry);
+    document.title = adminEntry
+      ? "GuDuu Nexus · 平台超管登录" : "GuDuu Nexus · 企业控制台";
+    $("#login-title").textContent = adminEntry ? "平台超级管理员" : "登录企业控制台";
+    $("#login-subtitle").textContent = adminEntry
+      ? "使用具名管理员账号登录；应急令牌仅用于首次建号和故障恢复"
+      : "管理你的 GuDuu OS 实例、授权与企业服务";
+    $(".tabs").hidden = adminEntry;
+    $("#form-admin").hidden = !adminEntry;
+    $("#form-oem-login").hidden = adminEntry;
+    $("#form-oem-reg").hidden = true;
+    $(".brand em").textContent = adminEntry ? "平台管理" : "控制台";
+  }
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -151,15 +173,21 @@
   function api(path, opts) {
     opts = opts || {};
     var auth = getAuth();
+    var method = opts.method || (opts.body ? "POST" : "GET");
     var headers = { "Content-Type": "application/json" };
     if (opts.token) headers["Authorization"] = "Bearer " + opts.token;
-    else if (auth) headers["Authorization"] = "Bearer " + auth.token;
+    else if (auth && auth.token) headers["Authorization"] = "Bearer " + auth.token;
+    if (auth && auth.mode === "admin" && method === "POST") {
+      // 管理 Cookie 会被浏览器自动携带；自定义头让跨站表单无法伪造写操作。
+      headers["X-Nexus-CSRF"] = "1";
+    }
     // 用 origin 拼绝对地址：当页面地址栏带 basic-auth 凭据(user:pass@host)时，
     // 相对路径 fetch 会被浏览器整体拒绝；origin 永不含凭据，稳。
     return fetch(new URL(path, window.location.origin).href, {
-      method: opts.method || (opts.body ? "POST" : "GET"),
+      method: method,
       headers: headers,
       body: opts.body ? JSON.stringify(opts.body) : undefined,
+      credentials: "same-origin",
     }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (data) {
         if (res.status === 401 && !opts.noKick) { // 会话失效 → 回登录页
@@ -328,17 +356,38 @@
   function route() {
     var auth = getAuth();
     if (!auth) {
+      configureLoginEntry();
       show("#view-login");
       prepareDashboardLinks();
+      // Cookie 是 HttpOnly，JavaScript 看不到令牌；新标签页通过 /me 恢复非敏感身份。
+      if (isAdminEntry() && !adminRestoreTried) {
+        adminRestoreTried = true;
+        api("/nexus/admin/me", { noKick: true }).then(function (r) {
+          setAuth({
+            mode: "admin", token: "", admin_id: r.admin.id,
+            display_name: r.admin.display_name, auth_kind: r.admin.auth_kind,
+          });
+          route();
+        }).catch(function () { /* 没有有效 Cookie 时正常停留登录页 */ });
+      }
       return;
     }
     if (auth.mode === "admin") {
+      // 超管工作台只在独立地址展示；URL 分离不是权限边界，但可避免与 OEM 入口混淆。
+      if (!isAdminEntry()) {
+        window.location.replace(ADMIN_ENTRY_PATH + window.location.hash);
+        return;
+      }
       show("#view-admin");
       selectAdminPage(adminPageFromHash(), false);
       loadAdmin();
       loadAdminSecurity();
     }
     else {
+      if (isAdminEntry()) {
+        window.location.replace("/portal/" + window.location.hash);
+        return;
+      }
       show("#view-oem");
       selectOemPage(oemPageFromHash(), false);
       loadOem();
@@ -396,9 +445,10 @@
     api("/nexus/admin/auth/login", {
       body: { username: f.username.value, password: f.password.value }, noKick: true,
     }).then(function (r) {
+      adminRestoreTried = true;
       setAuth({
-        mode: "admin", token: r.token, admin_id: r.admin.id,
-        display_name: r.admin.display_name, auth_kind: "named_session",
+        mode: "admin", token: "", admin_id: r.admin.id,
+        display_name: r.admin.display_name, auth_kind: "named_cookie",
       });
       // 登录成功后立刻清空 DOM 中的密码，避免共享屏幕或调试工具留下敏感信息。
       f.password.value = "";
@@ -410,11 +460,14 @@
     var f = $("#form-admin");
     var tok = f.emergency_token.value.trim();
     if (!tok) { loginErr("请填写服务器应急令牌"); return; }
-    api("/nexus/admin/me", { token: tok, noKick: true }).then(function (r) {
+    api("/nexus/admin/auth/emergency", {
+      body: { emergency_token: tok }, noKick: true,
+    }).then(function (r) {
+      adminRestoreTried = true;
       setAuth({
-        mode: "admin", token: tok, admin_id: 0,
-        display_name: r.admin.display_name || "服务器应急令牌",
-        auth_kind: "emergency_token",
+        mode: "admin", token: "", admin_id: 0,
+        display_name: r.admin.display_name || "服务器应急恢复",
+        auth_kind: "recovery_cookie",
       });
       // 应急令牌验证成功后立刻从输入框移除，只让它保留在当前浏览器会话中。
       f.emergency_token.value = "";
@@ -425,8 +478,16 @@
   $("#btn-logout").addEventListener("click", function () {
     var auth = getAuth();
     if (auth && auth.mode === "oem") api("/nexus/oem/logout", { method: "POST", body: {}, noKick: true }).catch(function () {});
-    if (auth && auth.mode === "admin" && auth.auth_kind === "named_session") {
-      api("/nexus/admin/auth/logout", { method: "POST", body: {}, noKick: true }).catch(function () {});
+    if (auth && auth.mode === "admin") {
+      // 等服务端撤销 Cookie 后再回登录页，避免 /me 恢复流程与退出请求发生竞态。
+      api("/nexus/admin/auth/logout", { method: "POST", body: {}, noKick: true })
+        .then(function () {
+          clearAuth(); adminRestoreTried = true; route();
+        })
+        .catch(function () {
+          clearAuth(); adminRestoreTried = true; route();
+        });
+      return;
     }
     clearAuth(); route();
   });

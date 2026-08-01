@@ -11,7 +11,8 @@ import hashlib
 import re
 import secrets
 import time
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Union
 
 from sqlalchemy import delete, func, select
 
@@ -21,7 +22,17 @@ from nexus.fleet import FleetError
 from nexus.oem import hash_password, password_problem, verify_password
 
 _SESSION_TTL_MS = 12 * 3600 * 1000
+_RECOVERY_SESSION_TTL_MS = 30 * 60 * 1000
 _USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.@-]{3,80}$")
+
+
+@dataclass(frozen=True)
+class EmergencyAdmin:
+    """服务器应急身份的只读描述，不对应真实人员账号。"""
+
+    id: int = 0
+    display_name: str = "服务器应急恢复"
+    status: str = "active"
 
 
 def _now_ms() -> int:
@@ -145,15 +156,43 @@ def login(s, username: str, password: str, source_ip: str = "") -> Dict[str, Any
     return {"admin": public_admin(row), "token": token, "expires_ts": now + _SESSION_TTL_MS}
 
 
-def resolve_session(s, token: str) -> Optional[NexusAdmin]:
-    """解析有效会话；过期、停用或不存在时返回 ``None``。"""
-    if not token or not token.startswith("nxa_"):
+def issue_emergency_session(s) -> Dict[str, Any]:
+    """签发 30 分钟应急恢复会话，浏览器不再长期持有服务器静态令牌。"""
+    now = _now_ms()
+    token = "nxr_" + secrets.token_urlsafe(36)
+    s.add(
+        NexusAdminSession(
+            token_hash=_token_hash(token),
+            # 0 是保留的服务器应急身份，不会与自增的具名管理员主键冲突。
+            admin_id=0,
+            created_ts=now,
+            expires_ts=now + _RECOVERY_SESSION_TTL_MS,
+        )
+    )
+    return {"token": token, "expires_ts": now + _RECOVERY_SESSION_TTL_MS}
+
+
+def resolve_session(
+    s, token: str, *, allow_emergency: bool = False
+) -> Optional[Union[NexusAdmin, EmergencyAdmin]]:
+    """解析有效会话；过期、停用或不存在时返回 ``None``。
+
+    ``allow_emergency`` 由 HTTP 层根据服务器是否仍配置应急令牌决定。这样运维删除或
+    轮换静态令牌后，已经签发的恢复 Cookie 也会立即失效。
+    """
+    if not token or not token.startswith(("nxa_", "nxr_")):
         return None
     session_row = s.get(NexusAdminSession, _token_hash(token))
     if session_row is None:
         return None
     now = _now_ms()
     if int(session_row.expires_ts or 0) <= now:
+        s.delete(session_row)
+        s.commit()
+        return None
+    if int(session_row.admin_id or 0) == 0:
+        if allow_emergency:
+            return EmergencyAdmin()
         s.delete(session_row)
         s.commit()
         return None
@@ -167,7 +206,7 @@ def resolve_session(s, token: str) -> Optional[NexusAdmin]:
 
 def logout(s, token: str) -> None:
     """撤销当前具名管理员会话；重复退出保持幂等。"""
-    if token and token.startswith("nxa_"):
+    if token and token.startswith(("nxa_", "nxr_")):
         row = s.get(NexusAdminSession, _token_hash(token))
         if row is not None:
             s.delete(row)
@@ -251,6 +290,7 @@ def reset_password(
 __all__ = [
     "active_count",
     "create_admin",
+    "issue_emergency_session",
     "list_admins",
     "login",
     "logout",

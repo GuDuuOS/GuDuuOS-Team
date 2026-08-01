@@ -97,6 +97,18 @@ class DashboardSecurityTests(unittest.TestCase):
             self.assertNotIn("script-src 'self' 'unsafe-inline'", policy)
             self.assertIn("frame-ancestors 'none'", policy)
 
+    def test_admin_has_independent_noindex_entry(self) -> None:
+        """独立超管深链必须可刷新直达，同时明确禁止搜索引擎收录。"""
+        with urlopen(f"{self.base_url}/portal/admin/", timeout=3) as response:
+            html = response.read().decode("utf-8")
+            self.assertEqual(response.status, 200)
+            self.assertEqual(
+                response.headers["X-Robots-Tag"],
+                "noindex, nofollow, noarchive",
+            )
+            self.assertIn('id="form-admin"', html)
+            self.assertNotIn('data-tab="admin"', html)
+
 
 if __name__ == "__main__":
     unittest.main()

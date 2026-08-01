@@ -6,14 +6,15 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置使用同源外部脚本，既防刷新闪色，也允许 Portal 开启严格脚本 CSP。 -->
 <script src="/portal/theme-init.js?v=1"></script>
-<link rel="stylesheet" href="/portal/portal.css?v=29" />
+<link rel="stylesheet" href="/portal/portal.css?v=30" />
 </head>
 <body>
 <!--
   GuDuu Nexus 控制台（模块6 P1 第2片）
   ——————————————————————————————
   单页三视图（vanilla JS，与大屏同栈零构建）：
-    · 登录页：OEM 邮箱账号（登录/注册）+ 平台具名超级管理员（应急令牌可恢复）
+    · /portal/：OEM 邮箱登录/注册
+    · /portal/admin/：独立平台超管登录（应急令牌仅作恢复）
     · OEM 门户：我的实例 / 认领授权码 / 我的授权码
     · 超管视图：舰队实例 / KEY 签发与吊销 / 手动充值 / OEM 客户列表
   权限全部由服务端强制（/nexus/admin/* 走管理员会话、/nexus/oem/* 走 OEM 会话），
@@ -36,11 +37,11 @@
 <!-- ====== 登录视图 ====== -->
 <main id="view-login" class="login-wrap" hidden>
   <section class="login-card">
-    <h1>登录控制台</h1>
+    <h1 id="login-title">登录企业控制台</h1>
+    <p id="login-subtitle" class="login-subtitle">管理你的 GuDuu OS 实例、授权与企业服务</p>
     <div class="tabs">
       <button data-tab="oem-login" class="tab on">OEM 登录</button>
       <button data-tab="oem-reg" class="tab">OEM 注册</button>
-      <button data-tab="admin" class="tab">平台超管</button>
     </div>
 
     <form id="form-oem-login" class="pane" data-pane="oem-login">
@@ -799,6 +800,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=39"></script>
+<script src="/portal/portal.js?v=40"></script>
 </body>
 </html>

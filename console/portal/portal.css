@@ -127,6 +127,10 @@ label input { margin-top: 5px; }
   background: var(--panel-strong); backdrop-filter: blur(10px);
 }
 .login-card h1 { font-size: 19px; margin-bottom: 18px; }
+.login-card h1 + .login-subtitle { margin-top: -12px; margin-bottom: 18px; }
+.login-subtitle { color: var(--muted); font-size: 12.5px; }
+.admin-entry .login-card { border-color: var(--line-strong); }
+.admin-entry .login-card h1 { color: var(--orange); }
 .tabs { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
 .tab {
   padding: 7px 13px; background: none; border: 0; color: var(--muted); font-size: 13px;

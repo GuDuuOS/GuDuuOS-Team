@@ -7,7 +7,7 @@ import tempfile
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 import json
@@ -137,16 +137,40 @@ class AdminAuthHttpTests(unittest.TestCase):
             os.environ[name] = value
 
     def _request(
-        self, path: str, token: str = "", body: Optional[Dict[str, Any]] = None
+        self,
+        path: str,
+        token: str = "",
+        body: Optional[Dict[str, Any]] = None,
+        *,
+        cookie: str = "",
+        csrf: bool = False,
     ) -> Dict[str, Any]:
         """发送 JSON 请求并返回解码结果。"""
+        return self._exchange(
+            path, token, body, cookie=cookie, csrf=csrf
+        )[0]
+
+    def _exchange(
+        self,
+        path: str,
+        token: str = "",
+        body: Optional[Dict[str, Any]] = None,
+        *,
+        cookie: str = "",
+        csrf: bool = False,
+    ) -> Tuple[Dict[str, Any], Any]:
+        """发送请求并同时返回响应头，用于核对 HttpOnly Cookie 属性。"""
         raw = json.dumps(body).encode("utf-8") if body is not None else None
         headers = {"Content-Type": "application/json"}
         if token:
             headers["Authorization"] = "Bearer " + token
+        if cookie:
+            headers["Cookie"] = cookie
+        if csrf:
+            headers["X-Nexus-CSRF"] = "1"
         request = Request(self.base_url + path, data=raw, headers=headers)
         with urlopen(request, timeout=3) as response:
-            return json.loads(response.read().decode("utf-8"))
+            return json.loads(response.read().decode("utf-8")), response.headers
 
     def test_emergency_token_bootstraps_named_admin(self) -> None:
         """现有生产令牌可创建首个账号，之后日常接口接受短期会话。"""
@@ -160,21 +184,62 @@ class AdminAuthHttpTests(unittest.TestCase):
             },
         )
         self.assertEqual(created["admin"]["username"], "owner")
-        login = self._request(
+        login, login_headers = self._exchange(
             "/nexus/admin/auth/login",
             body={"username": "owner", "password": "Owner1234!"},
         )
-        me = self._request("/nexus/admin/me", login["token"])
+        self.assertNotIn("token", login)
+        set_cookie = str(login_headers["Set-Cookie"])
+        self.assertIn("HttpOnly", set_cookie)
+        self.assertIn("Secure", set_cookie)
+        self.assertIn("SameSite=Strict", set_cookie)
+        self.assertNotIn("Max-Age", set_cookie)
+        cookie = set_cookie.split(";", 1)[0]
+        me = self._request("/nexus/admin/me", cookie=cookie)
         self.assertEqual(me["admin"]["display_name"], "平台负责人")
-        self.assertEqual(me["admin"]["auth_kind"], "named_session")
+        self.assertEqual(me["admin"]["auth_kind"], "named_cookie")
         self.assertEqual(
-            self._request("/nexus/admin/dashboard-token", login["token"])["token"],
+            self._request("/nexus/admin/dashboard-token", cookie=cookie)["token"],
             "readonly-test-token",
         )
-        self._request("/nexus/admin/auth/logout", login["token"], {})
+        self._request(
+            "/nexus/admin/auth/logout", body={}, cookie=cookie, csrf=True
+        )
         with self.assertRaises(HTTPError) as raised:
-            self._request("/nexus/admin/me", login["token"])
+            self._request("/nexus/admin/me", cookie=cookie)
         self.assertEqual(raised.exception.code, 401)
+
+    def test_emergency_secret_becomes_short_recovery_cookie(self) -> None:
+        """浏览器提交静态令牌后只能收到短期 HttpOnly 恢复会话。"""
+        payload, headers = self._exchange(
+            "/nexus/admin/auth/emergency",
+            body={"emergency_token": "emergency-test-token"},
+        )
+        self.assertNotIn("token", payload)
+        self.assertEqual(payload["admin"]["auth_kind"], "recovery_cookie")
+        cookie = str(headers["Set-Cookie"]).split(";", 1)[0]
+        me = self._request("/nexus/admin/me", cookie=cookie)
+        self.assertEqual(me["admin"]["id"], 0)
+        self.assertEqual(me["admin"]["auth_kind"], "recovery_cookie")
+
+    def test_cookie_write_requires_csrf_header(self) -> None:
+        """即使浏览器自动携带管理 Cookie，跨站写请求也必须被拒绝。"""
+        _, headers = self._exchange(
+            "/nexus/admin/auth/emergency",
+            body={"emergency_token": "emergency-test-token"},
+        )
+        cookie = str(headers["Set-Cookie"]).split(";", 1)[0]
+        with self.assertRaises(HTTPError) as raised:
+            self._request(
+                "/nexus/admin/admins",
+                body={
+                    "username": "blocked",
+                    "display_name": "阻断测试",
+                    "password": "Blocked1234!",
+                },
+                cookie=cookie,
+            )
+        self.assertEqual(raised.exception.code, 403)
 
 
 if __name__ == "__main__":
