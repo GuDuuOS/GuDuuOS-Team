@@ -117,17 +117,36 @@ class FeatureFlagHttpTests(unittest.TestCase):
             return json.loads(response.read().decode("utf-8"))
 
     def test_oem_network_hidden_until_admin_enables_it(self) -> None:
-        """关闭时响应不含数据且受控端点 403；开启后目录恢复。"""
+        """关闭时隐藏统计和目录但保留分享二维码；开启后目录恢复。"""
         me = self._json_request("/nexus/oem/me", self.oem_token)
         self.assertEqual(me["features"], {"oem_network_visible": False})
-        self.assertEqual(me["referral"], {})
+        self.assertTrue(me["referral"]["code"])
+        self.assertIn("invite=", me["referral"]["partner_link"])
+        for hidden_key in (
+            "level",
+            "ancestors",
+            "direct_oems",
+            "total_downline_oems",
+            "direct_users",
+            "network_users",
+        ):
+            self.assertNotIn(hidden_key, me["referral"])
 
-        for path in ("/nexus/oem/network", "/nexus/oem/share_qr?kind=partner"):
-            with self.assertRaises(HTTPError) as raised:
-                self._json_request(path, self.oem_token)
-            self.assertEqual(raised.exception.code, 403)
-            payload = json.loads(raised.exception.read().decode("utf-8"))
-            self.assertEqual(payload["errcode"], "NEXUS_FEATURE_DISABLED")
+        with self.assertRaises(HTTPError) as raised:
+            self._json_request("/nexus/oem/network", self.oem_token)
+        self.assertEqual(raised.exception.code, 403)
+        payload = json.loads(raised.exception.read().decode("utf-8"))
+        self.assertEqual(payload["errcode"], "NEXUS_FEATURE_DISABLED")
+
+        # 二维码是邀请能力，不属于层级/用户数据开关；关闭时也必须生成成功。
+        request = Request(
+            self.base_url + "/nexus/oem/share_qr?kind=partner",
+            headers={"Authorization": "Bearer " + self.oem_token},
+        )
+        with urlopen(request, timeout=3) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers.get_content_type(), "image/svg+xml")
+            self.assertIn(b"<svg", response.read())
 
         admin = self._json_request(
             "/nexus/admin/features",

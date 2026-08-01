@@ -225,7 +225,7 @@
     licenses: "授权申请",
     keys: "我的 KEY",
   };
-  // 服务端返回开关之前采用安全默认值 false，避免页面初始渲染时短暂露出入口。
+  // 服务端返回开关之前采用安全默认值 false，避免页面初始渲染时短暂露出层级数据。
   var oemNetworkVisible = false;
   function oemPageFromHash() {
     var value = window.location.hash.replace(/^#oem-/, "").trim();
@@ -233,7 +233,6 @@
   }
   function selectOemPage(page, resetScroll) {
     if (!Object.prototype.hasOwnProperty.call(OEM_PAGE_TITLES, page)) page = "overview";
-    if (page === "network" && !oemNetworkVisible) page = "overview";
     $all("[data-oem-view]").forEach(function (view) {
       view.hidden = view.dataset.oemView !== page;
     });
@@ -256,15 +255,13 @@
   }
   function applyOemFeatureFlags(flags) {
     oemNetworkVisible = !!(flags && flags.oem_network_visible);
-    var networkButton = $('button[data-oem-page="network"]');
-    networkButton.hidden = !oemNetworkVisible;
+    // 分享入口与二维码始终保留；开关只控制统计和名单两块敏感运营数据。
+    $("#oem-network-stats").hidden = !oemNetworkVisible;
+    $("#panel-network-directory").hidden = !oemNetworkVisible;
+    $("#nav-oem-network").hidden = !oemNetworkVisible;
     if (!oemNetworkVisible) {
-      // 不仅隐藏页面，也清空浏览器 DOM 里的旧数据；用户即使此前打开过该页，
-      // 超管关闭功能并刷新后也不能从元素检查器继续看到旧的下属清单。
+      // 清空浏览器 DOM 里的旧层级与名单数据，但不能清除分享链接和二维码。
       clearOemNetworkData();
-      if (window.location.hash.replace(/^#/, "") === "oem-network") {
-        openOemPage("overview", false);
-      }
     }
   }
   $all("button[data-oem-page]").forEach(function (button) {
@@ -456,17 +453,11 @@
 
   function clearOemNetworkData() {
     "use strict";
-    // 释放已生成二维码的 Object URL，避免关闭开关后图片内容仍驻留在当前标签页内存。
-    $all("#oem-user-share img, #oem-partner-share img").forEach(function (img) {
-      if (img.dataset.objectUrl) URL.revokeObjectURL(img.dataset.objectUrl);
-    });
-    $("#oem-referral-code").textContent = "—";
+    // 只清除受控统计与目录，分享码、注册链接和二维码必须继续可用。
     $("#oem-ref-level").textContent = "—";
     $("#oem-ref-users").textContent = "0";
     $("#oem-ref-direct").textContent = "0";
     $("#oem-ref-network").textContent = "0 / 0";
-    $("#oem-user-share").innerHTML = "";
-    $("#oem-partner-share").innerHTML = "";
     $("#nav-oem-network").textContent = "0";
     $("#oem-network-total").textContent = "0 家企业 · 0 个用户";
     $("#oem-downline-count").textContent = "0 家";
@@ -1028,8 +1019,8 @@
       api("/nexus/oem/me"),
       api("/nexus/oem/products"),
     ]).then(function (base) {
-      // 先读 /me 中的服务端开关；关闭时绝不请求层级目录接口，避免把受控数据
-      // 下载到浏览器后再依赖 CSS 隐藏。
+      // 先读 /me 中的服务端开关；关闭时绝不请求层级目录接口，但 /me 仍会
+      // 返回不含统计的分享链接，保证二维码和邀请能力可用。
       applyOemFeatureFlags(base[0].features || {});
       var networkRequest = oemNetworkVisible
         ? api("/nexus/oem/network")
@@ -1047,9 +1038,11 @@
       renderShop(rs[1], r.instances);
       renderOrders(orders);
       renderAnnouncements(announcements);
+      renderReferral(r.referral || {});
       if (oemNetworkVisible) {
-        renderReferral(r.referral || {});
         renderNetworkDirectory(rs[2]);
+      } else {
+        clearOemNetworkData();
       }
       // 左栏数字全部来自当前 OEM 的服务端过滤结果，不混入平台或其他企业数据。
       $("#nav-oem-instances").textContent = String(r.instances.length);
@@ -1523,8 +1516,8 @@
     }).then(function (result) {
       renderPlatformFeatures(result.features || {});
       toast(nextValue
-        ? "OEM 邀请、层级与用户数据已开放"
-        : "OEM 邀请、层级与用户数据已隐藏");
+        ? "OEM 层级与归属用户数据已开放"
+        : "OEM 层级与归属用户数据已隐藏，分享二维码继续可用");
     }).catch(function (error) {
       renderPlatformFeatures(adminFeatureFlags);
       toast(error.message, true);

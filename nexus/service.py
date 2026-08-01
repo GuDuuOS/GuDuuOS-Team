@@ -339,13 +339,15 @@ class NexusHandler(BaseHTTPRequestHandler):
                         # 只返回该 OEM 名下节点已经成功安装的版本；它与上方 instances
                         # 使用同一归属边，但在业务层再次强制过滤，避免依赖前端隐藏。
                         "announcements": releases.list_oem_announcements(s, oem.id),
-                        # 功能关闭时连汇总和分享码都不返回，不能只隐藏菜单后仍把
-                        # 层级/用户数据留在浏览器网络响应里。
+                        # 分享码、注册链接和二维码始终保留；开关关闭时只裁掉层级、
+                        # 人数与下属统计，不能把隐藏数据继续留在浏览器网络响应里。
                         "features": feature_flags,
                         "referral": (
                             oem_svc.share_summary(s, oem.id, self._public_origin())
                             if feature_flags["oem_network_visible"]
-                            else {}
+                            else oem_svc.share_links(
+                                s, oem.id, self._public_origin()
+                            )
                         ),
                     },
                 )
@@ -389,7 +391,6 @@ class NexusHandler(BaseHTTPRequestHandler):
                 account = self._oem(s)
                 if account is None:
                     return
-                features.require_oem_network_visible(s)
                 qs = parse_qs(urlsplit(self.path).query)
                 kind = str((qs.get("kind") or [""])[0])
                 try:

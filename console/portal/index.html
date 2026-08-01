@@ -81,7 +81,7 @@
       <button class="admin-menu-item on" data-oem-page="overview" aria-current="page">
         <span class="admin-menu-icon">⌂</span><span>我的首页</span><em id="nav-oem-instances">0</em>
       </button>
-      <button class="admin-menu-item" data-oem-page="network" hidden>
+      <button class="admin-menu-item" data-oem-page="network">
         <span class="admin-menu-icon">◎</span><span>邀请与层级</span><em id="nav-oem-network">0</em>
       </button>
       <button class="admin-menu-item" data-oem-page="announcements">
@@ -145,7 +145,7 @@
       </div>
       <span class="badge active" id="oem-referral-code">—</span>
     </div>
-    <div class="stats referral-stats">
+    <div class="stats referral-stats" id="oem-network-stats" hidden>
       <div class="stat"><small>当前层级</small><b class="plain" id="oem-ref-level">—</b></div>
       <div class="stat"><small>直属普通用户</small><b id="oem-ref-users">0</b></div>
       <div class="stat"><small>直属下级 OEM</small><b id="oem-ref-direct">0</b></div>
@@ -165,7 +165,7 @@
     </div>
   </section>
 
-  <section class="panel network-directory-panel" id="panel-network-directory">
+  <section class="panel network-directory-panel" id="panel-network-directory" hidden>
     <div class="panel-head">
       <div>
         <h2>我的下属清单</h2>
@@ -363,8 +363,8 @@
         </div>
         <div class="platform-feature-row">
           <div>
-            <h3>邀请、层级与归属用户</h3>
-            <p>关闭后 OEM 左侧不显示“邀请与层级”，层级统计、下属清单、用户清单和分享二维码接口均不可访问。</p>
+            <h3>层级与归属用户数据</h3>
+            <p>关闭后 OEM 仍可使用分享链接和二维码，但不显示层级统计、下属 OEM 清单与归属用户清单。</p>
           </div>
           <button id="toggle-oem-network" class="feature-switch" type="button" role="switch" aria-checked="false" disabled>
             <span class="feature-switch-track"><i></i></span>
@@ -677,6 +677,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=35"></script>
+<script src="/portal/portal.js?v=36"></script>
 </body>
 </html>

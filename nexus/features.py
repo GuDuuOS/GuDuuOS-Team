@@ -3,9 +3,10 @@
 这些开关属于运营控制项：超管需要在不重启服务的情况下决定某项 OEM 功能
 是否对客户可见，因此持久化到 ``NexusSetting``，不能只放浏览器或环境变量。
 
-当前首个开关 ``oem_network_visible`` 控制 OEM 门户的邀请、层级与归属用户
-数据展示。默认关闭；关闭时服务端也拒绝目录与二维码接口，避免仅靠前端隐藏。
-关系边仍会保留在数据库中，重新开启后可继续展示既有真实数据。
+当前首个开关 ``oem_network_visible`` 只控制 OEM 门户的层级统计、下属 OEM
+与归属用户数据。分享页、注册链接和二维码始终保留；默认关闭时服务端拒绝
+网络目录接口，避免仅靠前端隐藏。关系边仍会保留在数据库中，重新开启后可
+继续展示既有真实数据。
 """
 
 from __future__ import annotations
@@ -81,7 +82,7 @@ def require_oem_network_visible(s) -> None:
     if not get_flags(s)["oem_network_visible"]:
         raise FleetError(
             "NEXUS_FEATURE_DISABLED",
-            "邀请、层级与用户数据暂未开放",
+            "层级与归属用户数据暂未开放",
             403,
         )
 

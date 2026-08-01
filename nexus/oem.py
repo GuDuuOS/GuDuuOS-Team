@@ -353,13 +353,38 @@ def _descendant_ids(children: Dict[int, List[int]], oem_id: int) -> List[int]:
     return out
 
 
-def share_summary(s, oem_id: int, portal_base: str) -> Dict[str, Any]:
-    """生成 OEM 门户的分享链接、二维码目标与层级人数统计。"""
+def share_links(s, oem_id: int, portal_base: str) -> Dict[str, Any]:
+    """生成 OEM 门户始终可用的分享码、注册链接与二维码目标。
+
+    这部分不包含层级或用户统计，因此即使平台暂时隐藏网络数据，OEM 仍可
+    邀请普通用户和合作伙伴。二维码端点也复用这份服务端重算结果，禁止把
+    客户传入的任意网址编码进二维码。
+    """
     owner = s.get(NexusOem, int(oem_id))
     if owner is None:
         raise FleetError("NEXUS_OEM_NOT_FOUND", "OEM 不存在", 404)
     share = _share_for(s, owner.id)
     instances = my_instances(s, owner.id)
+    return {
+        "code": share.code,
+        "partner_link": f"{portal_base.rstrip('/')}/portal/?invite={share.code}",
+        "user_links": [
+            {
+                "instance_id": int(item["id"]),
+                "domain": item["domain"],
+                "url": f"https://{item['domain']}/#/login?mode=register&ref={share.code}",
+            }
+            for item in instances
+        ],
+    }
+
+
+def share_summary(s, oem_id: int, portal_base: str) -> Dict[str, Any]:
+    """生成 OEM 分享能力以及受平台开关控制的层级人数统计。"""
+    owner = s.get(NexusOem, int(oem_id))
+    if owner is None:
+        raise FleetError("NEXUS_OEM_NOT_FOUND", "OEM 不存在", 404)
+    result = share_links(s, owner.id, portal_base)
     parents, children, accounts = _hierarchy_maps(s)
     descendants = _descendant_ids(children, owner.id)
     network_ids = [owner.id] + descendants
@@ -378,17 +403,7 @@ def share_summary(s, oem_id: int, portal_base: str) -> Dict[str, Any]:
         ).scalar_one()
     )
     ancestor_ids = _ancestor_ids(parents, owner.id)
-    return {
-        "code": share.code,
-        "partner_link": f"{portal_base.rstrip('/')}/portal/?invite={share.code}",
-        "user_links": [
-            {
-                "instance_id": int(item["id"]),
-                "domain": item["domain"],
-                "url": f"https://{item['domain']}/#/login?mode=register&ref={share.code}",
-            }
-            for item in instances
-        ],
+    result.update({
         "level": len(ancestor_ids) + 1,
         "ancestors": [
             {
@@ -402,7 +417,8 @@ def share_summary(s, oem_id: int, portal_base: str) -> Dict[str, Any]:
         "total_downline_oems": len(descendants),
         "direct_users": direct_users,
         "network_users": network_users,
-    }
+    })
+    return result
 
 
 def network_directory(s, oem_id: int, limit: int = 500) -> Dict[str, Any]:
@@ -550,7 +566,7 @@ def network_directory(s, oem_id: int, limit: int = 500) -> Dict[str, Any]:
 
 def qr_target(s, oem_id: int, portal_base: str, kind: str, instance_id: int = 0) -> str:
     """按当前登录 OEM 重新计算二维码目标，拒绝把二维码端点当任意 URL 生成器。"""
-    summary = share_summary(s, oem_id, portal_base)
+    summary = share_links(s, oem_id, portal_base)
     if kind == "partner":
         return str(summary["partner_link"])
     if kind == "user":
