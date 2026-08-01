@@ -26,13 +26,13 @@ class TestCosmacDb(unittest.TestCase):
     def test_skill_create_and_get(self) -> None:
         with session_scope() as s:
             obj = repo.upsert_skill(
-                s, SCOPE_USER, "@alice:cosmac.cc", "weekly-report",
+                s, SCOPE_USER, "@alice:example.invalid", "weekly-report",
                 name="周报", description="生成本周数据周报", instructions="按...步骤",
             )
             self.assertIsNotNone(obj.id)
             self.assertTrue(obj.enabled)  # 默认启用
         with session_scope() as s:
-            got = repo.get_skill(s, SCOPE_USER, "@alice:cosmac.cc", "weekly-report")
+            got = repo.get_skill(s, SCOPE_USER, "@alice:example.invalid", "weekly-report")
             self.assertIsNotNone(got)
             assert got is not None
             self.assertEqual(got.name, "周报")
@@ -80,22 +80,22 @@ class TestCosmacDb(unittest.TestCase):
     def test_agent_with_skill_slugs_json(self) -> None:
         with session_scope() as s:
             a = repo.upsert_agent(
-                s, SCOPE_ROOM, "!ops:cosmac.cc", "planner",
+                s, SCOPE_ROOM, "!ops:example.invalid", "planner",
                 name="策划", system_prompt="你是策划", model="claude-opus-4-8",
                 skill_slugs=["weekly-report", "kb-search"],
             )
             self.assertEqual(a.skill_slugs, ["weekly-report", "kb-search"])
         with session_scope() as s:
-            got = repo.get_agent(s, SCOPE_ROOM, "!ops:cosmac.cc", "planner")
+            got = repo.get_agent(s, SCOPE_ROOM, "!ops:example.invalid", "planner")
             assert got is not None
             self.assertEqual(got.model, "claude-opus-4-8")
             self.assertEqual(got.skill_slugs, ["weekly-report", "kb-search"])  # JSON 往返
         # 部分更新：换绑技能，人设不动
         with session_scope() as s:
-            repo.upsert_agent(s, SCOPE_ROOM, "!ops:cosmac.cc", "planner",
+            repo.upsert_agent(s, SCOPE_ROOM, "!ops:example.invalid", "planner",
                               skill_slugs=["summary"])
         with session_scope() as s:
-            got = repo.get_agent(s, SCOPE_ROOM, "!ops:cosmac.cc", "planner")
+            got = repo.get_agent(s, SCOPE_ROOM, "!ops:example.invalid", "planner")
             assert got is not None
             self.assertEqual(got.skill_slugs, ["summary"])
             self.assertEqual(got.system_prompt, "你是策划")

@@ -97,7 +97,7 @@ export function useMyPeople() {
     if (busy.value) return
     // 新增模式：容错规范化 user_id（@bob / bob 都补成 @bob:本服务器）；已有联系人则 user_id 固定
     const pid = adding.value ? normalizeUserId(form.user_id) : form.user_id
-    if (!pid || !pid.includes(':')) { warn('请填写用户名（如 bob 或 @bob:cosmac.cc）'); return }
+    if (!pid || !pid.includes(':')) { warn('请填写用户名（如 bob 或 @bob:example.invalid）'); return }
     busy.value = true
     errText.value = ''
     try {

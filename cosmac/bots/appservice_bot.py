@@ -2990,7 +2990,7 @@ class CosmacBot:
     # —— @ 提及识别：只有被 @ 才响应 ——
 
     def _bot_localpart(self) -> str:
-        """从完整用户 id（@guduu:cosmac.cc）取出 localpart（guduu）。"""
+        """从完整用户 id（如 @guduu:example.invalid）取出 localpart（guduu）。"""
         return self.config.bot_user_id.split(":", 1)[0].lstrip("@")
 
     def _mention_tokens(self) -> List[str]:
@@ -3000,7 +3000,7 @@ class CosmacBot:
         """
         lp = self._bot_localpart()
         return [
-            self.config.bot_user_id,        # @guduu:cosmac.cc（@pill）
+            self.config.bot_user_id,        # 例如 @guduu:example.invalid（@pill）
             f"@{lp}",                        # @guduu
             self.config.bot_displayname,     # GuDuu OS
             "GuDuu OS",
@@ -5181,7 +5181,7 @@ class CosmacBot:
                 "· 可随时修改个人资料、删除自己发送的消息。\n"
                 "· 可联系管理员导出或删除账号数据、停用账号。\n\n"
                 "五、联系我们\n"
-                "· 平台内私信管理员，或发邮件至 support@cosmac.cc。"
+                "· 平台内私信管理员，或发邮件至 support@guduu.co。"
             ),
         },
         "help": {
@@ -5202,7 +5202,7 @@ class CosmacBot:
                 "【常见问题】\n"
                 "· 登录提示“账号已停用”：请联系管理员恢复。\n"
                 "· 收不到验证码：检查垃圾邮件，或稍后重试。\n"
-                "· 其它问题：私信管理员或发邮件 support@cosmac.cc。"
+                "· 其它问题：私信管理员或发邮件 support@guduu.co。"
             ),
         },
     }
@@ -6956,7 +6956,7 @@ class CosmacBot:
             return 403, {"error": self._gate_denied_text("people_manage", ui=True)}
         person_id = str((body or {}).get("person_id") or "").strip()
         if not person_id.startswith("@") or ":" not in person_id:
-            return 400, {"error": "请填写完整的用户 ID（如 @bob:cosmac.cc）"}
+            return 400, {"error": "请填写完整的用户 ID（如 @bob:example.invalid）"}
         try:
             from cosmac.db import session_scope
             from cosmac.db.person_repo import to_dict, upsert_person
@@ -8061,7 +8061,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         if cors:
-            # 跨源：前端在 app.cosmac.cc，bot 在 hs.cosmac.cc，浏览器要 CORS 头才放行。
+            # 跨源：客户端与 Matrix API 分属不同子域时，浏览器需要 CORS 头才会放行。
             # 默认 *（这些端点要么公开、要么自带 token 校验）；可用 COSMAC_APP_ORIGIN 收紧到具体域名。
             origin = os.environ.get("COSMAC_APP_ORIGIN", "") or "*"
             self.send_header("Access-Control-Allow-Origin", origin)

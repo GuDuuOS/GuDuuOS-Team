@@ -293,7 +293,7 @@ class MatrixClient:
 
         参数：
             name:     房间显示名（如"爆款专班·职场"）。
-            invitees: 创建时就邀请的用户 id 列表（如 ["@admin:cosmac.cc"]）。
+            invitees: 创建时就邀请的用户 id 列表（如 ["@admin:example.invalid"]）。
             admins:   建房时就提成「房间管理员」(power=100) 的用户 id 列表。
                       **关键**：bot 是唯一创建者(默认 power=100)，被邀请进来的真人若不提权就是 0 级，
                       改不了房名/topic/频道配置(那些 state event 至少要 50 级)——于是频道"主人"一改名就

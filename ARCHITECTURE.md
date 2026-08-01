@@ -2,8 +2,9 @@
 
 > 本文件是**给人读的架构地图**：讲清楚"这个系统由什么组成、数据放在哪、AI 怎么工作、
 > 资源怎么分层、请求怎么流转"。
-> 与 `CLAUDE.md`(项目宪法/开发规范)、`DEVLOG.md`(开发流水)、`DEPLOY.md`(部署细节·gitignored)分工不同。
-> 架构一旦有大变动，先更新本文件再写代码。最后更新：2026-07-05。
+> 与 `AGENTS.md`（项目宪法/开发规范）、`DEVLOG.md`（开发流水）、`DEPLOY.md`
+>（当前生产部署细节，gitignored）分工不同。架构一旦有大变动，先更新本文件再写代码。
+> 最后更新：2026-08-02。
 
 ---
 
@@ -49,7 +50,7 @@ Module API / Application Service 协议接入。这样能一直跟上游更新�
 ## 3. 目录结构
 
 ```
-synapse/          上游 Synapse 仓库(只读参考，改动需登记 CLAUDE.md §8)
+synapse/          上游 Synapse 仓库(只读参考，改动需登记 AGENTS.md §8)
 cosmac/           GuDuu OS 全部后端代码(独立 Python 包)
   __main__.py       进程入口(python -m cosmac)
   config.py         配置(env 读取，COSMAC_* 前缀，兼容旧 GUDUU_*)
@@ -275,18 +276,22 @@ cosmac_doc_page / cosmac_user_profile / cosmac_user_template`。
 
 ---
 
-## 12. 部署架构(细节见 gitignored 的 DEPLOY.md)
+## 12. 当前生产部署架构（细节见 gitignored 的 DEPLOY.md）
 
 ```
-浏览器 ──https──▶ 宝塔 nginx(接管 80/443) ──▶ /var/www/cosmac-app (前端静态)
-                                          └──▶ Synapse (127.0.0.1:8008)
-                                          └──▶ cosmac bot (appservice, systemd: guduu-bot)
-Synapse ⇄ PostgreSQL(含 cosmac 独立 db)
+浏览器 ──https──▶ Cloudflare DNS / Access
+                    ├──▶ Google Cloud OEM 节点
+                    │      └── Caddy ──▶ Web / Synapse / Bot / PostgreSQL（Docker）
+                    └──▶ Google Cloud Nexus
+                           └── Caddy ──▶ Nexus service / PostgreSQL
 ```
 
-- **前端部署**：`cd client && npm run build` → `git add -f client/dist` → push →
-  服务器 `git pull` + `cp dist/* /var/www/cosmac-app/`(宝塔 nginx 实时读盘，无需 reload)。
-- **后端部署**：改了 `cosmac/` → 服务器 `git pull` + `systemctl restart guduu-bot`。
+- **OEM 节点部署**：发布不可变 `vX.Y.Z` tag，由节点更新代理拉取并执行
+  `distro/update.sh`；完成后运行 `distro/doctor.sh`。
+- **中央 Nexus 部署**：只发布 Nexus 轨道变更，先备份 PostgreSQL，再更新代码、静态资源并
+  重启 `nexus.service`，最后验证管理域名、公开门户和健康端点。
+- **域名与主机**：只使用当前 `guduu.co` 测试域名和 Google Cloud 实例；具体 IP、SSH
+  用户与目录仅记录在本机 `DEPLOY.md`，不进入版本库。
 - 密钥只进服务器 env / systemd，绝不进代码或 git。
 
 ---
@@ -310,11 +315,11 @@ Synapse ⇄ PostgreSQL(含 cosmac 独立 db)
 
 ## 14. 关键设计约束速查(改代码前对照)
 
-1. **不改 Synapse 核心**——优先 Module/Appservice，真要改先问负责人 + 登记 CLAUDE.md §8。
+1. **不改 Synapse 核心**——优先 Module/Appservice，真要改先问负责人 + 登记 AGENTS.md §8。
 2. **Synapse 已存的不重存**——数据分层见 §5。
 3. **浏览器够不到 DB**——平台配置走控制室 state event。
 4. **全局技能每轮全注入**——受 6000 字预算约束，方法论走 `inject=agent`。
 5. **权限服务端强制**——门控/配额/access/任务可见性都在 bot，客户端只配置。
 6. **协议层一字不改**——`/_matrix`、`m.*` 事件、联邦格式(品牌化只碰呈现层)。
 7. **密钥只进 env**——不进代码/git。
-8. **全程中文沟通 + 详细中文注释**(CLAUDE.md §5/§6)。
+8. **全程中文沟通 + 详细中文注释**（AGENTS.md §5/§6）。

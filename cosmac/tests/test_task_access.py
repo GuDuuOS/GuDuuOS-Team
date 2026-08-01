@@ -23,7 +23,7 @@ def _bot() -> CosmacBot:
 
 def _task(**kw):
     base = dict(
-        sender="", executor_kind="none", executor_ref="", assignee="", room_id="!r:cosmac.cc"
+        sender="", executor_kind="none", executor_ref="", assignee="", room_id="!r:example.invalid"
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -32,42 +32,42 @@ def _task(**kw):
 class TestTaskAccess(unittest.TestCase):
     def test_assignee_full_id_can_update(self) -> None:
         bot = _bot()
-        t = _task(executor_kind="human", executor_ref="@duxz02:cosmac.cc")
-        self.assertTrue(bot._can_access_task("@duxz02:cosmac.cc", t))
+        t = _task(executor_kind="human", executor_ref="@duxz02:example.invalid")
+        self.assertTrue(bot._can_access_task("@duxz02:example.invalid", t))
 
     def test_assignee_bare_localpart_ref_matches_full_user(self) -> None:
         # executor_ref 存的是纯 localpart，登录用户是全 id —— 仍应放行。
         bot = _bot()
         t = _task(executor_kind="human", executor_ref="duxz02")
-        self.assertTrue(bot._can_access_task("@duxz02:cosmac.cc", t))
+        self.assertTrue(bot._can_access_task("@duxz02:example.invalid", t))
 
     def test_case_insensitive(self) -> None:
         bot = _bot()
-        t = _task(executor_kind="human", executor_ref="@DuxZ02:cosmac.cc")
-        self.assertTrue(bot._can_access_task("@duxz02:cosmac.cc", t))
+        t = _task(executor_kind="human", executor_ref="@DuxZ02:example.invalid")
+        self.assertTrue(bot._can_access_task("@duxz02:example.invalid", t))
 
     def test_legacy_assignee_first_word(self) -> None:
         # 旧任务无 executor_ref，按 assignee 首词兜底。
         bot = _bot()
-        t = _task(assignee="@duxz02:cosmac.cc 人事经理")
-        self.assertTrue(bot._can_access_task("@duxz02:cosmac.cc", t))
+        t = _task(assignee="@duxz02:example.invalid 人事经理")
+        self.assertTrue(bot._can_access_task("@duxz02:example.invalid", t))
 
     def test_other_user_denied(self) -> None:
         # 不是被指派者、不是下达者、非管理员、非房间成员 → 拒绝（防越权遍历 id）。
         bot = _bot()
-        t = _task(executor_kind="human", executor_ref="@liwei:cosmac.cc")
-        self.assertFalse(bot._can_access_task("@duxz02:cosmac.cc", t))
+        t = _task(executor_kind="human", executor_ref="@liwei:example.invalid")
+        self.assertFalse(bot._can_access_task("@duxz02:example.invalid", t))
 
     def test_sender_can_update(self) -> None:
         bot = _bot()
-        t = _task(sender="@boss:cosmac.cc", executor_kind="human", executor_ref="@liwei:cosmac.cc")
-        self.assertTrue(bot._can_access_task("@boss:cosmac.cc", t))
+        t = _task(sender="@boss:example.invalid", executor_kind="human", executor_ref="@liwei:example.invalid")
+        self.assertTrue(bot._can_access_task("@boss:example.invalid", t))
 
     def test_none_kind_not_assignee(self) -> None:
         # executor_kind=none 且无 assignee → 谁都不是被指派者。
         bot = _bot()
         t = _task()
-        self.assertFalse(bot._is_task_assignee("@duxz02:cosmac.cc", t))
+        self.assertFalse(bot._is_task_assignee("@duxz02:example.invalid", t))
 
 
 class TestTaskBoardWindow(unittest.TestCase):

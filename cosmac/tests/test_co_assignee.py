@@ -38,7 +38,7 @@ class TestIsTaskAssignee(unittest.TestCase):
     def test_agent_executed_task_visible_to_co_assignee(self) -> None:
         # 线上原样:AI 执行 + assignee 挂真人 → 真人必须命中
         t = _task("社媒运营+duxiuzhen01", kind="agent", ref="social")
-        self.assertTrue(self._hit("@duxiuzhen01:retired-dev.example.invalid", t))
+        self.assertTrue(self._hit("@duxiuzhen01:example.invalid", t))
 
     def test_agent_task_not_visible_to_others(self) -> None:
         t = _task("社媒运营+duxiuzhen01", kind="agent", ref="social")
@@ -51,8 +51,8 @@ class TestIsTaskAssignee(unittest.TestCase):
 
     def test_full_id_in_assignee(self) -> None:
         # assignee 里写全 id 也能配(词内 _lp 剥 @ 和 :server)
-        t = _task("运营 @duxiuzhen01:retired-dev.example.invalid", kind="workflow", ref="wf1")
-        self.assertTrue(self._hit("@duxiuzhen01:retired-dev.example.invalid", t))
+        t = _task("运营 @duxiuzhen01:example.invalid", kind="workflow", ref="wf1")
+        self.assertTrue(self._hit("@duxiuzhen01:example.invalid", t))
 
     def test_legacy_no_ref_any_word(self) -> None:
         # 旧任务无类型化执行者:assignee 任一词等于本人即命中(原先只认首词)

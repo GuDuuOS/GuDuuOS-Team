@@ -406,7 +406,7 @@ class Toolbox:
                 "properties": {
                     "user_id": {
                         "type": "string",
-                        "description": "要邀请的完整用户 id，如 @bob:cosmac.cc。",
+                        "description": "要邀请的完整用户 id，如 @bob:example.invalid。",
                     },
                     "room_id": {
                         "type": "string",
@@ -1590,7 +1590,7 @@ class Toolbox:
             return notes
         if not joined_members and not invited_members:
             return notes
-        # 单 homeserver:完整 id 的域名从发起人身上取(@boss:cosmac.cc → cosmac.cc)
+        # 单 homeserver：完整 id 的域名从发起人身上取（@boss:example.invalid → example.invalid）。
         domain = ctx.sender.split(":", 1)[1] if ":" in ctx.sender else ""
         seen: Set[str] = set()
         for raw in humans:
@@ -1655,7 +1655,7 @@ class Toolbox:
         """邀请用户进已有房间。默认当前房间；指定别的房间要过 _check_room_access 防越权。"""
         user_id = str(args.get("user_id") or "").strip()
         if not user_id.startswith("@") or ":" not in user_id:
-            return "请给出完整用户 id（如 @bob:cosmac.cc）。"
+            return "请给出完整用户 id（如 @bob:example.invalid）。"
         # 按群名找 room_id:用户在私人会话里通常只知道群名(如"邀请xx加入暑期研学活动")。
         room_name = str(args.get("room_name") or "").strip()
         if not args.get("room_id") and room_name:
@@ -2189,8 +2189,8 @@ class Toolbox:
         """抓一个网页并返回纯文本。**替代 SDK 内置的 WebFetch**。
 
         为什么要自己做一个：SDK 的 WebFetch 能抓任意 URL，在容器里等于一条 SSRF 通道——
-        实测 bot 容器可直连 synapse:8008 / postgres:5432，云元数据(已退役云环境
-        100.100.100.200)还能吐出 RAM 临时凭据。那个工具已在 engine 里拉黑，
+        bot 容器需要直连 synapse:8008 / postgres:5432，但云元数据（部分云平台使用
+        100.100.100.200）还能吐出云实例临时凭据。那个工具已在 engine 里拉黑，
         能力挪到这里、走 wf.check_outbound_url 的防护。
 
         防护要点与 manifest 导入一致：禁重定向(302 到内网即绕过)、限大小、限超时。

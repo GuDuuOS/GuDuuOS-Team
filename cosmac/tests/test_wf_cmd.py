@@ -46,7 +46,7 @@ def _bot(workflows=None) -> CosmacBot:
     # public_url 非空：异步连接器据此拼回调地址
     bot = CosmacBot(CosmacConfig(
         llm_provider="echo", control_room_alias="#cosmac-ctrl:host",
-        public_url="https://hs.cosmac.cc",
+        public_url="https://hs.example.invalid",
     ))
     bot.client = FakeClient(workflows if workflows is not None else [WF])
     bot._reply_pool = None  # 同步模式:事件路径测试要立刻看到回复(并发修复后默认线程池)

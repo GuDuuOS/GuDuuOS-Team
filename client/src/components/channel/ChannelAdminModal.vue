@@ -103,7 +103,7 @@
           </div>
           <p v-if="!liveMembers.length" class="cam-row-desc" style="padding:8px 2px">还没有成员（或正在加载…）</p>
           <div class="cam-add">
-            <input v-model="liveInvite" class="cam-input" placeholder="邀请已有用户：用户名 或 @用户:cosmac.cc" @keyup.enter="doInviteLive" />
+            <input v-model="liveInvite" class="cam-input" placeholder="邀请已有用户：用户名 或 @用户:example.invalid" @keyup.enter="doInviteLive" />
             <button class="cam-add-btn" :disabled="!liveInvite.trim() || liveBusy" @click="doInviteLive">{{ liveBusy ? '邀请中…' : '＋ 邀请成员' }}</button>
           </div>
           <div class="cam-help">频道真实成员。邀请 = 把已有用户拉进频道；移出 = 移出频道（需你在本频道有管理员权限）。新建账号需走后台。</div>

@@ -13,7 +13,7 @@
         <!-- 编辑能力：给已有联系人(user_id 固定) 或 手动添加新人(user_id 可编辑) -->
         <div v-if="editing" class="mp-edit">
           <input v-if="adding" v-model.trim="form.user_id" class="mp-input"
-            placeholder="用户名或 @用户名（如 wenan / @wenan:cosmac.cc）" />
+            placeholder="用户名或 @用户名（如 wenan / @wenan:example.invalid）" />
           <div v-else class="mp-edit-who">{{ form.name || form.user_id }} <span class="mp-uid">{{ form.user_id }}</span></div>
           <div class="mp-row">
             <input v-model.trim="form.name" class="mp-input" placeholder="显示名（可空）" />

@@ -23,7 +23,7 @@ import {
 } from '@/matrix/client'
 import { defaultHsUrl } from '@/config/hs'
 
-// homeserver 基址（与 LiveView 保持一致）：主站/本地连 hs.cosmac.cc，
+// homeserver 基址（与 LiveView 保持一致）：当前主站/本地连 dev-hs.guduu.co，
 // OEM 自部实例（发行版）为同源——见 config/hs.ts
 const HS = defaultHsUrl()
 
@@ -90,7 +90,7 @@ function loginIdentity(): { byEmail: boolean; id: string } {
   if (loginBy.value === 'email') return { byEmail: true, id: email.value.trim() }
   const id = user.value.trim()
   // ⚠️ 用 indexOf > 0 而不是 includes('@')：Matrix 用户 ID 本身就以 @ 开头
-  // （@duxiuzhen01:cosmac.cc），用 includes 会把粘贴完整 MXID 的人误判成邮箱登录。
+  // （如 @duxiuzhen01:example.invalid），用 includes 会把粘贴完整 MXID 的人误判成邮箱登录。
   return { byEmail: id.indexOf('@') > 0, id }
 }
 const error = ref('')

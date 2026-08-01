@@ -15,7 +15,7 @@ from cosmac.db import init_engine, session_scope
 from cosmac.db.memory_repo import bump_and_check, get_summary, save_summary
 from cosmac.db.models import SCOPE_ROOM
 
-ROOM = "!ops:cosmac.cc"
+ROOM = "!ops:example.invalid"
 
 
 class TestMemoryRepo(unittest.TestCase):

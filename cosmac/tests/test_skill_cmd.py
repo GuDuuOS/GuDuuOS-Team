@@ -12,8 +12,8 @@ from cosmac.db import repo
 from cosmac.db.models import SCOPE_ROOM, SCOPE_USER
 from cosmac.db.skill_cmd import handle_skill_command, looks_like_skill_command
 
-ROOM = "!ops:cosmac.cc"
-USER = "@alice:cosmac.cc"
+ROOM = "!ops:example.invalid"
+USER = "@alice:example.invalid"
 
 
 def run(text: str, *, is_dm: bool = False, can_write: bool = True) -> str:

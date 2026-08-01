@@ -352,7 +352,7 @@ export async function loginWithEmailNoStart(
 // 被改成攻击者主机后，恢复会话时会把 Authorization: Bearer <token> 发往该主机 → token 泄露。
 // 追加 window.location.hostname：OEM 自部实例（发行版）homeserver 与页面同源；
 // 同源天然可信——代码本身就是从该源加载的，伪造同源即已完全控制页面，白名单挡不了也不必挡。
-const ALLOWED_HS_HOSTS = ['hs.cosmac.cc', 'localhost', '127.0.0.1', window.location.hostname]
+const ALLOWED_HS_HOSTS = ['dev-hs.guduu.co', 'localhost', '127.0.0.1', window.location.hostname]
 
 function isValidBaseUrl(u: unknown): u is string {
   if (typeof u !== 'string' || !u) return false
@@ -898,9 +898,9 @@ export async function createChannelInSpace(
   return cid
 }
 
-/** 本服务器域名（从当前用户 id 取，如 @admin:cosmac.cc → cosmac.cc）。 */
+/** 本服务器域名（从当前用户 id 取，如 @admin:example.invalid → example.invalid）。 */
 export function serverName(): string {
-  return (mx?.getUserId() || '').split(':')[1] || 'cosmac.cc'
+  return (mx?.getUserId() || '').split(':')[1] || 'dev-os.guduu.co'
 }
 
 /** 把一个房间挂进某工作区(Space)：先加入它（bot 已邀请），再写 m.space.child 让它进频道树。
@@ -1104,7 +1104,7 @@ export function listMyContacts(): { id: string; name: string }[] {
 
 /** 频道管理「人员」标签用的成员（含头像/角色/在不在群） */
 export interface ChannelMember {
-  id: string              // 完整 Matrix 用户 id，如 @alice:cosmac.cc
+  id: string              // 完整 Matrix 用户 id，如 @alice:example.invalid
   name: string            // 显示名（没设昵称就退回用户名段）
   avatar: string          // http 头像地址；没有则空串（UI 退回首字母圆头像）
   isBot: boolean          // 是否中枢 AI（按 botId() 判定，UI 标 APP）
@@ -1143,7 +1143,7 @@ export function listChannelMembers(roomId: string): ChannelMember[] {
     const { role, roleLabel } = roleOfPower(power)
     const isBot = m.userId === botId()
     const mxc = m.getMxcAvatarUrl?.() || m.events?.member?.getContent?.()?.avatar_url || ''
-    // js-sdk 在没设昵称时把 name 填成完整 userId（@guduu:cosmac.cc），显示难看；
+    // js-sdk 在没设昵称时把 name 填成完整 userId（如 @guduu:example.invalid），显示难看；
     // 这种情况退回用 id 的 localpart（@后、:前那段），仍是真实信息、只是更干净。
     const localpart = m.userId.replace(/^@/, '').split(':')[0]
     const name = (!m.name || m.name === m.userId) ? localpart : m.name
@@ -1302,7 +1302,7 @@ async function adminFetch(path: string, init: RequestInit = {}): Promise<any> {
 
 /** 管理后台用的精简用户结构 */
 export interface AdminUser {
-  id: string            // 完整 id，如 @alice:cosmac.cc
+  id: string            // 完整 id，如 @alice:example.invalid
   name: string          // 显示名（没设就退回 localpart）
   admin: boolean        // 是否服务器管理员
   deactivated: boolean  // 是否已**注销**(旧版停用,Synapse deactivate:已退出所有房间,不可逆)
@@ -1489,7 +1489,7 @@ async function syncControlRoomAdmins(): Promise<void> {
 
 /** 管理后台用的精简房间结构 */
 export interface AdminRoom {
-  id: string                 // room_id，如 !abc:cosmac.cc
+  id: string                 // room_id，如 !abc:example.invalid
   name: string               // 房间名（没设名就退回别名或 room_id）
   alias: string | null       // 规范别名 #xxx:host（可能没有）
   members: number            // 已加入成员数
@@ -2753,7 +2753,7 @@ export async function getPlans(): Promise<PlanDef[]> {
 }
 
 /* —— 用户侧「升级会员」：调 bot 的 /cosmac/pay/* 端点（前端够不到 cosmac DB）——
- *  base = homeserver(hs.cosmac.cc)，nginx 已把 /cosmac/ 代理给 bot。 */
+ *  base = 当前 homeserver，反向代理已把 /cosmac/ 转给 bot。 */
 
 function payBase(): string {
   return String((mx as any)?.baseUrl || '').replace(/\/$/, '')
@@ -4117,7 +4117,7 @@ export async function sendText(
 const BOT_LOCALPART = 'guduu'
 /**
  * 主 AI 的完整用户 id（私聊它 = 右侧"中枢 AI"面板）。
- * 按当前登录服务器域名动态拼（@guduu:<serverName>），不写死 cosmac.cc——
+ * 按当前登录服务器域名动态拼（@guduu:<serverName>），不写死任何租户域名——
  * 否则本地 guduu.local 环境会去邀请一个不存在的账号，AI 进不了群。
  * 必须在登录后调用（serverName() 取自当前用户 id）。
  */

@@ -61,7 +61,7 @@ DOMAIN="" ADMIN_EMAIL="" OEM_KEY=""
 BEHIND_PROXY=0
 PROXY_HTTP_PORT=8080
 # GuDuu Nexus 母舰地址（兑换授权 + 心跳 + LLM 网关都指它）；可用 --nexus 覆盖
-NEXUS_URL="${NEXUS_URL:-https://nexus.guduuos.com}"
+NEXUS_URL="${NEXUS_URL:-https://dev-nexus.guduu.co}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --domain) DOMAIN="$2"; shift 2 ;;

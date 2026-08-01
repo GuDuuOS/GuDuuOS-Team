@@ -17,8 +17,8 @@ from cosmac.db.service import (
     render_skill_prompt,
 )
 
-ROOM = "!ops:cosmac.cc"
-USER = "@alice:cosmac.cc"
+ROOM = "!ops:example.invalid"
+USER = "@alice:example.invalid"
 
 
 class TestSkillService(unittest.TestCase):

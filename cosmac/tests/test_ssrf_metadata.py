@@ -17,8 +17,8 @@ from cosmac.wf import _is_metadata_addr, check_outbound_url
 
 
 class MetadataAddrTest(unittest.TestCase):
-    def test_aliyun_metadata_is_blocked(self) -> None:
-        """本项目生产环境所在的云——这条要是漏了，代价是实例凭据。"""
+    def test_secondary_cloud_metadata_is_blocked(self) -> None:
+        """兼容拦截使用 CGNAT 元数据地址的云平台，避免泄露实例凭据。"""
         self.assertTrue(_is_metadata_addr(ipaddress.ip_address("100.100.100.200")))
 
     def test_whole_carrier_nat_range_is_blocked(self) -> None:
@@ -101,7 +101,7 @@ class FetchUrlToolTest(unittest.TestCase):
             "http://127.0.0.1/x",
             "http://10.0.0.5/x",
             "http://169.254.169.254/latest/meta-data/",
-            "http://100.100.100.200/latest/meta-data/",   # 已退役云环境
+            "http://100.100.100.200/latest/meta-data/",   # CGNAT 云元数据地址
         ):
             out = self._run(bad)
             self.assertIn("不能抓取", out, f"{bad} 必须被拒")

@@ -147,7 +147,7 @@ function loadUser() {
   const info = myProfileInfo()
   user.value = {
     name: info.name || '我',
-    handle: info.userId,               // @user:cosmac.cc
+    handle: info.userId,               // @user:example.invalid
     avatar: info.avatarUrl,            // 有头像=http 地址；没有=空串(模板回退首字母)
   }
 }

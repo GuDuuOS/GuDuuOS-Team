@@ -5,7 +5,7 @@ Rule/Skill」最先要的两类结构化数据。知识库（pgvector）、群�
 
 **作用域（scope）模型**：每条 Skill/Agent 都挂在一个作用域上，覆盖你提到的
 「每账号配置 + 群级智能」两种需求：
-    - ``user``   ：属于某个账号，scope_id = 用户 id（如 ``@alice:cosmac.cc``）
+    - ``user``   ：属于某个账号，scope_id = 用户 id（如 ``@alice:example.invalid``）
     - ``room``   ：属于某个群/频道，scope_id = room_id（群级技能/智能体）
     - ``global`` ：全平台共享，scope_id = ``""``
 (scope, scope_id, slug) 三元组唯一——同一作用域内 slug 不重复，不同作用域可重名。

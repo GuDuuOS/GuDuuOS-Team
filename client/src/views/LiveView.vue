@@ -346,7 +346,7 @@ function dispatchedByMe(t: TaskItem): boolean {
   const me = localPartOf(currentUserId())
   return !!me && !!t.sender && localPartOf(t.sender) === me
 }
-/** 取 Matrix user_id 的 localpart：`@duxz01:cosmac.cc` / `duxz01` / `@duxz01` → `duxz01`(小写)。 */
+/** 取 Matrix user_id 的 localpart：`@duxz01:example.invalid` / `duxz01` / `@duxz01` → `duxz01`（小写）。 */
 function localPartOf(s: string): string {
   return (s || '').trim().replace(/^@/, '').split(':')[0].toLowerCase()
 }
@@ -452,7 +452,7 @@ async function submitReschedule(clear = false) {
 }
 
 
-// homeserver 基址：主站/本地连 hs.cosmac.cc，OEM 自部实例（发行版）为同源——见 config/hs.ts
+// homeserver 基址：当前主站/本地连 dev-hs.guduu.co，OEM 自部实例为同源——见 config/hs.ts
 const HS = defaultHsUrl()
 
 // ── 登录态 ──────────────────────────────────────────────
@@ -3333,7 +3333,7 @@ onBeforeUnmount(() => {
         <div class="nw-sub">和某个人开一个<b>一对一私聊</b>,聊天出现在左侧「私信」区。<br>这不是邀请进频道——邀请进频道请到目标频道里操作。</div>
         <div class="nw-field-label">对方用户名</div>
         <div class="nw-inline">
-          <input v-model="dmUserInput" class="nw-input" placeholder="用户名 或 @用户:cosmac.cc" @keyup.enter="doStartDm" />
+          <input v-model="dmUserInput" class="nw-input" placeholder="用户名 或 @用户:example.invalid" @keyup.enter="doStartDm" />
           <button class="nw-btn primary" :disabled="!dmUserInput.trim() || dmBusy" @click="doStartDm">{{ dmBusy ? '发起中…' : '发起私信' }}</button>
         </div>
         <div class="nw-note">💡 对方需已有账号。发起后对方会收到私信邀请,接受即可开始聊天。</div>
@@ -3352,7 +3352,7 @@ onBeforeUnmount(() => {
 
         <div class="nw-field-label">邀请用户名</div>
         <div class="nw-inline">
-          <input v-model="inviteUserInput" class="nw-input" placeholder="用户名 或 @用户:cosmac.cc" @keyup.enter="doInvite" />
+          <input v-model="inviteUserInput" class="nw-input" placeholder="用户名 或 @用户:example.invalid" @keyup.enter="doInvite" />
           <button class="nw-btn primary" :disabled="!inviteUserInput.trim() || !memberTarget || memberBusy" @click="doInvite">{{ memberBusy ? '邀请中…' : '邀请' }}</button>
         </div>
 

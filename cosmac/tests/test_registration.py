@@ -174,22 +174,22 @@ class PasswordResetTest(unittest.TestCase):
     def test_reset_happy_path(self) -> None:
         reg.reset_request_code("a@b.com")
         st, payload = reg.reset_verify(
-            "a@b.com", self._last_code(), "NewPass123!", hs_url="http://hs", server_name="cosmac.cc")
+            "a@b.com", self._last_code(), "NewPass123!", hs_url="http://hs", server_name="example.invalid")
         self.assertEqual(st, 200)
         # 确认拿正确的 user_id + 新密码去调了重置
-        self.assertEqual(self._reset_calls, [("@alice:cosmac.cc", "NewPass123!")])
+        self.assertEqual(self._reset_calls, [("@alice:example.invalid", "NewPass123!")])
 
     def test_reset_wrong_code(self) -> None:
         reg.reset_request_code("a@b.com")
         st, _ = reg.reset_verify(
-            "a@b.com", "000000", "NewPass123!", hs_url="http://hs", server_name="cosmac.cc")
+            "a@b.com", "000000", "NewPass123!", hs_url="http://hs", server_name="example.invalid")
         self.assertEqual(st, 400)
         self.assertEqual(self._reset_calls, [])  # 没验过码就不该调重置
 
     def test_reset_weak_password(self) -> None:
         reg.reset_request_code("a@b.com")
         st, payload = reg.reset_verify(
-            "a@b.com", self._last_code(), "123", hs_url="http://hs", server_name="cosmac.cc")
+            "a@b.com", self._last_code(), "123", hs_url="http://hs", server_name="example.invalid")
         self.assertEqual(st, 400)
         self.assertIn("密码", payload["error"])
 
@@ -200,7 +200,7 @@ class PasswordResetTest(unittest.TestCase):
         reg.request_code("a@b.com")          # 注册码
         reg_code = self._last_code()
         st, _ = reg.reset_verify(
-            "a@b.com", reg_code, "NewPass123!", hs_url="http://hs", server_name="cosmac.cc")
+            "a@b.com", reg_code, "NewPass123!", hs_url="http://hs", server_name="example.invalid")
         self.assertEqual(st, 400)  # reset 桶里没这个码
 
 

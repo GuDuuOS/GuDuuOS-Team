@@ -88,7 +88,7 @@ class CosmacConfig:
     database_url: str = ""
 
     # —— 异步工作流回调用的公网基址（模块3）——
-    # 形如 https://hs.cosmac.cc（经 nginx 把 /cosmac/ 路由到本 bot）。外部平台(n8n/ComfyUI)
+    # 形如 https://matrix.example.invalid（反向代理把 /cosmac/ 路由到本 bot）。外部平台（n8n/ComfyUI）
     # 长任务跑完反向 POST 到 {public_url}/cosmac/wf/callback/<run_id>?token=...。
     # 留空 = 不启用异步回调（异步连接器会退回同步或提示未配）。
     public_url: str = ""

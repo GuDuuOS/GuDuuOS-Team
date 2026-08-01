@@ -14,8 +14,8 @@ from cosmac.db import kb
 from cosmac.db.kb_cmd import handle_kb_command, looks_like_kb_command
 from cosmac.db.models import SCOPE_ROOM, SCOPE_USER
 
-ROOM = "!ops:cosmac.cc"
-USER = "@alice:cosmac.cc"
+ROOM = "!ops:example.invalid"
+USER = "@alice:example.invalid"
 
 
 def run(text: str, *, is_dm: bool = False, can_write: bool = True) -> str:
