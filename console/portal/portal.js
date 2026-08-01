@@ -1190,12 +1190,69 @@
         if (stillOwned) fetchOemInstanceDetail(oemInstanceDetailId);
         else closeOemInstanceDetail();
       }
-      // KEY 表
-      $("#oem-keys tbody").innerHTML = keys.map(function (k) {
-        var st = k.status === "suspended" ? "suspended" : (k.status !== "active" ? "revoked" : (k.instance_id ? "active" : "idle"));
-        return "<tr><td>#" + k.id + "</td><td>···" + esc(k.tail) + "</td><td class=\"zh\">" + badge(st) + "</td>" +
-          "<td>" + fmtTokens(k.token_grant) + "</td><td class=\"zh\">" + (k.instance_id ? "#" + k.instance_id : "—") + "</td></tr>";
-      }).join("") || '<tr><td colspan="5" class="zh empty">尚未认领任何授权码</td></tr>';
+      // KEY、节点绑定与节点心跳是三套不同状态。这里用 instance_id 关联当前 OEM
+      // 的真实节点数据，绝不再把 active KEY 翻译为“在线”。
+      var instancesById = {};
+      r.instances.forEach(function (instance) {
+        instancesById[Number(instance.id)] = instance;
+      });
+      var keyBoundCount = keys.filter(function (key) { return !!key.instance_id; }).length;
+      var keyUnboundCount = keys.filter(function (key) {
+        return key.status === "active" && !key.instance_id;
+      }).length;
+      var keyAlertCount = keys.filter(function (key) { return key.status !== "active"; }).length;
+      $("#oem-key-total").textContent = String(keys.length);
+      $("#oem-key-bound").textContent = String(keyBoundCount);
+      $("#oem-key-unbound").textContent = String(keyUnboundCount);
+      $("#oem-key-alert").textContent = String(keyAlertCount);
+
+      function keyAuthorizationBadge(status) {
+        if (status === "active") return '<span class="badge active">授权有效</span>';
+        if (status === "suspended") return '<span class="badge suspended">授权暂停</span>';
+        return '<span class="badge revoked">授权吊销</span>';
+      }
+      function keyNodeBadge(instance, hasBinding) {
+        if (!instance) return hasBinding
+          ? '<span class="badge warning">节点待同步</span>'
+          : '<span class="badge idle">未部署</span>';
+        var heartbeat = hbStatus(instance);
+        var labels = { active: "节点在线", warning: "节点迟滞", offline: "节点离线" };
+        return '<span class="badge ' + heartbeat + '">' + labels[heartbeat] + "</span>";
+      }
+      $("#oem-keys").innerHTML = keys.map(function (key) {
+        var instance = key.instance_id ? instancesById[Number(key.instance_id)] : null;
+        var bindingBadge = key.instance_id
+          ? '<span class="badge active">已绑定</span>'
+          : (key.status === "active"
+            ? '<span class="badge idle">待部署兑换</span>'
+            : '<span class="badge idle">未绑定</span>');
+        var domain = instance ? esc(instance.domain) : (key.instance_id ? "节点数据待同步" : "尚未绑定节点");
+        var currentBalance = instance ? fmtTokens(instance.balance_tokens) : "—";
+        var nodeVersion = instance ? esc(instance.version || "—") : "—";
+        var actions = instance
+          ? '<button type="button" class="ghost small" data-key-view-instance="' + instance.id + '">查看节点</button>' +
+            (key.status === "active"
+              ? '<button type="button" class="primary small" data-key-topup-instance="' + instance.id + '">Token 充值</button>'
+              : "")
+          : "";
+        return '<article class="key-card">' +
+          '<div class="key-card-head"><div><small>授权 KEY #' + key.id + '</small><b>···' + esc(key.tail) + '</b></div>' +
+          '<div class="key-card-badges">' + keyAuthorizationBadge(key.status) + bindingBadge + keyNodeBadge(instance, !!key.instance_id) + "</div></div>" +
+          '<div class="key-card-details">' +
+          '<div class="key-card-detail key-domain"><small>节点域名</small><b>' + domain + "</b></div>" +
+          '<div class="key-card-detail"><small>初始附赠 Token</small><b>' + fmtTokens(key.token_grant) + "</b></div>" +
+          '<div class="key-card-detail"><small>节点当前余额</small><b>' + currentBalance + "</b></div>" +
+          '<div class="key-card-detail"><small>节点版本</small><b>' + nodeVersion + "</b></div>" +
+          '<div class="key-card-detail"><small>签发时间</small><b>' + fmtTime(key.created_ts) + "</b></div>" +
+          '<div class="key-card-detail"><small>兑换时间</small><b>' + fmtTime(key.redeemed_ts) + "</b></div></div>" +
+          '<div class="key-card-foot"><p>' + (instance
+            ? "该 KEY 已与此节点永久建立授权关系。"
+            : (key.status === "active"
+              ? "部署新节点时输入此 KEY，即可完成绑定与初始 Token 发放。"
+              : "该授权当前不可用于部署，请联系平台确认授权状态。")) +
+          '</p><div class="key-card-actions">' + actions + "</div></div></article>";
+      }).join("") || '<div class="key-empty"><b>尚无授权 KEY</b><p>先提交授权申请；获批领取后会自动进入这里。</p>' +
+        '<button type="button" class="primary small" data-key-open-page="licenses">前往授权申请</button></div>';
       oemRequests = requests;
       renderOemRequests();
     }).catch(function (err) { toast(err.message, true); });
@@ -2454,6 +2511,28 @@
     var oemInstanceTarget = t.closest ? t.closest("[data-oem-instance-detail]") : null;
     if (oemInstanceTarget) {
       openOemInstanceDetail(Number(oemInstanceTarget.dataset.oemInstanceDetail));
+      return;
+    }
+    // KEY 卡片快捷入口：查看节点回到首页正文详情；充值则进入购买页并预选
+    // 当前 KEY 绑定的真实实例，避免多节点客户充错对象。
+    if (t.dataset && t.dataset.keyViewInstance) {
+      var keyViewInstanceId = Number(t.dataset.keyViewInstance);
+      openOemPage("overview", true);
+      setTimeout(function () { openOemInstanceDetail(keyViewInstanceId); }, 30);
+      return;
+    }
+    if (t.dataset && t.dataset.keyTopupInstance) {
+      var keyTopupInstanceId = Number(t.dataset.keyTopupInstance);
+      openOemPage("commerce", true);
+      setTimeout(function () {
+        var target = document.querySelector('.pick[data-pick="inst"][data-val="' + keyTopupInstanceId + '"]');
+        if (target) target.click();
+      }, 30);
+      toast("已进入 Token 充值，并选中对应节点");
+      return;
+    }
+    if (t.dataset && t.dataset.keyOpenPage) {
+      openOemPage(t.dataset.keyOpenPage, true);
       return;
     }
     if (t.dataset && t.dataset.copyLink) {

@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
 <script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=27" />
+<link rel="stylesheet" href="/portal/portal.css?v=28" />
 </head>
 <body>
 <!--
@@ -339,21 +339,39 @@
     <div class="admin-page" data-oem-view="keys" hidden>
 
   <section class="panel">
-    <div class="panel-head"><h2>认领授权码</h2></div>
-    <form id="form-claim" class="inline-form">
-      <input name="key" placeholder="CMK-XXXX-XXXX-XXXX-XXXX" required />
-      <button class="primary">认领</button>
-    </form>
-    <p class="hint">线下拿到的授权码在此认领归入你的账号（门户申请批准的码已自动归属，无需再认领）。</p>
-    <p id="claim-msg" class="ok" hidden></p>
+    <div class="panel-head key-summary-head">
+      <div>
+        <h2>授权概览</h2>
+        <p class="hint">授权状态、节点绑定和节点运行状态分别统计，避免把有效 KEY 误认为节点在线。</p>
+      </div>
+      <button type="button" class="primary small" data-key-open-page="licenses">申请新授权</button>
+    </div>
+    <div class="stats key-summary-stats">
+      <div class="stat"><small>授权总数</small><b id="oem-key-total" class="plain">0</b></div>
+      <div class="stat"><small>已绑定节点</small><b id="oem-key-bound">0</b></div>
+      <div class="stat"><small>待部署兑换</small><b id="oem-key-unbound" class="plain">0</b></div>
+      <div class="stat"><small>暂停 / 吊销</small><b id="oem-key-alert" class="plain">0</b></div>
+    </div>
   </section>
 
   <section class="panel">
-    <div class="panel-head"><h2>我的授权码</h2></div>
-    <table class="tbl" id="oem-keys">
-      <thead><tr><th>编号</th><th>尾号</th><th>状态</th><th>附赠 Token</th><th>实例</th></tr></thead>
-      <tbody></tbody>
-    </table>
+    <div class="panel-head key-list-head">
+      <div>
+        <h2>我的授权</h2>
+        <p class="hint">完整 KEY 只在签发或获批领取窗口展示一次；此处长期只显示尾号。</p>
+      </div>
+    </div>
+    <div class="key-card-grid" id="oem-keys"></div>
+  </section>
+
+  <section class="panel key-claim-panel">
+    <div class="panel-head"><h2>认领线下授权码</h2></div>
+    <form id="form-claim" class="key-claim-form">
+      <input name="key" aria-label="线下授权码" placeholder="CMK-XXXX-XXXX-XXXX-XXXX" autocomplete="off" required />
+      <button class="ghost" type="submit">认领到我的账号</button>
+    </form>
+    <p class="hint">仅用于商务或线下渠道另行交付的授权码；门户申请批准的 KEY 已自动归属，无需重复认领。</p>
+    <p id="claim-msg" class="ok" hidden></p>
   </section>
     </div>
   </div>
@@ -737,6 +755,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=37"></script>
+<script src="/portal/portal.js?v=38"></script>
 </body>
 </html>

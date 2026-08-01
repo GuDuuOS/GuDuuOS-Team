@@ -400,6 +400,68 @@ label input { margin-top: 5px; }
 .stat b.plain { color: var(--ink); }
 .stat-note { display: block; margin-top: 3px; color: var(--muted); font-size: 11.5px; }
 
+/* —— OEM 我的 KEY：授权、绑定、运行三类状态独立展示 —— */
+.key-summary-head { align-items: flex-start; gap: 18px; }
+.key-summary-head .hint, .key-list-head .hint { margin-top: 3px; }
+.key-summary-stats { margin: 0; }
+.key-card-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 14px;
+}
+.key-card {
+  min-width: 0; padding: 17px; border: 1px solid var(--line); border-radius: 13px;
+  background: var(--card);
+}
+.key-card-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  padding-bottom: 13px; border-bottom: 1px solid var(--line);
+}
+.key-card-head small { display: block; color: var(--muted); font: 10.5px/1.4 var(--mono); }
+.key-card-head b { display: block; margin-top: 3px; color: var(--ink); font: 700 17px/1.4 var(--mono); }
+.key-card-badges { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.key-card-details {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px 18px;
+  padding: 14px 0;
+}
+.key-card-detail { min-width: 0; }
+.key-card-detail small { display: block; color: var(--muted); font-size: 11px; }
+.key-card-detail b {
+  display: block; margin-top: 2px; overflow-wrap: anywhere; color: var(--ink);
+  font: 600 12.5px/1.45 var(--mono);
+}
+.key-card-detail.key-domain { grid-column: 1 / -1; }
+.key-card-detail.key-domain b { color: var(--orange); font-size: 13.5px; }
+.key-card-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding-top: 12px; border-top: 1px solid var(--line);
+}
+.key-card-foot p { max-width: 58%; color: var(--muted); font-size: 11.5px; }
+.key-card-actions { display: flex; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
+.key-empty {
+  grid-column: 1 / -1; padding: 34px 18px; border: 1px dashed var(--line-strong);
+  border-radius: 12px; text-align: center; color: var(--muted);
+}
+.key-empty b { display: block; color: var(--ink); font-size: 15px; }
+.key-empty p { margin: 3px 0 13px; font-size: 12px; }
+.key-claim-panel { background: var(--card); }
+.key-claim-form {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px;
+  max-width: 720px;
+}
+.key-claim-form input { min-width: 0; font-family: var(--mono); letter-spacing: .02em; }
+.key-claim-form .ghost { white-space: nowrap; }
+
+@media (max-width: 620px) {
+  .key-summary-head, .key-card-head, .key-card-foot { align-items: stretch; flex-direction: column; }
+  .key-summary-head .primary { align-self: flex-start; }
+  .key-card-grid { grid-template-columns: 1fr; }
+  .key-card-badges { justify-content: flex-start; }
+  .key-card-details { grid-template-columns: 1fr; }
+  .key-card-detail.key-domain { grid-column: auto; }
+  .key-card-foot p { max-width: none; }
+  .key-card-actions { justify-content: flex-start; }
+  .key-claim-form { grid-template-columns: 1fr; }
+}
+
 /* —— 舰队总览：把大量同级数字收敛为「核心状态 → 分组详情 → 用量」三层。
  * 指标仍由 portal.js 使用真实接口数据生成；这里只改善信息层级，不隐藏任何口径。 */
 .fleet-overview { display: grid; gap: 14px; margin-bottom: 20px; }
