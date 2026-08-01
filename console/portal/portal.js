@@ -558,7 +558,8 @@
     $("#shop-key").hidden = !keyOn;
     if (keyOn) {
       $("#shop-key-desc").textContent = "附赠 " + fmtTokens(pricing.key_token_grant) + " token · 支付与部署资料统一进入授权申请";
-      $("#shop-key-btns").innerHTML = '<span class="shop-price">' + fmtYuan(pricing.key_price_cents) + "</span>" + chButtons("buykey");
+      $("#shop-key-btns").innerHTML = '<span class="shop-price">' + fmtYuan(pricing.key_price_cents) + "</span>" +
+        chButtons("buykey") + '<button class="ghost small" data-buykey-transfer="1">企业转账购买</button>';
     }
     $("#shop-topup").hidden = !topupOn;
     if (topupOn) {
@@ -643,6 +644,53 @@
     }).join("");
   }
 
+  var WITHDRAW_ST = {
+    pending: ["warning", "待审核"], approved: ["active", "已批准待打款"],
+    paid: ["active", "已打款"], rejected: ["revoked", "已驳回"],
+  };
+  function renderOemFinance(finance) {
+    var summary = finance.summary || {}, terms = finance.terms || {};
+    $("#oem-earned").textContent = fmtYuan(summary.earned_cents || 0);
+    $("#oem-income-pending").textContent = fmtYuan(summary.pending_cents || 0);
+    $("#oem-income-available").textContent = fmtYuan(summary.available_cents || 0);
+    $("#oem-withdrawn").textContent = fmtYuan(summary.withdrawn_cents || 0);
+    $("#oem-settlement-note").textContent = "直属下级完成真实支付后，价差进入待结算；T+" +
+      Number(terms.settlement_days || 0) + " 转为可提现，平台主管订单不产生收益。";
+    var termRows = [];
+    if (Number(terms.key_retail_cents) > 0) {
+      termRows.push('<div class="reseller-term"><b>下级 OEM 授权兑换码</b>客户价 ' +
+        fmtYuan(terms.key_retail_cents) + " · 结算价 " + fmtYuan(terms.key_settlement_cents) +
+        " · 每单收益 " + fmtYuan(terms.key_margin_cents) + "</div>");
+    }
+    (terms.topup_packs || []).forEach(function (item) {
+      termRows.push('<div class="reseller-term"><b>' + fmtTokens(item.tokens) +
+        " Token</b>客户价 " + fmtYuan(item.retail_cents) + " · 结算价 " +
+        fmtYuan(item.settlement_cents) + " · 每单收益 " + fmtYuan(item.margin_cents) + "</div>");
+    });
+    $("#oem-reseller-terms").innerHTML = termRows.join("") ||
+      '<p class="empty">平台尚未配置可销售的授权或充值套餐。</p>';
+    var withdrawInput = $("#form-oem-withdraw").amount_yuan;
+    withdrawInput.min = String((Number(terms.withdraw_min_cents) || 100) / 100);
+    withdrawInput.placeholder = "最低 " + fmtYuan(terms.withdraw_min_cents || 100);
+    $("#oem-income-ledger tbody").innerHTML = (finance.ledger || []).map(function (item) {
+      var sale = String(item.kind || "").indexOf("sale_") === 0;
+      var source = sale ? (item.kind === "sale_key" ? "授权兑换码" : "Token 充值") :
+        (item.kind === "withdrawal" ? "申请提现" : (item.kind === "withdrawal_return" ? "提现退回" : item.kind));
+      var valueClass = Number(item.delta_cents) >= 0 ? "income-positive" : "income-negative";
+      return '<tr><td class="zh"><b>' + esc(source) + '</b><div class="hint">' + esc(item.note || "") +
+        '</div></td><td>' + (sale ? fmtYuan(item.gross_cents) : "—") + '</td><td>' +
+        (sale ? fmtYuan(item.settlement_cents) : "—") + '</td><td class="' + valueClass + '">' +
+        (Number(item.delta_cents) >= 0 ? "+" : "") + fmtYuan(item.delta_cents) + '</td><td>' +
+        (sale ? fmtTime(item.available_ts) : fmtTime(item.created_ts)) + "</td></tr>";
+    }).join("") || '<tr><td colspan="5" class="empty">暂无收益流水</td></tr>';
+    $("#oem-withdrawals tbody").innerHTML = (finance.withdrawals || []).map(function (item) {
+      var st = WITHDRAW_ST[item.status] || ["idle", item.status];
+      return '<tr><td>' + esc(item.withdrawal_no) + '</td><td>' + fmtYuan(item.amount_cents) +
+        '</td><td class="zh">' + esc(item.payout_masked || "—") + '</td><td class="zh"><span class="badge ' +
+        st[0] + '">' + esc(st[1]) + '</span></td><td>' + fmtTime(item.created_ts) + "</td></tr>";
+    }).join("") || '<tr><td colspan="5" class="empty">暂无提现记录</td></tr>';
+  }
+
   var paymentConfigs = {};
   var manualTransferAi = {};
   var manualTransferOems = [];
@@ -664,7 +712,10 @@
       '</b><span class="stat-note">已交付 ' + fmtTokens(f.topup_tokens) + ' Token</span></div>' +
       '<div class="stat"><small>企业转账实收</small><b class="manual-money">' +
       fmtYuan(f.manual_transfer_revenue_cents) + '</b><span class="stat-note">' +
-      (f.manual_transfer_count || 0) + ' 笔人工确认单</span></div>';
+      (f.manual_transfer_count || 0) + ' 笔人工确认单</span></div>' +
+      '<div class="stat"><small>OEM 待结算 / 可提现</small><b>' +
+      fmtYuan(f.oem_pending_settlement_cents) + ' / ' + fmtYuan(f.oem_available_cents) +
+      '</b><span class="stat-note">' + (f.withdraw_pending_count || 0) + ' 笔提现待处理</span></div>';
 
     $("#admin-finance-breakdown").innerHTML =
       '<div class="finance-row"><span>授权码买断</span><b>' + fmtYuan(f.key_revenue_cents) +
@@ -860,6 +911,65 @@
     });
   }
 
+  $("#form-topup-transfer").addEventListener("submit", function (event) {
+    event.preventDefault();
+    var form = event.target;
+    var pickInst = document.querySelector('.pick[data-pick="inst"].on');
+    var pickPack = document.querySelector('.pick[data-pick="pack"].on');
+    var file = form.voucher.files && form.voucher.files[0];
+    if (!pickInst || !pickPack) return toast("请先选择充值实例和套餐", true);
+    if (!file) return toast("企业转账必须上传银行回单", true);
+    if (["image/jpeg", "image/png", "image/webp"].indexOf(file.type) < 0 || file.size > 8 * 1024 * 1024) {
+      return toast("凭证必须是 8MB 以内的 JPG、PNG 或 WebP 图片", true);
+    }
+    var button = form.querySelector('button[type="submit"]');
+    button.disabled = true; button.textContent = "正在提交…";
+    fileAsBase64(file).then(function (encoded) {
+      return api("/nexus/oem/topup_checkout", { body: {
+        payment_method: "corporate_transfer",
+        instance_id: Number(pickInst.dataset.val),
+        pack_index: Number(pickPack.dataset.val),
+        transfer_details: {
+          payer_company: form.payer_company.value.trim(),
+          transaction_id: form.transaction_id.value.trim(),
+        },
+        image_base64: encoded,
+        content_type: file.type,
+        filename: file.name,
+      } });
+    }).then(function (result) {
+      toast("转账充值已提交，超管核对到账后自动充值");
+      form.reset();
+      if (result.order) renderOrders([result.order]);
+      loadOem();
+    }).catch(function (error) { toast(error.message, true); }).then(function () {
+      button.disabled = false; button.textContent = "提交转账充值";
+    });
+  });
+
+  $("#form-oem-withdraw").addEventListener("submit", function (event) {
+    event.preventDefault();
+    var form = event.target;
+    var amount = Math.round(Number(form.amount_yuan.value || 0) * 100);
+    var button = form.querySelector('button[type="submit"]');
+    button.disabled = true; button.textContent = "正在提交…";
+    api("/nexus/oem/withdrawals", { body: {
+      amount_cents: amount,
+      payout: {
+        method: form.method.value,
+        account_name: form.account_name.value.trim(),
+        account_no: form.account_no.value.trim(),
+        bank_name: form.bank_name.value.trim(),
+      },
+      note: form.note.value.trim(),
+    } }).then(function () {
+      toast("提现申请已提交，平台审核后线下打款");
+      form.reset(); loadOem();
+    }).catch(function (error) { toast(error.message, true); }).then(function () {
+      button.disabled = false; button.textContent = "提交提现申请";
+    });
+  });
+
   document.addEventListener("click", function (event) {
     var openButton = event.target.closest && event.target.closest("[data-manual-transfer]");
     if (openButton) openTransferModal();
@@ -1018,6 +1128,7 @@
     Promise.all([
       api("/nexus/oem/me"),
       api("/nexus/oem/products"),
+      api("/nexus/oem/finance"),
     ]).then(function (base) {
       // 先读 /me 中的服务端开关；关闭时绝不请求层级目录接口，但 /me 仍会
       // 返回不含统计的分享链接，保证二维码和邀请能力可用。
@@ -1026,7 +1137,7 @@
         ? api("/nexus/oem/network")
         : Promise.resolve({});
       return networkRequest.then(function (network) {
-        return [base[0], base[1], network];
+        return [base[0], base[1], base[2], network];
       });
     }).then(function (rs) {
       var r = rs[0];
@@ -1036,11 +1147,12 @@
       var keys = r.keys || [];
       oemInstances = (r.instances || []).slice();
       renderShop(rs[1], r.instances);
+      renderOemFinance(rs[2]);
       renderOrders(orders);
       renderAnnouncements(announcements);
       renderReferral(r.referral || {});
       if (oemNetworkVisible) {
-        renderNetworkDirectory(rs[2]);
+        renderNetworkDirectory(rs[3]);
       } else {
         clearOemNetworkData();
       }
@@ -1536,6 +1648,8 @@
       api("/nexus/admin/finance_summary"),
       api("/nexus/admin/payment_configs"),
       api("/nexus/admin/features"),
+      api("/nexus/admin/withdrawals"),
+      api("/nexus/admin/oem_commercial_terms"),
     ]).then(function (rs) {
       var insts = rs[0].instances, keys = rs[1].keys, oems = rs[2].oems;
       var reqs = rs[3].requests || [], requestCounts = rs[3].counts || {};
@@ -1544,6 +1658,8 @@
       var finance = rs[7] || {};
       var configs = rs[8].payment_configs || [];
       var featureFlags = rs[9].features || {};
+      var withdrawals = rs[10].withdrawals || [];
+      var commercialTerms = rs[11].terms || [];
       adminInstances = insts.slice();
       manualTransferOems = oems.slice();
       renderFinanceOverview(finance, configs);
@@ -1574,10 +1690,13 @@
       var pf = $("#form-pricing");
       if (document.activeElement === null || !pf.contains(document.activeElement)) {
         pf.key_yuan.value = (pricing.key_price_cents / 100) || 0;
+        pf.key_oem_yuan.value = (pricing.key_oem_cost_cents / 100) || 0;
         pf.key_grant.value = pricing.key_token_grant;
+        pf.settlement_days.value = pricing.settlement_days;
+        pf.withdraw_min_yuan.value = (pricing.withdraw_min_cents / 100) || 1;
         if (document.activeElement !== $("#pricing-packs")) {
           $("#pricing-packs").value = pricing.topup_packs.map(function (p) {
-            return (p.cents / 100) + ":" + p.tokens;
+            return (p.cents / 100) + ":" + (p.oem_cost_cents / 100) + ":" + p.tokens;
           }).join("\n");
         }
       }
@@ -1592,14 +1711,48 @@
         var what = o.kind === "key" ? "授权码" : (o.kind === "topup" ? "充值 " + fmtTokens(o.tokens) : esc(o.purpose || "企业转账收款"));
         var payer = manual && o.details && o.details.payer_company ? '<div class="hint">付款：' + esc(o.details.payer_company) + "</div>" : "";
         var customer = o.oem_id ? (oemEmailById[o.oem_id] || "#" + o.oem_id) : "未关联";
-        var voucher = manual
+        var voucher = o.transfer_id
           ? '<button class="ghost small" data-transfer-voucher="' + o.transfer_id + '">查看图片</button>'
           : "—";
+        if (!manual && o.channel === "corporate_transfer" && o.status === "pending") {
+          voucher += ' <button class="primary small" data-confirm-topup-transfer="' + esc(o.order_no) + '">确认到账</button>' +
+            ' <button class="ghost small" data-reject-topup-transfer="' + esc(o.order_no) + '">拒绝</button>';
+        }
         return '<tr class="' + (manual ? "manual-transfer-row" : "") + '"><td>' + esc(o.order_no) + "</td><td>" + esc(customer) + "</td>" +
           '<td class="zh">' + what + payer + '</td><td class="' + (manual ? "manual-money" : "") + '">' + fmtYuan(o.amount_cents) + '</td><td class="zh">' + (CH_ZH[o.channel] || o.channel) + "</td>" +
           '<td class="zh"><span class="badge ' + (manual && o.status === "paid" ? "manual" : st[0]) + '">' +
           (manual && o.status === "paid" ? "人工确认到账" : st[1]) + "</span></td><td class=\"zh\">" + voucher + "</td><td>" + fmtTime(o.created_ts) + "</td></tr>";
       }).join("");
+
+      $("#admin-withdrawals tbody").innerHTML = withdrawals.map(function (item) {
+        var st = WITHDRAW_ST[item.status] || ["idle", item.status];
+        var payout = item.payout || {};
+        var account = esc(payout.account_name || "—") + '<div class="hint">' +
+          esc(payout.method || item.payout_method || "") + " · " + esc(payout.account_no || "—") +
+          (payout.bank_name ? " · " + esc(payout.bank_name) : "") + "</div>";
+        var actions = item.status === "pending"
+          ? '<button class="primary small" data-withdraw-approve="' + item.id + '">批准</button> <button class="ghost small" data-withdraw-reject="' + item.id + '">驳回</button>'
+          : (item.status === "approved"
+            ? '<button class="primary small" data-withdraw-paid="' + item.id + '">确认已打款</button> <button class="ghost small" data-withdraw-reject="' + item.id + '">驳回</button>'
+            : esc(item.admin_note || "—"));
+        return '<tr><td>' + esc(item.withdrawal_no) + '</td><td class="zh"><b>' + esc(item.company || ("OEM #" + item.oem_id)) +
+          '</b><div class="hint">' + esc(item.oem_email || "") + '</div></td><td>' + fmtYuan(item.amount_cents) +
+          '</td><td class="zh">' + account + '</td><td class="zh"><span class="badge ' + st[0] + '">' + st[1] +
+          '</span></td><td>' + fmtTime(item.created_ts) + '</td><td class="zh">' + actions + '</td></tr>';
+      }).join("") || '<tr><td colspan="7" class="empty">暂无提现申请</td></tr>';
+
+      // 每个 OEM 可有自己的结算成本；零售价仍是平台统一价格，避免下级客户
+      // 因 OEM 不同看到不同售价。表格输入只在点保存时提交，不做自动保存。
+      $("#admin-oem-commercial-terms tbody").innerHTML = commercialTerms.map(function (item) {
+        var rule = item.custom ? '<span class="badge active">专属</span>' : '<span class="badge idle">跟随默认</span>';
+        var rate = item.topup_cost_bps === null || item.topup_cost_bps === undefined
+          ? "" : Number(item.topup_cost_bps) / 100;
+        return '<tr data-commercial-row="' + item.oem_id + '"><td class="zh"><b>' + esc(item.name || "未填写企业名") +
+          '</b><div class="hint">' + esc(item.email) + '</div></td><td><input data-commercial-key type="number" min="0" step="0.01" value="' +
+          (Number(item.key_cost_cents) / 100) + '" style="width:120px"></td><td><input data-commercial-rate type="number" min="0" max="100" step="0.01" value="' +
+          rate + '" placeholder="如 70" style="width:100px">%</td><td class="zh">' + rule + '</td><td class="zh"><button class="primary small" data-commercial-save="' +
+          item.oem_id + '">保存专属价</button> <button class="ghost small" data-commercial-default="' + item.oem_id + '">恢复默认</button></td></tr>';
+      }).join("") || '<tr><td colspan="5" class="empty">暂无 OEM 客户</td></tr>';
 
       $all("[data-request-status]").forEach(function (button) {
         var status = button.dataset.requestStatus;
@@ -2187,7 +2340,7 @@
       .catch(function (err) { toast(err.message, true); });
   });
 
-  // 定价保存：packs 文本每行 "元:token"，空行忽略；格式错就地报错不提交
+  // 定价保存：每行“客户价:OEM结算价:token”，金额统一换算为整数分。
   $("#form-pricing").addEventListener("submit", function (e) {
     e.preventDefault();
     var f = e.target;
@@ -2197,16 +2350,19 @@
       var ln = lines[i].trim();
       if (!ln) continue;
       var m = ln.split(":");
-      var yuan = Number(m[0]), tokens = Number(m[1]);
-      if (m.length !== 2 || !(yuan > 0) || !(tokens > 0)) {
-        return toast("充值包第 " + (i + 1) + " 行格式应为 元:token数（如 99:50000000）", true);
+      var yuan = Number(m[0]), oemYuan = Number(m[1]), tokens = Number(m[2]);
+      if (m.length !== 3 || !(yuan > 0) || !(oemYuan >= 0) || oemYuan > yuan || !(tokens > 0)) {
+        return toast("充值包第 " + (i + 1) + " 行格式应为 客户价:OEM结算价:token数（如 99:70:50000000）", true);
       }
-      packs.push({ cents: Math.round(yuan * 100), tokens: tokens });
+      packs.push({ cents: Math.round(yuan * 100), oem_cost_cents: Math.round(oemYuan * 100), tokens: tokens });
     }
     api("/nexus/admin/pricing", {
       body: {
         key_price_cents: Math.round(Number(f.key_yuan.value || 0) * 100),
+        key_oem_cost_cents: Math.round(Number(f.key_oem_yuan.value || 0) * 100),
         key_token_grant: Number(f.key_grant.value || 0),
+        settlement_days: Number(f.settlement_days.value || 0),
+        withdraw_min_cents: Math.round(Number(f.withdraw_min_yuan.value || 0) * 100),
         topup_packs: packs,
       },
     }).then(function () { toast("定价已保存，即刻生效"); loadAdmin(); })
@@ -2233,6 +2389,25 @@
   // 表格行内操作（事件代理：详情 / 吊销 / 充值）
   document.addEventListener("click", function (e) {
     var t = e.target;
+    if (t.dataset && (t.dataset.commercialSave || t.dataset.commercialDefault)) {
+      var commercialOemId = Number(t.dataset.commercialSave || t.dataset.commercialDefault);
+      var useDefaultTerms = !!t.dataset.commercialDefault;
+      var commercialRow = document.querySelector('[data-commercial-row="' + commercialOemId + '"]');
+      var commercialBody = { oem_id: commercialOemId, use_default: useDefaultTerms };
+      if (!useDefaultTerms && commercialRow) {
+        var rateInput = commercialRow.querySelector("[data-commercial-rate]").value.trim();
+        if (rateInput === "" || Number(rateInput) < 0 || Number(rateInput) > 100) {
+          toast("请填写 0% 到 100% 的 Token 结算比例", true);
+          return;
+        }
+        commercialBody.key_cost_cents = Math.round(Number(commercialRow.querySelector("[data-commercial-key]").value || 0) * 100);
+        commercialBody.topup_cost_bps = Math.round(Number(rateInput) * 100);
+      }
+      api("/nexus/admin/oem_commercial_terms", { body: commercialBody })
+        .then(function () { toast(useDefaultTerms ? "已恢复平台默认结算价" : "OEM 专属结算价已保存"); loadAdmin(); })
+        .catch(function (error) { toast(error.message, true); });
+      return;
+    }
     if (t.dataset && t.dataset.requestDetail) {
       openRequestDetail(Number(t.dataset.requestDetail));
       return;
@@ -2372,6 +2547,17 @@
       toast("请填写部署资料后创建在线支付订单");
       return;
     }
+    if (t.dataset && t.dataset.buykeyTransfer) {
+      var transferLicenseForm = $("#form-request");
+      transferLicenseForm.payment_method.value = "corporate_transfer";
+      syncLicensePaymentForm();
+      openOemPage("licenses", false);
+      setTimeout(function () {
+        transferLicenseForm.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 30);
+      toast("请填写下级 OEM 部署资料并上传企业转账凭证");
+      return;
+    }
     // 卡片选择切换（同组单选；点击可能落在卡片内部的 small 上,向上找到卡片本体）
     var pickBtn = t.closest ? t.closest(".pick[data-pick]") : null;
     if (pickBtn) {
@@ -2388,6 +2574,57 @@
         instance_id: Number(pickInst.dataset.val),
         pack_index: Number(pickPack.dataset.val),
       });
+    }
+    if (t.dataset && t.dataset.confirmTopupTransfer) {
+      var topupOrderNo = t.dataset.confirmTopupTransfer;
+      uiConfirm("确认银行已收到这笔 Token 充值款？确认后会立即给目标节点充值并记录 OEM 价差。", false, "确认到账并充值").then(function (ok) {
+        if (!ok) return;
+        api("/nexus/admin/topup_transfer_decide", { body: {
+          order_no: topupOrderNo, approve: true, note: "已核对银行真实到账",
+        } }).then(function () { toast("到账已确认，Token 已充值"); loadAdmin(); })
+          .catch(function (error) { toast(error.message, true); });
+      });
+      return;
+    }
+    if (t.dataset && t.dataset.rejectTopupTransfer) {
+      var rejectTopupOrderNo = t.dataset.rejectTopupTransfer;
+      uiPrompt("拒绝这笔 Token 转账充值的原因", "例如：未查到到账 / 金额不符").then(function (reason) {
+        if (reason === null || !reason.trim()) return toast("请填写拒绝原因", true);
+        api("/nexus/admin/topup_transfer_decide", { body: {
+          order_no: rejectTopupOrderNo, approve: false, note: reason,
+        } }).then(function () { toast("充值转账已拒绝"); loadAdmin(); })
+          .catch(function (error) { toast(error.message, true); });
+      });
+      return;
+    }
+    if (t.dataset && t.dataset.withdrawApprove) {
+      api("/nexus/admin/withdrawal_decide", { body: {
+        withdrawal_id: Number(t.dataset.withdrawApprove), action: "approve", note: "审核通过，等待线下打款",
+      } }).then(function () { toast("提现已批准，请完成线下打款"); loadAdmin(); })
+        .catch(function (error) { toast(error.message, true); });
+      return;
+    }
+    if (t.dataset && t.dataset.withdrawPaid) {
+      var paidWithdrawalId = Number(t.dataset.withdrawPaid);
+      uiPrompt("填写线下打款流水号或付款备注", "必填，用于财务对账").then(function (reference) {
+        if (reference === null || !reference.trim()) return toast("请填写打款流水号或备注", true);
+        api("/nexus/admin/withdrawal_decide", { body: {
+          withdrawal_id: paidWithdrawalId, action: "paid", note: reference,
+        } }).then(function () { toast("提现已标记为已打款"); loadAdmin(); })
+          .catch(function (error) { toast(error.message, true); });
+      });
+      return;
+    }
+    if (t.dataset && t.dataset.withdrawReject) {
+      var rejectWithdrawalId = Number(t.dataset.withdrawReject);
+      uiPrompt("填写驳回提现原因", "必填；驳回后金额自动退回可提现余额").then(function (reason) {
+        if (reason === null || !reason.trim()) return toast("请填写驳回原因", true);
+        api("/nexus/admin/withdrawal_decide", { body: {
+          withdrawal_id: rejectWithdrawalId, action: "reject", note: reason,
+        } }).then(function () { toast("提现已驳回，余额已退回"); loadAdmin(); })
+          .catch(function (error) { toast(error.message, true); });
+      });
+      return;
     }
     if (t.dataset && t.dataset.confirmTransfer) {
       var transferRequestId = Number(t.dataset.confirmTransfer);

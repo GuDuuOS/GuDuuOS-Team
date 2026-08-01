@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
 <script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=24" />
+<link rel="stylesheet" href="/portal/portal.css?v=25" />
 </head>
 <body>
 <!--
@@ -217,10 +217,10 @@
     <div class="admin-page" data-oem-view="commerce" hidden>
 
   <section class="panel" id="panel-shop">
-    <div class="panel-head"><h2>购买与充值</h2></div>
+    <div class="panel-head"><div><h2>购买与充值</h2><p class="hint">款项统一支付到 GuDuu 平台；直属上级 OEM 按结算价获得价差。</p></div></div>
     <div id="shop-key" class="shop-row" hidden>
       <div class="shop-info">
-        <b>GuDuu OS 授权码（买断 · 永久含升级）</b>
+        <b>下级 OEM 授权兑换码（买断 · 永久含升级）</b>
         <small id="shop-key-desc"></small>
       </div>
       <div class="shop-actions" id="shop-key-btns"></div>
@@ -236,12 +236,58 @@
         <div class="pick-label">选择套餐</div>
         <div class="pick-group" id="topup-pack"></div>
         <div class="shop-actions" id="shop-topup-btns" style="margin-top:10px"></div>
+        <form id="form-topup-transfer" class="topup-transfer-form">
+          <b>企业转账充值</b>
+          <p class="hint">选择上方节点和套餐，上传真实银行回单；超管确认到账后自动充值。</p>
+          <div class="inline-form">
+            <label>付款企业<input name="payer_company" required maxlength="200" /></label>
+            <label>银行流水号<input name="transaction_id" maxlength="200" /></label>
+            <label>转账凭证<input name="voucher" type="file" accept="image/jpeg,image/png,image/webp" required /></label>
+            <button class="ghost" type="submit">提交转账充值</button>
+          </div>
+        </form>
       </div>
     </div>
     <p id="shop-none" class="empty" hidden>在线支付渠道暂未开放；仍可在下方选择企业转账或合同/免费授权审批。</p>
     <div id="pay-pending" class="issued" hidden>
       <b>订单已创建：</b><span id="pay-pending-msg"></span>
       <div style="margin-top:8px"><button id="btn-mock-pay" class="primary" hidden>模拟支付成功（开发环境）</button></div>
+    </div>
+  </section>
+
+  <section class="panel oem-income-panel" id="panel-oem-income">
+    <div class="panel-head">
+      <div><h2>销售收益与提现</h2><p class="hint" id="oem-settlement-note">直属下级完成支付后，价差进入待结算收益。</p></div>
+    </div>
+    <div class="stats oem-income-stats">
+      <div class="stat"><small>累计销售收益</small><b id="oem-earned">¥0</b></div>
+      <div class="stat"><small>待结算</small><b class="plain" id="oem-income-pending">¥0</b></div>
+      <div class="stat"><small>可提现</small><b id="oem-income-available">¥0</b></div>
+      <div class="stat"><small>累计申请提现</small><b class="plain" id="oem-withdrawn">¥0</b></div>
+    </div>
+    <div id="oem-reseller-terms" class="reseller-terms"></div>
+    <form id="form-oem-withdraw" class="withdraw-form">
+      <h3>申请提现</h3>
+      <div class="inline-form">
+        <label>提现金额（元）<input name="amount_yuan" type="number" min="1" step="0.01" required /></label>
+        <label>收款方式<select name="method"><option value="bank">银行卡</option><option value="alipay">支付宝</option><option value="wechat">微信</option><option value="paypal">PayPal</option></select></label>
+        <label>收款人 / 企业<input name="account_name" maxlength="120" required /></label>
+        <label>收款账号<input name="account_no" maxlength="255" autocomplete="off" required /></label>
+        <label>开户行<input name="bank_name" maxlength="160" placeholder="银行卡必填" /></label>
+        <label>备注<input name="note" maxlength="500" /></label>
+        <button class="primary" type="submit">提交提现申请</button>
+      </div>
+      <p class="hint">收款账户加密保存；第一阶段由平台人工审核并线下打款。</p>
+    </form>
+    <div class="income-history-grid">
+      <div>
+        <h3>收益流水</h3>
+        <div class="table-scroll"><table class="tbl" id="oem-income-ledger"><thead><tr><th>来源</th><th>客户实付</th><th>结算价</th><th>我的收益</th><th>可提现时间</th></tr></thead><tbody></tbody></table></div>
+      </div>
+      <div>
+        <h3>提现记录</h3>
+        <div class="table-scroll"><table class="tbl" id="oem-withdrawals"><thead><tr><th>单号</th><th>金额</th><th>账户</th><th>状态</th><th>时间</th></tr></thead><tbody></tbody></table></div>
+      </div>
     </div>
   </section>
 
@@ -502,13 +548,23 @@
         <div class="panel-head"><h2>定价设置（在线购买）</h2></div>
         <form id="form-pricing" class="inline-form">
           <label style="margin:0">授权码价格（元，0=不开放在线购买）<input name="key_yuan" type="number" min="0" step="0.01" style="width:150px" /></label>
+          <label style="margin:0">授权 OEM 结算价（元）<input name="key_oem_yuan" type="number" min="0" step="0.01" style="width:150px" /></label>
           <label style="margin:0">附赠 Token<input name="key_grant" type="number" min="0" style="width:150px" /></label>
+          <label style="margin:0">结算等待（天）<input name="settlement_days" type="number" min="0" max="90" style="width:110px" /></label>
+          <label style="margin:0">最低提现（元）<input name="withdraw_min_yuan" type="number" min="1" step="0.01" style="width:130px" /></label>
           <button class="primary">保存</button>
         </form>
-        <label>充值包（每行一档：<code>元:token数</code>，如 <code>99:50000000</code>）
+        <label>充值包（每行：<code>客户价:OEM结算价:token数</code>，如 <code>99:70:50000000</code>）
           <textarea id="pricing-packs" rows="3" style="width:100%;font-family:var(--mono);background:var(--input-bg);color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:9px 12px"></textarea>
         </label>
         <p class="hint">保存后立即生效；真钱支付按钮尚未开放，国内与海外渠道的凭据状态请在舰队总览查看。</p>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><h2>OEM 专属结算价</h2><p class="hint">客户零售价保持统一；这里只调整指定 OEM 的平台结算成本，改价仅影响之后创建的新订单。</p></div></div>
+        <div class="table-scroll"><table class="tbl" id="admin-oem-commercial-terms">
+          <thead><tr><th>OEM 企业</th><th>授权结算价（元）</th><th>Token 结算比例</th><th>当前规则</th><th>操作</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
       </section>
       <section class="panel" id="panel-admin-orders" hidden>
         <div class="panel-head"><h2>订单</h2></div>
@@ -516,6 +572,10 @@
           <thead><tr><th>订单号</th><th>客户</th><th>内容</th><th>金额</th><th>渠道</th><th>状态</th><th>凭证</th><th>时间</th></tr></thead>
           <tbody></tbody>
         </table>
+      </section>
+      <section class="panel" id="panel-admin-withdrawals">
+        <div class="panel-head"><div><h2>OEM 提现审核</h2><p class="hint">批准后线下打款，填写银行流水号再确认“已打款”；驳回会自动退回可提现余额。</p></div></div>
+        <div class="table-scroll"><table class="tbl" id="admin-withdrawals"><thead><tr><th>提现单</th><th>企业</th><th>金额</th><th>收款账户</th><th>状态</th><th>申请时间</th><th>操作</th></tr></thead><tbody></tbody></table></div>
       </section>
     </div>
   </div>
@@ -677,6 +737,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=36"></script>
+<script src="/portal/portal.js?v=37"></script>
 </body>
 </html>

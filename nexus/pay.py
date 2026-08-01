@@ -36,7 +36,9 @@ from nexus.db import (
     NexusLicensePayment,
     NexusManualTransfer,
     NexusOrder,
+    NexusOrderCommercial,
     NexusSetting,
+    NexusTopupPayment,
 )
 from nexus.fleet import FleetError
 
@@ -46,8 +48,13 @@ _PRICING_KEY = "pricing"
 # 默认定价：KEY 未定价(0=门户不开放购买,引导走申请通道)；充值包为空
 _PRICING_DEFAULT: Dict[str, Any] = {
     "key_price_cents": 0,        # 授权码买断价(分)。0=暂不开放在线购买
+    # OEM 结算价缺省随零售价，升级旧配置后不会凭空产生历史外的新收益。
+    "key_oem_cost_cents": -1,
     "key_token_grant": 100_000_000,  # 在线购买的 KEY 附赠 token
-    "topup_packs": [],           # 充值包列表：[{"cents": 9900, "tokens": 100000000}, ...]
+    # 充值包：客户价、OEM 结算价、Token 数。
+    "topup_packs": [],
+    "settlement_days": 7,
+    "withdraw_min_cents": 10_000,
 }
 
 
@@ -62,17 +69,68 @@ def get_pricing(s) -> Dict[str, Any]:
             data = {}
     out = dict(_PRICING_DEFAULT)
     out.update({k: data[k] for k in _PRICING_DEFAULT if k in data})
+    # 旧生产配置没有结算价：安全解释为结算价=零售价（零价差），只有超管明确
+    # 设置更低成本后才开始产生 OEM 收益。
+    retail = max(0, int(out.get("key_price_cents") or 0))
+    try:
+        key_cost = int(out.get("key_oem_cost_cents", -1))
+    except (TypeError, ValueError):
+        key_cost = -1
+    out["key_price_cents"] = retail
+    out["key_oem_cost_cents"] = retail if key_cost < 0 or key_cost > retail else key_cost
+    try:
+        out["settlement_days"] = max(0, min(int(out["settlement_days"]), 90))
+    except (TypeError, ValueError):
+        out["settlement_days"] = 7
+    try:
+        out["withdraw_min_cents"] = max(100, int(out["withdraw_min_cents"]))
+    except (TypeError, ValueError):
+        out["withdraw_min_cents"] = 10_000
+    clean_packs: List[Dict[str, int]] = []
+    packs = out.get("topup_packs")
+    if isinstance(packs, list):
+        for item in packs[:10]:
+            if not isinstance(item, dict):
+                continue
+            try:
+                cents = int(item.get("cents") or 0)
+                tokens = int(item.get("tokens") or 0)
+                cost = int(item.get("oem_cost_cents", cents))
+            except (TypeError, ValueError):
+                continue
+            if cents > 0 and tokens > 0:
+                clean_packs.append(
+                    {
+                        "cents": cents,
+                        "oem_cost_cents": (
+                            cost if 0 <= cost <= cents else cents
+                        ),
+                        "tokens": tokens,
+                    }
+                )
+    out["topup_packs"] = clean_packs
     return out
 
 
 def set_pricing(s, data: Dict[str, Any]) -> Dict[str, Any]:
     """超管改定价。只收白名单字段并做类型/边界校验。"""
     cur = get_pricing(s)
+    old_key_retail = int(cur["key_price_cents"])
+    old_key_cost = int(cur["key_oem_cost_cents"])
     if "key_price_cents" in data:
         v = int(data["key_price_cents"])
         if v < 0:
             raise FleetError("NEXUS_BAD_PRICE", "价格不能为负")
         cur["key_price_cents"] = v
+        if "key_oem_cost_cents" not in data and old_key_cost == old_key_retail:
+            # 旧配置只有客户价、从未设置过价差时，改零售价继续保持零价差；
+            # 防止升级后一次普通调价意外把全部销售额都记成 OEM 收益。
+            cur["key_oem_cost_cents"] = v
+    if "key_oem_cost_cents" in data:
+        v = int(data["key_oem_cost_cents"])
+        if v < 0:
+            raise FleetError("NEXUS_BAD_OEM_PRICE", "OEM 授权结算价不能为负")
+        cur["key_oem_cost_cents"] = v
     if "key_token_grant" in data:
         v = int(data["key_token_grant"])
         if v < 0:
@@ -85,10 +143,29 @@ def set_pricing(s, data: Dict[str, Any]) -> Dict[str, Any]:
         clean = []
         for p in packs:
             cents, tokens = int(p.get("cents", 0)), int(p.get("tokens", 0))
+            cost = int(p.get("oem_cost_cents", cents))
             if cents <= 0 or tokens <= 0:
                 raise FleetError("NEXUS_BAD_PACKS", "充值包金额与 token 都必须为正")
-            clean.append({"cents": cents, "tokens": tokens})
+            if cost < 0 or cost > cents:
+                raise FleetError(
+                    "NEXUS_BAD_OEM_PRICE", "充值包 OEM 结算价不能高于客户售价"
+                )
+            clean.append(
+                {"cents": cents, "oem_cost_cents": cost, "tokens": tokens}
+            )
         cur["topup_packs"] = clean
+    if "settlement_days" in data:
+        days = int(data["settlement_days"])
+        if not 0 <= days <= 90:
+            raise FleetError("NEXUS_BAD_SETTLEMENT", "结算等待天数必须在 0 到 90 之间")
+        cur["settlement_days"] = days
+    if "withdraw_min_cents" in data:
+        minimum = int(data["withdraw_min_cents"])
+        if minimum < 100:
+            raise FleetError("NEXUS_BAD_WITHDRAW_AMOUNT", "最低提现金额不能低于 1 元")
+        cur["withdraw_min_cents"] = minimum
+    if int(cur["key_oem_cost_cents"]) > int(cur["key_price_cents"]):
+        raise FleetError("NEXUS_BAD_OEM_PRICE", "OEM 授权结算价不能高于客户售价")
     row = s.get(NexusSetting, _PRICING_KEY)
     if row is None:
         row = NexusSetting(k=_PRICING_KEY)
@@ -96,6 +173,20 @@ def set_pricing(s, data: Dict[str, Any]) -> Dict[str, Any]:
     row.v = json.dumps(cur, ensure_ascii=False)
     row.updated_ts = int(time.time() * 1000)
     return cur
+
+
+def public_pricing(s) -> Dict[str, Any]:
+    """返回买家购买所需价格；OEM 结算价通过收益端点单独展示。"""
+    pricing = get_pricing(s)
+    result = {
+        "key_price_cents": int(pricing["key_price_cents"]),
+        "key_token_grant": int(pricing["key_token_grant"]),
+        "topup_packs": [
+            {"cents": int(item["cents"]), "tokens": int(item["tokens"])}
+            for item in pricing["topup_packs"]
+        ],
+    }
+    return result
 
 
 # ---------- 支付渠道抽象 ----------
@@ -326,6 +417,7 @@ def create_order(
         if cents <= 0:
             raise FleetError("NEXUS_NOT_FOR_SALE", "授权码暂未开放在线购买，请走申请通道")
         tokens = int(pricing["key_token_grant"])
+        settlement_cents = int(pricing["key_oem_cost_cents"])
         instance_id = None
     elif kind == "topup":
         packs = pricing["topup_packs"]
@@ -335,6 +427,7 @@ def create_order(
             raise FleetError("NEXUS_BAD_INSTANCE", "请选择要充值的实例")
         cents = int(packs[pack_index]["cents"])
         tokens = int(packs[pack_index]["tokens"])
+        settlement_cents = int(packs[pack_index]["oem_cost_cents"])
     else:
         raise FleetError("NEXUS_BAD_KIND", "未知的订单类型")
 
@@ -349,8 +442,132 @@ def create_order(
     )
     s.add(order)
     s.flush()
+    # 商业归属必须与订单同事务冻结，不能等支付回调时再读取可能已经改变的
+    # 上下级关系或价格。
+    from nexus import oem_finance
+
+    oem_finance.snapshot_order(s, order, pricing, settlement_cents)
     pay = provider.create(order)
     return {"order": public_order(order, owner=True), "pay": pay}
+
+
+def create_topup_transfer(
+    s,
+    oem_id: int,
+    instance_id: int,
+    pack_index: int,
+    *,
+    image_data: bytes,
+    content_type: str,
+    filename: str,
+    transfer_details: Dict[str, Any],
+) -> Dict[str, Any]:
+    """创建 Token 充值企业转账订单与待核对凭证。
+
+    金额和 Token 完全来自服务端套餐；凭证确认前订单保持 ``pending``，超管核对
+    银行到账后才调用 :func:`mark_paid` 原子充值并产生 OEM 价差收益。
+    """
+    from nexus import manual_transfer, oem_finance
+
+    pricing = get_pricing(s)
+    packs = pricing["topup_packs"]
+    if not (0 <= int(pack_index) < len(packs)):
+        raise FleetError("NEXUS_BAD_PACK", "充值套餐不存在")
+    if not int(instance_id):
+        raise FleetError("NEXUS_BAD_INSTANCE", "请选择要充值的实例")
+    pack = packs[int(pack_index)]
+    details = transfer_details if isinstance(transfer_details, dict) else {}
+    payer_company = str(details.get("payer_company", "") or "").strip()
+    if not payer_company:
+        raise FleetError("NEXUS_TRANSFER_PAYER_REQUIRED", "请填写付款企业")
+    order = NexusOrder(
+        order_no=_gen_order_no(),
+        oem_id=int(oem_id),
+        kind="topup",
+        instance_id=int(instance_id),
+        channel="corporate_transfer",
+        amount_cents=int(pack["cents"]),
+        tokens=int(pack["tokens"]),
+    )
+    s.add(order)
+    s.flush()
+    oem_finance.snapshot_order(
+        s, order, pricing, int(pack["oem_cost_cents"])
+    )
+    transfer = manual_transfer.create_transfer(
+        s,
+        amount_cents=int(pack["cents"]),
+        image_data=image_data,
+        content_type=content_type,
+        filename=filename,
+        oem_id=int(oem_id),
+        purpose=f"Token 充值订单 {order.order_no}",
+        details={**details, "payer_company": payer_company},
+        confirmed=False,
+    )
+    s.add(
+        NexusTopupPayment(
+            order_id=int(order.id), transfer_id=int(transfer["transfer_id"])
+        )
+    )
+    s.flush()
+    public = _public_order_with_link(s, order, owner=True)
+    return {"order": public, "transfer": transfer}
+
+
+def decide_topup_transfer(
+    s, order_no: str, approve: bool, note: str
+) -> Dict[str, Any]:
+    """超管核对 Token 企业转账，批准时立即充值并确认销售收益。"""
+    from nexus import manual_transfer
+
+    located = s.execute(
+        select(NexusOrder).where(NexusOrder.order_no == str(order_no))
+    ).scalar_one_or_none()
+    if located is None:
+        raise FleetError("NEXUS_ORDER_NOT_FOUND", "充值订单不存在", 404)
+    order = s.execute(
+        select(NexusOrder)
+        .where(NexusOrder.id == int(located.id))
+        .with_for_update()
+    ).scalar_one()
+    link = s.execute(
+        select(NexusTopupPayment)
+        .where(NexusTopupPayment.order_id == int(order.id))
+        .with_for_update()
+    ).scalar_one_or_none()
+    if link is None or order.kind != "topup" or order.channel != "corporate_transfer":
+        raise FleetError("NEXUS_TRANSFER_NOT_FOUND", "该订单没有待核对转账", 404)
+    transfer = s.execute(
+        select(NexusManualTransfer)
+        .where(NexusManualTransfer.id == int(link.transfer_id))
+        .with_for_update()
+    ).scalar_one_or_none()
+    if transfer is None:
+        raise FleetError("NEXUS_TRANSFER_NOT_FOUND", "转账凭证不存在", 404)
+    clean_note = (note or "").strip()[:500]
+    if approve:
+        if order.status == "paid":
+            return {
+                "order": _public_order_with_link(s, order),
+                "transfer": manual_transfer.public_transfer(transfer),
+            }
+        manual_transfer.decide_submission(s, int(transfer.id), True)
+        paid = mark_paid(
+            s,
+            order.order_no,
+            transfer.transfer_no,
+            paid_amount_cents=int(transfer.amount_cents),
+        )
+    else:
+        if not clean_note:
+            raise FleetError("NEXUS_DECIDE_NOTE_REQUIRED", "拒绝转账凭证必须填写原因")
+        if order.status == "paid":
+            raise FleetError("NEXUS_ORDER_CLOSED", "充值已经完成，不能拒绝", 409)
+        manual_transfer.decide_submission(s, int(transfer.id), False)
+        order.status = "closed"
+        paid = _public_order_with_link(s, order)
+    return {"order": paid, "transfer": manual_transfer.public_transfer(transfer)}
 
 
 def create_license_checkout(
@@ -465,6 +682,10 @@ def create_license_checkout(
                 updated_ts=now,
             )
         )
+        # 企业转账没有在线订单表，因此按申请号单独冻结直属销售 OEM 与价差。
+        from nexus import oem_finance
+
+        oem_finance.snapshot_license(s, request_id, int(oem_id), pricing)
         result["transfer"] = transfer
     else:
         s.add(
@@ -597,6 +818,10 @@ def mark_paid(
     order.status = "paid"
     order.provider_txn = (provider_txn or "")[:128]
     order.paid_ts = int(time.time() * 1000)
+    # 发码/充值成功后才确认 OEM 收益；若履约抛错，HTTP 层会回滚订单和收益。
+    from nexus import oem_finance
+
+    oem_finance.record_paid_order(s, order)
     # 静态检查友好：oem_svc 引用留给将来清明文用（redeem 时统一清 order.key_plain）
     _ = oem_svc
     return _public_order_with_link(s, order, owner=True)
@@ -682,6 +907,12 @@ def decide_license_transfer(
             note=clean_note,
             metadata={"request_id": link.request_id, "key_id": request["key_id"]},
         )
+        # 企业转账与在线订单使用同一收益账本，只是来源快照按申请号保存。
+        from nexus import oem_finance
+
+        oem_finance.record_paid_license_transfer(
+            s, int(link.request_id), transfer.transfer_no
+        )
     else:
         manual_transfer.decide_submission(s, transfer.id, False)
         request = oem_svc.decide_request(
@@ -744,6 +975,12 @@ def _public_order_with_link(
         out["fulfillment_status"] = str(link.status)
         # 新流程的 KEY 只在申请安全交付窗口领取，订单接口永不返回明文。
         out.pop("key", None)
+    commercial = s.get(NexusOrderCommercial, int(order.id))
+    if commercial is not None:
+        out["seller_oem_id"] = commercial.seller_oem_id
+    topup_payment = s.get(NexusTopupPayment, int(order.id))
+    if topup_payment is not None:
+        out["transfer_id"] = int(topup_payment.transfer_id)
     return out
 
 
@@ -770,7 +1007,17 @@ def list_orders(s) -> List[Dict[str, Any]]:
         select(NexusOrder).order_by(NexusOrder.id.desc()).limit(200)
     ).scalars().all()
     combined = [_public_order_with_link(s, r) for r in rows]
-    combined.extend(manual_transfer.list_transfers(s, limit=200))
+    # Token 企业转账会同时拥有充值订单和凭证记录；运营订单表以充值订单为主行，
+    # 通过 transfer_id 查看图片，避免同一笔钱重复显示两行。
+    linked_transfer_ids = {
+        int(row.transfer_id)
+        for row in s.execute(select(NexusTopupPayment)).scalars().all()
+    }
+    combined.extend(
+        item
+        for item in manual_transfer.list_transfers(s, limit=200)
+        if int(item.get("transfer_id") or 0) not in linked_transfer_ids
+    )
     combined.sort(key=lambda item: int(item.get("created_ts") or 0), reverse=True)
     return combined[:200]
 
@@ -823,10 +1070,34 @@ def finance_summary(s) -> Dict[str, Any]:
     from nexus import manual_transfer
 
     manual = manual_transfer.summary(s)
+    # Token 企业转账既有一张充值订单，也有一张银行凭证。总营收以充值订单为准，
+    # 因此从人工转账汇总中扣除这些已关联凭证，避免同一笔钱算两次；授权企业转账
+    # 没有 NexusOrder，仍完整保留在人工转账收入中。
+    linked_transfer_ids = {
+        int(item.transfer_id)
+        for item in s.execute(select(NexusTopupPayment)).scalars().all()
+    }
+    if linked_transfer_ids:
+        linked_transfers = s.execute(
+            select(NexusManualTransfer).where(
+                NexusManualTransfer.id.in_(linked_transfer_ids)
+            )
+        ).scalars().all()
+        since_30d_ms = int(time.time() * 1000) - 30 * 24 * 3600 * 1000
+        for transfer in linked_transfers:
+            amount = int(transfer.amount_cents)
+            if transfer.status == "confirmed":
+                manual["manual_transfer_revenue_cents"] -= amount
+                manual["manual_transfer_count"] -= 1
+                if int(transfer.confirmed_ts or 0) >= since_30d_ms:
+                    manual["manual_transfer_30d_cents"] -= amount
+            elif transfer.status == "pending_review":
+                manual["manual_transfer_pending_cents"] -= amount
+                manual["manual_transfer_pending_count"] -= 1
     online_revenue = int(row[0] or 0)
     online_revenue_30d = int(row[1] or 0)
     online_paid_count = int(row[3] or 0)
-    return {
+    result = {
         "paid_revenue_cents": online_revenue
         + manual["manual_transfer_revenue_cents"],
         "paid_revenue_30d_cents": online_revenue_30d
@@ -845,6 +1116,10 @@ def finance_summary(s) -> Dict[str, Any]:
         "topup_paid_count": int(row[8] or 0),
         "topup_tokens": int(row[9] or 0),
     }
+    from nexus import oem_finance
+
+    result.update(oem_finance.platform_summary(s))
+    return result
 
 
 def get_order_for(s, oem_id: int, order_no: str) -> NexusOrder:

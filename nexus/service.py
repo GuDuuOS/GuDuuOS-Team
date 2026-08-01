@@ -58,6 +58,7 @@ from nexus import (
     geo,
     manual_transfer,
     oem as oem_svc,
+    oem_finance,
     pay,
     payment_config,
     releases,
@@ -431,14 +432,32 @@ class NexusHandler(BaseHTTPRequestHandler):
                     return
                 self._json(
                     200,
-                    {"pricing": pay.get_pricing(s), "channels": pay.channels(s)},
+                    {"pricing": pay.public_pricing(s), "channels": pay.channels(s)},
                 )
             self._with_session(_products)
+            return
+        if path == "/nexus/oem/finance":
+            def _oem_finance(s):
+                account = self._oem(s)
+                if account is None:
+                    return
+                self._json(200, oem_finance.finance_snapshot(s, account.id))
+
+            self._with_session(_oem_finance)
             return
         if path == "/nexus/admin/orders":
             if self._check_admin():
                 self._with_session(
                     lambda s: self._json(200, {"orders": pay.list_orders(s)})
+                )
+            return
+        if path == "/nexus/admin/withdrawals":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {"withdrawals": oem_finance.list_admin_withdrawals(s)},
+                    )
                 )
             return
         if path == "/nexus/admin/finance_summary":
@@ -475,6 +494,16 @@ class NexusHandler(BaseHTTPRequestHandler):
             if self._check_admin():
                 self._with_session(
                     lambda s: self._json(200, {"pricing": pay.get_pricing(s)})
+                )
+            return
+        if path == "/nexus/admin/oem_commercial_terms":
+            # 专属条款只展示给平台主管；OEM 只能在自己的收益页看到最终有效价格。
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {"terms": oem_finance.list_commercial_terms(s)},
+                    )
                 )
             return
         if path == "/nexus/admin/features":
@@ -821,6 +850,62 @@ class NexusHandler(BaseHTTPRequestHandler):
             self._with_session(_license_checkout)
             return
 
+        # Token 企业转账和授权购买一样携带图片；金额、套餐、实例归属均由服务端
+        # 重算，浏览器不能自行提交金额或 Token 数。
+        if path == "/nexus/oem/topup_checkout":
+            checkout_body = self._read_large_json(12 * 1024 * 1024)
+            if checkout_body is None:
+                return
+            method = str(checkout_body.get("payment_method", "online")).strip()
+            image_data = b""
+            content_type = ""
+            if method == "corporate_transfer":
+                try:
+                    image_data, content_type = manual_transfer.decode_image(
+                        str(checkout_body.get("image_base64", "")),
+                        str(checkout_body.get("content_type", "")),
+                    )
+                except FleetError as error:
+                    self._err(error.http_status, error.code, error.message)
+                    return
+
+            def _topup_checkout(s):
+                account = self._oem(s)
+                if account is None:
+                    return
+                instance_id = int(checkout_body.get("instance_id") or 0)
+                if not oem_svc.owns_instance(s, account.id, instance_id):
+                    raise FleetError("NEXUS_FORBIDDEN", "该实例不属于你的账号", 403)
+                if method == "corporate_transfer":
+                    details = checkout_body.get("transfer_details")
+                    result = pay.create_topup_transfer(
+                        s,
+                        account.id,
+                        instance_id,
+                        int(checkout_body.get("pack_index", -1)),
+                        image_data=image_data,
+                        content_type=content_type,
+                        filename=str(checkout_body.get("filename", "")),
+                        transfer_details=(
+                            details if isinstance(details, dict) else {}
+                        ),
+                    )
+                elif method == "online":
+                    result = pay.create_order(
+                        s,
+                        account.id,
+                        "topup",
+                        str(checkout_body.get("channel", "")),
+                        instance_id=instance_id,
+                        pack_index=int(checkout_body.get("pack_index", -1)),
+                    )
+                else:
+                    raise FleetError("NEXUS_BAD_PAYMENT_METHOD", "请选择有效的付款方式")
+                self._json(201, result)
+
+            self._with_session(_topup_checkout)
+            return
+
         body = self._read_body()
 
         if path == "/nexus/redeem":
@@ -1015,6 +1100,28 @@ class NexusHandler(BaseHTTPRequestHandler):
             return
 
         # —— Token 充值订单（KEY 必须走上方 license_checkout）——
+        if path == "/nexus/oem/withdrawals":
+            def _withdraw(s):
+                account = self._oem(s)
+                if account is None:
+                    return
+                payout = body.get("payout")
+                self._json(
+                    201,
+                    {
+                        "withdrawal": oem_finance.request_withdrawal(
+                            s,
+                            account.id,
+                            int(body.get("amount_cents") or 0),
+                            payout if isinstance(payout, dict) else {},
+                            str(body.get("note", "")),
+                        )
+                    },
+                )
+
+            self._with_session(_withdraw)
+            return
+
         if path == "/nexus/oem/order":
             def _order(s):
                 oem = self._oem(s)
@@ -1089,6 +1196,54 @@ class NexusHandler(BaseHTTPRequestHandler):
                 self._with_session(
                     lambda s: self._json(
                         200, {"pricing": pay.set_pricing(s, body)}
+                    )
+                )
+            return
+
+        if path == "/nexus/admin/oem_commercial_terms":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "terms": oem_finance.set_commercial_terms(
+                                s,
+                                int(body.get("oem_id") or 0),
+                                body,
+                            )
+                        },
+                    )
+                )
+            return
+
+        if path == "/nexus/admin/topup_transfer_decide":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        pay.decide_topup_transfer(
+                            s,
+                            str(body.get("order_no", "")),
+                            bool(body.get("approve")),
+                            str(body.get("note", "")),
+                        ),
+                    )
+                )
+            return
+
+        if path == "/nexus/admin/withdrawal_decide":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "withdrawal": oem_finance.decide_withdrawal(
+                                s,
+                                int(body.get("withdrawal_id") or 0),
+                                str(body.get("action", "")),
+                                str(body.get("note", "")),
+                            )
+                        },
                     )
                 )
             return

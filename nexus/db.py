@@ -171,6 +171,23 @@ class NexusSetting(Base):
     updated_ts = Column(BigInteger, nullable=False, default=_now_ms)
 
 
+class NexusOemCommercialTerms(Base):
+    """单个 OEM 的专属结算条款。
+
+    这里只覆盖平台的默认结算价，不改变客户看到的统一零售价。空值表示继续跟随
+    平台默认配置；Token 用万分比表达结算成本，避免每次新增充值包都要重录一遍。
+    历史订单始终读取下单时的商业快照，因此修改本表只影响之后创建的新订单。
+    """
+
+    __tablename__ = "nexus_oem_commercial_terms"
+
+    oem_id = Column(Integer, primary_key=True)
+    key_cost_cents = Column(BigInteger, nullable=True, default=None)
+    # Token 结算成本占客户售价的万分比，例如 7000 表示平台成本为零售价 70%。
+    topup_cost_bps = Column(Integer, nullable=True, default=None)
+    updated_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
 class NexusOrder(Base):
     """支付订单（模块6 P3：KEY 在线购买 / token 在线充值）。
 
@@ -265,6 +282,107 @@ class NexusLicensePayment(Base):
     currency = Column(String(8), nullable=False, default="CNY")
     created_ts = Column(BigInteger, nullable=False, default=_now_ms)
     updated_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
+class NexusOrderCommercial(Base):
+    """在线订单创建时冻结的 OEM 销售归属与价差快照。
+
+    ``buyer_oem_id`` 是实际付款并取得 KEY/Token 的 OEM；``seller_oem_id`` 只取
+    买家的直属上级，平台主管客户为空。零售价、结算价和等待天数全部在下单时冻结，
+    后续超管改价不能追溯篡改历史订单收益。
+    """
+
+    __tablename__ = "nexus_order_commercial"
+
+    order_id = Column(Integer, primary_key=True)
+    buyer_oem_id = Column(Integer, nullable=False, index=True)
+    seller_oem_id = Column(Integer, nullable=True, default=None, index=True)
+    retail_cents = Column(BigInteger, nullable=False)
+    settlement_cents = Column(BigInteger, nullable=False)
+    margin_cents = Column(BigInteger, nullable=False, default=0)
+    settlement_days = Column(Integer, nullable=False, default=7)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
+class NexusLicenseCommercial(Base):
+    """企业转账授权申请的销售归属与价差快照。
+
+    在线授权已经有 :class:`NexusOrderCommercial`；企业转账没有在线订单，因此按
+    ``request_id`` 单独冻结同一组商业字段，等超管核实到账后再进入收益账本。
+    """
+
+    __tablename__ = "nexus_license_commercial"
+
+    request_id = Column(Integer, primary_key=True)
+    buyer_oem_id = Column(Integer, nullable=False, index=True)
+    seller_oem_id = Column(Integer, nullable=True, default=None, index=True)
+    retail_cents = Column(BigInteger, nullable=False)
+    settlement_cents = Column(BigInteger, nullable=False)
+    margin_cents = Column(BigInteger, nullable=False, default=0)
+    settlement_days = Column(Integer, nullable=False, default=7)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
+class NexusTopupPayment(Base):
+    """Token 企业转账凭证与充值订单的一对一关联。"""
+
+    __tablename__ = "nexus_topup_payment"
+
+    order_id = Column(Integer, primary_key=True)
+    transfer_id = Column(Integer, nullable=False, unique=True, index=True)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
+class NexusOemIncomeLedger(Base):
+    """OEM 人民币收益的只追加账本。
+
+    正数是销售价差或驳回提现后的退回；负数是提交提现时的余额锁定。余额永远由
+    流水求和，禁止保存可被覆盖的独立 balance。``source_key`` 唯一保证支付回调、
+    企业转账确认或提现重试不会重复记账。
+    """
+
+    __tablename__ = "nexus_oem_income_ledger"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    oem_id = Column(Integer, nullable=False, index=True)
+    source_key = Column(String(80), nullable=False, unique=True, index=True)
+    # sale_key / sale_topup / withdrawal / withdrawal_return / reversal / adjust
+    kind = Column(String(32), nullable=False, index=True)
+    delta_cents = Column(BigInteger, nullable=False)
+    order_id = Column(Integer, nullable=True, default=None, index=True)
+    withdrawal_id = Column(Integer, nullable=True, default=None, index=True)
+    buyer_oem_id = Column(Integer, nullable=True, default=None, index=True)
+    gross_cents = Column(BigInteger, nullable=False, default=0)
+    settlement_cents = Column(BigInteger, nullable=False, default=0)
+    fee_cents = Column(BigInteger, nullable=False, default=0)
+    available_ts = Column(BigInteger, nullable=False, default=_now_ms, index=True)
+    note = Column(Text, nullable=False, default="")
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms, index=True)
+
+
+class NexusOemWithdrawal(Base):
+    """OEM 提现申请。
+
+    收款人、账号和开户行使用 ``NEXUS_SECRET_KEY`` 加密；OEM 列表只显示脱敏摘要，
+    仅超管处理申请时可读取完整收款资料。第一阶段由超管人工审核并线下打款。
+    """
+
+    __tablename__ = "nexus_oem_withdrawal"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    withdrawal_no = Column(String(40), nullable=False, unique=True, index=True)
+    oem_id = Column(Integer, nullable=False, index=True)
+    amount_cents = Column(BigInteger, nullable=False)
+    # pending / approved / paid / rejected
+    status = Column(String(16), nullable=False, default="pending", index=True)
+    payout_method = Column(String(24), nullable=False)
+    encrypted_payout = Column(LargeBinary, nullable=False)
+    payout_masked = Column(String(255), nullable=False, default="")
+    applicant_note = Column(Text, nullable=False, default="")
+    admin_note = Column(Text, nullable=False, default="")
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms, index=True)
+    decided_ts = Column(BigInteger, nullable=True, default=None)
+    paid_ts = Column(BigInteger, nullable=True, default=None)
 
 
 class NexusPaymentConfig(Base):
