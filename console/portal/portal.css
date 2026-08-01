@@ -611,10 +611,23 @@ label input { margin-top: 5px; }
 /* —— OEM 实例卡 —— */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
 .inst-card { border: 1px solid var(--line); border-radius: 12px; padding: 15px 17px; background: var(--card); }
+.inst-card-button {
+  width: 100%; color: var(--ink); text-align: left; font: inherit; cursor: pointer;
+  transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease;
+}
+.inst-card-button:hover, .inst-card-button:focus-visible {
+  transform: translateY(-2px); border-color: var(--orange); outline: none;
+  box-shadow: 0 10px 26px var(--bg-glow-a);
+}
 .inst-card h3 { font-size: 15px; margin-bottom: 6px; font-family: var(--mono); }
 .inst-card .row { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted); padding: 2.5px 0; }
 .inst-card .row b { color: var(--ink); font-family: var(--mono); font-weight: 500; }
 .inst-card .row b.low { color: var(--red); }
+.inst-card-open {
+  display: flex; align-items: center; justify-content: space-between; margin-top: 10px;
+  padding-top: 9px; border-top: 1px solid var(--line); color: var(--orange); font-size: 12px;
+}
+.inst-card-open::after { content: "→"; font: 15px var(--mono); }
 .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
 
 /* —— OEM 下属目录：清单与邀请区分开，让层级关系可以直接核对 —— */

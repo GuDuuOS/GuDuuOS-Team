@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置：在 CSS 生效前写好主题防刷新闪色。默认白色；仅存过 dark 偏好的用暗色 -->
 <script>try{if(localStorage.getItem("nexus_portal_theme")!=="dark")document.documentElement.dataset.theme="light";}catch(e){document.documentElement.dataset.theme="light";}</script>
-<link rel="stylesheet" href="/portal/portal.css?v=21" />
+<link rel="stylesheet" href="/portal/portal.css?v=22" />
 </head>
 <body>
 <!--
@@ -497,7 +497,7 @@
   </div>
 </div>
 
-<!-- 节点详情弹窗（超管）：使用实例列表已返回的快照，不重复请求服务端 -->
+<!-- 节点详情弹窗：超管与 OEM 共用展示口径，数据端点仍按角色分权 -->
 <div id="instance-detail-mask" class="mask" hidden>
   <div class="modal instance-detail-modal" role="dialog" aria-modal="true" aria-labelledby="instance-detail-title">
     <div class="modal-head">
@@ -512,10 +512,10 @@
     <div class="modal-sec">
       <h3>节点运营快照</h3>
       <div id="instance-detail-stats" class="instance-stat-grid"></div>
-      <p class="instance-metric-source">聊天房间、会员和业务数据来自节点最新心跳；今日消息是 Bot 当日进程计数，重启后从 0 重计；Token 数据来自 Nexus 账本。</p>
+      <p id="instance-detail-metric-source" class="instance-metric-source">聊天房间、会员和业务数据来自节点最新心跳；今日消息是 Bot 当日进程计数，重启后从 0 重计；Token 数据来自 Nexus 账本。</p>
     </div>
     <div class="instance-detail-actions">
-      <span class="hint">详情来自 Nexus 最近一次节点心跳和 OEM 档案。</span>
+      <span id="instance-detail-source" class="hint">详情来自 Nexus 最近一次节点心跳和 OEM 档案。</span>
       <button id="instance-detail-oem" class="ghost" type="button">查看企业档案</button>
     </div>
   </div>
@@ -640,6 +640,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=32"></script>
+<script src="/portal/portal.js?v=33"></script>
 </body>
 </html>

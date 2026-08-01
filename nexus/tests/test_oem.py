@@ -190,6 +190,42 @@ class OemScopingTest(unittest.TestCase):
         self.assertTrue(oem.owns_instance(self.s, self.a, a_inst[0]["id"]))
         self.assertFalse(oem.owns_instance(self.s, self.b, a_inst[0]["id"]))
 
+        # OEM 点开自己的节点时，返回与超管详情同口径的真实心跳/账本数据。
+        fleet.heartbeat(
+            self.s,
+            k1,
+            "1.2.3",
+            {
+                "users_total": 3,
+                "users_business": 1,
+                "users_admin": 1,
+                "users_ai": 1,
+                "channels_total": 2,
+                "knowledge_bases_total": 1,
+                "agents_custom_enabled": 4,
+            },
+            client_ip="34.44.38.162",
+        )
+        fleet.debit(self.s, a_inst[0]["id"], 125, "openai/test")
+        detail = oem.my_instance_detail(self.s, self.a, a_inst[0]["id"])
+        self.assertEqual(detail["domain"], "a-oem.com")
+        self.assertEqual(detail["version"], "1.2.3")
+        self.assertEqual(detail["balance_tokens"], 875)
+        self.assertEqual(detail["tokens_total"], 125)
+        self.assertEqual(detail["requests_total"], 1)
+        self.assertEqual(detail["stats"]["channels_total"], 2)
+        self.assertEqual(detail["stats"]["agents_custom_enabled"], 4)
+        self.assertEqual(detail["last_ip"], "34.44.38.0/24")
+
+        # 另一家 OEM 即使猜到实例编号也只得到 403；不存在的编号同样 403，
+        # 不给跨企业探测节点是否存在的信息差。
+        with self.assertRaises(FleetError) as other_error:
+            oem.my_instance_detail(self.s, self.b, a_inst[0]["id"])
+        self.assertEqual(other_error.exception.http_status, 403)
+        with self.assertRaises(FleetError) as missing_error:
+            oem.my_instance_detail(self.s, self.a, 99999)
+        self.assertEqual(missing_error.exception.http_status, 403)
+
     def test_list_oems_for_admin(self):
         # 超管客户列表：全量账号 + 每家认领数；绝不含密码哈希
         k1 = self._issue()

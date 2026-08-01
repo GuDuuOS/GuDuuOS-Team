@@ -27,6 +27,7 @@
         POST /nexus/admin/release_action                       灰度/全量/回撤/暂停/重试
     OEM 门户（须 OEM 会话，且所有数据按当前企业服务端隔离）：
         GET  /nexus/oem/me                                  自有实例/KEY/订单等总览
+        GET  /nexus/oem/instance                            自有单节点的完整运行快照
         GET  /nexus/oem/network                             自己的下级 OEM 与归属用户清单
 
 安全：
@@ -352,6 +353,28 @@ class NexusHandler(BaseHTTPRequestHandler):
                 self._json(200, oem_svc.network_directory(s, account.id))
 
             self._with_session(_network)
+            return
+        if path == "/nexus/oem/instance":
+            def _oem_instance(s):
+                """校验 OEM 会话与实例归属后，返回节点的真实运行快照。"""
+                account = self._oem(s)
+                if account is None:
+                    return
+                qs = parse_qs(urlsplit(self.path).query)
+                try:
+                    instance_id = int((qs.get("instance_id") or ["0"])[0])
+                except ValueError:
+                    instance_id = 0
+                self._json(
+                    200,
+                    {
+                        "instance": oem_svc.my_instance_detail(
+                            s, account.id, instance_id
+                        )
+                    },
+                )
+
+            self._with_session(_oem_instance)
             return
         if path == "/nexus/oem/share_qr":
             def _share_qr(s):

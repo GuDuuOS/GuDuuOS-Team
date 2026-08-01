@@ -700,6 +700,25 @@ def my_instances(s, oem_id: int) -> List[Dict[str, Any]]:
     return out
 
 
+def my_instance_detail(s, oem_id: int, instance_id: int) -> Dict[str, Any]:
+    """返回 OEM 自己某个节点的完整运行快照。
+
+    ``oem_id`` 来自已验证的 OEM 会话，``instance_id`` 来自页面点击。
+    函数先沿 ``实例 → KEY 认领记录 → OEM`` 校验归属，通过后才读取
+    心跳与账本数据。不属于当前企业时统一返回 403，不区分“节点不存在”
+    和“属于别人”，避免把本接口变成节点编号探测器。
+    """
+    if not owns_instance(s, int(oem_id), int(instance_id)):
+        raise FleetError(
+            "NEXUS_INSTANCE_NOT_OWNED",
+            "该实例不属于当前 OEM",
+            403,
+        )
+    from nexus.fleet import instance_snapshot
+
+    return instance_snapshot(s, int(instance_id))
+
+
 def list_oems(s) -> List[Dict[str, Any]]:
     """全部 OEM 账号 + 认领的 KEY 数（**超管**控制台"客户列表"数据源）。
 
@@ -1553,6 +1572,7 @@ __all__ = [
     "claim_key",
     "my_keys",
     "my_instances",
+    "my_instance_detail",
     "list_oems",
     "set_oem_status",
     "oem_detail",

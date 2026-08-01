@@ -582,6 +582,44 @@ def list_instances(s) -> List[Dict[str, Any]]:
     return out
 
 
+def instance_snapshot(s, instance_id: int) -> Dict[str, Any]:
+    """返回单个节点的心跳、钱包、用量和地域快照。
+
+    参数 ``instance_id`` 是 Nexus 实例编号，返回值与超管实例列表中
+    单个节点的运行字段保持同一口径。本函数只组装运行数据，不判断
+    谁可以看；OEM 归属权限必须在调用它之前由 ``oem.my_instance_detail``
+    强制校验，这样权限边界不会混进通用统计函数。
+    """
+    iid = int(instance_id)
+    row = s.get(NexusInstance, iid)
+    if row is None:
+        raise FleetError("NEXUS_INSTANCE_MISSING", "实例不存在", 404)
+    wallet = s.get(NexusWallet, iid)
+    try:
+        stats = json.loads(row.stats_json or "{}")
+    except Exception:
+        # 历史心跳如果曾写入损坏 JSON，详情页仍应展示基础运行信息。
+        stats = {}
+    all_usage = _usage_by_instance(s).get(iid, {})
+    today_usage = _usage_by_instance(s, since=_day_start_ms()).get(iid, {})
+    return {
+        "id": row.id,
+        "domain": row.domain,
+        "admin_email": row.admin_email,
+        "status": row.status,
+        "version": row.version,
+        "created_ts": row.created_ts,
+        "last_seen_ts": row.last_seen_ts,
+        "stats": stats,
+        "balance_tokens": int(wallet.balance_tokens) if wallet else 0,
+        "tokens_total": all_usage.get("tokens", 0),
+        "tokens_today": today_usage.get("tokens", 0),
+        "requests_total": all_usage.get("requests", 0),
+        "requests_today": today_usage.get("requests", 0),
+        **_geo_of(s, iid),
+    }
+
+
 # ---------- 大屏数据聚合（console/dashboard 用）----------
 
 # 在线判定阈值：心跳间隔设计为 10 分钟级，15 分钟没心跳=警告，2 小时=离线

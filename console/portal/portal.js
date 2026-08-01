@@ -996,6 +996,7 @@
       var announcements = r.announcements || [];
       var requests = r.requests || [];
       var keys = r.keys || [];
+      oemInstances = (r.instances || []).slice();
       renderShop(rs[1], r.instances);
       renderOrders(orders);
       renderAnnouncements(announcements);
@@ -1014,11 +1015,13 @@
       box.innerHTML = r.instances.map(function (i) {
         var st = hbStatus(i);
         var low = i.balance_tokens < 1e6; // 余额低于 100 万 token 标红提醒充值
-        return '<div class="inst-card"><h3>' + esc(i.domain) + " " + badge(st) + "</h3>" +
+        return '<button type="button" class="inst-card inst-card-button" data-oem-instance-detail="' + i.id +
+          '" aria-label="查看节点 ' + esc(i.domain) + ' 的详细数据"><h3>' + esc(i.domain) + " " + badge(st) + "</h3>" +
           '<div class="row"><span>Token 余额</span><b class="' + (low ? "low" : "") + '">' + fmtTokens(i.balance_tokens) + "</b></div>" +
           '<div class="row"><span>版本</span><b>' + esc(i.version || "—") + "</b></div>" +
           '<div class="row"><span>最近心跳</span><b>' + fmtTime(i.last_seen_ts) + "</b></div>" +
-          '<div class="row"><span>开通时间</span><b>' + fmtTime(i.created_ts) + "</b></div></div>";
+          '<div class="row"><span>开通时间</span><b>' + fmtTime(i.created_ts) + "</b></div>" +
+          '<span class="inst-card-open">查看详细运行数据</span></button>';
       }).join("");
       $("#oem-noinst").hidden = r.instances.length > 0;
       // KEY 表
@@ -1278,6 +1281,9 @@
   var releaseInstanceCount = 0;
   // 节点详情使用最近一次管理列表快照，打开弹窗时无需再发请求。
   var adminInstances = [];
+  // OEM 实例列表只用于点击前快速确认卡片仍属于当前页面；
+  // 真正的归属校验仍在服务端做，不信任这个前端数组。
+  var oemInstances = [];
   var releaseDraftChecked = false;
   // KEY 明文只保留在当前页面内存，刷新或关闭标签页即消失，绝不写入 Storage。
   var revealedRequestKeys = {};
@@ -1852,22 +1858,27 @@
     $("#instance-detail-mask").hidden = true;
   }
 
-  function openInstanceDetail(instanceId) {
-    var inst = adminInstances.find(function (item) { return Number(item.id) === Number(instanceId); });
-    if (!inst) return toast("节点数据已更新，请刷新后重试", true);
+  function renderInstanceDetail(inst, viewer) {
+    // 超管和 OEM 共用一套数据标签，避免同一个心跳字段在两个页面变成
+    // 不同口径。只有企业档案入口属于超管能力，OEM 查看时必须隐藏。
+    var isOem = viewer === "oem";
     var status = hbStatus(inst);
     var company = inst.company_name || "未绑定企业";
     var region = inst.region_label
       ? inst.region_label + (inst.region ? "（" + inst.region + "）" : "")
       : "未设置";
-    $("#instance-detail-title").textContent = company;
-    $("#instance-detail-summary").textContent = "节点 #" + inst.id + " · " + inst.domain;
+    $("#instance-detail-title").textContent = isOem ? inst.domain : company;
+    $("#instance-detail-summary").textContent = (isOem ? "我的节点 #" : "节点 #") + inst.id + " · " + inst.domain;
     $("#instance-detail-state").innerHTML = badge(status) +
       "<span>" + (status === "active" ? "节点心跳正常" : (status === "warning" ? "心跳已超过 15 分钟" : "节点离线或已停用")) + "</span>";
-    var rows = [
+    var rows = isOem ? [
+      ["节点编号", "#" + inst.id],
+    ] : [
       ["所属企业", company],
       ["OEM 账号", inst.oem_email || "—"],
       ["OEM 编号", inst.oem_id ? "#" + inst.oem_id : "—"],
+    ];
+    rows = rows.concat([
       ["节点域名", inst.domain],
       ["节点管理员", inst.admin_email || "—"],
       ["当前版本", inst.version || "—"],
@@ -1882,7 +1893,7 @@
       ["今日 AI 请求", String(Number(inst.requests_today) || 0)],
       ["累计 AI 请求", String(Number(inst.requests_total) || 0)],
       ["服务状态", STATUS_ZH[status] || status],
-    ];
+    ]);
     $("#instance-detail-kv").innerHTML = rows.map(function (row) {
       return "<small>" + esc(row[0]) + "</small><b>" + esc(row[1]) + "</b>";
     }).join("");
@@ -1909,9 +1920,28 @@
       );
     }
     var oemButton = $("#instance-detail-oem");
-    oemButton.hidden = !inst.oem_id;
+    oemButton.hidden = isOem || !inst.oem_id;
     oemButton.dataset.oemId = inst.oem_id ? String(inst.oem_id) : "";
+    $("#instance-detail-source").textContent = isOem
+      ? "详情只来自你自己的节点心跳和 Nexus 账本。"
+      : "详情来自 Nexus 最近一次节点心跳和 OEM 档案。";
     $("#instance-detail-mask").hidden = false;
+  }
+
+  function openInstanceDetail(instanceId) {
+    var inst = adminInstances.find(function (item) { return Number(item.id) === Number(instanceId); });
+    if (!inst) return toast("节点数据已更新，请刷新后重试", true);
+    renderInstanceDetail(inst, "admin");
+  }
+
+  function openOemInstanceDetail(instanceId) {
+    // 前端先拒绝已不在当前卡片列表的编号，只是为了更友好的错误提示；
+    // API 依然会根据会话与 KEY 归属再做一次强制校验。
+    var owned = oemInstances.some(function (item) { return Number(item.id) === Number(instanceId); });
+    if (!owned) return toast("该节点已不在你的实例列表，请刷新后重试", true);
+    api("/nexus/oem/instance?instance_id=" + encodeURIComponent(instanceId))
+      .then(function (result) { renderInstanceDetail(result.instance, "oem"); })
+      .catch(function (err) { toast(err.message, true); });
   }
 
   $("#instance-detail-close").addEventListener("click", closeInstanceDetail);
@@ -2086,6 +2116,11 @@
     }
     if (t.dataset && t.dataset.instanceDetail) {
       openInstanceDetail(Number(t.dataset.instanceDetail));
+      return;
+    }
+    var oemInstanceTarget = t.closest ? t.closest("[data-oem-instance-detail]") : null;
+    if (oemInstanceTarget) {
+      openOemInstanceDetail(Number(oemInstanceTarget.dataset.oemInstanceDetail));
       return;
     }
     if (t.dataset && t.dataset.copyLink) {
