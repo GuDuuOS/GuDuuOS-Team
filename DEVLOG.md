@@ -1,5 +1,10 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-08-03 — GuDuu OS 1.20.1 (patch)
+
+- 修复：SSH 单次恢复命令会安全读取 Nexus systemd 环境文件中的
+  PostgreSQL 地址，避免普通 SSH shell 缺少服务环境时误写本地 SQLite。
+
 ## 2026-08-03 — GuDuu OS 1.20.0 (minor)
 
 - 新增：Nexus 管理员灾难恢复改为服务器 SSH 生成的短期单次码，
