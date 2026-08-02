@@ -101,6 +101,24 @@ class TestCreateTasksAutoInvite(unittest.TestCase):
         self.assertEqual(c.invited, [])
         self.assertNotIn("已自动邀请", out)
 
+    def test_nonmember_reviewer_falls_back_to_channel_sender(self) -> None:
+        """审核人不在频道成员里时，不得再创建一张“假人审”卡片。"""
+        from cosmac.db import session_scope
+        from cosmac.db.task_repo import list_tasks
+
+        c = _Client()
+        tb = Toolbox(c)
+        _create(tb, [{
+            "title": "真人验收",
+            "executor_kind": "agent",
+            "executor_ref": "copywriter",
+            "reviewer_ref": "@missing:h",
+        }])
+        with session_scope() as session:
+            task = list_tasks(session, room_ids=["!team:h"])[0]
+            self.assertEqual(task.reviewer_ref, "@boss:h")
+            self.assertEqual(task.review_status, "waiting")
+
     def test_co_assignee_in_assignee_field_invited(self) -> None:
         """截图原样场景：AI 执行(agent) + assignee 挂真人 → 挂名真人也要被邀请。"""
         c = _Client()

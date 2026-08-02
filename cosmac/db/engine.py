@@ -192,6 +192,18 @@ def _heal_business_schema(engine: Engine) -> None:
                         "ALTER TABLE cosmac_task "
                         "ADD COLUMN executor_ref VARCHAR(255) NOT NULL DEFAULT ''"
                     ))
+                # 真人审核流程：旧任务不能被突然卡住，因此 reviewer_ref 空串 +
+                # review_status=none 保留历史语义；新任务由应用层填入真人审核人。
+                if "reviewer_ref" not in have:
+                    conn.execute(text(
+                        "ALTER TABLE cosmac_task "
+                        "ADD COLUMN reviewer_ref VARCHAR(255) NOT NULL DEFAULT ''"
+                    ))
+                if "review_status" not in have:
+                    conn.execute(text(
+                        "ALTER TABLE cosmac_task "
+                        "ADD COLUMN review_status VARCHAR(16) NOT NULL DEFAULT 'none'"
+                    ))
                 # 任务时效（快到期/逾期提醒）新增两列：截止时间 + 提醒去重位。
                 if "due_ts" not in have:
                     conn.execute(text(

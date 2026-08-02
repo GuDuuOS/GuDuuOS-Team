@@ -7,8 +7,11 @@ alwaysApply: true
 
 - 对外版本 `MAJOR.MINOR.PATCH`(标准 SemVer)。**同一次发版只升一档**:
   有破坏性/强制迁移/负责人指定代际 → MAJOR+1(其余归零);
-  否则本周打包新能力/可感知增量 → MINOR+1(PATCH 归零);
-  否则有可交付改动 → PATCH+1。
+  否则有任何用户可感知新能力 → MINOR+1(PATCH 归零，type=feature);
+  否则只有修复/纯维护 → PATCH+1(type=bugfix/maintenance)。
+- 升号前必须 `git fetch origin main --tags`，重读远程版本文件、DEVLOG、tag 和
+  `docs/RELEASE_LEDGER.md`；禁止依赖单次对话记忆。每版把 feature/bugfix/maintenance/breaking
+  之一写入发布台账。
 - **有发版才涨号**;禁止无交付硬凑;禁止日期当版本号;Synapse/SDK 版本不是产品版本。
 - **整栈一个号**:`cosmac/__init__.py __version__` = `client/package.json version`
   = distro 发行说明 = Nexus 心跳 version。

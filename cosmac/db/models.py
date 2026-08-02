@@ -298,7 +298,13 @@ class Task(Base, TimestampMixin):
     # 档3 的"建专班/派发"与档4 的"回填"据这两列把活路由到正确的执行者。
     executor_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
     executor_ref: Mapped[str] = mapped_column(String(255), nullable=False, default="")
-    # todo（待办）/ doing（进行中）/ done（已完成）；进度 0-100
+    # 真人审核人：存完整 Matrix user_id（旧数据空串=沿用无审核流程）。
+    # AI/工作流/真人执行者交付后只能提交给该用户审核，不得自审自批。
+    reviewer_ref: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # waiting=尚未提交 / pending=待审 / approved=已通过 / changes=已打回；
+    # none 仅用于兼容没有审核人的存量任务。
+    review_status: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
+    # todo（待办）/ doing（进行中）/ review（待真人审核）/ done（已通过）；进度 0-100
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="todo", index=True)
     progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # 执行结果/进展说明（P2 由 AI/工作流回填；P1 可人工备注）

@@ -208,7 +208,7 @@ function openDocs() {
 }
 function openOrg() { org.value = true; board.value = false; tasks.value = false; docs.value = false; currentRoom.value = '' }
 
-// 任务看板（AI 任务编排 P1）：主 AI 拆解的真实任务，三列 Kanban + 手动改状态。
+// 任务看板（AI 任务编排 P1）：主 AI 拆解的真实任务，四列 Kanban + 真人审核闸。
 import { getTasks, updateTask, currentUserId, type TaskItem } from '@/matrix/client'
 const taskList = ref<TaskItem[]>([])
 // 全屏中枢AI聊天「进度」面板**跟随当前这条会话**(负责人拍板:不按工作区过滤——
@@ -241,6 +241,7 @@ const { open: openMyUsage } = useMyUsage()
 const TASK_COLS = [
   { key: 'todo', label: '待办' },
   { key: 'doing', label: '进行中' },
+  { key: 'review', label: '待审核' },
   { key: 'done', label: '已完成' },
 ]
 // 刷新态:给看板右上「刷新」按钮做视觉反馈(转圈+禁用)——否则点下去看板不变化,
@@ -301,13 +302,13 @@ const scopedTasks = computed(() => {
       // 把"我下达却派给别人、且归属工作区已退出/删除"的任务弄丢了,与后端可见性口径不一致)。
       // 平台管理员额外放行:后端本来就发全量给管理员,但未加入的工作区在左栏没有入口,
       // 这里再按成员身份过滤掉就**永远看不到**(负责人报的 bug)——与"全局管理员"权限定义不符。
-      return assignedToMe(t) || dispatchedByMe(t) || isAdmin.value
+      return assignedToMe(t) || reviewedByMe(t) || dispatchedByMe(t) || isAdmin.value
     }
     // —— 以下为无归属的存量任务：旧口径兜底 ——
     const rid = t.room_id || ''
     if (!activeSpace.value || !rid) return true       // 没选工作区 / 无 room_id:各处显示
     if (spaceChildIds.value.has(rid)) return true     // 本工作区的频道任务
-    if (allSpaceChildIds.value.has(rid)) return assignedToMe(t)  // 别的工作区频道:那边看;派给我才兜底
+    if (allSpaceChildIds.value.has(rid)) return assignedToMe(t) || reviewedByMe(t)  // 执行/审核都不能隐身
     if (aiIds.has(rid)) return true                   // 自己的 AI 会话房:全局任务
     return true                                        // 私聊/孤儿房:没有归宿 → 各处显示,不丢
   })
@@ -345,6 +346,11 @@ function assignedToMe(t: TaskItem): boolean {
 function dispatchedByMe(t: TaskItem): boolean {
   const me = localPartOf(currentUserId())
   return !!me && !!t.sender && localPartOf(t.sender) === me
+}
+/** 这条任务是否由当前真人审核；口径与服务端 _is_task_reviewer 一致。 */
+function reviewedByMe(t: TaskItem): boolean {
+  const me = localPartOf(currentUserId())
+  return !!me && !!t.reviewer_ref && localPartOf(t.reviewer_ref) === me
 }
 /** 取 Matrix user_id 的 localpart：`@duxz01:example.invalid` / `duxz01` / `@duxz01` → `duxz01`（小写）。 */
 function localPartOf(s: string): string {
@@ -393,6 +399,11 @@ function execLabel(t: TaskItem): string {
   if (k === 'workflow') return '⚙ ' + ref
   return ''
 }
+/** 审核人徽章：显示精简用户名，title 中仍保留完整 Matrix ID。 */
+function reviewerLabel(t: TaskItem): string {
+  const reviewer = (t.reviewer_ref || '').trim()
+  return reviewer ? `👀 审核 ${localPartOf(reviewer)}` : ''
+}
 // 截止时间徽章：据 due_ts 与当前时间算"已逾期/今天到期/还剩N天/日期截止"，配色区分紧急度。
 // 已完成任务不显示（已经交付了、期限不再有意义）。
 function dueMeta(t: TaskItem): { text: string; cls: string } | null {
@@ -411,13 +422,25 @@ function dueMeta(t: TaskItem): { text: string; cls: string } | null {
   if (dayDiff <= 2) return { text: `还剩 ${dayDiff} 天 · ${when}`, cls: 'soon' }
   return { text: `${when} 截止`, cls: '' }
 }
-function nextStatus(s: string) { return s === 'todo' ? 'doing' : 'done' }
-function prevStatus(s: string) { return s === 'done' ? 'doing' : 'todo' }
+function nextStatus(s: string) {
+  if (s === 'todo') return 'doing'
+  if (s === 'doing') return 'review'
+  return 'done'
+}
+function prevStatus(s: string) {
+  if (s === 'done') return 'review'
+  if (s === 'review') return 'doing'
+  return 'todo'
+}
 async function moveTask(t: TaskItem, status: string) {
   const res = await updateTask(t.id, { status })
   if (res.ok) {
-    t.status = status
-    if (status === 'done') t.progress = 100
+    // 以服务端返回的最终状态为准：非审核人点“完成”会被安全
+    // 转成“待审核”，前端不能乐观地显示 done 造成短暂的假通过。
+    t.status = res.status || status
+    if (res.review_status) t.review_status = res.review_status
+    if (t.status === 'review' || t.status === 'done') t.progress = 100
+    if (res.message) toast('任务已更新', res.message)
   } else {
     // 把后端真实原因告诉用户(如账号被停用后的「登录已失效，请重新登录」),别让按钮"点了没反应"
     toast('操作失败', res.error || '请稍后重试')
@@ -2652,30 +2675,31 @@ onBeforeUnmount(() => {
                   <span class="kan-n">{{ tasksByStatus(col.key).length }}</span>
                 </div>
                 <div class="kan-cards">
-                  <div v-for="t in tasksByStatus(col.key)" :key="t.id" class="kan-card" :class="{ done: t.status === 'done' }" @click="col.key !== 'done' && moveTask(t, nextStatus(col.key))">
+                  <div v-for="t in tasksByStatus(col.key)" :key="t.id" class="kan-card" :class="{ done: t.status === 'done' }" @click="col.key !== 'done' && (col.key !== 'review' || reviewedByMe(t)) && moveTask(t, nextStatus(col.key))">
                     <!-- 任务 ID 前置:AI 在频道/对话里引用任务只说 #编号,看板不显示编号就对不上号(负责人报的) -->
                     <div class="kan-title"><span class="kan-id">#{{ t.id }}</span>{{ t.title }}</div>
                     <!-- 截止徽章可点改期(负责人报:逾期提醒让来看板改期,此前不支持) -->
                     <div v-if="dueMeta(t)" class="kan-due kan-due-btn" :class="dueMeta(t)!.cls" title="点击改期" @click.stop="openReschedule(t)"><Icon name="clock" :size="12" /> {{ dueMeta(t)!.text }} <Icon name="edit" :size="12" /></div>
-                    <div v-if="t.assignee || execLabel(t) || t.progress > 0" class="kan-foot">
+                    <div v-if="t.assignee || execLabel(t) || reviewerLabel(t) || t.progress > 0" class="kan-foot">
                       <span v-if="t.assignee" class="kan-who">
                         <span class="kan-who-ava">{{ t.assignee.slice(0, 1) }}</span>{{ t.assignee }}
                       </span>
                       <span v-if="execLabel(t)" class="kan-exec" :title="execLabel(t)">{{ execLabel(t) }}</span>
+                      <span v-if="reviewerLabel(t)" class="kan-reviewer" :title="t.reviewer_ref">{{ reviewerLabel(t) }}</span>
                       <span v-if="t.progress > 0" class="kan-prog">{{ t.progress }}%</span>
                     </div>
                     <div v-if="t.progress > 0 && t.status !== 'done'" class="kan-barwrap">
                       <div class="kan-bar" :style="{ width: t.progress + '%' }" />
                     </div>
                     <div class="kan-btns">
-                      <button v-if="col.key !== 'todo'" class="kan-btn" title="退回" @click.stop="moveTask(t, prevStatus(col.key))">←</button>
+                      <button v-if="col.key !== 'todo' && (col.key === 'doing' || reviewedByMe(t))" class="kan-btn" :title="col.key === 'review' ? '审核打回' : '退回'" @click.stop="moveTask(t, prevStatus(col.key))">←</button>
                       <button v-if="col.key !== 'done' && !t.due_ts" class="kan-btn" title="设置截止时间" @click.stop="openReschedule(t)"><Icon name="calendar" :size="14" /></button>
                       <span class="kan-spacer" />
-                      <button v-if="col.key !== 'done'" class="kan-btn primary" @click.stop="moveTask(t, nextStatus(col.key))">{{ col.key === 'todo' ? '开始 →' : '完成 ✓' }}</button>
+                      <button v-if="col.key !== 'done' && (col.key !== 'review' || reviewedByMe(t))" class="kan-btn primary" @click.stop="moveTask(t, nextStatus(col.key))">{{ col.key === 'todo' ? '开始 →' : col.key === 'doing' ? '提交审核 →' : '审核通过 ✓' }}</button>
                     </div>
                   </div>
                   <div v-if="!tasksByStatus(col.key).length" class="kan-empty">
-                    <span class="kan-empty-ic"><Icon :name="col.key === 'done' ? 'check' : col.key === 'doing' ? 'zap' : 'inbox'" :size="24" /></span>
+                    <span class="kan-empty-ic"><Icon :name="col.key === 'done' ? 'check' : col.key === 'doing' ? 'zap' : col.key === 'review' ? 'eye' : 'inbox'" :size="24" /></span>
                     暂无任务
                   </div>
                 </div>
@@ -3644,7 +3668,7 @@ onBeforeUnmount(() => {
 .proj-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--warn, #e0883a)); border-radius: 4px; transition: width .3s ease; }
 .proj-meta { font-size: var(--fs-75); color: var(--text-3); }
 .kan-tip { font-size: var(--fs-75); color: var(--text-3); margin: 0 0 18px; line-height: 1.5; background: var(--bg-soft); border-radius: 10px; padding: 10px 13px; }
-.kanban { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; align-items: start; }
+.kanban { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; align-items: start; }
 .kan-col { border: 1px solid var(--border); border-radius: 16px; padding: 6px 6px 12px; min-height: 220px; background: var(--bg-soft); }
 .kan-col-h { display: flex; align-items: center; gap: 8px; font-size: var(--fs-100); font-weight: var(--fw-bold); color: var(--text); padding: 12px 12px 12px; }
 .kan-col-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
@@ -3655,9 +3679,11 @@ onBeforeUnmount(() => {
 .kan-col::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
 .kan-todo::before { background: #9aa0a6; }
 .kan-doing::before { background: var(--accent, #c96442); }
+.kan-review::before { background: var(--warn, #d8972f); }
 .kan-done::before { background: var(--ok, #6b8e4e); }
 .kan-todo .kan-col-dot { background: #9aa0a6; }
 .kan-doing .kan-col-dot { background: var(--accent, #c96442); }
+.kan-review .kan-col-dot { background: var(--warn, #d8972f); }
 .kan-done .kan-col-dot { background: var(--ok, #6b8e4e); }
 .kan-cards { display: flex; flex-direction: column; gap: 10px; padding: 0 6px; }
 .kan-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 13px 14px; box-shadow: 0 1px 2px rgba(0,0,0,.04); transition: box-shadow .14s ease, transform .14s ease, border-color .14s ease; }
@@ -3684,6 +3710,7 @@ onBeforeUnmount(() => {
 .kan-who { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-75); color: var(--text-2); background: var(--bg-soft); border-radius: 999px; padding: 2px 10px 2px 2px; }
 .kan-who-ava { width: 19px; height: 19px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 10px; font-weight: var(--fw-bold); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .kan-exec { font-size: var(--fs-75); color: var(--text-2); background: var(--bg-soft); border-radius: 999px; padding: 2px 9px; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kan-reviewer { font-size: var(--fs-75); color: #8a5a10; background: #f7e3b8; border-radius: 999px; padding: 2px 9px; max-width: 145px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kan-prog { font-size: var(--fs-75); color: var(--accent); font-weight: var(--fw-bold); margin-left: auto; }
 .kan-barwrap { height: 5px; background: var(--bg-soft); border-radius: 3px; margin-top: 10px; overflow: hidden; }
 .kan-bar { height: 100%; background: linear-gradient(90deg, var(--accent), var(--warn, #e0883a)); border-radius: 3px; }

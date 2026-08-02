@@ -2134,7 +2134,7 @@ class CosmacBot:
                     break
             except Exception:
                 logger.debug("自动执行:配额检查失败(放行)", exc_info=True)
-            title, goal, slug = "", "", ""
+            title, goal, slug, reviewer = "", "", "", ""
             try:
                 from cosmac.db import session_scope
                 from cosmac.db.task_repo import get_task, update_task
@@ -2144,6 +2144,7 @@ class CosmacBot:
                     if not t or t.executor_kind != "agent" or t.status == "done":
                         continue
                     title, goal, slug = t.title, t.goal, t.executor_ref
+                    reviewer = str(t.reviewer_ref or "").strip()
                     update_task(s, tid, status="doing", progress=10)
             except Exception:
                 logger.exception("自动执行:读取任务 #%s 失败", tid)
@@ -2232,9 +2233,34 @@ class CosmacBot:
                     from cosmac.db.task_repo import update_task
 
                     with session_scope() as s:
-                        update_task(s, tid, status="done", progress=100, result=out[:2000])
+                        # AI 产出是“已交付”而不是“已验收”。新任务必须进入
+                        # review/pending，保留给指定真人的最后质量闸；无审核人的
+                        # 存量旧任务仍按旧口径 done，避免上线后把旧数据卡死。
+                        next_status = "review" if reviewer else "done"
+                        next_review = "pending" if reviewer else "none"
+                        update_task(
+                            s,
+                            tid,
+                            status=next_status,
+                            progress=100,
+                            result=out[:2000],
+                            review_status=next_review,
+                        )
                     done_n += 1
                     prior.append(f"《{title}》({name}):{out[:500]}")
+                    if reviewer:
+                        try:
+                            self.client.send_text(
+                                room_id,
+                                f"{reviewer} 任务#{tid}《{title}》已由 AI 交付，"
+                                "请在任务看板审核通过或打回。",
+                            )
+                        except Exception:
+                            logger.debug(
+                                "自动执行:通知审核人失败 reviewer=%s",
+                                reviewer,
+                                exc_info=True,
+                            )
                 except Exception:
                     logger.exception("自动执行:任务 #%s 回填看板失败", tid)
                 # 产出成功才消费配额(评审 #5,与对话路径同口径:失败不扣)
@@ -2272,7 +2298,8 @@ class CosmacBot:
                 tail += "⚠️ 发起人当日 AI 额度已用完,剩余任务留在看板——明日自动恢复额度后可 @ 对应 AI 执行,或升级会员提升额度。"
             self.client.send_text(
                 room_id,
-                f"📋 AI 同事本轮任务执行完毕：成功 {done_n}/{total}，看板已更新{tail}。",
+                f"📋 AI 同事本轮任务交付完毕：成功 {done_n}/{total}，"
+                f"已进入真人审核流程，看板已更新{tail}。",
             )
         except Exception:
             pass
@@ -4146,12 +4173,33 @@ class CosmacBot:
                 return True
         return False
 
+    @staticmethod
+    def _is_task_reviewer(user_id: str, task: Any) -> bool:
+        """user_id 是否为这条任务指定的真人审核人。
+
+        数据库历史上同时存在完整 Matrix ID 和纯 localpart，因此与执行人
+        判定一样忽略「@」与 homeserver 后缀。只做完整 localpart 相等，
+        不用子串匹配，避免短用户名误命中其他人。
+        """
+        reviewer = str(getattr(task, "reviewer_ref", "") or "").strip()
+        if not user_id or not reviewer:
+            return False
+
+        def _localpart(value: str) -> str:
+            """把 Matrix ID/用户名统一成小写 localpart。"""
+            return str(value or "").strip().lstrip("@").split(":")[0].lower()
+
+        return bool(_localpart(user_id)) and _localpart(user_id) == _localpart(
+            reviewer
+        )
+
     def _can_access_task(self, user_id: str, task: Any) -> bool:
         """判断 user_id 是否有权读/改这条任务。
 
         授权规则（任一成立即可）：① 平台管理员；② 任务由本人下达（task.sender）；
         ③ 任务**派给本人**（executor_ref/assignee 指向本人）——被指派者要能在看板推进自己的卡；
-        ④ 本人是任务所属房间(task.room_id)的成员。任何不确定一律拒绝（fail-closed），
+        ④ 本人是指定审核人；⑤ 本人是任务所属房间(task.room_id)的成员。
+        任何不确定一律拒绝（fail-closed），
         防止任意登录用户靠遍历 id 越权读写别人工作区的任务看板。
         """
         if not user_id:
@@ -4160,6 +4208,9 @@ class CosmacBot:
             return True
         # 被指派者可改自己的任务（与看板可见性同口径，修「看得到却点不动 403」）。
         if self._is_task_assignee(user_id, task):
+            return True
+        # 审核人必须能看到卡片并执行“通过/打回”，即使 TA 不是执行人。
+        if self._is_task_reviewer(user_id, task):
             return True
         if self._is_platform_admin(user_id):
             return True
@@ -4194,12 +4245,14 @@ class CosmacBot:
                     candidates = list_tasks_for_user(
                         s, user_id=user_id, localpart=localpart,
                     )
-                    # 可见性 = 本人下达 或 派给本人；与 _can_access_task(改状态鉴权)**共用同一口径**
+                    # 可见性 = 本人下达 / 派给本人 / 由本人审核；与
+                    # _can_access_task(改状态鉴权)**共用同一口径**
                     # (_is_task_assignee),保证「看得到 == 改得动」,不再各写一份而悄悄跑偏(线上踩过)。
                     visible = [
                         t for t in candidates
                         if (t.sender and t.sender == user_id)
                         or self._is_task_assignee(user_id, t)
+                        or self._is_task_reviewer(user_id, t)
                     ]
                 for t in visible:
                     out.append({
@@ -4208,6 +4261,10 @@ class CosmacBot:
                         "goal": t.goal, "result": t.result,
                         # 类型化执行者（档2）：看板据此显示"派给谁/什么"
                         "executor_kind": t.executor_kind, "executor_ref": t.executor_ref,
+                        # 指定真人审核人及审核流程状态；前端用它显示
+                        # “待谁审核”，不再把 AI 的交付误当成已完成。
+                        "reviewer_ref": t.reviewer_ref,
+                        "review_status": t.review_status,
                         # 所属频道：前端"删频道前提醒未完成任务"用它按房间统计
                         "room_id": t.room_id or "",
                         # 所属工作区：前端任务看板据此按工作区过滤（空=存量无归属，各处显示）
@@ -4238,7 +4295,7 @@ class CosmacBot:
         from cosmac.ai.tools import _normalize_task_status, _TASK_STATUSES
         status = _normalize_task_status(body.get("status"))
         if status is not None and status not in _TASK_STATUSES:
-            return 400, {"error": "任务状态非法（只能是 待办/进行中/已完成）"}
+            return 400, {"error": "任务状态非法（只能是 待办/进行中/待审核/已完成）"}
         # 改期(负责人报:逾期提醒让去看板改期,看板却不支持)——due 语义:
         # 字段缺失=不动;空串=清除截止;'YYYY-MM-DD[ HH:MM]'=设置(解析失败给明确 400)。
         due_kwargs: Dict[str, Any] = {}
@@ -4264,18 +4321,53 @@ class CosmacBot:
                 # 先校验归属再改，堵住「遍历 id 篡改全平台任务」。
                 if not self._can_access_task(user_id, task):
                     return 403, {"error": "无权操作此任务"}
+                reviewer = str(task.reviewer_ref or "").strip()
+                review_status: Optional[str] = None
+                message = ""
+                # 看板上执行人原来的“完成”按钮不能再跳过审核。
+                # 为了兼容旧客户端，非审核人仍发 done 时服务端不直接报错，
+                # 而是安全转成 review/pending，并把真实状态返回给 UI。
+                if status == "done" and reviewer:
+                    if self._is_task_reviewer(user_id, task):
+                        review_status = "approved"
+                        message = "真人审核已通过"
+                    else:
+                        status = "review"
+                        review_status = "pending"
+                        message = f"已提交给 {reviewer} 审核"
+                elif status == "review" and reviewer:
+                    review_status = "pending"
+                    message = f"已提交给 {reviewer} 审核"
+                elif (
+                    status == "doing"
+                    and task.status == "review"
+                    and reviewer
+                    and self._is_task_reviewer(user_id, task)
+                ):
+                    review_status = "changes"
+                    message = "已打回修改"
                 ok = update_task(
                     s, task_id,
                     status=status,
                     progress=body.get("progress"),
                     result=body.get("result"),
+                    review_status=review_status,
                     **due_kwargs,
                 )
         except Exception:
             logger.exception("更新任务失败 id=%s", task_id)
             return 500, {"error": "更新失败"}
         # 任务确实存在（上面已 get 到）：ok=False 只能是「没有可更新字段」→ 400 而非误导性 404。
-        return (200, {"ok": True}) if ok else (400, {"error": "没有可更新的内容"})
+        return (
+            (200, {
+                "ok": True,
+                "status": status,
+                "review_status": review_status,
+                "message": message,
+            })
+            if ok
+            else (400, {"error": "没有可更新的内容"})
+        )
 
     # —— 图文教程（全局图文内容，类公众号）：页面树 CRUD ——
     # 改版后是**全平台一份**(不分工作区)：所有页面存在固定的 _GLOBAL_DOC_ROOM 作用域下。

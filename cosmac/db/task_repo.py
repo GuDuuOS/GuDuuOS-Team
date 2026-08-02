@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 
 from cosmac.db.models import Task
 
-_VALID_STATUS = ("todo", "doing", "done")
+_VALID_STATUS = ("todo", "doing", "review", "done")
+_VALID_REVIEW_STATUS = ("none", "waiting", "pending", "approved", "changes")
 _VALID_KIND = ("human", "agent", "workflow", "none")  # 类型化执行者（档2）
 _MAX_TITLE = 2000
 _MAX_TASKS = 30  # 一次拆解最多落这么多子任务，防失控
@@ -34,7 +35,11 @@ def create_tasks(
     sender: str = "",
     space_id: str = "",
 ) -> List[Task]:
-    """把一批子任务落库。items: [{"title","assignee","executor_kind","executor_ref"}]。
+    """把一批子任务落库。
+
+    items 支持 ``title/assignee/executor_kind/executor_ref/reviewer_ref``。新任务只要
+    指定真人审核人，审核状态就从 waiting 开始；未指定时保留 none，仅作
+    兼容兜底，正常工具链路会在调用本函数前自动选定频道管理员/下达人。
 
     executor_kind/ref（档2）是主AI 读能力名册后填的类型化执行者；缺省/非法 kind 回落 none。
     space_id：所属工作区(Space room_id)，任务看板据它按工作区过滤；空=无归属(前端各处显示)。
@@ -51,6 +56,7 @@ def create_tasks(
         ref = str(it.get("executor_ref") or "").strip()[:255]
         if kind == "none":
             ref = ""  # 未指派就不留 ref，避免悬空引用
+        reviewer_ref = str(it.get("reviewer_ref") or "").strip()[:255]
         # 截止时间（epoch 秒，可空）：主 AI 拆任务时可给，非法/缺省 → None（无时限）。
         due_ts = None
         raw_due = it.get("due_ts")
@@ -65,6 +71,8 @@ def create_tasks(
             assignee=str(it.get("assignee") or "").strip()[:255],
             executor_kind=kind,
             executor_ref=ref,
+            reviewer_ref=reviewer_ref,
+            review_status="waiting" if reviewer_ref else "none",
             status="todo",
             progress=0,
             room_id=room_id or "",
@@ -137,6 +145,8 @@ def list_tasks_for_user(
         # 任务派给 agent 执行、assignee 挂「社媒运营+duxiuzhen01」,真人看板必须可见)。
         # 不再限定 executor_ref 为空——否则 AI 执行的共同任务被 DB 层直接漏掉。
         conds.append(func.lower(func.coalesce(Task.assignee, "")).like(like))
+        # 审核人必须在自己看板看到待审任务，否则审核闭环根本无从进入。
+        conds.append(func.lower(func.coalesce(Task.reviewer_ref, "")).like(like))
     stmt = select(Task).where(or_(*conds)).order_by(Task.id.desc()).limit(limit)
     return list(session.execute(stmt).scalars().all())
 
@@ -162,8 +172,10 @@ def update_task(
     assignee: Optional[str] = None,
     executor_kind: Optional[str] = None,
     executor_ref: Optional[str] = None,
+    reviewer_ref: Optional[str] = None,
+    review_status: Optional[str] = None,
 ) -> bool:
-    """改任务状态/进度/结果/截止时间/**执行者**（手动拖卡、AI 推进/审核回填、改派）。
+    """改任务状态/进度/结果/截止时间/执行者/真人审核状态。
 
     status 改成 done 时进度补满 100；从 done **重新打开**(改回 todo/doing)且没显式给
     进度时,把挂着的 100% 清回 0——重开的任务卡还显示 100% 会误导(负责人报的)。
@@ -174,7 +186,7 @@ def update_task(
     values: Dict[str, Any] = {}
     if status is not None and status in _VALID_STATUS:
         values["status"] = status
-        if status == "done" and progress is None:
+        if status in ("review", "done") and progress is None:
             values["progress"] = 100
         elif status != "done" and progress is None:
             # 重新打开：进度还挂 100% 的清回 0（其它进度值保留——暂停再继续别丢进度）
@@ -194,6 +206,13 @@ def update_task(
         values["executor_kind"] = _norm_kind(executor_kind)
     if executor_ref is not None:
         values["executor_ref"] = str(executor_ref).strip()[:255]
+    if reviewer_ref is not None and str(reviewer_ref).strip():
+        values["reviewer_ref"] = str(reviewer_ref).strip()[:255]
+        # 改指审核人后需要重新审，不能沿用前一位的 approved。
+        if review_status is None:
+            values["review_status"] = "waiting"
+    if review_status is not None and str(review_status) in _VALID_REVIEW_STATUS:
+        values["review_status"] = str(review_status)
     if due_ts is not _DUE_UNSET:
         parsed = None
         if due_ts is not None:
@@ -250,7 +269,8 @@ def tasks_needing_reminder(
 def rooms_all_tasks_done(session: Session) -> List[Dict[str, Any]]:
     """扫出**任务全部完成**的频道（归档催办用）。
 
-    返回 [{"room_id", "total", "last_update_ts"}]：该频道有任务、且没有一条非 done；
+    返回 [{"room_id", "total", "last_update_ts"}]：该频道有任务，且每条都是
+    done；新审核任务还必须 review_status=approved，旧任务 reviewer_ref 为空则兼容放行。
     last_update_ts = 该频道任务的最近一次更新时刻（epoch 秒）——催办扫描用它实现
     「完成后 24h 没动静才开始催」（刚完成时 AI 已在对话里口头问过归档，别立刻叠着催）。
     只挑挂在真实频道上的任务（room_id 非空）；已归档与否由调用方读房间 state 判断
@@ -266,7 +286,10 @@ def rooms_all_tasks_done(session: Session) -> List[Dict[str, Any]]:
         )
         .where(Task.room_id != "")
         .group_by(Task.room_id)
-        .having(func.sum(case((Task.status != "done", 1), else_=0)) == 0)
+        .having(func.sum(case((or_(
+            Task.status != "done",
+            and_(Task.reviewer_ref != "", Task.review_status != "approved"),
+        ), 1), else_=0)) == 0)
     ).all()
     out: List[Dict[str, Any]] = []
     for room_id, total, last_update in rows:

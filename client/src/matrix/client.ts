@@ -3299,6 +3299,8 @@ export interface TaskItem {
   id: number; title: string; assignee: string
   status: string; progress: number; goal: string; result: string
   executor_kind?: string; executor_ref?: string
+  reviewer_ref?: string       // 指定真人审核人 Matrix user_id
+  review_status?: string      // waiting/pending/approved/changes；与看板四列同步
   room_id?: string   // 所属频道(删频道前统计未完成任务用)
   space_id?: string  // 所属工作区(Space id)：看板按工作区过滤；空=存量无归属任务
   sender?: string    // 下达人 user_id：前端按工作区过滤时判断"我下达的"，别弄丢(L11)
@@ -3321,10 +3323,13 @@ export async function getTasks(): Promise<TaskItem[]> {
   } catch { return [] }
 }
 
-/** 改任务状态/进度（看板手动操作）。返回是否成功。 */
+/** 改任务状态/进度（看板手动操作）。
+ *
+ * 服务端可会把非审核人发出的 done 安全转成 review，因此必须把实际
+ * status/review_status 返回给看板，不能再由前端假定请求值就是最终值。 */
 export async function updateTask(
   id: number, patch: { status?: string; progress?: number; due?: string },
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; status?: string; review_status?: string; message?: string }> {
   const token = (mx as any)?.getAccessToken?.() || ''
   if (!token) return { ok: false, error: '登录已失效，请重新登录' }
   try {
@@ -3333,7 +3338,7 @@ export async function updateTask(
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ id, ...patch }),
     })
-    if (r.ok) return { ok: true }
+    if (r.ok) return await r.json()
     // 把后端真实报错(如 401「登录已失效，请重新登录」/403「无权操作此任务」)带给 UI——
     // 旧版只回 boolean,点「开始」失败毫无反应,用户以为按钮坏了(线上实测:账号被停用后)。
     const j = await r.json().catch(() => ({}))

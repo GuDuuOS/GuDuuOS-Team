@@ -29,11 +29,13 @@ logger = logging.getLogger("cosmac.ai.tools")
 
 # 任务状态白名单 + 模型/用户可能给的同义词归一化（M6：非法 status 曾被 task_repo 静默丢弃 →
 # 工具却回"已更新→<非法值>"的假成功，审核打回等流程静默失效）。
-_TASK_STATUSES = ("todo", "doing", "done")
+_TASK_STATUSES = ("todo", "doing", "review", "done")
 _STATUS_ALIASES = {
     "todo": "todo", "待办": "todo", "todo列": "todo", "backlog": "todo", "pending": "todo",
     "doing": "doing", "进行中": "doing", "in_progress": "doing", "inprogress": "doing",
     "in-progress": "doing", "wip": "doing", "处理中": "doing",
+    "review": "review", "待审核": "review", "pending_review": "review",
+    "pending-review": "review", "submitted": "review", "已提交": "review",
     "done": "done", "已完成": "done", "完成": "done", "completed": "done",
     "complete": "done", "finished": "done", "closed": "done",
 }
@@ -84,6 +86,22 @@ def _normalize_task_status(raw: Any) -> Any:
     if not s:
         return None
     return _STATUS_ALIASES.get(s, s)
+
+
+def _matrix_localpart(user_id: Any) -> str:
+    """取 Matrix 用户标识的 localpart，给任务执行者/审核人比对用。
+
+    兼容 ``@alice:example.invalid`` / ``alice`` / ``@alice``，统一返回小写
+    ``alice``；空值返回空串。任务历史里两种格式都存在，不做这层就会
+    出现明明是同一人却无法审核的问题。
+    """
+    return str(user_id or "").strip().lstrip("@").split(":")[0].lower()
+
+
+def _same_matrix_user(left: Any, right: Any) -> bool:
+    """判断两个全量/简写 Matrix 用户标识是否指向同一 localpart。"""
+    a, b = _matrix_localpart(left), _matrix_localpart(right)
+    return bool(a) and a == b
 
 
 def _parse_due_to_ts(due: Any) -> Optional[int]:
@@ -561,7 +579,8 @@ class Toolbox:
                 "把用户交代的事登记到『任务看板』并指派执行者——**可以只有一条**。\n"
                 "⭐ 别只在『需要拆解』时才用它：只要用户是在让你做一件事（装个技能、写篇文案、"
                 "查个数据…），就记一条，哪怕它只有一步。用户要能在进度面板看到"
-                "『我交代的事进行到哪了』，而不是做完就无影无踪。做完记得用 update_task 标 done。\n"
+                "『我交代的事进行到哪了』，而不是做完就无影无踪。交付后要用 "
+                "update_task 提交到 review，不能跳过真人审核直接 done。\n"
                 "（纯聊天/问答/查询这类没有交付物的**不要**建，会把看板刷满噪音。）\n"
                 "适用于『不开专班、就在当前对话/频道列待办』的轻量场景。\n"
                 "⚠️ 在与中枢 AI 的**私人会话**里，create_tasks 只能记自己/AI 待办；"
@@ -578,6 +597,9 @@ class Toolbox:
                 "  • workflow —— 跑某工作流，ref 填其 slug\n"
                 "  • none —— 暂不指派（拿不准就用它，别瞎编一个不存在的人/agent）\n"
                 "assignee 另填一个给人看的负责人标签（人名/角色）。\n"
+                "每条任务必须有真人审核人 reviewer_ref（优先频道管理员）。拿不准可留空，"
+                "系统会指定频道管理员/下达人；AI/工作流/执行者只能提交待审，"
+                "不能自己标已完成。\n"
                 "**真人+AI 共同执行**：任务由 AI 执行（executor_kind=agent/workflow）但有真人"
                 "共同负责/审核时，必须把真人账号写进 assignee（如『社媒运营+duxiuzhen01』）——"
                 "系统按 assignee 里的账号名让该真人在自己的任务看板看到并推进这条任务。"
@@ -613,6 +635,10 @@ class Toolbox:
                                         "执行者标识：human→@user_id / agent→slug / "
                                         "workflow→slug；none 留空。须来自 list_capabilities。"
                                     ),
+                                },
+                                "reviewer_ref": {
+                                    "type": "string",
+                                    "description": "真人审核人 Matrix user_id；留空由系统选频道管理员/下达人。",
                                 },
                                 "due": {
                                     "type": "string",
@@ -867,7 +893,8 @@ class Toolbox:
                 "⚠️ 对同一目标**不要再单独调 create_tasks**（否则任务重复成两份、一份还留在原对话里）。"
                 "成员/Agent/技能**必须来自 list_capabilities 名册,绝不要编造名册里没有的**——"
                 "库里没有的资源会被剔除并向用户提示缺口。"
-                "项目主AI 会被任务 RULE 约束、只围绕本项目分配与审核。"
+                "项目主AI 会被任务 RULE 约束、只围绕本项目分配与跟进；"
+                "最终审核必须由指定真人完成。"
             ),
             parameters={
                 "type": "object",
@@ -917,6 +944,10 @@ class Toolbox:
                                     "enum": ["human", "agent", "workflow", "none"],
                                 },
                                 "executor_ref": {"type": "string"},
+                                "reviewer_ref": {
+                                    "type": "string",
+                                    "description": "真人审核人 Matrix user_id；留空默认专班创建者/频道管理员。",
+                                },
                                 "due": {
                                     "type": "string",
                                     "description": "截止时间(可选)：'YYYY-MM-DD' 或 'YYYY-MM-DD HH:MM'；相对时间先据当前时间换算。",
@@ -930,7 +961,8 @@ class Toolbox:
                             "（只想建群绑资源、不派任务请改用 create_room）。请拆成 3~8 个子任务。"
                             "任务交 AI 执行(executor_kind=agent)但成员表里有对应角色的真人时，"
                             "把真人账号写进 assignee(如『社媒运营+duxiuzhen01』)——真人才能在"
-                            "自己的任务看板看到这条任务。"
+                            "自己的任务看板看到这条任务。每条任务 reviewer_ref 必须是真人；"
+                            "留空由系统统一指定专班创建者（频道管理员）。"
                         ),
                     },
                 },
@@ -966,9 +998,9 @@ class Toolbox:
             name="update_task",
             description=(
                 "更新**当前频道**里某条任务的状态/结果/**截止日期**，用于推进、审核回填与改期：\n"
-                "  • 执行者交付 → status=done 且 result 填交付内容/结论/链接\n"
-                "  • 审核通过 → status=done\n"
-                "  • 审核打回 → status=doing 且 result 写明打回原因与修改要求\n"
+                "  • 执行者/AI 交付 → status=review 且 result 填交付内容/结论/链接\n"
+                "  • 指定真人审核人通过 → status=done（系统会记为 approved）\n"
+                "  • 指定真人审核人打回 → status=doing 且 result 写明原因与修改要求\n"
                 "  • 开始处理 → status=doing\n"
                 "  • **改截止日期** → due 填新日期（如『2025-07-11』或『2025-07-11 10:00』）；"
                 "清空截止日期填 due=''。用户说『把截止改到X』就直接用本工具改,别再新建任务。\n"
@@ -981,7 +1013,7 @@ class Toolbox:
                 "properties": {
                     "task_id": {"type": "integer", "description": "任务编号（见 list_room_tasks）。"},
                     "status": {
-                        "type": "string", "enum": ["todo", "doing", "done"],
+                        "type": "string", "enum": ["todo", "doing", "review", "done"],
                         "description": "新状态（可选）。",
                     },
                     "result": {
@@ -1010,6 +1042,10 @@ class Toolbox:
                     "executor_ref": {
                         "type": "string",
                         "description": "改派时的执行者标识：真人填 @用户id 或用户名；agent 填能力名册里的 slug；workflow 填工作流名。",
+                    },
+                    "reviewer_ref": {
+                        "type": "string",
+                        "description": "改派审核人时的真人 Matrix user_id；不传则保持原审核人。",
                     },
                 },
                 "required": ["task_id"],
@@ -1252,6 +1288,60 @@ class Toolbox:
             return "channel"  # 读失败:按频道处理,不缓存
         self._room_kind_cache[room_id] = kind
         return kind
+
+    def _default_task_reviewer(self, room_id: str, sender: str) -> str:
+        """为新任务选一位真人审核人，优先频道管理员，兜底任务下达人。
+
+        下达人本身是管理员时优先本人；否则选 power>=50 的第一个真人。
+        读取状态失败或无显式管理员时退回 sender。sender 是真实发言用户，
+        因此兜底仍满足“人审 AI”，不会落到主 AI/协作 Agent 账号。
+        """
+        fallback = str(sender or "").strip()
+        try:
+            pl = self.client.get_state_event(room_id, "m.room.power_levels") or {}
+            users = pl.get("users") or {}
+            if isinstance(users, dict):
+                for uid, power in users.items():
+                    if _same_matrix_user(uid, fallback) and int(power or 0) >= 50:
+                        return fallback
+                for uid, power in users.items():
+                    user_id = str(uid or "")
+                    lp = _matrix_localpart(user_id)
+                    if (
+                        int(power or 0) >= 50
+                        and user_id.startswith("@")
+                        and not lp.startswith("guduu-ai-")
+                        and lp not in ("guduu", "guduu-ai")
+                    ):
+                        return user_id
+        except Exception:
+            logger.debug("选取任务真人审核人失败，退回下达人", exc_info=True)
+        return fallback
+
+    def _valid_task_reviewer(self, room_id: str, user_id: str) -> bool:
+        """候选审核人是否为当前频道内的真实人类成员。
+
+        只看格式不够：原 bug 就是卡片上有用户名，但频道成员里没这个人。
+        这里要求精确命中 get_members 返回的 user_id，同时排除主 AI 与协作
+        Agent 傀儡账号。读取失败时返回 False，由调用方退回已验证的下达人。
+        """
+        candidate = str(user_id or "").strip()
+        lp = _matrix_localpart(candidate)
+        if (
+            not candidate
+            or lp in ("guduu", "guduu-ai")
+            or lp.startswith("guduu-ai-")
+        ):
+            return False
+        try:
+            return any(
+                _same_matrix_user(candidate, member.get("user_id"))
+                for member in (self.client.get_members(room_id) or [])
+                if isinstance(member, dict)
+            )
+        except Exception:
+            logger.debug("校验任务审核人失败", exc_info=True)
+            return False
 
     def _space_map(self, room_ids: List[str]) -> "Dict[str, Tuple[str, Set[str]]]":
         """从一批房间里识别**工作区(Space)**并读出其子频道关系。
@@ -2095,6 +2185,20 @@ class Toolbox:
             if not lp or len(lp) < 2 or lp in self._TASK_HUMAN_NOISE or not _dom:
                 return ""
             return f"@{lp}:{_dom}"
+
+        # 审核人必须在任务入库前就确定，否则 AI 执行完后仍会落回旧的
+        # “自己交付→自己完成”漏洞。模型没填时优先选频道管理员；读不到
+        # power level 时退回任务下达人，这两者都是已核验的真人账号。
+        default_reviewer = self._default_task_reviewer(ctx.room_id, ctx.sender)
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            reviewer = _norm_uid(str(item.get("reviewer_ref") or ""))
+            item["reviewer_ref"] = (
+                reviewer
+                if self._valid_task_reviewer(ctx.room_id, reviewer)
+                else default_reviewer
+            )
         try:
             from cosmac.db import session_scope
             from cosmac.db.task_repo import create_tasks
@@ -2117,6 +2221,8 @@ class Toolbox:
                         seg += f" —— {_kind_label.get(t.executor_kind, '')}{t.executor_ref}"
                     elif t.assignee:
                         seg += f" —— {t.assignee}"
+                    if t.reviewer_ref:
+                        seg += f" · 审核人 {t.reviewer_ref}"
                     lines.append(seg)
                     # 收集真人指派:human 执行者 ref + assignee 里的挂名真人(共同负责,
                     # 切词口径与看板可见性 _is_task_assignee 一致)。归一化后既发 @ 通知,
@@ -2132,6 +2238,10 @@ class Toolbox:
                             if uid:
                                 humans.append(w)
                                 by_person.setdefault(uid, []).append(t.title)
+                    # 审核人必须能进入任务所属频道；与执行人共用后面的
+                    # 成员校验/自动邀请，避免只在看板上挂一个实际看不到频道的审核人。
+                    if t.reviewer_ref:
+                        humans.append(t.reviewer_ref)
         except Exception:
             logger.exception("登记任务到看板失败")
             return "登记任务到看板失败（数据库不可用？）。"
@@ -2478,7 +2588,10 @@ class Toolbox:
                 lines = []
                 done = 0
                 for t in rows:
-                    if t.status == "done":
+                    approved = t.status == "done" and (
+                        not t.reviewer_ref or t.review_status == "approved"
+                    )
+                    if approved:
                         done += 1
                     seg = f"#{t.id} [{t.status}] {t.title}"
                     # 进度% 与截止时间：与任务看板取的是同一份 DB 字段(progress/due_ts)。
@@ -2491,6 +2604,8 @@ class Toolbox:
                         seg += f"（{t.executor_kind}:{t.executor_ref}）"
                     elif t.assignee:
                         seg += f"（{t.assignee}）"
+                    if t.reviewer_ref:
+                        seg += f" · 审核人:{t.reviewer_ref}({t.review_status})"
                     if t.result:
                         seg += f" — 结果/批注：{t.result[:200]}"
                     lines.append(seg)
@@ -2515,7 +2630,10 @@ class Toolbox:
         # 却回一句"已更新→<非法值>"的假成功（模型/用户会以为改成功了）。
         status = _normalize_task_status(args.get("status"))
         if status is not None and status not in _TASK_STATUSES:
-            return "任务状态只能是 待办(todo)/进行中(doing)/已完成(done) 之一，请用其中之一。"
+            return (
+                "任务状态只能是 待办(todo)/进行中(doing)/"
+                "待审核(review)/已完成(done) 之一。"
+            )
         result = args.get("result")
         progress = args.get("progress")
         # 改派参数(负责人报的 bug:AI 嘴上说改派了,看板责任人没变——原来工具根本不支持传执行者)。
@@ -2523,6 +2641,7 @@ class Toolbox:
         assignee = args.get("assignee")
         exec_kind = args.get("executor_kind")
         exec_ref = args.get("executor_ref")
+        reviewer_ref = args.get("reviewer_ref")
         if exec_kind is not None and str(exec_kind) not in ("human", "agent", "workflow"):
             return "executor_kind 只能是 human/agent/workflow 之一。"
         # 截止日期：没给这个键=不动;给了(含空串)=改期。空串→清除(None);否则解析日期→epoch 秒。
@@ -2561,6 +2680,44 @@ class Toolbox:
                         f"你无权更新任务 #{tid}（你不是它的执行者/下达者，也不在该任务的频道里）。"
                         "**不要**另建一个新任务来假装完成它;如需推进,请让该任务的执行者或频道管理员来改。"
                     )
+                if reviewer_ref is not None:
+                    proposed_reviewer = str(reviewer_ref or "").strip()
+                    # 改审核人会直接改变谁能放行 done，不能让普通执行者把
+                    # 自己改成审核人后自审。只允许下达人/频道管理员操作，且新人
+                    # 必须已是频道内的真人成员。
+                    may_reassign_reviewer = (
+                        _same_matrix_user(ctx.sender, t.sender)
+                        or self._can_archive(ctx, t.room_id or ctx.room_id)
+                    )
+                    if not may_reassign_reviewer:
+                        return "只有任务下达人或频道管理员可以改派审核人。"
+                    if not self._valid_task_reviewer(
+                        t.room_id or ctx.room_id, proposed_reviewer
+                    ):
+                        return "新审核人必须是该频道内的真实人类成员。"
+                # 有指定真人审核人的新任务，只有该真人可以把状态推到
+                # done。执行人、下达人、频道成员甚至 AI 都只能提交 review，
+                # 这个硬闸不依赖 prompt，防止模型忘记规则后自己放行。
+                current_reviewer = str(t.reviewer_ref or "").strip()
+                if status == "done" and current_reviewer and not _same_matrix_user(
+                    ctx.sender, current_reviewer
+                ):
+                    return (
+                        f"任务 #{tid} 已指定真人审核人 {current_reviewer}。"
+                        "你只能用 status=review 提交待审，不能代替审核人标记 done。"
+                    )
+                review_status: Optional[str] = None
+                if status == "review" and current_reviewer:
+                    review_status = "pending"
+                elif status == "done" and current_reviewer:
+                    review_status = "approved"
+                elif (
+                    status == "doing"
+                    and t.status == "review"
+                    and current_reviewer
+                    and _same_matrix_user(ctx.sender, current_reviewer)
+                ):
+                    review_status = "changes"
                 title = t.title
                 task_room = t.room_id or ""   # 任务所属房(改派可能在别的频道/私聊里发起)
                 ok = update_task(
@@ -2572,10 +2729,18 @@ class Toolbox:
                     assignee=assignee if isinstance(assignee, str) else None,
                     executor_kind=str(exec_kind) if exec_kind is not None else None,
                     executor_ref=str(exec_ref) if exec_ref is not None else None,
+                    reviewer_ref=(
+                        str(reviewer_ref) if reviewer_ref is not None else None
+                    ),
+                    review_status=review_status,
                 )
             if not ok:
                 return f"任务 #{tid} 没有可更新的内容。"
             tail = f" → {status}" if status else ""
+            if status == "review":
+                tail += f"（已提交给 {current_reviewer} 审核）"
+            elif status == "done" and current_reviewer:
+                tail += "（真人审核已通过）"
             if due_label:
                 tail += f"（{due_label}）"
             if isinstance(assignee, str) and assignee.strip():
@@ -2699,7 +2864,10 @@ class Toolbox:
                 for t in rows:
                     if not goal and t.goal:
                         goal = t.goal
-                    if t.status == "done":
+                    approved = t.status == "done" and (
+                        not t.reviewer_ref or t.review_status == "approved"
+                    )
+                    if approved:
                         done += 1
                     snapshot.append({
                         "id": t.id,
@@ -2707,10 +2875,17 @@ class Toolbox:
                         "status": t.status,
                         "executor_kind": t.executor_kind,
                         "executor_ref": t.executor_ref,
+                        "reviewer_ref": t.reviewer_ref,
+                        "review_status": t.review_status,
                         "assignee": t.assignee or "",
                         "result": (t.result or "")[:500],
                     })
                 total = len(rows)
+                if done != total:
+                    return (
+                        f"当前只有 {done}/{total} 个任务经指定真人审核通过，"
+                        "还不能归档。请先让各任务审核人处理待审任务。"
+                    )
                 create_archive(
                     s,
                     room_id=room_id,
@@ -2868,7 +3043,8 @@ class Toolbox:
             task_rule = (
                 f"本专班目标：{project}。"
                 + (f"任务节点：{'、'.join(titles)}。" if titles else "任务节点见任务看板。")
-                + "约束：只围绕本项目工作；每个节点完成后必须由项目主AI审核（不合格打回并写明原因）；"
+                + "约束：只围绕本项目工作；每个节点交付后必须提交给指定真人审核人；"
+                "项目主AI可做质量预检和提醒，但不得代替真人审核、不得自己标 done；"
                 "全部节点完成并审核通过后，征询用户同意再归档关闭本专班。"
             )
             auto_rule = True
@@ -2879,9 +3055,9 @@ class Toolbox:
         else:
             persona["prompt"] = (
                 f"你是本专班「{project}」的项目主AI（编排者）。职责仅限于：围绕本项目把子任务"
-                "分配给合适的成员/AI、跟踪进度、按下方任务约束审核交付。具体节奏：\n"
-                "① 每当某个成员/AI 完成一个任务节点，你要**逐个审核**：用 list_room_tasks 看清进度，"
-                "用 update_task 把审核通过的节点标 done、把不合格的打回（status=doing 并写明原因）。\n"
+                "分配给合适的成员/AI、跟踪进度、按下方任务约束做交付预检。具体节奏：\n"
+                "① 成员/AI 交付后，用 update_task 把任务提交为 review，"
+                "并提醒该任务的指定真人审核人；你可以预检质量，但不得代审标 done。\n"
                 "② 始终盯住完成度（X/N）；卡点时汇报。\n"
                 "③ 当**所有节点都已完成并审核通过**时，先用 ask_user_choice 征询用户是否归档关闭本专班，"
                 "得到同意后调 archive_project 把项目存档、清理频道记忆、提示关闭频道。\n"
@@ -2926,6 +3102,14 @@ class Toolbox:
         task_agent_slugs: List[str] = []  # 任务执行者里的 AI 同事 slug(要把它们也拉进频道)
         task_items = args.get("tasks") or []
         if isinstance(task_items, list) and task_items:
+            # 专班发起人在建房时已被设为 100 级频道管理员，因此是
+            # 模型没有显式指定审核人时最稳定、且肯定能看到本频道的真人。
+            for item in task_items:
+                if not isinstance(item, dict):
+                    continue
+                reviewer = str(item.get("reviewer_ref") or "").strip()
+                if not self._valid_task_reviewer(room_id, reviewer):
+                    item["reviewer_ref"] = ctx.sender
             # 解析每条截止时间 due → due_ts（同 create_tasks 路径）。
             for it in task_items:
                 if isinstance(it, dict) and it.get("due"):
@@ -3019,7 +3203,10 @@ class Toolbox:
                 + "。可让管理员到「管理后台 → 智能体/技能」先添加，再对我说重新绑定。"
             )
         if n_tasks:
-            parts.append(f"已派 {n_tasks} 个任务，详见任务看板。")
+            parts.append(
+                f"已派 {n_tasks} 个任务，未单独指定时由 {ctx.sender} 作为"
+                "真人审核人，详见任务看板。"
+            )
         if auto_started:
             parts.append(
                 f"🤖 其中 {len(agent_task_ids)} 个任务由 AI 同事执行——已自动开工，"
