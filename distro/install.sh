@@ -122,8 +122,11 @@ fi
 
 # ---------- 2. DNS / 端口体检（只警告不拦截：可能在 LB/NAT 后面）----------
 PUB_IP="$(curl -4fsS --max-time 8 https://ifconfig.me 2>/dev/null || true)"
-DNS_IP="$(getent hosts "$DOMAIN" 2>/dev/null | awk '{print $1; exit}' || true)"
-if [ -n "$PUB_IP" ] && [ -n "$DNS_IP" ] && [ "$PUB_IP" != "$DNS_IP" ]; then
+DNS_IP="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '$2=="STREAM"{print $1; exit}' || true)"
+if curl -fsSI --max-time 10 "https://$DOMAIN/" 2>/dev/null \
+    | tr -d '\r' | grep -Eiq '^server:[[:space:]]*cloudflare'; then
+  say "  DNS：      $DOMAIN 已经 Cloudflare 代理"
+elif [ -n "$PUB_IP" ] && [ -n "$DNS_IP" ] && [ "$PUB_IP" != "$DNS_IP" ]; then
   warn "域名 $DOMAIN 解析到 $DNS_IP，本机公网 IP 是 $PUB_IP —— 若不一致证书会签发失败。"
 elif [ -z "$DNS_IP" ]; then
   warn "域名 $DOMAIN 当前解析不到 IP —— 请确认 DNS A 记录已生效，否则证书签发会失败。"

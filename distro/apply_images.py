@@ -192,6 +192,32 @@ def _write_env_images(bot_image: str, web_image: str) -> None:
             os.unlink(temp_name)
 
 
+def _wait_for_doctor(env: Mapping[str, str], attempts: int = 12) -> None:
+    """等待新容器真正就绪后再决定发布成败。
+
+    Docker 的 ``running`` 只代表进程已启动，bot HTTP 端口与 Caddy 路由可能还需要
+    数秒初始化。无等待的单次体检会把短暂启动窗口误判为故障，并造成无意义回撤。
+
+    Args:
+        env: 本次 Compose 切换使用的镜像环境变量。
+        attempts: 最多体检次数，每次间隔五秒。
+
+    Raises:
+        RuntimeError: 在等待窗口内始终未能通过完整体检。
+    """
+    last_error: Optional[RuntimeError] = None
+    for attempt in range(max(1, attempts)):
+        try:
+            _run(["bash", "doctor.sh"], env=env, timeout=10 * 60)
+            return
+        except RuntimeError as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                time.sleep(5)
+    assert last_error is not None
+    raise last_error
+
+
 def apply(version: str, bot_image: str, web_image: str) -> None:
     """执行一次受保护的镜像切换，失败自动回撤并向调用方返回非零。"""
     if not _VERSION_RE.fullmatch(version):
@@ -229,7 +255,7 @@ def apply(version: str, bot_image: str, web_image: str) -> None:
             env=new_env,
             timeout=15 * 60,
         )
-        _run(["bash", "doctor.sh"], env=new_env, timeout=10 * 60)
+        _wait_for_doctor(new_env)
         installed = _run(
             [
                 "docker", "compose", "exec", "-T", "bot", "python", "-c",
@@ -248,7 +274,7 @@ def apply(version: str, bot_image: str, web_image: str) -> None:
                 env=old_env,
                 timeout=15 * 60,
             )
-            _run(["bash", "doctor.sh"], env=old_env, timeout=10 * 60)
+            _wait_for_doctor(old_env)
         except Exception as rollback_error:
             raise RuntimeError(
                 "新版本失败且自动回撤体检也失败；请立即人工处理。新版本错误：%s；"

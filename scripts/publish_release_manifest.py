@@ -53,6 +53,11 @@ def main() -> int:
         data=canonical,
         headers={
             "Content-Type": "application/json",
+            # Cloudflare 会将 Python urllib 的默认 User-Agent 视为高风险机器人。
+            # 这里使用稳定、可审计的 CI 标识，避免合法的 HMAC 回调在
+            # 到达 Nexus 前被边缘阻断；真正的身份校验仍由下方 HMAC 完成。
+            "User-Agent": "GuDuuOS-Release-GitHub-Actions/1.0",
+            "Accept": "application/json",
             "X-Nexus-Timestamp": timestamp,
             "X-Nexus-Signature": "sha256=" + signature,
         },

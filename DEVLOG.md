@@ -1,5 +1,14 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-08-03 — GuDuu OS 1.19.1 (patch)
+
+- 修复：镜像清单回调增加明确的 GitHub Actions 请求标识，避免被 Cloudflare
+  将 Python 默认请求误判为机器人并在到达 Nexus 前拦截。
+- 修复：节点体检正确识别 Cloudflare 代理域名，DNS 返回边缘 IP 时不再
+  误报为源站解析故障并触发无效回撤。
+- 优化：新镜像及回撤镜像启动后体检最多等待一分钟，避免 bot HTTP
+  端口的短暂初始化窗口被误判为发布失败。
+
 ## 2026-08-02 — GuDuu OS 1.19.0 (minor)
 
 - 新增：OEM 节点应用发布改为 GitHub Actions 构建 bot/web 多架构 Docker 镜像，

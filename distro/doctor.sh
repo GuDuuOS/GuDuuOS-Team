@@ -34,9 +34,14 @@ done
 
 # ---------- DNS ----------
 PUB_IP="$(curl -4fsS --max-time 8 https://ifconfig.me 2>/dev/null || true)"
-DNS_IP="$(getent hosts "$DOMAIN" 2>/dev/null | awk '{print $1; exit}' || true)"
+DNS_IP="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '$2=="STREAM"{print $1; exit}' || true)"
 if [ -n "$DNS_IP" ] && { [ -z "$PUB_IP" ] || [ "$DNS_IP" = "$PUB_IP" ]; }; then
   ok "DNS 解析正常（$DOMAIN → $DNS_IP）"
+elif curl -fsSI --max-time 10 "https://$DOMAIN/" 2>/dev/null \
+    | tr -d '\r' | grep -Eiq '^server:[[:space:]]*cloudflare'; then
+  # 开启 Cloudflare 橙云后，DNS 本来就应该返回边缘 IP，而不是源站 IP。
+  # 继续把两者不同判为故障会导致正常发布被自动回撤。
+  ok "DNS 经 Cloudflare 代理（$DOMAIN → ${DNS_IP:-边缘网络}）"
 else
   bad "DNS 异常：解析到「${DNS_IP:-无}」，本机公网 IP「${PUB_IP:-未知}」——检查域名 A 记录"
 fi
