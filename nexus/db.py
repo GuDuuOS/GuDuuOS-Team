@@ -541,7 +541,9 @@ class NexusOemFile(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     oem_id = Column(Integer, nullable=False, index=True)
     filename = Column(String(255), nullable=False)
-    content_type = Column(String(120), nullable=False, default="application/octet-stream")
+    content_type = Column(
+        String(120), nullable=False, default="application/octet-stream"
+    )
     size = Column(BigInteger, nullable=False, default=0)
     data = Column(LargeBinary, nullable=False)
     uploaded_ts = Column(BigInteger, nullable=False, default=_now_ms)
@@ -646,6 +648,39 @@ class NexusKeyRequestProfile(Base):
     updated_ts = Column(BigInteger, nullable=False, default=_now_ms)
 
 
+class NexusKeyRequestNetwork(Base):
+    """授权申请的公网 IP 风控设置（一对一扩展表）。
+
+    完整 IP 不落库：``expected_ip_hash`` 只用于兑换时常数时间比较，``masked`` 仅供
+    OEM 与超管核对网段。``strict_ip`` 为 1 时才把不一致升级为拒绝激活。
+    """
+
+    __tablename__ = "nexus_key_request_network"
+
+    request_id = Column(Integer, primary_key=True)
+    expected_ip_hash = Column(String(64), nullable=False, default="")
+    expected_ip_masked = Column(String(64), nullable=False, default="")
+    strict_ip = Column(Integer, nullable=False, default=0)
+    updated_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
+class NexusKeyBinding(Base):
+    """KEY 获批后冻结的部署边界，以及首次在线兑换的风险结果。"""
+
+    __tablename__ = "nexus_key_binding"
+
+    key_id = Column(Integer, primary_key=True)
+    approved_domain = Column(String(255), nullable=False, default="", index=True)
+    expected_ip_hash = Column(String(64), nullable=False, default="")
+    expected_ip_masked = Column(String(64), nullable=False, default="")
+    strict_ip = Column(Integer, nullable=False, default=0)
+    activation_ip_hash = Column(String(64), nullable=False, default="")
+    activation_ip_masked = Column(String(64), nullable=False, default="")
+    risk_status = Column(String(32), nullable=False, default="")
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    activated_ts = Column(BigInteger, nullable=True, default=None)
+
+
 class NexusKeyRequestDelivery(Base):
     """获批申请的 KEY 安全交付记录。
 
@@ -721,7 +756,7 @@ class NexusRequestStat(Base):
 
     # 复合主键：一个实例在一分钟内只有一行，并发写靠"先 UPDATE 不中再 INSERT"收敛
     instance_id = Column(Integer, primary_key=True)
-    minute_ts = Column(BigInteger, primary_key=True)   # 对齐到整分钟的 epoch ms
+    minute_ts = Column(BigInteger, primary_key=True)  # 对齐到整分钟的 epoch ms
     ok_count = Column(Integer, nullable=False, default=0)
     fail_count = Column(Integer, nullable=False, default=0)
     # 延迟只累计**成功**请求（失败往往是秒回的 4xx，混进来会把均值拉得虚低）
@@ -740,7 +775,7 @@ class NexusInstanceGeo(Base):
 
     __tablename__ = "nexus_instance_geo"
 
-    instance_id = Column(Integer, primary_key=True)   # = NexusInstance.id
+    instance_id = Column(Integer, primary_key=True)  # = NexusInstance.id
     # 地域代码（见 nexus/geo.py REGIONS，如 CN-ZJ / SG）；空=未填，大屏不打点
     region_code = Column(String(16), nullable=False, default="")
     # 冗余存下当时的中文名与经纬度：字典将来微调坐标也不影响历史展示，大屏直接读免查表

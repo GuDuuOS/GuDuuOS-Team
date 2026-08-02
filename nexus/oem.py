@@ -28,10 +28,12 @@ from nexus import audit
 from nexus.db import (
     NexusInstance,
     NexusKey,
+    NexusKeyBinding,
     NexusKeyClaim,
     NexusKeyRequest,
     NexusKeyRequestDelivery,
     NexusKeyRequestProfile,
+    NexusKeyRequestNetwork,
     NexusLicensePayment,
     NexusManualTransfer,
     NexusOem,
@@ -46,6 +48,7 @@ from nexus.db import (
 )
 from nexus.fleet import FleetError
 from nexus.keys import hash_key, looks_like_key, normalize_key
+from nexus import network_binding
 
 # 会话有效期：7 天（OEM 门户是低频配置场景，不需要长会话；到期重登）
 _SESSION_TTL_MS = 7 * 24 * 3600 * 1000
@@ -73,6 +76,7 @@ def _delivery_fernet() -> Fernet:
 
 
 # ---------- 密码哈希（pbkdf2，标准库）----------
+
 
 def hash_password(password: str) -> str:
     """派生密码存储串：``pbkdf2$<迭代>$<salt_hex>$<hash_hex>``。"""
@@ -123,7 +127,9 @@ def _resolve_inviter(s, inviter: str) -> Optional[int]:
     """
     inviter = (inviter or "").strip()
     if not inviter:
-        raise FleetError("NEXUS_INVITER_REQUIRED", "请填写邀请人邮箱（平台直接客户填 GUDUU）")
+        raise FleetError(
+            "NEXUS_INVITER_REQUIRED", "请填写邀请人邮箱（平台直接客户填 GUDUU）"
+        )
     if inviter.upper() == _ROOT_INVITE_CODE:
         return None
     # 分享链接会把随机码自动回填到 OEM 注册表单；保留邮箱输入兼容既有客户和线下邀请。
@@ -142,7 +148,9 @@ def _resolve_inviter(s, inviter: str) -> Optional[int]:
     ).scalar_one_or_none()
     if row is None or row.status != "active":
         # 不存在与被停用同文案：不给探测账号存在性的口子
-        raise FleetError("NEXUS_INVITER_INVALID", "邀请人不存在或不可用，请与邀请你的人确认", 400)
+        raise FleetError(
+            "NEXUS_INVITER_INVALID", "邀请人不存在或不可用，请与邀请你的人确认", 400
+        )
     return int(row.id)
 
 
@@ -269,6 +277,7 @@ def public_oem(oem: NexusOem) -> Dict[str, Any]:
 
 # ---------- 分享码、无限层级与普通用户归属 ----------
 
+
 def _share_for(s, oem_id: int) -> NexusOemShare:
     """读取或首次生成某 OEM 的稳定随机分享码。"""
     row = s.get(NexusOemShare, int(oem_id))
@@ -305,7 +314,8 @@ def referral_info(s, code: str) -> Dict[str, Any]:
     return {
         "code": share.code,
         "oem_id": owner.id,
-        "name": (profile.company if profile and profile.company else owner.name) or "OEM 客户",
+        "name": (profile.company if profile and profile.company else owner.name)
+        or "OEM 客户",
     }
 
 
@@ -403,21 +413,23 @@ def share_summary(s, oem_id: int, portal_base: str) -> Dict[str, Any]:
         ).scalar_one()
     )
     ancestor_ids = _ancestor_ids(parents, owner.id)
-    result.update({
-        "level": len(ancestor_ids) + 1,
-        "ancestors": [
-            {
-                "id": oid,
-                "name": accounts[oid].name or accounts[oid].email,
-            }
-            for oid in reversed(ancestor_ids)
-            if oid in accounts
-        ],
-        "direct_oems": len(children.get(owner.id, [])),
-        "total_downline_oems": len(descendants),
-        "direct_users": direct_users,
-        "network_users": network_users,
-    })
+    result.update(
+        {
+            "level": len(ancestor_ids) + 1,
+            "ancestors": [
+                {
+                    "id": oid,
+                    "name": accounts[oid].name or accounts[oid].email,
+                }
+                for oid in reversed(ancestor_ids)
+                if oid in accounts
+            ],
+            "direct_oems": len(children.get(owner.id, [])),
+            "total_downline_oems": len(descendants),
+            "direct_users": direct_users,
+            "network_users": network_users,
+        }
+    )
     return result
 
 
@@ -459,7 +471,9 @@ def network_directory(s, oem_id: int, limit: int = 500) -> Dict[str, Any]:
         int(row.oem_id): row
         for row in s.execute(
             select(NexusOemProfile).where(NexusOemProfile.oem_id.in_(network_ids))
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     }
 
     # 直属用户数一次 group by 拉齐，避免每个下级 OEM 再发一条 SQL。
@@ -517,19 +531,23 @@ def network_directory(s, oem_id: int, limit: int = 500) -> Dict[str, Any]:
 
     # 用户明细按最新归属倒序。返回的是 Matrix user_id，不是密码、手机号
     # 或聊天内容；它本来就是 Nexus 归属边的业务标识。
-    user_rows = s.execute(
-        select(NexusUserAttribution)
-        .where(NexusUserAttribution.oem_id.in_(network_ids))
-        .order_by(NexusUserAttribution.id.desc())
-        .limit(limit)
-    ).scalars().all()
+    user_rows = (
+        s.execute(
+            select(NexusUserAttribution)
+            .where(NexusUserAttribution.oem_id.in_(network_ids))
+            .order_by(NexusUserAttribution.id.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
     instance_ids = list({int(row.instance_id) for row in user_rows})
     instances = {
         int(row.id): row
         for row in (
-            s.execute(
-                select(NexusInstance).where(NexusInstance.id.in_(instance_ids))
-            ).scalars().all()
+            s.execute(select(NexusInstance).where(NexusInstance.id.in_(instance_ids)))
+            .scalars()
+            .all()
             if instance_ids
             else []
         )
@@ -537,7 +555,9 @@ def network_directory(s, oem_id: int, limit: int = 500) -> Dict[str, Any]:
     users = []
     for row in user_rows:
         direct_owner_id = int(row.oem_id)
-        depth = 0 if direct_owner_id == owner_id else relative_depth.get(direct_owner_id, 0)
+        depth = (
+            0 if direct_owner_id == owner_id else relative_depth.get(direct_owner_id, 0)
+        )
         instance = instances.get(int(row.instance_id))
         users.append(
             {
@@ -596,7 +616,9 @@ def record_user_attribution(
         raise FleetError("NEXUS_ATTRIBUTION_OWNER_MISSING", "实例尚未归属 OEM", 403)
     info = referral_info(s, referral_code)
     if int(info["oem_id"]) != int(claim.oem_id):
-        raise FleetError("NEXUS_REFERRAL_INSTANCE_MISMATCH", "邀请链接与注册实例不匹配", 403)
+        raise FleetError(
+            "NEXUS_REFERRAL_INSTANCE_MISMATCH", "邀请链接与注册实例不匹配", 403
+        )
     normalized_user = (user_id or "").strip()
     if not normalized_user.startswith("@") or ":" not in normalized_user:
         raise FleetError("NEXUS_BAD_USER_ID", "用户 ID 格式不正确")
@@ -610,7 +632,9 @@ def record_user_attribution(
     ).scalar_one_or_none()
     if existing is not None:
         if int(existing.oem_id) != int(claim.oem_id):
-            raise FleetError("NEXUS_USER_ALREADY_ATTRIBUTED", "用户已经归属其他 OEM", 409)
+            raise FleetError(
+                "NEXUS_USER_ALREADY_ATTRIBUTED", "用户已经归属其他 OEM", 409
+            )
         return {"id": existing.id, "already": True, "oem_id": existing.oem_id}
     row = NexusUserAttribution(
         instance_id=instance.id,
@@ -624,6 +648,7 @@ def record_user_attribution(
 
 
 # ---------- KEY 认领（把一把 KEY 归到自己名下）----------
+
 
 def claim_key(s, oem_id: int, raw_key: str) -> Dict[str, Any]:
     """OEM 认领一把 KEY（下单拿到 KEY 后在门户激活绑定到自己账号）。
@@ -657,6 +682,7 @@ def claim_key(s, oem_id: int, raw_key: str) -> Dict[str, Any]:
 
 # ---------- 自有资源查询（服务端按 oem_id 过滤，OEM 只见自己）----------
 
+
 def _owned_key_ids(s, oem_id: int) -> List[int]:
     return [
         int(kid)
@@ -671,21 +697,34 @@ def my_keys(s, oem_id: int) -> List[Dict[str, Any]]:
     ids = _owned_key_ids(s, oem_id)
     if not ids:
         return []
-    rows = s.execute(
-        select(NexusKey).where(NexusKey.id.in_(ids)).order_by(NexusKey.id.desc())
-    ).scalars().all()
-    return [
-        {
-            "id": r.id,
-            "tail": r.key_tail,
-            "status": r.status,
-            "token_grant": int(r.token_grant),
-            "instance_id": r.instance_id,
-            "redeemed_ts": r.redeemed_ts,
-            "created_ts": r.created_ts,
-        }
-        for r in rows
-    ]
+    rows = (
+        s.execute(
+            select(NexusKey).where(NexusKey.id.in_(ids)).order_by(NexusKey.id.desc())
+        )
+        .scalars()
+        .all()
+    )
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        binding = s.get(NexusKeyBinding, r.id)
+        out.append(
+            {
+                "id": r.id,
+                "tail": r.key_tail,
+                "status": r.status,
+                "token_grant": int(r.token_grant),
+                "instance_id": r.instance_id,
+                "redeemed_ts": r.redeemed_ts,
+                "created_ts": r.created_ts,
+                "approved_domain": binding.approved_domain if binding else "",
+                "expected_public_ip_masked": (
+                    binding.expected_ip_masked if binding else ""
+                ),
+                "strict_ip": bool(binding.strict_ip) if binding else False,
+                "risk_status": binding.risk_status if binding else "",
+            }
+        )
+    return out
 
 
 def my_instances(s, oem_id: int) -> List[Dict[str, Any]]:
@@ -693,11 +732,15 @@ def my_instances(s, oem_id: int) -> List[Dict[str, Any]]:
     ids = _owned_key_ids(s, oem_id)
     if not ids:
         return []
-    rows = s.execute(
-        select(NexusInstance)
-        .where(NexusInstance.key_id.in_(ids))
-        .order_by(NexusInstance.id.desc())
-    ).scalars().all()
+    rows = (
+        s.execute(
+            select(NexusInstance)
+            .where(NexusInstance.key_id.in_(ids))
+            .order_by(NexusInstance.id.desc())
+        )
+        .scalars()
+        .all()
+    )
     out: List[Dict[str, Any]] = []
     for r in rows:
         wallet = s.get(NexusWallet, r.id)
@@ -750,8 +793,9 @@ def list_oems(s) -> List[Dict[str, Any]]:
     invites, children, _accounts = _hierarchy_maps(s)
     user_counts: Dict[int, int] = {}
     for oid, count in s.execute(
-        select(NexusUserAttribution.oem_id, func.count(NexusUserAttribution.id))
-        .group_by(NexusUserAttribution.oem_id)
+        select(
+            NexusUserAttribution.oem_id, func.count(NexusUserAttribution.id)
+        ).group_by(NexusUserAttribution.oem_id)
     ).all():
         user_counts[int(oid)] = int(count)
     emails = {r.id: r.email for r in rows}
@@ -786,14 +830,15 @@ def hierarchy_snapshot(s) -> Dict[str, Any]:
     只需变更 OEM 入边。普通用户仅返回 Matrix user_id 与注册实例，不含邮箱和认证资料。
     """
     nodes = list_oems(s)
-    users = s.execute(
-        select(NexusUserAttribution).order_by(NexusUserAttribution.id.desc())
-    ).scalars().all()
+    users = (
+        s.execute(select(NexusUserAttribution).order_by(NexusUserAttribution.id.desc()))
+        .scalars()
+        .all()
+    )
     return {
         "oems": nodes,
         "oem_edges": [
-            {"oem_id": row["id"], "parent_oem_id": row["inviter_id"]}
-            for row in nodes
+            {"oem_id": row["id"], "parent_oem_id": row["inviter_id"]} for row in nodes
         ],
         "user_edges": [
             {
@@ -820,9 +865,11 @@ _REVEAL_WINDOW_MS = 30 * 60 * 1000
 
 
 def _clean_domain(value: str) -> str:
-    """校验申请中的计划域名；允许留空，但禁止把 URL/路径当成域名入库。"""
+    """校验申请中的计划域名；新申请必须填写，作为 KEY 的硬绑定边界。"""
     domain = (value or "").strip().lower().rstrip(".")[:255]
-    if domain and (not _DOMAIN_RE.fullmatch(domain) or ".." in domain):
+    if not domain:
+        raise FleetError("NEXUS_DOMAIN_REQUIRED", "请填写计划部署域名")
+    if not _DOMAIN_RE.fullmatch(domain) or ".." in domain:
         raise FleetError("NEXUS_BAD_DOMAIN", "计划部署域名格式不正确")
     return domain
 
@@ -847,15 +894,21 @@ def request_key(
     purpose: str = "",
     expected_date: str = "",
     requested_tokens: int = 0,
+    expected_public_ip: str = "",
+    strict_ip: bool = False,
     source_ip: str = "",
 ) -> Dict[str, Any]:
     """OEM 提交一张结构化授权申请（一张申请对应一个节点 KEY）。"""
-    pending = s.execute(
-        select(NexusKeyRequest).where(
-            NexusKeyRequest.oem_id == int(oem_id),
-            NexusKeyRequest.status.in_(("pending", "needs_info")),
+    pending = (
+        s.execute(
+            select(NexusKeyRequest).where(
+                NexusKeyRequest.oem_id == int(oem_id),
+                NexusKeyRequest.status.in_(("pending", "needs_info")),
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if len(pending) >= _MAX_PENDING_REQUESTS:
         raise FleetError(
             "NEXUS_TOO_MANY_REQUESTS",
@@ -869,18 +922,35 @@ def request_key(
     clean_purpose = (purpose or note or "").strip()[:255]
     if not clean_purpose:
         raise FleetError("NEXUS_REQUEST_PURPOSE_REQUIRED", "请填写使用场景")
+    clean_domain = _clean_domain(deployment_domain)
+    # 先把网络策略完整校验并计算成不可逆值，再创建申请主记录，避免脚本调用方
+    # 忘记回滚时留下只有主表、没有绑定资料的半成品申请。
+    if strict_ip and not (expected_public_ip or "").strip():
+        raise FleetError(
+            "NEXUS_STRICT_IP_REQUIRED", "启用严格 IP 绑定时必须填写公网 IP"
+        )
+    expected_ip_hash = network_binding.fingerprint(expected_public_ip)
+    expected_ip_masked = network_binding.masked(expected_public_ip)
     row = NexusKeyRequest(oem_id=int(oem_id), note=(note or "").strip()[:500])
     s.add(row)
     s.flush()
     s.add(
         NexusKeyRequestProfile(
             request_id=row.id,
-            deployment_domain=_clean_domain(deployment_domain),
+            deployment_domain=clean_domain,
             purpose=clean_purpose,
             expected_date=(expected_date or "").strip()[:16],
             requested_tokens=_clean_tokens(requested_tokens),
             contact_name=(profile.contact_name if profile else account.name)[:80],
             contact_phone=(profile.phone if profile else "")[:60],
+        )
+    )
+    s.add(
+        NexusKeyRequestNetwork(
+            request_id=row.id,
+            expected_ip_hash=expected_ip_hash,
+            expected_ip_masked=expected_ip_masked,
+            strict_ip=1 if strict_ip else 0,
         )
     )
     audit.record(
@@ -915,10 +985,13 @@ def _delivery_status(
 def _public_request(s, row: NexusKeyRequest) -> Dict[str, Any]:
     """返回不含 KEY 明文/密文的申请摘要，OEM 与超管共用。"""
     profile = s.get(NexusKeyRequestProfile, row.id)
+    network = s.get(NexusKeyRequestNetwork, row.id)
     delivery = s.get(NexusKeyRequestDelivery, row.id)
     delivery_status = _delivery_status(row, delivery)
     payment = s.get(NexusLicensePayment, row.id)
-    order = s.get(NexusOrder, payment.order_id) if payment and payment.order_id else None
+    order = (
+        s.get(NexusOrder, payment.order_id) if payment and payment.order_id else None
+    )
     transfer = (
         s.get(NexusManualTransfer, payment.transfer_id)
         if payment and payment.transfer_id
@@ -945,6 +1018,8 @@ def _public_request(s, row: NexusKeyRequest) -> Dict[str, Any]:
         "requested_tokens": int(profile.requested_tokens) if profile else 0,
         "contact_name": profile.contact_name if profile else "",
         "contact_phone": profile.contact_phone if profile else "",
+        "expected_public_ip_masked": network.expected_ip_masked if network else "",
+        "strict_ip": bool(network.strict_ip) if network else False,
         "delivery_status": delivery_status,
         "delivery_expires_ts": delivery.expires_ts if delivery else None,
         "reveal_until_ts": delivery.reveal_until_ts if delivery else None,
@@ -961,11 +1036,15 @@ def _public_request(s, row: NexusKeyRequest) -> Dict[str, Any]:
 
 def my_requests(s, oem_id: int) -> List[Dict[str, Any]]:
     """返回 OEM 的完整申请历史；授权码须另调 reveal 接口主动领取。"""
-    rows = s.execute(
-        select(NexusKeyRequest)
-        .where(NexusKeyRequest.oem_id == int(oem_id))
-        .order_by(NexusKeyRequest.id.desc())
-    ).scalars().all()
+    rows = (
+        s.execute(
+            select(NexusKeyRequest)
+            .where(NexusKeyRequest.oem_id == int(oem_id))
+            .order_by(NexusKeyRequest.id.desc())
+        )
+        .scalars()
+        .all()
+    )
     return [_public_request(s, row) for row in rows]
 
 
@@ -1008,7 +1087,13 @@ def list_requests(
         item["company"] = profile.company if profile else ""
         haystack = " ".join(
             str(item.get(field) or "")
-            for field in ("oem_email", "company", "deployment_domain", "purpose", "note")
+            for field in (
+                "oem_email",
+                "company",
+                "deployment_domain",
+                "purpose",
+                "note",
+            )
         ).lower()
         if needle and needle not in haystack:
             continue
@@ -1044,6 +1129,8 @@ def update_request(
     purpose: str = "",
     expected_date: str = "",
     requested_tokens: int = 0,
+    expected_public_ip: str = "",
+    strict_ip: bool = False,
     source_ip: str = "",
 ) -> Dict[str, Any]:
     """OEM 补充待审资料；needs_info 补完后自动回到 pending。"""
@@ -1080,6 +1167,25 @@ def update_request(
     if payment is None or payment.method == "manual_review":
         profile.requested_tokens = _clean_tokens(requested_tokens)
     profile.updated_ts = _now_ms()
+    network = s.get(NexusKeyRequestNetwork, row.id)
+    if (
+        strict_ip
+        and not (expected_public_ip or "").strip()
+        and not (network and network.expected_ip_hash)
+    ):
+        raise FleetError(
+            "NEXUS_STRICT_IP_REQUIRED", "启用严格 IP 绑定时必须填写公网 IP"
+        )
+    if network is None:
+        network = NexusKeyRequestNetwork(request_id=row.id)
+        s.add(network)
+    # 对已存在申请，界面只拿到脱敏网段，无法也不应回填完整 IP；因此留空表示
+    # “保留原值”，只有明确输入新地址时才替换 HMAC 与展示网段。
+    if (expected_public_ip or "").strip() or not network.expected_ip_hash:
+        network.expected_ip_hash = network_binding.fingerprint(expected_public_ip)
+        network.expected_ip_masked = network_binding.masked(expected_public_ip)
+    network.strict_ip = 1 if strict_ip else 0
+    network.updated_ts = _now_ms()
     account = s.get(NexusOem, int(oem_id))
     audit.record(
         s,
@@ -1171,12 +1277,32 @@ def _approve_request_locked(
     if row.status != "pending":
         raise FleetError("NEXUS_REQUEST_DECIDED", "该申请已处理", 409)
     grant = _clean_tokens(token_grant)
+    request_profile = s.get(NexusKeyRequestProfile, row.id)
+    request_network = s.get(NexusKeyRequestNetwork, row.id)
+    # 先验证绑定资料，再签发 KEY。这样即使该函数被脚本直接调用且调用方没有
+    # 正确回滚事务，也不会在发现资料缺失前留下一个没有归属的临时 KEY。
+    if request_profile is None or not request_profile.deployment_domain:
+        raise FleetError("NEXUS_DOMAIN_REQUIRED", "授权申请缺少计划部署域名", 409)
     issued = fleet.issue_keys(
         s,
         count=1,
         note=f"申请单#{row.id} · {row.note[:60]}",
         token_grant=grant,
     )[0]
+    # 审批时把计划域名与 IP 策略复制成不可由 OEM 再修改的 KEY 绑定快照。
+    s.add(
+        NexusKeyBinding(
+            key_id=issued["id"],
+            approved_domain=request_profile.deployment_domain,
+            expected_ip_hash=(
+                request_network.expected_ip_hash if request_network else ""
+            ),
+            expected_ip_masked=(
+                request_network.expected_ip_masked if request_network else ""
+            ),
+            strict_ip=(request_network.strict_ip if request_network else 0),
+        )
+    )
     now = _now_ms()
     row.status = "approved"
     row.decided_ts = now
@@ -1203,7 +1329,15 @@ def _approve_request_locked(
         from_state="pending",
         to_state="approved",
         note=row.decide_note,
-        metadata={"token_grant": grant, "key_id": issued["id"]},
+        metadata={
+            "token_grant": grant,
+            "key_id": issued["id"],
+            "approved_domain": request_profile.deployment_domain,
+            "expected_public_ip_masked": (
+                request_network.expected_ip_masked if request_network else ""
+            ),
+            "strict_ip": bool(request_network and request_network.strict_ip),
+        },
     )
     s.flush()
     return _public_request(s, row)
@@ -1330,7 +1464,9 @@ def decide_request(
     return _public_request(s, row)
 
 
-def _migrate_legacy_delivery(s, row: NexusKeyRequest) -> Optional[NexusKeyRequestDelivery]:
+def _migrate_legacy_delivery(
+    s, row: NexusKeyRequest
+) -> Optional[NexusKeyRequestDelivery]:
     """把升级前 ``key_plain`` 明文原子迁入加密交付表，随后清空旧列。"""
     delivery = s.get(NexusKeyRequestDelivery, row.id)
     if delivery is not None or not row.key_plain or not row.key_id:
@@ -1368,7 +1504,9 @@ def reveal_request_key(
     first_reveal = delivery.first_revealed_ts is None
     if delivery.first_revealed_ts is None:
         if now > delivery.expires_ts:
-            raise FleetError("NEXUS_DELIVERY_EXPIRED", "领取期限已过，请联系平台补发", 410)
+            raise FleetError(
+                "NEXUS_DELIVERY_EXPIRED", "领取期限已过，请联系平台补发", 410
+            )
         delivery.first_revealed_ts = now
         delivery.reveal_until_ts = min(delivery.expires_ts, now + _REVEAL_WINDOW_MS)
     elif not delivery.reveal_until_ts or now > delivery.reveal_until_ts:
@@ -1441,7 +1579,17 @@ def clear_plain_by_key(s, raw_key: str) -> None:
 # ---------- 客户档案详情 / 合同附件（超管专用）----------
 
 # 附件白名单（合同/资质常见格式）与单文件上限
-_FILE_EXT_OK = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".jpg", ".jpeg", ".png", ".zip"}
+_FILE_EXT_OK = {
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".zip",
+}
 FILE_MAX_BYTES = 20 * 1024 * 1024
 
 

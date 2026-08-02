@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import hmac
 import time
 from typing import Any, Dict, List, Optional
 
@@ -22,6 +23,7 @@ from nexus.db import (
     NexusInstance,
     NexusInstanceGeo,
     NexusKey,
+    NexusKeyBinding,
     NexusKeyClaim,
     NexusLedger,
     NexusOem,
@@ -30,6 +32,7 @@ from nexus.db import (
     NexusWallet,
 )
 from nexus.keys import generate_key, hash_key, looks_like_key
+from nexus import network_binding
 
 
 class FleetError(Exception):
@@ -49,6 +52,7 @@ def _now_ms() -> int:
 # ---------- KEY 签发 / 吊销（管理员操作）----------
 
 _MAX_TOKEN_GRANT = 1_000_000_000_000
+
 
 def issue_keys(
     s, count: int = 1, note: str = "", token_grant: int = 0
@@ -129,8 +133,14 @@ def _key_by_plain(s, raw_key: str) -> NexusKey:
 
 # ---------- 兑换（OEM 安装脚本调用）----------
 
+
 def redeem(
-    s, raw_key: str, domain: str, admin_email: str = "", region: str = ""
+    s,
+    raw_key: str,
+    domain: str,
+    admin_email: str = "",
+    region: str = "",
+    client_ip: str = "",
 ) -> Dict[str, Any]:
     """兑换 KEY、登记实例。**幂等**：同 KEY+同域名重复兑换（重装）直接返回原实例。
 
@@ -140,15 +150,62 @@ def redeem(
       - 首次兑换时建钱包并注入 KEY 附赠的初始 token（记 grant 流水）。
     """
     domain = (domain or "").strip().lower()
-    if not domain or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789.-" for c in domain):
+    if not domain or any(
+        c not in "abcdefghijklmnopqrstuvwxyz0123456789.-" for c in domain
+    ):
         raise FleetError("NEXUS_BAD_DOMAIN", "域名不合法")
     key = _key_by_plain(s, raw_key)
+    binding = s.get(NexusKeyBinding, key.id)
+    # 新签发 KEY 已在审批时冻结域名；历史 KEY 没有绑定记录，首次兑换仍保持兼容，
+    # 但会立即把实际域名冻结下来，之后不能换服务器域名复用。
+    if binding is not None and binding.approved_domain:
+        if binding.approved_domain != domain:
+            raise FleetError(
+                "NEXUS_KEY_BOUND"
+                if key.instance_id is not None
+                else "NEXUS_DOMAIN_MISMATCH",
+                (
+                    "该授权码已绑定其他域名；如需换域名请联系 GuDuu 人工处理"
+                    if key.instance_id is not None
+                    else f"该 KEY 仅允许部署到 {binding.approved_domain}"
+                ),
+                409 if key.instance_id is not None else 403,
+            )
+    elif binding is None:
+        binding = NexusKeyBinding(key_id=key.id, approved_domain=domain)
+        s.add(binding)
+
+    warnings: List[str] = []
+    observed_hash = network_binding.fingerprint(client_ip) if client_ip else ""
+    observed_masked = network_binding.masked(client_ip) if client_ip else ""
+    if binding.expected_ip_hash:
+        matches = bool(observed_hash) and hmac.compare_digest(
+            binding.expected_ip_hash, observed_hash
+        )
+        if not matches and int(binding.strict_ip or 0):
+            raise FleetError(
+                "NEXUS_ACTIVATION_IP_MISMATCH",
+                "激活请求来源 IP 与授权申请中的严格绑定 IP 不一致",
+                403,
+            )
+        if not matches:
+            warnings.append("activation_ip_mismatch")
 
     if key.instance_id is not None:
         inst = s.get(NexusInstance, key.instance_id)
         if inst is not None and inst.domain == domain:
             # 重装同域名：幂等放行
-            return {"instance_id": inst.id, "domain": inst.domain, "reinstall": True}
+            if observed_hash:
+                binding.activation_ip_hash = observed_hash
+                binding.activation_ip_masked = observed_masked
+                binding.risk_status = warnings[0] if warnings else ""
+                binding.activated_ts = _now_ms()
+            return {
+                "instance_id": inst.id,
+                "domain": inst.domain,
+                "reinstall": True,
+                "warnings": warnings,
+            }
         raise FleetError(
             "NEXUS_KEY_BOUND",
             "该授权码已绑定其他域名；如需换域名请联系 GuDuu 人工处理",
@@ -166,6 +223,11 @@ def redeem(
     s.flush()
     key.instance_id = inst.id
     key.redeemed_ts = _now_ms()
+    binding.approved_domain = binding.approved_domain or domain
+    binding.activation_ip_hash = observed_hash
+    binding.activation_ip_masked = observed_masked
+    binding.risk_status = warnings[0] if warnings else ""
+    binding.activated_ts = _now_ms()
 
     # 建钱包 + 注入初始额度（0 也建，网关统一按钱包判额度）
     s.add(NexusWallet(instance_id=inst.id, balance_tokens=int(key.token_grant)))
@@ -182,17 +244,31 @@ def redeem(
     code = geo.normalize(region)
     if code:
         info = geo.lookup(code)
-        s.add(NexusInstanceGeo(
-            instance_id=inst.id, region_code=code,
-            region_label=info["label"], lat=info["lat"], lon=info["lon"],
-        ))
-    return {"instance_id": inst.id, "domain": inst.domain, "reinstall": False}
+        s.add(
+            NexusInstanceGeo(
+                instance_id=inst.id,
+                region_code=code,
+                region_label=info["label"],
+                lat=info["lat"],
+                lon=info["lon"],
+            )
+        )
+    return {
+        "instance_id": inst.id,
+        "domain": inst.domain,
+        "reinstall": False,
+        "warnings": warnings,
+    }
 
 
 # ---------- 心跳（实例定期回连）----------
 
+
 def heartbeat(
-    s, raw_key: str, version: str = "", stats: Optional[Dict[str, Any]] = None,
+    s,
+    raw_key: str,
+    version: str = "",
+    stats: Optional[Dict[str, Any]] = None,
     client_ip: str = "",
 ) -> Dict[str, Any]:
     """实例心跳：更新快照 + 记历史。返回母舰想让实例知道的少量信息。
@@ -215,11 +291,7 @@ def heartbeat(
     inst.last_seen_ts = _now_ms()
     inst.version = (version or "")[:64]
     inst.stats_json = payload
-    s.add(
-        NexusHeartbeat(
-            instance_id=inst.id, version=inst.version, stats_json=payload
-        )
-    )
+    s.add(NexusHeartbeat(instance_id=inst.id, version=inst.version, stats_json=payload))
     # 记下来源网段（best-effort：地域行不存在就顺手建一条空的，等 OEM/管理员填地域）
     masked = geo.mask_ip(client_ip)
     if masked:
@@ -241,9 +313,8 @@ def heartbeat(
 
 # ---------- 网关请求统计（成功率 / 延迟 / 峰值）----------
 
-def record_request(
-    s, instance_id: int, *, ok: bool, latency_ms: int = 0
-) -> None:
+
+def record_request(s, instance_id: int, *, ok: bool, latency_ms: int = 0) -> None:
     """记一次网关请求到**分钟桶**。成败都要记——只记成功的话成功率永远是 100%。
 
     并发收敛：先原子 UPDATE 累加,rowcount=0 说明本分钟还没有行,再 INSERT;
@@ -278,15 +349,20 @@ def record_request(
     if _update():
         return
     try:
-        s.add(NexusRequestStat(
-            instance_id=int(instance_id), minute_ts=minute,
-            ok_count=inc_ok, fail_count=inc_fail,
-            latency_sum_ms=lat_sum, latency_max_ms=ms if ok else 0,
-        ))
+        s.add(
+            NexusRequestStat(
+                instance_id=int(instance_id),
+                minute_ts=minute,
+                ok_count=inc_ok,
+                fail_count=inc_fail,
+                latency_sum_ms=lat_sum,
+                latency_max_ms=ms if ok else 0,
+            )
+        )
         s.flush()
     except Exception:
         s.rollback()
-        _update()   # 撞并发插入:回到累加路径
+        _update()  # 撞并发插入:回到累加路径
 
 
 def request_stats(s, since_ms: int = 0) -> Dict[int, Dict[str, Any]]:
@@ -323,6 +399,7 @@ def request_stats(s, since_ms: int = 0) -> Dict[int, Dict[str, Any]]:
 
 # ---------- 实例地域（大屏地图）----------
 
+
 def set_geo(s, instance_id: int, region_code: str) -> Dict[str, Any]:
     """设置/修改实例地域。region_code 传空串=清空（大屏不再打点）。
 
@@ -352,7 +429,13 @@ def _geo_of(s, instance_id: int) -> Dict[str, Any]:
     """取某实例的地域快照（没填过就返回空壳，调用方无需判 None）。"""
     row = s.get(NexusInstanceGeo, int(instance_id))
     if row is None:
-        return {"region": "", "region_label": "", "lat": None, "lon": None, "last_ip": ""}
+        return {
+            "region": "",
+            "region_label": "",
+            "lat": None,
+            "lon": None,
+            "last_ip": "",
+        }
     return {
         "region": row.region_code or "",
         "region_label": row.region_label or "",
@@ -363,6 +446,7 @@ def _geo_of(s, instance_id: int) -> Dict[str, Any]:
 
 
 # ---------- 钱包（充值 / 扣费）----------
+
 
 def topup(s, instance_id: int, tokens: int, note: str = "") -> int:
     """人工充值（P1 手动记账；P3 接支付后由订单回调调用）。返回新余额。
@@ -439,9 +523,7 @@ def debit(s, instance_id: int, tokens: int, note: str = "") -> int:
     return new_balance
 
 
-def _usage_by_instance(
-    s, since: int = 0, until: int = 0
-) -> Dict[int, Dict[str, int]]:
+def _usage_by_instance(s, since: int = 0, until: int = 0) -> Dict[int, Dict[str, int]]:
     """Nexus usage 流水按实例聚合 token 消耗与 AI 请求次数。
 
     返回 ``{instance_id: {tokens, requests}}``。账本中 usage 是负数扣费，
@@ -470,6 +552,7 @@ def _usage_by_instance(
 
 # ---------- 列表（console 用）----------
 
+
 def list_keys(s) -> List[Dict[str, Any]]:
     """全部 KEY + 归属企业（不含任何可还原明文的信息）。"""
     rows = s.execute(select(NexusKey).order_by(NexusKey.id.desc())).scalars().all()
@@ -478,37 +561,63 @@ def list_keys(s) -> List[Dict[str, Any]]:
         int(claim.key_id): int(claim.oem_id)
         for claim in s.execute(
             select(NexusKeyClaim).where(NexusKeyClaim.key_id.in_(key_ids or [-1]))
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     }
     owner_ids = sorted(set(claims.values()))
     accounts = {
         int(account.id): account.email
         for account in s.execute(
             select(NexusOem).where(NexusOem.id.in_(owner_ids or [-1]))
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     }
     profiles = {
         int(profile.oem_id): profile.company
         for profile in s.execute(
             select(NexusOemProfile).where(NexusOemProfile.oem_id.in_(owner_ids or [-1]))
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
+    }
+    bindings = {
+        int(binding.key_id): binding
+        for binding in s.execute(
+            select(NexusKeyBinding).where(NexusKeyBinding.key_id.in_(key_ids or [-1]))
+        )
+        .scalars()
+        .all()
     }
     out: List[Dict[str, Any]] = []
     for row in rows:
         owner_id = claims.get(int(row.id))
-        out.append({
-            "id": row.id,
-            "tail": row.key_tail,
-            "status": row.status,
-            "note": row.note,
-            "token_grant": int(row.token_grant),
-            "instance_id": row.instance_id,
-            "created_ts": row.created_ts,
-            "redeemed_ts": row.redeemed_ts,
-            "oem_id": owner_id,
-            "oem_email": accounts.get(owner_id, "") if owner_id else "",
-            "company_name": profiles.get(owner_id, "") if owner_id else "",
-        })
+        binding = bindings.get(int(row.id))
+        out.append(
+            {
+                "id": row.id,
+                "tail": row.key_tail,
+                "status": row.status,
+                "note": row.note,
+                "token_grant": int(row.token_grant),
+                "instance_id": row.instance_id,
+                "created_ts": row.created_ts,
+                "redeemed_ts": row.redeemed_ts,
+                "oem_id": owner_id,
+                "oem_email": accounts.get(owner_id, "") if owner_id else "",
+                "company_name": profiles.get(owner_id, "") if owner_id else "",
+                "approved_domain": binding.approved_domain if binding else "",
+                "expected_public_ip_masked": (
+                    binding.expected_ip_masked if binding else ""
+                ),
+                "strict_ip": bool(binding.strict_ip) if binding else False,
+                "activation_ip_masked": (
+                    binding.activation_ip_masked if binding else ""
+                ),
+                "risk_status": binding.risk_status if binding else "",
+            }
+        )
     return out
 
 
@@ -520,9 +629,11 @@ def list_instances(s) -> List[Dict[str, Any]]:
     实例表再复制一份企业名造成改名后不一致。早期未认领节点返回空企业，
     由前端明确显示“未绑定企业”。
     """
-    rows = s.execute(
-        select(NexusInstance).order_by(NexusInstance.id.desc())
-    ).scalars().all()
+    rows = (
+        s.execute(select(NexusInstance).order_by(NexusInstance.id.desc()))
+        .scalars()
+        .all()
+    )
     # 两次聚合查询一次拿齐所有实例，避免列表里每个节点再查两遍账本。
     all_usage = _usage_by_instance(s)
     today_usage = _usage_by_instance(s, since=_day_start_ms())
@@ -700,7 +811,10 @@ def dash_summary(s) -> Dict[str, Any]:
     by_bucket = {int(b): abs(int(t or 0)) for b, t in hourly_rows}
     start_bucket = int(since_24h // hour_ms) + 1
     hourly = [
-        {"ts": (start_bucket + i) * hour_ms, "tokens": by_bucket.get(start_bucket + i, 0)}
+        {
+            "ts": (start_bucket + i) * hour_ms,
+            "tokens": by_bucket.get(start_bucket + i, 0),
+        }
         for i in range(24)
     ]
 
@@ -737,7 +851,11 @@ def dash_summary(s) -> Dict[str, Any]:
         admin_users = int(stats.get("users_admin") or 0)
         ai_users = int(stats.get("users_ai") or 0)
         # 环比：昨日为 0 时不算涨幅（避免 +∞），显示 0
-        delta = round((t_today - t_yesterday) / t_yesterday * 100, 1) if t_yesterday else 0.0
+        delta = (
+            round((t_today - t_yesterday) / t_yesterday * 100, 1)
+            if t_yesterday
+            else 0.0
+        )
         oems.append(
             {
                 "id": inst.id,
@@ -765,9 +883,11 @@ def dash_summary(s) -> Dict[str, Any]:
             }
         )
 
-    recent_rows = s.execute(
-        select(NexusLedger).order_by(NexusLedger.id.desc()).limit(15)
-    ).scalars().all()
+    recent_rows = (
+        s.execute(select(NexusLedger).order_by(NexusLedger.id.desc()).limit(15))
+        .scalars()
+        .all()
+    )
     domains = {o["id"]: o["domain"] for o in oems}
     recent = [
         {
@@ -813,9 +933,9 @@ def dash_summary(s) -> Dict[str, Any]:
             # 舰队覆盖的地域（底部 Region 用；多地域显示"N 个地域"）。
             # 统计**所有已定位实例**而非仅在线——否则单实例偶发掉线时底栏会闪成「—」，
             # 而"部署在哪"这件事并不随在线状态变化。
-            "regions": sorted({
-                o["region_label"] for o in oems if o.get("region_label")
-            }),
+            "regions": sorted(
+                {o["region_label"] for o in oems if o.get("region_label")}
+            ),
         },
         "oems": oems,
         "models": models_top,

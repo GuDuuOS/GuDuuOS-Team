@@ -1756,7 +1756,9 @@
       return "<tr><td>#" + q.id + '</td><td class="zh"><span class="badge ' +
         (REQUEST_CLASS[q.status] || "idle") + '">' + (REQUEST_LABEL[q.status] || q.status) +
         "</span>" + message + '</td><td class="zh"><b>' + esc(q.deployment_domain || "待定") +
-        '</b><div class="hint">' + esc(q.purpose || q.note || "—") + "</div></td><td>" +
+        '</b><div class="hint">' + esc(q.purpose || q.note || "—") +
+        (q.expected_public_ip_masked ? "<br>IP " + esc(q.expected_public_ip_masked) +
+          (q.strict_ip ? " · 严格绑定" : " · 风险核验") : "") + "</div></td><td>" +
         payment + '</td><td class="zh">' + requestKeyCell(q) + "</td><td>" +
         fmtTime(q.created_ts) + '</td><td class="zh">' + actions + "</td></tr>";
     }).join("");
@@ -1766,6 +1768,10 @@
     var f = $("#form-request");
     editingRequestId = q.id;
     f.deployment_domain.value = q.deployment_domain || "";
+    f.expected_public_ip.value = "";
+    f.expected_public_ip.placeholder = q.expected_public_ip_masked
+      ? "已保存 " + q.expected_public_ip_masked + "；留空保留" : "固定 IP，例如 203.0.113.10";
+    f.strict_ip.checked = !!q.strict_ip;
     f.purpose.value = q.purpose || "";
     f.expected_date.value = q.expected_date || "";
     f.requested_tokens.value = q.requested_tokens || 0;
@@ -1799,6 +1805,8 @@
       purpose: f.purpose.value,
       expected_date: f.expected_date.value,
       requested_tokens: Number(f.requested_tokens.value) || 0,
+      expected_public_ip: f.expected_public_ip.value,
+      strict_ip: !!f.strict_ip.checked,
     };
     if (editingRequestId) {
       payload.action = "update";
@@ -1868,6 +1876,8 @@
         " · 交付状态 " + esc(DELIVERY_LABEL[q.delivery_status] || DELIVERY_LABEL.none) + "</span>";
       var fields = [
         ["计划域名", q.deployment_domain || "待定"], ["使用场景", q.purpose || "—"],
+        ["计划公网 IP", q.expected_public_ip_masked || "未填写"],
+        ["IP 校验策略", q.strict_ip ? "严格绑定（不一致拒绝激活）" : "风险核验（不一致告警）"],
         ["期望日期", q.expected_date || "—"], ["申请 Token", fmtTokens(q.requested_tokens)],
         ["付款方式", PAYMENT_METHOD_ZH[q.payment_method] || q.payment_method || "人工审批"],
         ["付款状态", PAYMENT_STATUS_ZH[q.payment_status] || q.payment_status || "—"],
@@ -2364,6 +2374,8 @@
         return "<tr><td>#" + q.id + '</td><td class="zh"><b>' + esc(q.company || "未补企业名") +
           '</b><div class="hint">' + esc(q.oem_email) + '</div></td><td class="zh"><b>' +
           esc(q.deployment_domain || "域名待定") + '</b><div class="hint">' + esc(q.purpose || q.note || "—") +
+          (q.expected_public_ip_masked ? "<br>IP " + esc(q.expected_public_ip_masked) +
+            (q.strict_ip ? " · 严格" : " · 核验") : "") +
           '</div></td><td class="zh"><span class="badge ' + (REQUEST_CLASS[q.status] || "idle") + '">' +
           (REQUEST_LABEL[q.status] || q.status) + "</span></td><td>" + fmtTime(q.created_ts) +
           '</td><td class="zh">' + paymentCell + '</td><td class="zh"><button class="ghost small" data-request-detail="' +

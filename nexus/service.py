@@ -217,9 +217,7 @@ class NexusHandler(BaseHTTPRequestHandler):
         token = bearer_token or cookie_token
         s = db.session()
         try:
-            account = admin_auth.resolve_session(
-                s, token, allow_emergency=bool(expect)
-            )
+            account = admin_auth.resolve_session(s, token, allow_emergency=bool(expect))
             if account is not None:
                 self._admin_actor_id = int(account.id)
                 self._admin_actor_label = account.display_name
@@ -351,23 +349,33 @@ class NexusHandler(BaseHTTPRequestHandler):
 
     def _public_origin(self) -> str:
         """根据反代头生成当前 Nexus 公网 origin，并拒绝异常 Host 注入分享链接。"""
-        host = (self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "").strip()
+        host = (
+            self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or ""
+        ).strip()
         host = host.split(",", 1)[0].strip()
-        if not host or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:" for c in host):
+        if not host or any(
+            c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:"
+            for c in host
+        ):
             raise FleetError("NEXUS_BAD_HOST", "请求 Host 不合法")
-        forwarded = (self.headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip()
-        scheme = forwarded if forwarded in ("http", "https") else (
-            "http" if host.startswith(("127.0.0.1", "localhost")) else "https"
+        forwarded = (
+            (self.headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip()
+        )
+        scheme = (
+            forwarded
+            if forwarded in ("http", "https")
+            else ("http" if host.startswith(("127.0.0.1", "localhost")) else "https")
         )
         return f"{scheme}://{host}"
 
     def _request_host(self) -> str:
         """返回不含端口的小写请求主机名，用于管理域名的服务端边界判断。"""
         host = (
-            self.headers.get("X-Forwarded-Host")
-            or self.headers.get("Host")
-            or ""
-        ).split(",", 1)[0].strip().lower()
+            (self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "")
+            .split(",", 1)[0]
+            .strip()
+            .lower()
+        )
         # 当前生产只使用普通 DNS 主机名；测试里的 127.0.0.1:port 也可稳定去端口。
         return host.rsplit(":", 1)[0] if ":" in host else host
 
@@ -412,7 +420,9 @@ class NexusHandler(BaseHTTPRequestHandler):
         if path == "/nexus/referral":
             qs = parse_qs(urlsplit(self.path).query)
             code = str((qs.get("code") or [""])[0])
-            self._with_session(lambda s: self._json(200, oem_svc.referral_info(s, code)))
+            self._with_session(
+                lambda s: self._json(200, oem_svc.referral_info(s, code))
+            )
             return
         if path == "/nexus/oem/auth/config":
             # 只返回布尔能力，不把 SMTP 主机、账号、发件人或其他部署细节暴露给浏览器。
@@ -454,9 +464,7 @@ class NexusHandler(BaseHTTPRequestHandler):
         if path == "/nexus/admin/admins":
             if self._check_admin():
                 self._with_session(
-                    lambda s: self._json(
-                        200, {"admins": admin_auth.list_admins(s)}
-                    )
+                    lambda s: self._json(200, {"admins": admin_auth.list_admins(s)})
                 )
             return
         if path == "/nexus/admin/audit":
@@ -484,7 +492,9 @@ class NexusHandler(BaseHTTPRequestHandler):
             return
         if path == "/nexus/admin/keys":
             if self._check_admin():
-                self._with_session(lambda s: self._json(200, {"keys": fleet.list_keys(s)}))
+                self._with_session(
+                    lambda s: self._json(200, {"keys": fleet.list_keys(s)})
+                )
             return
         if path == "/nexus/admin/regions":
             # 地域字典（console 下拉 + 大屏图例用）。静态数据，不查库。
@@ -500,9 +510,7 @@ class NexusHandler(BaseHTTPRequestHandler):
         if path == "/nexus/admin/releases":
             if self._check_admin():
                 self._with_session(
-                    lambda s: self._json(
-                        200, {"releases": releases.list_releases(s)}
-                    )
+                    lambda s: self._json(200, {"releases": releases.list_releases(s)})
                 )
             return
         if path == "/nexus/admin/release_draft":
@@ -553,6 +561,7 @@ class NexusHandler(BaseHTTPRequestHandler):
             return
         # —— OEM 门户：登录后看自己的账号 + 实例 + KEY ——
         if path == "/nexus/oem/me":
+
             def _me(s):
                 oem = self._oem(s)
                 if oem is None:
@@ -576,15 +585,15 @@ class NexusHandler(BaseHTTPRequestHandler):
                         "referral": (
                             oem_svc.share_summary(s, oem.id, self._public_origin())
                             if feature_flags["oem_network_visible"]
-                            else oem_svc.share_links(
-                                s, oem.id, self._public_origin()
-                            )
+                            else oem_svc.share_links(s, oem.id, self._public_origin())
                         ),
                     },
                 )
+
             self._with_session(_me)
             return
         if path == "/nexus/oem/network":
+
             def _network(s):
                 """仅返回当前登录 OEM 自己的下属网络明细。"""
                 account = self._oem(s)
@@ -596,6 +605,7 @@ class NexusHandler(BaseHTTPRequestHandler):
             self._with_session(_network)
             return
         if path == "/nexus/oem/instance":
+
             def _oem_instance(s):
                 """校验 OEM 会话与实例归属后，返回节点的真实运行快照。"""
                 account = self._oem(s)
@@ -618,6 +628,7 @@ class NexusHandler(BaseHTTPRequestHandler):
             self._with_session(_oem_instance)
             return
         if path == "/nexus/oem/share_qr":
+
             def _share_qr(s):
                 account = self._oem(s)
                 if account is None:
@@ -656,6 +667,7 @@ class NexusHandler(BaseHTTPRequestHandler):
             return
         # —— 商品与渠道（登录后查询：定价 + 各渠道可用性）——
         if path == "/nexus/oem/products":
+
             def _products(s):
                 oem = self._oem(s)
                 if oem is None:
@@ -664,9 +676,11 @@ class NexusHandler(BaseHTTPRequestHandler):
                     200,
                     {"pricing": pay.public_pricing(s), "channels": pay.channels(s)},
                 )
+
             self._with_session(_products)
             return
         if path == "/nexus/oem/finance":
+
             def _oem_finance(s):
                 account = self._oem(s)
                 if account is None:
@@ -811,6 +825,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                     )
                     self.end_headers()
                     self.wfile.write(data)
+
                 self._with_session(_dl)
             return
         # 企业转账凭证包含银行信息，只允许超管按记录 id 查看；响应禁止缓存。
@@ -894,7 +909,7 @@ class NexusHandler(BaseHTTPRequestHandler):
             if path in ("/portal/admin", "/portal/admin/"):
                 rel = "index.html"
             else:
-                rel = path[len("/portal"):].lstrip("/") or "index.html"
+                rel = path[len("/portal") :].lstrip("/") or "index.html"
         else:
             base_dir = self._DASH_DIR
             rel = path.lstrip("/") or "index.html"
@@ -960,7 +975,7 @@ class NexusHandler(BaseHTTPRequestHandler):
         if path.startswith("/gw/"):
             from nexus import gateway  # 延迟导入：fleet-only 部署可不装 requests
 
-            parts = path[len("/gw/"):].split("/", 1)
+            parts = path[len("/gw/") :].split("/", 1)
             provider = parts[0] if parts else ""
             suffix = parts[1] if len(parts) > 1 else ""
             gateway.handle_post(self, provider, suffix)
@@ -971,6 +986,7 @@ class NexusHandler(BaseHTTPRequestHandler):
         if path == "/nexus/admin/oem_upload":
             if self._check_admin():
                 from urllib.parse import unquote
+
                 qs = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
                 oem_id = int((qs.get("oem_id") or ["0"])[0] or 0)
                 filename = unquote((qs.get("filename") or [""])[0])
@@ -986,7 +1002,11 @@ class NexusHandler(BaseHTTPRequestHandler):
                 self._with_session(
                     lambda s: self._json(
                         200,
-                        {"file": oem_svc.add_oem_file(s, oem_id, filename, ctype, data)},
+                        {
+                            "file": oem_svc.add_oem_file(
+                                s, oem_id, filename, ctype, data
+                            )
+                        },
                     )
                 )
             return
@@ -1011,6 +1031,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                 self._err(error.http_status, error.code, error.message)
                 return
             if path.endswith("/recognize"):
+
                 def _recognize_transfer(_s):
                     self._json(
                         200,
@@ -1084,14 +1105,12 @@ class NexusHandler(BaseHTTPRequestHandler):
                     method,
                     channel=str(checkout_body.get("channel", "")),
                     note=str(checkout_body.get("note", "")),
-                    deployment_domain=str(
-                        checkout_body.get("deployment_domain", "")
-                    ),
+                    deployment_domain=str(checkout_body.get("deployment_domain", "")),
                     purpose=str(checkout_body.get("purpose", "")),
                     expected_date=str(checkout_body.get("expected_date", "")),
-                    requested_tokens=int(
-                        checkout_body.get("requested_tokens") or 0
-                    ),
+                    requested_tokens=int(checkout_body.get("requested_tokens") or 0),
+                    expected_public_ip=str(checkout_body.get("expected_public_ip", "")),
+                    strict_ip=bool(checkout_body.get("strict_ip", False)),
                     image_data=image_data,
                     content_type=content_type,
                     filename=str(checkout_body.get("filename", "")),
@@ -1139,9 +1158,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                         image_data=image_data,
                         content_type=content_type,
                         filename=str(checkout_body.get("filename", "")),
-                        transfer_details=(
-                            details if isinstance(details, dict) else {}
-                        ),
+                        transfer_details=(details if isinstance(details, dict) else {}),
                     )
                 elif method == "online":
                     result = pay.create_order(
@@ -1190,9 +1207,7 @@ class NexusHandler(BaseHTTPRequestHandler):
             self._with_session(
                 lambda s: self._json(
                     200,
-                    passkeys.authentication_options(
-                        s, str(body.get("username", ""))
-                    ),
+                    passkeys.authentication_options(s, str(body.get("username", ""))),
                 )
             )
             return
@@ -1277,9 +1292,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                     self._clear_admin_cookie()
                     self._json(200, {"ok": True})
 
-                self._with_session(
-                    _admin_logout
-                )
+                self._with_session(_admin_logout)
             return
 
         if path == "/nexus/admin/passkey/register/options":
@@ -1426,11 +1439,14 @@ class NexusHandler(BaseHTTPRequestHandler):
                     str(body.get("key", "")),
                     str(body.get("domain", "")),
                     str(body.get("admin_email", "")),
-                    str(body.get("region", "")),   # OEM 兑码时选的机房地域（大屏地图用）
+                    str(body.get("region", "")),  # OEM 兑码时选的机房地域（大屏地图用）
+                    # 来源由 Nexus 自己读取，安装脚本不能通过自报地址绕过 IP 风控。
+                    client_ip=self._client_ip(),
                 )
                 # 装机成功后销毁申请单里存的交付明文（阅后即焚的"焚"时刻）
                 oem_svc.clear_plain_by_key(s, str(body.get("key", "")))
                 self._json(200, out)
+
             self._with_session(_redeem)
             return
 
@@ -1583,15 +1599,18 @@ class NexusHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/nexus/oem/claim":
+
             def _claim(s):
                 oem = self._oem(s)
                 if oem is None:
                     return
                 self._json(200, oem_svc.claim_key(s, oem.id, str(body.get("key", ""))))
+
             self._with_session(_claim)
             return
 
         if path == "/nexus/oem/request_key":
+
             def _req(s):
                 oem = self._oem(s)
                 if oem is None:
@@ -1607,14 +1626,18 @@ class NexusHandler(BaseHTTPRequestHandler):
                             purpose=str(body.get("purpose", "")),
                             expected_date=str(body.get("expected_date", "")),
                             requested_tokens=int(body.get("requested_tokens") or 0),
+                            expected_public_ip=str(body.get("expected_public_ip", "")),
+                            strict_ip=bool(body.get("strict_ip", False)),
                             source_ip=self._client_ip(),
                         )
                     },
                 )
+
             self._with_session(_req)
             return
 
         if path == "/nexus/oem/request_action":
+
             def _request_action(s):
                 account = self._oem(s)
                 if account is None:
@@ -1635,6 +1658,8 @@ class NexusHandler(BaseHTTPRequestHandler):
                         purpose=str(body.get("purpose", "")),
                         expected_date=str(body.get("expected_date", "")),
                         requested_tokens=int(body.get("requested_tokens") or 0),
+                        expected_public_ip=str(body.get("expected_public_ip", "")),
+                        strict_ip=bool(body.get("strict_ip", False)),
                         source_ip=self._client_ip(),
                     )
                 elif action == "reveal":
@@ -1650,6 +1675,7 @@ class NexusHandler(BaseHTTPRequestHandler):
 
         # —— Token 充值订单（KEY 必须走上方 license_checkout）——
         if path == "/nexus/oem/withdrawals":
+
             def _withdraw(s):
                 account = self._oem(s)
                 if account is None:
@@ -1672,6 +1698,7 @@ class NexusHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/nexus/oem/order":
+
             def _order(s):
                 oem = self._oem(s)
                 if oem is None:
@@ -1687,7 +1714,9 @@ class NexusHandler(BaseHTTPRequestHandler):
                     )
                     return
                 inst = body.get("instance_id")
-                if kind == "topup" and not oem_svc.owns_instance(s, oem.id, int(inst or 0)):
+                if kind == "topup" and not oem_svc.owns_instance(
+                    s, oem.id, int(inst or 0)
+                ):
                     self._err(403, "NEXUS_FORBIDDEN", "该实例不属于你的账号")
                     return
                 self._json(
@@ -1701,11 +1730,13 @@ class NexusHandler(BaseHTTPRequestHandler):
                         pack_index=int(body.get("pack_index", -1)),
                     ),
                 )
+
             self._with_session(_order)
             return
 
         # mock 渠道确认（仅 NEXUS_PAY_MOCK=1 环境；买家本人对自己的单确认）
         if path == "/nexus/pay/mock/confirm":
+
             def _mock(s):
                 if os.environ.get("NEXUS_PAY_MOCK", "").strip() != "1":
                     self._err(404, "NEXUS_UNKNOWN", "未知端点")
@@ -1715,12 +1746,14 @@ class NexusHandler(BaseHTTPRequestHandler):
                     return
                 order = pay.get_order_for(s, oem.id, str(body.get("order_no", "")))
                 self._json(200, {"order": pay.mark_paid(s, order.order_no, "MOCK")})
+
             self._with_session(_mock)
             return
 
         # 支付渠道异步回调（骨架：验签在 provider 内，API 接入前一律 503）
         if path in ("/nexus/pay/notify/alipay", "/nexus/pay/notify/wechat"):
             channel = path.rsplit("/", 1)[-1]
+
             def _notify(s):
                 provider = pay._PROVIDERS[channel]
                 info = provider.verify_notify(dict(self.headers), b"")
@@ -1737,15 +1770,14 @@ class NexusHandler(BaseHTTPRequestHandler):
                 )
                 # 支付宝要求回 success 文本；这里统一 JSON,接真 API 时按渠道要求调整
                 self._json(200, {"ok": True})
+
             self._with_session(_notify)
             return
 
         if path == "/nexus/admin/pricing":
             if self._check_admin():
                 self._with_session(
-                    lambda s: self._json(
-                        200, {"pricing": pay.set_pricing(s, body)}
-                    )
+                    lambda s: self._json(200, {"pricing": pay.set_pricing(s, body)})
                 )
             return
 
@@ -1800,14 +1832,13 @@ class NexusHandler(BaseHTTPRequestHandler):
         if path == "/nexus/admin/features":
             if self._check_admin():
                 self._with_session(
-                    lambda s: self._json(
-                        200, {"features": features.set_flags(s, body)}
-                    )
+                    lambda s: self._json(200, {"features": features.set_flags(s, body)})
                 )
             return
 
         if path == "/nexus/admin/payment_config":
             if self._check_admin():
+
                 def _payment_config(s):
                     provider = str(body.get("provider", "")).strip().lower()
                     action = str(body.get("action", "save")).strip().lower()
@@ -1819,9 +1850,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                             raise FleetError(
                                 "NEXUS_PAY_CONFIG_INVALID", "支付配置格式不正确"
                             )
-                        result = payment_config.save_and_verify(
-                            s, provider, submitted
-                        )
+                        result = payment_config.save_and_verify(s, provider, submitted)
                     else:
                         raise FleetError(
                             "NEXUS_PAY_CONFIG_ACTION", "支付配置操作不合法"
@@ -1854,6 +1883,7 @@ class NexusHandler(BaseHTTPRequestHandler):
 
         if path == "/nexus/admin/release_action":
             if self._check_admin():
+
                 def _release_action(s):
                     action = str(body.get("action", ""))
                     release_id = int(body.get("release_id") or 0)
@@ -1872,9 +1902,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                     elif action == "retry":
                         result = releases.retry_failed(s, release_id)
                     else:
-                        raise FleetError(
-                            "NEXUS_BAD_RELEASE_ACTION", "版本操作不合法"
-                        )
+                        raise FleetError("NEXUS_BAD_RELEASE_ACTION", "版本操作不合法")
                     self._json(200, {"release": result})
 
                 self._with_session(_release_action)
@@ -1935,6 +1963,7 @@ class NexusHandler(BaseHTTPRequestHandler):
 
         if path == "/nexus/admin/keys":
             if self._check_admin():
+
                 def _issue(s):
                     issued = fleet.issue_keys(
                         s,
@@ -1953,9 +1982,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                             source_ip=self._client_ip(),
                             to_state="active",
                             note=str(body.get("note", "")),
-                            metadata={
-                                "token_grant": int(body.get("token_grant") or 0)
-                            },
+                            metadata={"token_grant": int(body.get("token_grant") or 0)},
                         )
                     self._json(200, {"keys": issued})
 
@@ -1964,11 +1991,14 @@ class NexusHandler(BaseHTTPRequestHandler):
 
         if path == "/nexus/admin/revoke":
             if self._check_admin():
+
                 def _do(s):
                     key_id = int(body.get("key_id") or 0)
                     reason = str(body.get("reason", "")).strip()
                     if not reason:
-                        raise FleetError("NEXUS_REASON_REQUIRED", "永久吊销必须填写原因")
+                        raise FleetError(
+                            "NEXUS_REASON_REQUIRED", "永久吊销必须填写原因"
+                        )
                     key_row = s.get(db.NexusKey, key_id)
                     old_status = key_row.status if key_row else ""
                     fleet.revoke_key(s, key_id)
@@ -1985,17 +2015,21 @@ class NexusHandler(BaseHTTPRequestHandler):
                         note=reason,
                     )
                     self._json(200, {"ok": True})
+
                 self._with_session(_do)
             return
 
         if path == "/nexus/admin/key_status":
             if self._check_admin():
+
                 def _key_status(s):
                     key_id = int(body.get("key_id") or 0)
                     target = str(body.get("status", ""))
                     reason = str(body.get("reason", "")).strip()
                     if not reason:
-                        raise FleetError("NEXUS_REASON_REQUIRED", "暂停或恢复必须填写原因")
+                        raise FleetError(
+                            "NEXUS_REASON_REQUIRED", "暂停或恢复必须填写原因"
+                        )
                     changed = fleet.set_key_status(s, key_id, target)
                     audit.record(
                         s,
@@ -2016,19 +2050,23 @@ class NexusHandler(BaseHTTPRequestHandler):
 
         if path == "/nexus/admin/oem_note":
             if self._check_admin():
+
                 def _note(s):
                     oem_svc.set_admin_note(
                         s, int(body.get("oem_id") or 0), str(body.get("note", ""))
                     )
                     self._json(200, {"ok": True})
+
                 self._with_session(_note)
             return
 
         if path == "/nexus/admin/oem_file_delete":
             if self._check_admin():
+
                 def _fdel(s):
                     oem_svc.delete_oem_file(s, int(body.get("file_id") or 0))
                     self._json(200, {"ok": True})
+
                 self._with_session(_fdel)
             return
 

@@ -13,7 +13,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 
 from nexus import db, fleet
-from nexus.db import NexusLedger, NexusWallet
+from nexus.db import NexusKeyBinding, NexusLedger, NexusWallet
 from nexus.fleet import FleetError
 from nexus.keys import generate_key, hash_key, looks_like_key, normalize_key
 from sqlalchemy import select
@@ -42,6 +42,8 @@ class FleetTest(unittest.TestCase):
     """签发→兑换→心跳→充值/扣费 的全链路（临时 SQLite）。"""
 
     def setUp(self):
+        self._old_secret = os.environ.get("NEXUS_SECRET_KEY")
+        os.environ["NEXUS_SECRET_KEY"] = "unit-test-network-binding-secret-32-bytes"
         self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
         self._tmp.close()
         db.init_engine("sqlite:///" + self._tmp.name)
@@ -50,6 +52,10 @@ class FleetTest(unittest.TestCase):
     def tearDown(self):
         self.s.close()
         os.unlink(self._tmp.name)
+        if self._old_secret is None:
+            os.environ.pop("NEXUS_SECRET_KEY", None)
+        else:
+            os.environ["NEXUS_SECRET_KEY"] = self._old_secret
 
     # ---- 签发 ----
 
@@ -117,6 +123,65 @@ class FleetTest(unittest.TestCase):
             fleet.redeem(self.s, self._one_key(), "im.oem-a.com")
         self.assertEqual(ctx.exception.code, "NEXUS_DOMAIN_TAKEN")
 
+    def test_prebound_domain_and_soft_ip_warning(self):
+        """获批域名必须一致；软 IP 不一致只告警并仅保存指纹和脱敏网段。"""
+        issued = fleet.issue_keys(self.s)[0]
+        from nexus import network_binding
+
+        self.s.add(
+            NexusKeyBinding(
+                key_id=issued["id"],
+                approved_domain="bound.example.com",
+                expected_ip_hash=network_binding.fingerprint("203.0.113.8"),
+                expected_ip_masked=network_binding.masked("203.0.113.8"),
+            )
+        )
+        self.s.flush()
+        with self.assertRaises(FleetError) as mismatch:
+            fleet.redeem(self.s, issued["key"], "other.example.com")
+        self.assertEqual(mismatch.exception.code, "NEXUS_DOMAIN_MISMATCH")
+        out = fleet.redeem(
+            self.s,
+            issued["key"],
+            "bound.example.com",
+            client_ip="198.51.100.22",
+        )
+        self.assertEqual(out["warnings"], ["activation_ip_mismatch"])
+        binding = self.s.get(NexusKeyBinding, issued["id"])
+        self.assertEqual(binding.activation_ip_masked, "198.51.100.0/24")
+        self.assertNotIn("198.51.100.22", binding.activation_ip_hash)
+
+    def test_strict_ip_rejects_mismatch(self):
+        """只有明确开启严格模式时，错误来源 IP 才阻断在线激活。"""
+        issued = fleet.issue_keys(self.s)[0]
+        from nexus import network_binding
+
+        self.s.add(
+            NexusKeyBinding(
+                key_id=issued["id"],
+                approved_domain="strict.example.com",
+                expected_ip_hash=network_binding.fingerprint("203.0.113.8"),
+                expected_ip_masked=network_binding.masked("203.0.113.8"),
+                strict_ip=1,
+            )
+        )
+        self.s.flush()
+        with self.assertRaises(FleetError) as mismatch:
+            fleet.redeem(
+                self.s,
+                issued["key"],
+                "strict.example.com",
+                client_ip="198.51.100.22",
+            )
+        self.assertEqual(mismatch.exception.code, "NEXUS_ACTIVATION_IP_MISMATCH")
+        out = fleet.redeem(
+            self.s,
+            issued["key"],
+            "strict.example.com",
+            client_ip="203.0.113.8",
+        )
+        self.assertEqual(out["warnings"], [])
+
     def test_redeem_revoked_and_garbage(self):
         keys = fleet.issue_keys(self.s)
         fleet.revoke_key(self.s, keys[0]["id"])
@@ -176,9 +241,7 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(fleet.topup(self.s, inst, 900, "手动充值#1"), 1000)
         # 扣费允许透支（断供判定是"下一次请求"，见 fleet.debit docstring）
         self.assertEqual(fleet.debit(self.s, inst, 1300, "claude in+out"), -300)
-        kinds = [
-            r.kind for r in self.s.execute(select(NexusLedger)).scalars().all()
-        ]
+        kinds = [r.kind for r in self.s.execute(select(NexusLedger)).scalars().all()]
         self.assertEqual(kinds, ["grant", "topup", "usage"])
         with self.assertRaises(FleetError):
             fleet.topup(self.s, inst, 0)
@@ -212,12 +275,16 @@ class FleetTest(unittest.TestCase):
 
         self.s.expire_all()
         self.assertEqual(self.s.get(NexusWallet, inst).balance_tokens, 80)
-        usage_rows = self.s.execute(
-            select(NexusLedger).where(
-                NexusLedger.instance_id == inst,
-                NexusLedger.kind == "usage",
+        usage_rows = (
+            self.s.execute(
+                select(NexusLedger).where(
+                    NexusLedger.instance_id == inst,
+                    NexusLedger.kind == "usage",
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         self.assertEqual(len(usage_rows), 2)
         self.assertEqual(sum(int(row.delta_tokens) for row in usage_rows), -20)
 

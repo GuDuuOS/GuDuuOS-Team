@@ -343,6 +343,8 @@
     <form id="form-request" class="license-request-form">
       <label class="license-domain">计划部署域名<input name="deployment_domain" required placeholder="例如 im.my-brand.com" /></label>
       <label class="license-purpose">使用场景<input name="purpose" required maxlength="255" placeholder="例如企业内部协作 / 客户交付" /></label>
+      <label class="license-public-ip">计划公网 IP（可选）<input name="expected_public_ip" inputmode="decimal" placeholder="固定 IP，例如 203.0.113.10" /><small>仅保存指纹与脱敏网段；修改申请时留空会保留原值。</small></label>
+      <label class="license-strict-ip"><span><input name="strict_ip" type="checkbox" /> 严格绑定公网 IP</span><small>仅固定公网 IP 服务器开启；普通云主机建议关闭。</small></label>
       <label class="license-date">期望部署日期<input name="expected_date" type="date" /></label>
       <label class="license-payment">付款方式<select name="payment_method" id="license-payment-method">
         <option value="corporate_transfer">企业转账（到账后人工审核）</option>
