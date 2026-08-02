@@ -1362,20 +1362,20 @@
           </label>
           <div class="adm-grid2">
             <label class="adm-field">
-              <span>计费倍率 markup（用户扣量 = 真实 LLM token × 倍率；用它吸收模型成本波动）</span>
-              <input v-model.number="tkCfg.markup" type="number" min="0.1" step="0.1" />
+              <span>计费倍率 markup（最多两位小数；用户扣量 = 真实 LLM token × 倍率）</span>
+              <input v-model.number="tkCfg.markup" type="number" min="0.01" step="0.01" inputmode="decimal" @blur="tkNormalizeConfigNumbers" />
             </label>
             <label class="adm-field">
-              <span>汇率（1 元 = 多少 token；充值包定价与展示换算）</span>
-              <input v-model.number="tkCfg.tokens_per_yuan" type="number" min="1" />
+              <span>汇率（整数；1 元 = 多少 token，用于充值包定价与展示换算）</span>
+              <input v-model.number="tkCfg.tokens_per_yuan" type="number" min="1" step="1" inputmode="numeric" @blur="tkNormalizeConfigNumbers" />
             </label>
             <label class="adm-field">
-              <span>每日免费 token（每天送、当天清零不累积；0=不送）</span>
-              <input v-model.number="tkCfg.free_daily" type="number" min="0" />
+              <span>每日免费 token（整数；每天送、当天清零不累积；0=不送）</span>
+              <input v-model.number="tkCfg.free_daily" type="number" min="0" step="1" inputmode="numeric" @blur="tkNormalizeConfigNumbers" />
             </label>
             <label class="adm-field">
-              <span>新用户一次性赠送 token（首次建钱包发；0=不送）</span>
-              <input v-model.number="tkCfg.free_grant" type="number" min="0" />
+              <span>新用户一次性赠送 token（整数；首次建钱包发；0=不送）</span>
+              <input v-model.number="tkCfg.free_grant" type="number" min="0" step="1" inputmode="numeric" @blur="tkNormalizeConfigNumbers" />
             </label>
           </div>
 
@@ -1387,14 +1387,14 @@
           <p v-if="!tkCfg.packages.length" class="adm-hint">还没有充值包。加几档（如「入门包 / 1万 token / ¥9.9」），用户在「Token 充值」页购买。</p>
           <table v-else class="adm-table">
             <thead>
-              <tr><th>标识</th><th>名称</th><th>token 数</th><th>价格(元)</th><th>上架</th><th></th></tr>
+              <tr><th>标识</th><th>名称</th><th>token 数（整数）</th><th>价格（元，最多两位小数）</th><th>上架</th><th></th></tr>
             </thead>
             <tbody>
               <tr v-for="(p, i) in tkCfg.packages" :key="i">
                 <td><input v-model.trim="p.slug" class="adm-qnum wide" placeholder="t10" /></td>
                 <td><input v-model.trim="p.name" class="adm-qnum wide" placeholder="入门包" /></td>
-                <td><input v-model.number="p.tokens" type="number" min="1" class="adm-qnum" /></td>
-                <td><input v-model.trim="tkPkgYuan[i]" type="text" inputmode="decimal" class="adm-qnum" placeholder="9.9" /></td>
+                <td><input v-model.number="p.tokens" type="number" min="1" step="1" inputmode="numeric" class="adm-qnum" @blur="tkNormalizePackageTokens(p)" /></td>
+                <td><input :value="tkPkgYuan[i]" type="text" inputmode="decimal" class="adm-qnum" placeholder="9.90" @input="tkMoneyInput(i, $event)" @blur="tkMoneyBlur(i)" /></td>
                 <td><input type="checkbox" v-model="p.enabled" /></td>
                 <td><button class="adm-btn ghost sm danger" @click="tkCfg.packages.splice(i, 1); tkPkgYuan.splice(i, 1)">删</button></td>
               </tr>
@@ -1407,7 +1407,7 @@
           <div class="adm-wal-adjust">
             <input v-model.trim="tkTarget" class="adm-search" placeholder="@用户:域名（完整用户 ID）" />
             <button class="adm-btn ghost" :disabled="!tkTarget || tkAdjBusy" @click="tkQueryBalance">查余额</button>
-            <input v-model.number="tkDelta" type="number" class="adm-qnum wide" placeholder="±数量" />
+            <input v-model.number="tkDelta" type="number" step="1" inputmode="numeric" class="adm-qnum wide" placeholder="±整数数量" @blur="tkNormalizeDelta" />
             <input v-model.trim="tkNote" class="adm-search" placeholder="备注（对方流水可见）" style="max-width:180px" />
             <button class="adm-btn" :disabled="!tkTarget || !tkDelta || tkAdjBusy" @click="tkDoAdjust">
               {{ tkAdjBusy ? '处理中…' : '执行调整' }}
@@ -1882,6 +1882,7 @@ import {
   setTokenConfig,
   walletAdminAdjust,
   walletAdminBalance,
+  type TokenPackageDef,
   type TokenConfigDef,
   type WalletLedgerItem,
   creatorAdminApplications,
@@ -3459,6 +3460,62 @@ const TK_REASON: Record<string, string> = {
   agent_use: '创作者 Agent', skill_buy: '创作者技能', earning: '创作收益',
 }
 
+/** 把数量字段收敛为不小于下限的整数；NaN/空值使用给定默认值。 */
+function tkInteger(value: unknown, minimum: number, fallback: number): number {
+  const n = Number(value)
+  return Number.isFinite(n) ? Math.max(minimum, Math.trunc(n)) : fallback
+}
+
+/** 倍率最多保留两位小数且必须大于 0；其余 Token 数量全部保存为整数。 */
+function tkNormalizeConfigNumbers() {
+  const markup = Number(tkCfg.markup)
+  tkCfg.markup = Number.isFinite(markup) && markup > 0
+    ? Math.max(0.01, Math.round(markup * 100) / 100)
+    : 1
+  tkCfg.tokens_per_yuan = tkInteger(tkCfg.tokens_per_yuan, 1, 1000)
+  tkCfg.free_daily = tkInteger(tkCfg.free_daily, 0, 0)
+  tkCfg.free_grant = tkInteger(tkCfg.free_grant, 0, 0)
+}
+
+/** 单个充值包的 Token 数不能出现小数。 */
+function tkNormalizePackageTokens(pkg: TokenPackageDef) {
+  pkg.tokens = tkInteger(pkg.tokens, 1, 1)
+}
+
+/** 金额输入只保留数字和一个小数点，并在键入阶段最多接受两位小数。 */
+function tkMoneyInput(index: number, event: Event) {
+  const input = event.target as HTMLInputElement
+  const raw = input.value.replace(/[^\d.]/g, '')
+  if (!raw) {
+    tkPkgYuan[index] = ''
+    input.value = ''
+    return
+  }
+  const dot = raw.indexOf('.')
+  const wholeRaw = dot >= 0 ? raw.slice(0, dot) : raw
+  const fraction = dot >= 0 ? raw.slice(dot + 1).replace(/\./g, '').slice(0, 2) : ''
+  const whole = wholeRaw.replace(/^0+(?=\d)/, '') || '0'
+  const clean = dot >= 0 ? `${whole}.${fraction}` : whole
+  tkPkgYuan[index] = clean
+  // v-model 改为显式受控输入后，同步 DOM 可避免第三位小数短暂留在框中。
+  input.value = clean
+}
+
+/** 金额失焦时去掉多余尾零，但仍保证值精确到分，不保存浮点长尾。 */
+function tkMoneyBlur(index: number) {
+  const yuan = Number(tkPkgYuan[index])
+  tkPkgYuan[index] = Number.isFinite(yuan) && yuan > 0
+    ? String(Math.round(yuan * 100) / 100)
+    : ''
+}
+
+/** 人工调整允许正负数，但必须是整数；空输入保持为空。 */
+function tkNormalizeDelta() {
+  if (tkDelta.value === '') return
+  const n = Number(tkDelta.value)
+  tkDelta.value = Number.isFinite(n) ? Math.trunc(n) : ''
+}
+
 function switchToWallet() {
   tab.value = 'wallet'
   if (!tkLoaded.value) loadTokenCfg()
@@ -3543,8 +3600,12 @@ async function loadTokenCfg() {
 }
 
 async function saveTokenCfg() {
+  // 即使脚本或浏览器绕过了 input 的 step，这里也在持久化前做最后一次规整。
+  tkNormalizeConfigNumbers()
   // 元→分：按下标把「元」文本转回 prices.cny（非法/空丢弃该包定价 → 后端会过滤无价包）
   const packages = tkCfg.packages.map((p, i) => {
+    tkNormalizePackageTokens(p)
+    tkMoneyBlur(i)
     const yuan = parseFloat((tkPkgYuan[i] || '').trim())
     const prices: Record<string, number> = { ...p.prices }
     if (Number.isFinite(yuan) && yuan > 0) prices.cny = Math.round(yuan * 100)
@@ -3588,8 +3649,9 @@ async function tkQueryBalance() {
 }
 
 async function tkDoAdjust() {
+  tkNormalizeDelta()
   const delta = Number(tkDelta.value)
-  if (!tkTarget.value || !Number.isFinite(delta) || delta === 0) return
+  if (!tkTarget.value || !Number.isInteger(delta) || delta === 0) return
   if (!confirm(`确认给「${tkTarget.value}」${delta > 0 ? '增加' : '扣减'} ${Math.abs(delta).toLocaleString()} token？`)) return
   tkAdjBusy.value = true
   try {

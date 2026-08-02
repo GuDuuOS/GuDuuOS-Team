@@ -3570,7 +3570,10 @@ export async function getTokenConfig(): Promise<TokenConfigDef> {
     const pkgs = Array.isArray(ev?.packages) ? ev.packages : []
     return {
       enabled: !!ev?.enabled,
-      markup: Number(ev?.markup) > 0 ? Number(ev.markup) : 1,
+      // 倍率是十进制定价参数，统一最多两位；0/负数不能保存成“看似不扣费”的配置。
+      markup: Number(ev?.markup) > 0
+        ? Math.max(0.01, Math.round(Number(ev.markup) * 100) / 100)
+        : 1,
       tokens_per_yuan: Math.max(1, Math.trunc(Number(ev?.tokens_per_yuan) || 1000)),
       free_daily: Math.max(0, Math.trunc(Number(ev?.free_daily) || 0)),
       free_grant: Math.max(0, Math.trunc(Number(ev?.free_grant) || 0)),
@@ -3604,7 +3607,9 @@ export async function setTokenConfig(cfg: TokenConfigDef): Promise<void> {
   const rid = await ensureControlRoom()
   const clean = {
     enabled: !!cfg.enabled,
-    markup: Number(cfg.markup) > 0 ? Number(cfg.markup) : 1,
+    markup: Number(cfg.markup) > 0
+      ? Math.max(0.01, Math.round(Number(cfg.markup) * 100) / 100)
+      : 1,
     tokens_per_yuan: Math.max(1, Math.trunc(cfg.tokens_per_yuan) || 1000),
     free_daily: Math.max(0, Math.trunc(cfg.free_daily) || 0),
     free_grant: Math.max(0, Math.trunc(cfg.free_grant) || 0),
@@ -3613,7 +3618,13 @@ export async function setTokenConfig(cfg: TokenConfigDef): Promise<void> {
       .filter((p) => p.slug && p.tokens > 0)
       .map((p) => ({
         slug: p.slug, name: p.name || p.slug,
-        tokens: Math.trunc(p.tokens), prices: p.prices,
+        // Token 数与货币最小单位（分）都必须是整数；服务端仍会做第二层校验。
+        tokens: Math.max(1, Math.trunc(p.tokens)),
+        prices: Object.fromEntries(
+          Object.entries(p.prices || {})
+            .map(([currency, cents]) => [currency, Math.trunc(Number(cents))] as const)
+            .filter(([, cents]) => Number.isFinite(cents) && cents > 0),
+        ),
         enabled: p.enabled !== false,
       })),
   }

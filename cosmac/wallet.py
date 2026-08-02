@@ -61,6 +61,17 @@ def _as_float(v: Any, default: float) -> float:
         return default
 
 
+def _positive_decimal(v: Any, default: float, places: int = 2) -> float:
+    """解析必须大于 0 的十进制参数，并限制最多 ``places`` 位小数。
+
+    Token 数量都走整数解析；只有 markup 这类比例允许小数。单独收口可防控制室被绕过
+    前端写入 ``0`` 或很长浮点尾数，造成后台显示和实际扣量口径不一致。
+    """
+    value = _as_float(v, default)
+    rounded = round(value, places)
+    return rounded if rounded > 0 else default
+
+
 def _as_int(v: Any, default: int) -> int:
     try:
         return int(v)
@@ -114,7 +125,7 @@ def parse_token_config(ev: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     raw = ev if isinstance(ev, dict) else {}
     return {
         "enabled": bool(raw.get("enabled", _DEFAULTS["enabled"])),
-        "markup": _as_float(raw.get("markup"), _DEFAULTS["markup"]),
+        "markup": _positive_decimal(raw.get("markup"), _DEFAULTS["markup"]),
         "tokens_per_yuan": max(1, _as_int(raw.get("tokens_per_yuan"), _DEFAULTS["tokens_per_yuan"])),
         "free_daily": max(0, _as_int(raw.get("free_daily"), _DEFAULTS["free_daily"])),
         "free_grant": max(0, _as_int(raw.get("free_grant"), _DEFAULTS["free_grant"])),

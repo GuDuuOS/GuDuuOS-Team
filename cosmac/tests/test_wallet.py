@@ -122,6 +122,12 @@ class TestParseConfig(unittest.TestCase):
         self.assertEqual(cfg["tokens_per_yuan"], 1)  # 下限 1
         self.assertEqual(cfg["free_grant"], 0)       # 下限 0
 
+    def test_markup_is_positive_and_limited_to_two_decimals(self) -> None:
+        """绕过前端直写控制室时，倍率仍必须大于 0 且最多两位小数。"""
+        self.assertEqual(parse_token_config({"markup": 1.236})["markup"], 1.24)
+        self.assertEqual(parse_token_config({"markup": 0})["markup"], 1.0)
+        self.assertEqual(parse_token_config({"markup": -2})["markup"], 1.0)
+
 
 class TestWalletStore(unittest.TestCase):
     def setUp(self) -> None:
