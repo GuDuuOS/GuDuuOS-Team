@@ -9,6 +9,10 @@
         POST /nexus/redeem     {key,domain,admin_email,region}  兑换开通（install.sh 调）
         POST /nexus/heartbeat  {key,version,stats}        心跳上报（实例定时调）
         GET  /nexus/referral?code=...                    公开校验 OEM 分享码
+        GET  /nexus/oem/auth/config                       OEM 邮箱验证能力开关
+        POST /nexus/oem/email/request-code                发送注册/登录/重置验证码
+        POST /nexus/oem/login/code                        使用邮箱验证码登录
+        POST /nexus/oem/password/reset                    使用邮箱验证码重置密码
         POST /nexus/user/attribution {key,referral_code,user_id} 用户归属上报
         POST /nexus/update/check   {key,current_version}  拉取已分配的版本更新
         POST /nexus/update/report  {key,release_id,status,...} 上报更新结果
@@ -61,6 +65,7 @@ from nexus import (
     geo,
     manual_transfer,
     oem as oem_svc,
+    oem_email,
     oem_finance,
     pay,
     passkeys,
@@ -408,6 +413,10 @@ class NexusHandler(BaseHTTPRequestHandler):
             qs = parse_qs(urlsplit(self.path).query)
             code = str((qs.get("code") or [""])[0])
             self._with_session(lambda s: self._json(200, oem_svc.referral_info(s, code)))
+            return
+        if path == "/nexus/oem/auth/config":
+            # 只返回布尔能力，不把 SMTP 主机、账号、发件人或其他部署细节暴露给浏览器。
+            self._json(200, {"email_verification": oem_email.enabled()})
             return
         if path == "/nexus/admin/me":
             if self._check_admin():
@@ -1488,21 +1497,39 @@ class NexusHandler(BaseHTTPRequestHandler):
             )
             return
 
-        # —— OEM 账号：注册 / 登录（免鉴权，按 IP 限频）/ 登出 / 认领 KEY ——
-        if path in ("/nexus/oem/register", "/nexus/oem/login"):
+        # —— OEM 账号：邮箱验证 / 注册 / 登录 / 找回密码（免鉴权、统一按 IP 限频）——
+        if path in (
+            "/nexus/oem/email/request-code",
+            "/nexus/oem/register",
+            "/nexus/oem/login",
+            "/nexus/oem/login/code",
+            "/nexus/oem/password/reset",
+        ):
             if not _auth_rate_ok(self._client_ip()):
                 self._err(429, "NEXUS_RATE_LIMIT", "尝试过于频繁，请稍后再试")
                 return
-            if path == "/nexus/oem/register":
+            if path == "/nexus/oem/email/request-code":
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        oem_email.request_code(
+                            s,
+                            str(body.get("email", "")),
+                            str(body.get("purpose", "")),
+                        ),
+                    )
+                )
+            elif path == "/nexus/oem/register":
                 self._with_session(
                     lambda s: self._json(
                         200,
                         {
-                            "oem": oem_svc.register(
+                            "oem": oem_email.register_with_code(
                                 s,
-                                str(body.get("email", "")),
-                                str(body.get("password", "")),
-                                str(body.get("name", "")),
+                                email=str(body.get("email", "")),
+                                code=str(body.get("code", "")),
+                                password=str(body.get("password", "")),
+                                name=str(body.get("name", "")),
                                 inviter=str(body.get("inviter", "")),
                                 company=str(body.get("company", "")),
                                 contact_name=str(body.get("contact_name", "")),
@@ -1511,7 +1538,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                         },
                     )
                 )
-            else:
+            elif path == "/nexus/oem/login":
                 self._with_session(
                     lambda s: self._json(
                         200,
@@ -1519,6 +1546,30 @@ class NexusHandler(BaseHTTPRequestHandler):
                             s,
                             str(body.get("email", "")),
                             str(body.get("password", "")),
+                        ),
+                    )
+                )
+            elif path == "/nexus/oem/login/code":
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        oem_email.login_with_code(
+                            s,
+                            str(body.get("email", "")),
+                            str(body.get("code", "")),
+                        ),
+                    )
+                )
+            else:
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        oem_email.reset_password(
+                            s,
+                            str(body.get("email", "")),
+                            str(body.get("code", "")),
+                            str(body.get("password", "")),
+                            self._client_ip(),
                         ),
                     )
                 )

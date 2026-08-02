@@ -131,13 +131,21 @@ label input { margin-top: 5px; }
 .login-subtitle { color: var(--muted); font-size: 12.5px; }
 .admin-entry .login-card { border-color: var(--line-strong); }
 .admin-entry .login-card h1 { color: var(--orange); }
-.tabs { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.tabs {
+  display: flex; gap: 3px; margin-bottom: 18px; overflow-x: auto;
+  border-bottom: 1px solid var(--line); scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
-  padding: 7px 13px; background: none; border: 0; color: var(--muted); font-size: 13px;
+  padding: 7px 9px; background: none; border: 0; color: var(--muted); font-size: 12.5px;
+  white-space: nowrap;
   border-bottom: 2px solid transparent; margin-bottom: -1px;
 }
 .tab.on { color: var(--orange); border-bottom-color: var(--orange); font-weight: 600; }
 .pane .primary { width: 100%; margin-top: 4px; }
+.code-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 5px; }
+.code-field input { margin-top: 0; }
+.code-send { min-width: 104px; padding-inline: 11px; white-space: nowrap; }
 .hint { font-size: 12px; color: var(--muted); margin-top: 10px; }
 .err { margin-top: 12px; color: var(--red); font-size: 13px; }
 .ok { margin-top: 10px; color: var(--green); font-size: 13px; }

@@ -5,6 +5,9 @@
 
 ## P0 · 正式开放前必须完成
 
+- [ ] **Nexus OEM 邮箱验证上线**：在中央 Nexus 配置 `NEXUS_SMTP_*`，确认公开能力
+  接口返回 `email_verification: true`；用真实外部邮箱验收注册、验证码登录、找回密码，
+  并为发件域名配置 SPF、DKIM、DMARC，避免企业验证码进入垃圾邮件。
 - [ ] **注册防刷**：在 Cloudflare 为当前注册域名创建 Turnstile Widget，将 Site Key 与
   Secret 配入 OEM 节点并验证 `/cosmac/auth/config` 返回 `turnstile: true`。
 - [ ] **平台主管恢复链路**：

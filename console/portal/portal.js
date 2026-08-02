@@ -43,8 +43,19 @@
       : "管理你的 GuDuu OS 实例、授权与企业服务";
     $(".tabs").hidden = adminEntry;
     $("#form-admin").hidden = !adminEntry;
-    $("#form-oem-login").hidden = adminEntry;
-    $("#form-oem-reg").hidden = true;
+    if (adminEntry) {
+      $all(".pane[data-pane]").forEach(function (pane) { pane.hidden = true; });
+      $("#form-admin").hidden = false;
+    } else {
+      // 邀请链接会在路由初始化前选中注册页；这里读取当前 tab，而不是强制跳回密码
+      // 登录，否则 OEM 分享二维码虽然地址正确，落地后却看不到注册表单。
+      var selected = document.querySelector(".tab.on");
+      var paneName = selected ? selected.dataset.tab : "oem-login";
+      $all(".pane[data-pane]").forEach(function (pane) {
+        pane.hidden = pane.dataset.pane !== paneName;
+      });
+      $("#form-admin").hidden = true;
+    }
     $(".brand em").textContent = adminEntry ? "平台管理" : "控制台";
   }
   function esc(s) {
@@ -631,6 +642,64 @@
   })();
   function loginErr(msg) { var el = $("#login-err"); el.textContent = msg; el.hidden = false; }
 
+  // 邮件能力由服务端布尔开关决定；浏览器不接触 SMTP 地址、账号或密码。配置未完成时
+  // 按钮明确禁用，避免用户填完整张企业表单后才在最后一步发现邮件服务不可用。
+  var oemEmailEnabled = false;
+  function loadOemAuthConfig() {
+    if (isAdminEntry()) return;
+    api("/nexus/oem/auth/config", { noKick: true }).then(function (config) {
+      oemEmailEnabled = config.email_verification === true;
+      $all(".code-send").forEach(function (button) {
+        button.disabled = !oemEmailEnabled;
+        button.title = oemEmailEnabled ? "" : "邮箱验证服务正在配置中";
+      });
+    }).catch(function () {
+      oemEmailEnabled = false;
+      $all(".code-send").forEach(function (button) {
+        button.disabled = true;
+        button.title = "暂时无法读取邮箱验证配置";
+      });
+    });
+  }
+
+  function beginCodeCooldown(button, seconds) {
+    var left = Math.max(1, Number(seconds) || 60);
+    var original = "发送验证码";
+    button.disabled = true;
+    button.textContent = left + " 秒";
+    var timer = setInterval(function () {
+      left -= 1;
+      if (left <= 0) {
+        clearInterval(timer);
+        button.textContent = original;
+        button.disabled = !oemEmailEnabled;
+        return;
+      }
+      button.textContent = left + " 秒";
+    }, 1000);
+  }
+
+  $all(".code-send").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var form = button.closest("form");
+      var email = form && form.email ? form.email.value.trim() : "";
+      if (!email) return loginErr("请先填写邮箱");
+      if (!oemEmailEnabled) return loginErr("邮箱验证服务正在配置中，请稍后再试");
+      button.disabled = true;
+      api("/nexus/oem/email/request-code", {
+        body: { email: email, purpose: button.dataset.codePurpose }, noKick: true,
+      }).then(function (result) {
+        loginErr("");
+        $("#login-err").hidden = true;
+        toast("如果邮箱可用，验证码已经发送");
+        beginCodeCooldown(button, result.cooldown_seconds);
+      }).catch(function (err) {
+        button.disabled = false;
+        loginErr(err.message);
+      });
+    });
+  });
+
   $("#form-oem-login").addEventListener("submit", function (e) {
     e.preventDefault();
     var f = e.target;
@@ -639,17 +708,46 @@
       .catch(function (err) { loginErr(err.message); });
   });
 
+  $("#form-oem-code-login").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var f = e.target;
+    api("/nexus/oem/login/code", {
+      body: { email: f.email.value, code: f.code.value }, noKick: true,
+    }).then(function (r) {
+      setAuth({ mode: "oem", token: r.token, email: r.oem.email });
+      f.code.value = "";
+      route();
+    }).catch(function (err) { loginErr(err.message); });
+  });
+
   $("#form-oem-reg").addEventListener("submit", function (e) {
     e.preventDefault();
     var f = e.target;
     var email = f.email.value, pw = f.password.value;
     api("/nexus/oem/register", { body: {
-      email: email, password: pw, inviter: f.inviter.value,
+      email: email, code: f.code.value, password: pw, inviter: f.inviter.value,
       company: f.company.value, contact_name: f.contact_name.value, phone: f.phone.value,
     }, noKick: true })
       .then(function () { return api("/nexus/oem/login", { body: { email: email, password: pw }, noKick: true }); })
       .then(function (r) { setAuth({ mode: "oem", token: r.token, email: r.oem.email }); toast("注册成功，欢迎！"); route(); })
       .catch(function (err) { loginErr(err.message); });
+  });
+
+  $("#form-oem-reset").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var f = e.target;
+    if (f.password.value !== f.password_confirm.value) {
+      loginErr("两次输入的新密码不一致");
+      return;
+    }
+    api("/nexus/oem/password/reset", {
+      body: { email: f.email.value, code: f.code.value, password: f.password.value },
+      noKick: true,
+    }).then(function () {
+      f.reset();
+      document.querySelector('[data-tab="oem-login"]').click();
+      toast("密码已重置，请使用新密码登录");
+    }).catch(function (err) { loginErr(err.message); });
   });
 
   $("#form-admin").addEventListener("submit", function (e) {
@@ -3337,5 +3435,6 @@
     }
   });
 
+  loadOemAuthConfig();
   route();
 })();

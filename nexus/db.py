@@ -157,6 +157,39 @@ class NexusSession(Base):
     expires_ts = Column(BigInteger, nullable=False)
 
 
+class NexusOemEmailChallenge(Base):
+    """OEM 邮箱验证码挑战。
+
+    验证码原文绝不落库；``code_hash`` 使用 ``NEXUS_SECRET_KEY`` 做 HMAC。邮箱与用途
+    组成主键，使注册、验证码登录和找回密码的验证码彼此隔离，不能跨用途复用。
+    """
+
+    __tablename__ = "nexus_oem_email_challenge"
+
+    email = Column(String(255), primary_key=True)
+    purpose = Column(String(16), primary_key=True)
+    code_hash = Column(String(64), nullable=False)
+    expires_ts = Column(BigInteger, nullable=False, index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    last_sent_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    window_started_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    sent_count = Column(Integer, nullable=False, default=1)
+
+
+class NexusOemEmailVerification(Base):
+    """OEM 已验证邮箱记录。
+
+    单独建表而不修改既有 ``nexus_oem``，是为了让生产 PostgreSQL 通过 ``create_all``
+    无迁移风险地升级。新注册账号必须先产生这条记录；既有账号继续兼容密码登录。
+    """
+
+    __tablename__ = "nexus_oem_email_verification"
+
+    oem_id = Column(Integer, primary_key=True)
+    email = Column(String(255), nullable=False, unique=True, index=True)
+    verified_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
 class NexusAdmin(Base):
     """Nexus 平台具名超级管理员账号。
 

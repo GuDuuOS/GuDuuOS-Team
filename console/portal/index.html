@@ -40,8 +40,10 @@
     <h1 id="login-title">登录企业控制台</h1>
     <p id="login-subtitle" class="login-subtitle">管理你的 GuDuu OS 实例、授权与企业服务</p>
     <div class="tabs">
-      <button data-tab="oem-login" class="tab on">OEM 登录</button>
+      <button data-tab="oem-login" class="tab on">密码登录</button>
+      <button data-tab="oem-code-login" class="tab">验证码登录</button>
       <button data-tab="oem-reg" class="tab">OEM 注册</button>
+      <button data-tab="oem-reset" class="tab">找回密码</button>
     </div>
 
     <form id="form-oem-login" class="pane" data-pane="oem-login">
@@ -50,15 +52,38 @@
       <button class="primary">登录</button>
     </form>
 
+    <form id="form-oem-code-login" class="pane" data-pane="oem-code-login" hidden>
+      <label>邮箱<input name="email" type="email" autocomplete="email" required placeholder="you@company.com" /></label>
+      <label>邮箱验证码
+        <span class="code-field"><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required placeholder="6 位验证码" /><button class="ghost code-send" type="button" data-code-purpose="login">发送验证码</button></span>
+      </label>
+      <button class="primary">验证并登录</button>
+      <p class="hint">验证码 10 分钟有效；未注册邮箱不会收到邮件。</p>
+    </form>
+
     <form id="form-oem-reg" class="pane" data-pane="oem-reg" hidden>
       <label>企业 / 团队名称<input name="company" type="text" required placeholder="例：星辰传媒有限公司" /></label>
       <label>联系人姓名<input name="contact_name" type="text" required placeholder="真实姓名" /></label>
       <label>联系方式<input name="phone" type="text" required placeholder="手机号 / 微信号" /></label>
-      <label>邮箱<input name="email" type="email" autocomplete="username" required placeholder="you@company.com" /></label>
+      <label>邮箱<input name="email" type="email" autocomplete="email" required placeholder="you@company.com" /></label>
+      <label>邮箱验证码
+        <span class="code-field"><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required placeholder="6 位验证码" /><button class="ghost code-send" type="button" data-code-purpose="register">发送验证码</button></span>
+      </label>
       <label>密码<input name="password" type="password" autocomplete="new-password" required placeholder="至少 8 位，含字母和数字" /></label>
       <label>邀请人<input name="inviter" type="text" required placeholder="邀请链接会自动填写，也可输入邀请人邮箱" /></label>
-      <button class="primary">注册并登录</button>
-      <p class="hint">以上信息均为必填。邀请人必须是已注册的合作伙伴（填错无法注册）；GuDuu 平台直接客户填 <b>GUDUU</b>。</p>
+      <button class="primary">验证邮箱并注册</button>
+      <p class="hint">以上信息均为必填。邮箱验证通过后才会创建账号；邀请人必须是已注册的合作伙伴（填错无法注册）；GuDuu 平台直接客户填 <b>GUDUU</b>。</p>
+    </form>
+
+    <form id="form-oem-reset" class="pane" data-pane="oem-reset" hidden>
+      <label>注册邮箱<input name="email" type="email" autocomplete="email" required placeholder="you@company.com" /></label>
+      <label>邮箱验证码
+        <span class="code-field"><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required placeholder="6 位验证码" /><button class="ghost code-send" type="button" data-code-purpose="reset">发送验证码</button></span>
+      </label>
+      <label>新密码<input name="password" type="password" autocomplete="new-password" required placeholder="至少 8 位，含字母和数字" /></label>
+      <label>确认新密码<input name="password_confirm" type="password" autocomplete="new-password" required placeholder="再次输入新密码" /></label>
+      <button class="primary">重置密码</button>
+      <p class="hint">重置成功后，该账号在其他浏览器中的旧登录会话会全部失效。</p>
     </form>
 
     <form id="form-admin" class="pane" data-pane="admin" hidden>
