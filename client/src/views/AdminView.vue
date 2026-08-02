@@ -3574,10 +3574,13 @@ async function tkQueryBalance() {
   tkAdjBusy.value = true
   try {
     const r = await walletAdminBalance(tkTarget.value)
-    if (!r) { warn('查询失败', '请确认用户 ID 完整（@user:域名）'); return }
     tkBalance.value = r.balance
     tkLedger.value = r.items
     tkQueried.value = true
+  } catch (e: any) {
+    // 服务端会明确区分账号域写错、用户不存在与临时核验失败，必须把原文告诉管理员，
+    // 不能再吞掉后统一显示“请确认完整”——那会掩盖真正的错账原因。
+    warn('查询失败', e?.message || '请确认用户 ID 完整（@user:域名）')
   } finally {
     tkAdjBusy.value = false
   }

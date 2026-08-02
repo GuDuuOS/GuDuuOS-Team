@@ -4835,6 +4835,9 @@ class CosmacBot:
         target = str(body.get("user_id") or "").strip()
         if not target.startswith("@") or ":" not in target:
             return 400, {"error": "请填写完整用户 ID（@user:域名）"}
+        target_error = self._validate_wallet_target(target)
+        if target_error is not None:
+            return target_error
         try:
             delta = int(body.get("delta"))
         except (TypeError, ValueError):
@@ -4864,6 +4867,9 @@ class CosmacBot:
         t = str(target or "").strip()
         if not t.startswith("@") or ":" not in t:
             return 400, {"error": "请填写完整用户 ID（@user:域名）"}
+        target_error = self._validate_wallet_target(t)
+        if target_error is not None:
+            return target_error
         try:
             return 200, {
                 "user_id": t,
@@ -4873,6 +4879,37 @@ class CosmacBot:
         except Exception:
             logger.exception("管理员查钱包失败 target=%s", t)
             return 500, {"error": "查询失败，请稍后再试"}
+
+    def _validate_wallet_target(
+        self, target: str
+    ) -> Optional[Tuple[int, Dict[str, Any]]]:
+        """校验后台钱包目标是当前节点中真实存在的本地账号。
+
+        旧逻辑只看字符串里有没有 ``@``/``:``，因此 ``@duxz03:dev-cs`` 这类写错账号域
+        的 ID 也会直接建钱包、记流水。真实用户以完整 Matrix ID 登录，两个字符串对应
+        两只不同钱包，就会出现“后台 200、用户 0”。这里在任何写账/查询前同时校验账号域
+        和 Synapse 用户存在性；Synapse 暂时不可达时 fail-closed，宁可稍后重试也不写错账。
+
+        参数：
+            target: 管理员输入的完整 Matrix ID。
+        返回：
+            合法时返回 ``None``；非法时返回可直接作为 HTTP 响应的 ``(状态码, JSON)``。
+        """
+        localpart, sep, server = target[1:].partition(":")
+        expected_server = str(self.config.server_name or "").strip().lower()
+        if not sep or not localpart or not server:
+            return 400, {"error": "请填写完整用户 ID（@user:域名）"}
+        if expected_server and server.lower() != expected_server:
+            expected = f"@{localpart}:{self.config.server_name}"
+            return 400, {
+                "error": f"账号域不属于当前节点，请填写完整用户 ID，例如 {expected}"
+            }
+        exists = self.client.user_exists(target)
+        if exists is False:
+            return 404, {"error": f"用户不存在：{target}，请从用户列表复制完整 ID"}
+        if exists is None:
+            return 503, {"error": "暂时无法核验用户，请稍后重试；本次没有调整余额"}
+        return None
 
     def handle_register_request_code(
         self, body: Dict[str, Any], client_ip: str = ""
@@ -8152,6 +8189,11 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
+        # cosmac JSON 都是实时业务数据（钱包、任务、配置、审核等），不能让浏览器按固定
+        # URL 缓存旧响应。钱包旧代码正因此出现“后台已入账，用户仍看到 0/空流水”。
+        # 服务端统一 no-store 是最后一道保险；前端关键读取也会显式 no-store。
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Pragma", "no-cache")
         if cors:
             # 跨源：客户端与 Matrix API 分属不同子域时，浏览器需要 CORS 头才会放行。
             # 默认 *（这些端点要么公开、要么自带 token 校验）；可用 COSMAC_APP_ORIGIN 收紧到具体域名。

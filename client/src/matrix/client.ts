@@ -3636,6 +3636,8 @@ export async function walletGetMe(): Promise<WalletMe | null> {
   try {
     const r = await fetch(`${payBase()}/cosmac/wallet/me`, {
       headers: { Authorization: `Bearer ${token}` },
+      // 余额会被管理员从另一浏览器调整，固定 URL 绝不能复用旧的 0 余额响应。
+      cache: 'no-store',
     })
     if (!r.ok) return null
     return await r.json()
@@ -3654,7 +3656,11 @@ export async function walletGetLedger(limit = 50, offset = 0): Promise<WalletLed
   try {
     const r = await fetch(
       `${payBase()}/cosmac/wallet/ledger?limit=${limit}&offset=${offset}`,
-      { headers: { Authorization: `Bearer ${token}` } },
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        // 收支明细与余额同口径，每次展开都向服务端读取最新流水。
+        cache: 'no-store',
+      },
     )
     if (!r.ok) return []
     const j = await r.json().catch(() => ({}))
@@ -3882,18 +3888,21 @@ export async function creatorEarnings(limit = 50, offset = 0): Promise<{
 /** 管理员查某用户余额 + 最近流水。 */
 export async function walletAdminBalance(
   userId: string,
-): Promise<{ balance: number; items: WalletLedgerItem[] } | null> {
+): Promise<{ balance: number; items: WalletLedgerItem[] }> {
   const token = (mx as any)?.getAccessToken?.() || ''
-  if (!token) return null
-  try {
-    const r = await fetch(
-      `${payBase()}/cosmac/wallet/admin/balance?user_id=${encodeURIComponent(userId)}`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    )
-    const j = await r.json().catch(() => ({}))
-    if (!r.ok) throw new Error(j?.error || '查询失败')
-    return { balance: Number(j?.balance || 0), items: Array.isArray(j?.items) ? j.items : [] }
-  } catch { return null }
+  if (!token) throw new Error('未登录')
+  const r = await fetch(
+    `${payBase()}/cosmac/wallet/admin/balance?user_id=${encodeURIComponent(userId)}`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    },
+  )
+  const j = await r.json().catch(() => ({}))
+  // 不再吞掉服务端的“用户不存在/账号域错误”，否则管理员只看到笼统查询失败，
+  // 会继续对错误字符串执行入账并产生孤立钱包。
+  if (!r.ok) throw new Error(j?.error || '查询失败')
+  return { balance: Number(j?.balance || 0), items: Array.isArray(j?.items) ? j.items : [] }
 }
 
 /** 读某个频道当前时间线的消息（含发送者昵称与 cosmac.card 富卡）。 */

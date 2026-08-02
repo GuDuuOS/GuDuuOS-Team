@@ -94,6 +94,26 @@ class TestMatrixClientAuth(unittest.TestCase):
             f"Bearer {self.token}",
         )
 
+    def test_user_exists_distinguishes_missing_and_temporary_failure(self) -> None:
+        """后台发 Token 前可区分真实用户、明确不存在与暂时不可核验。"""
+        with mock.patch.object(
+            self.client._session,
+            "get",
+            side_effect=[_Resp(200, {}), _Resp(404, {}), _Resp(503, {})],
+        ):
+            self.assertTrue(self.client.user_exists("@alice:hs"))
+            self.assertFalse(self.client.user_exists("@missing:hs"))
+            self.assertIsNone(self.client.user_exists("@alice:hs"))
+
+    def test_user_exists_fails_closed_on_network_error(self) -> None:
+        """Synapse 抖动时返回未知，调用方必须停止写账而非创建孤立钱包。"""
+        with mock.patch.object(
+            self.client._session,
+            "get",
+            side_effect=requests.RequestException("down"),
+        ):
+            self.assertIsNone(self.client.user_exists("@alice:hs"))
+
 
 class TestAdminListRooms(unittest.TestCase):
     """节点资产统计必须读取 Synapse 全量房间，并在分页失败时拒绝部分结果。"""

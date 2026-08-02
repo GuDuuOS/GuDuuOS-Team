@@ -46,6 +46,25 @@ class _FakeBot:
         self.granted = (provider, json.loads(body))
         return 200
 
+    def handle_wallet_me(self, token):
+        """模拟用户钱包总览，供缓存响应头集成测试。"""
+        if not token.startswith("@"):
+            return 401, {"error": "no"}
+        return 200, {
+            "enabled": True,
+            "balance": 200,
+            "free_daily": {"total": 0, "used": 0, "remaining": 0},
+            "tokens_per_yuan": 1000,
+            "exempt": False,
+            "packages": [],
+        }
+
+    def handle_wallet_ledger(self, token, limit=50, offset=0):
+        """模拟用户钱包流水，验证固定 GET URL 不允许浏览器缓存。"""
+        if not token.startswith("@"):
+            return 401, {"error": "no"}
+        return 200, {"items": [{"id": 1, "delta": 200}]}
+
 
 class PayHttpTests(unittest.TestCase):
     def setUp(self):
@@ -91,6 +110,22 @@ class PayHttpTests(unittest.TestCase):
                          headers={"Authorization": "Bearer @a:h"}, timeout=5)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["tier"], "paid")
+
+    def test_wallet_gets_are_never_cached(self):
+        """余额与流水跨浏览器变化，响应必须明确 no-store。"""
+        headers = {"Authorization": "Bearer @a:h"}
+        balance = requests.get(
+            self._u("/cosmac/wallet/me"), headers=headers, timeout=5
+        )
+        ledger = requests.get(
+            self._u("/cosmac/wallet/ledger"), headers=headers, timeout=5
+        )
+        self.assertEqual(balance.status_code, 200)
+        self.assertEqual(balance.json()["balance"], 200)
+        self.assertEqual(balance.headers.get("Cache-Control"), "no-store")
+        self.assertEqual(ledger.status_code, 200)
+        self.assertEqual(ledger.json()["items"][0]["delta"], 200)
+        self.assertEqual(ledger.headers.get("Cache-Control"), "no-store")
 
     def test_manual_callback_dispatches(self):
         r = requests.post(self._u("/cosmac/pay/callback/manual"),

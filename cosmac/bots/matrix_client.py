@@ -451,6 +451,35 @@ class MatrixClient:
             return uid if isinstance(uid, str) and uid.startswith("@") else None
         return None
 
+    def user_exists(self, user_id: str) -> Optional[bool]:
+        """确认一个 Matrix 用户 ID 是否真实存在。
+
+        管理后台给用户发 Token 前必须先调用它，避免管理员输错账号域后，钱包层仍按任意
+        字符串创建一只“孤立钱包”：后台能看到余额，真实登录用户却永远读不到。
+
+        参数：
+            user_id: 要核验的完整 Matrix ID，例如 ``@alice:example.invalid``。
+        返回：
+            ``True`` 表示用户存在；``False`` 表示服务端明确返回 404；``None`` 表示
+            网络或 Synapse 暂时异常，此时调用方必须停止写账，不能把故障当作用户不存在。
+        """
+        try:
+            resp = self._session.get(
+                self._url(f"/_matrix/client/v3/profile/{quote(user_id)}"),
+                timeout=10,
+            )
+        except requests.RequestException as e:
+            logger.warning("核验用户存在性失败 user=%s: %s", user_id, e)
+            return None
+        if resp.status_code == 200:
+            return True
+        if resp.status_code == 404:
+            return False
+        logger.warning(
+            "核验用户存在性异常 user=%s status=%s", user_id, resp.status_code
+        )
+        return None
+
     def get_state_event(
         self, room_id: str, event_type: str, state_key: str = ""
     ) -> Optional[Dict[str, Any]]:
