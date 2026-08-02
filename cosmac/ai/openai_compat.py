@@ -19,22 +19,19 @@ from cosmac.ai.base import LLMProvider, Message, ToolCall, ToolSpec, TurnResult
 logger = logging.getLogger("cosmac.ai.openai_compat")
 
 
-def _usage_total(resp: Any) -> int:
-    """从 OpenAI 兼容响应里取真实总 token 数（prompt+completion）。取不到返回 0。
+def _usage_output_tokens(resp: Any) -> int:
+    """从 OpenAI 兼容响应里取模型实际输出 token 数。取不到返回 0。
 
-    Token 经济按真实用量计费用（见 cosmac/wallet.py）。不同兼容后端字段名一致
-    （usage.total_tokens），个别缺失就退化成 prompt+completion 之和、再退化 0。
+    用户 Token 经济的计费口径是 ``completion_tokens``，而不是
+    ``total_tokens``。系统提示词、历史上下文与工具 schema 都是平台为了
+    实现能力而发给模型的输入；若把它们按 1:1 扣用户余额，一次普通咨询
+    就可能因为巨大上下文清空整个钱包。
     """
     try:
         u = getattr(resp, "usage", None)
         if u is None:
             return 0
-        total = getattr(u, "total_tokens", None)
-        if total:
-            return int(total)
-        pt = int(getattr(u, "prompt_tokens", 0) or 0)
-        ct = int(getattr(u, "completion_tokens", 0) or 0)
-        return pt + ct
+        return max(0, int(getattr(u, "completion_tokens", 0) or 0))
     except (TypeError, ValueError, AttributeError):
         return 0
 
@@ -174,9 +171,10 @@ class OpenAICompatProvider(LLMProvider):
             tool_calls.append(
                 ToolCall(id=tc.id, name=tc.function.name, arguments=args)
             )
-        # 真实用量（Token 经济计费用）：OpenAI 兼容响应带 usage.total_tokens；取不到=0（不计费）。
+        # 用户计费量：只取模型输出 completion_tokens，平台注入的
+        # system/history/tools 不计入用户余额，避免工具型对话一次清空。
         return TurnResult(
             text=(msg.content or "").strip(),
             tool_calls=tool_calls,
-            usage_tokens=_usage_total(resp),
+            usage_tokens=_usage_output_tokens(resp),
         )

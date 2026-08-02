@@ -746,7 +746,7 @@ class TokenLedger(Base):
     ``reason`` 取值（P1）：
         recharge  用户充值入账（ref=order_no）
         grant     系统/管理员赠送（新用户礼包、活动）
-        ai_usage  平台内置 AI 真实用量扣费（ref=room_id；meta 记真实 LLM token 数与倍率）
+        ai_usage  平台内置 AI 输出用量扣费（ref=room_id；meta 记模型输出 token 数与倍率）
         adjust    管理员手动调整（可正可负）
         refund    退款回补
     （创作者 Agent 按次扣费 ``agent_use`` 与创作者分成收入 ``earning`` 属 P2 创作者商城，
@@ -768,7 +768,7 @@ class TokenLedger(Base):
     balance_after: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     # 备注（给用户看的人类可读说明，如"充值 100 元"/"AI 对话"）
     note: Mapped[str] = mapped_column(String(255), nullable=False, default="")
-    # 附加结构化元数据（如真实 LLM prompt/completion tokens、倍率、模型名），JSON
+    # 附加结构化元数据（如计费输出 token、计费口径、倍率、模型名），JSON
     meta: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     # 记账时间（只增不改，不用 TimestampMixin 的 updated_at）
     created_at: Mapped[datetime] = mapped_column(

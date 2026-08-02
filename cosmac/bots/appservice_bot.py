@@ -786,7 +786,7 @@ class CosmacBot:
             self.client.send_text(room_id, quota_msg)
             return
         # Token 经济前拦（模块4）：今日免费额度 + 钱包余额都空则拦（总开关关时恒放行）。
-        # 与配额同口径——回复前只拦、不扣，真实用量在回复成功后按 usage 结算。
+        # 与配额同口径——回复前只拦、不扣，模型输出量在回复成功后结算。
         wallet_msg = self._wallet_precheck_blocked(sender)
         if wallet_msg:
             self.client.send_text(room_id, wallet_msg)
@@ -926,7 +926,7 @@ class CosmacBot:
             self._rate_quota_blocked(sender, "ai_msg_daily", consume=True)
             # Token 经济（模块4）：回复成功后结算。**二选一**（负责人定稿）：
             # 用创作者 Agent = 按固定价/次扣并分账（90% 创作者 / 10% 平台），不再叠加
-            # 平台真实用量扣；否则按真实 LLM 用量扣（先今日免费额度、再钱包余额）。
+            # 平台内置 AI 按模型输出量扣（先今日免费额度、再钱包余额）。
             # 扣费失败都不影响这条已发出的回复。
             if cag_payer:
                 try:
@@ -1700,9 +1700,9 @@ class CosmacBot:
         self, agent, user_text, tool_ctx, extra_system, history, model_override="",
         stream_cb=None,
     ):
-        """按 COSMAC_AGENT_ENGINE 选执行引擎跑一条消息，返回 (回复文本, 真实用量token数)。
+        """按 COSMAC_AGENT_ENGINE 选执行引擎跑一条消息，返回 (回复文本, 模型输出 token 数)。
 
-        真实用量用于 Token 经济计费（见 cosmac/wallet.py）：SDK 引擎读 ResultMessage.usage、
+        模型输出量用于 Token 经济计费（见 cosmac/wallet.py）：SDK 引擎读 ResultMessage.usage、
         legacy 读 Agent 累计的 last_usage_tokens。取不到=0（不计费）。回退/异常路径也带 0。
 
         - claude_sdk:Claude Agent SDK(Claude Code 同款 harness),env 可插拔(P1,
@@ -1742,7 +1742,7 @@ class CosmacBot:
                 # 才无副作用。已动过手就停下、如实告知，让用户决定是否接着做。
                 if reporter.steps:
                     reporter.finish()
-                    # 已产生副作用才停：这条已消耗过真实 token，带上 SDK 已累计的用量照实结算。
+                    # 已产生副作用才停：带上 SDK 已累计的模型输出量结算。
                     return (
                         "⚠️ 我在执行过程中已经做了部分操作，但随后遇到故障。为避免重复建群/"
                         "重复派单，这条先停在这里。请看下已完成的部分，需要我接着把剩下的做完就说一声。"
@@ -8005,7 +8005,7 @@ class CosmacBot:
             return None
 
     def _wallet_charge(self, user_id: str, usage_tokens: int, room_id: str) -> None:
-        """按真实用量给用户扣 token（模块4 Token 经济）。回复成功后调，best-effort。
+        """按模型真实输出量扣 token（模块4 Token 经济）。回复成功后调，best-effort。
 
         总开关关或管理员豁免时不扣；扣费任何异常都吞掉（已发出的回复不因计费失败而回滚）。
         """

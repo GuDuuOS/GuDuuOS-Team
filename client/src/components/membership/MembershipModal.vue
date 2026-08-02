@@ -274,7 +274,7 @@ onMounted(load)
             <template v-else-if="(wallet?.free_daily?.total || 0) > 0">
               今日免费额度：剩 {{ fmtTokens(wallet?.free_daily?.remaining || 0) }} / {{ fmtTokens(wallet?.free_daily?.total || 0) }}（每天重置）
             </template>
-            <template v-else>使用 AI 按真实用量消耗 token</template>
+            <template v-else>使用 AI 按模型实际输出量消耗 token</template>
           </div>
         </div>
 

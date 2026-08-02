@@ -1,7 +1,8 @@
 """Token 钱包 + 流水账（模块4 变现·Token 经济 P1）单元测试。
 
 覆盖：wallet_repo 原子增减/守卫扣费/流水，parse_token_config 默认与覆盖，WalletStore 的
-建钱包赠送/用量前拦/按真实用量扣费(含扣到 0 为止)/充值/调整/查流水。零 key、内存 SQLite。
+建钱包赠送/用量前拦/按模型输出用量扣费(含扣到 0 为止)/充值/调整/查流水。
+零 key、内存 SQLite。
 """
 
 from __future__ import annotations
@@ -184,9 +185,10 @@ class TestWalletStore(unittest.TestCase):
         self.assertEqual(r["charged"], 40)
         self.assertEqual(r["balance"], 0)
         self.assertTrue(r["capped"])
-        # meta 里仍记真实应扣（对账/展示用）
+        # meta 里仍记真实应扣与新计费口径（对账/展示用）
         rows = self._ledger_rows("@u:h")
         self.assertEqual(rows[0]["meta"]["cost"], 100)
+        self.assertEqual(rows[0]["meta"]["billing_basis"], "model_output")
         self.assertTrue(rows[0]["meta"]["capped"])
 
     def test_free_daily_covers_usage_without_touching_wallet(self) -> None:

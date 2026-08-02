@@ -49,7 +49,7 @@ class Agent:
 
     @property
     def last_usage_tokens(self) -> int:
-        """本线程上次 run 累计的真实 LLM 用量（Token 经济计费用）；线程隔离，见 __init__。"""
+        """本线程上次 run 累计的模型输出用量（Token 经济计费用）；线程隔离，见 __init__。"""
         return int(getattr(self._usage_local, "value", 0))
 
     @last_usage_tokens.setter
@@ -89,7 +89,7 @@ class Agent:
 
         tools = self.toolbox.specs()
 
-        # 本次 run 累计的真实 LLM 用量（Token 经济按它计费）；每轮 complete 累加，
+        # 本次 run 累计的模型输出用量（Token 经济按它计费）；每轮 complete 累加，
         # bot 在 run 结束后读 self.last_usage_tokens 结算（见 _run_agent_engine）。
         self.last_usage_tokens = 0
 

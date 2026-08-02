@@ -1335,7 +1335,7 @@
         <header class="adm-head">
           <div>
             <h1 class="adm-h1">Token 经济</h1>
-            <p class="adm-hint">用户充值 token · 平台内置 AI 按真实用量扣 · 约 20 秒热生效 · <strong>此开关不取消已审核创作者商品的独立标价</strong></p>
+            <p class="adm-hint">用户充值 token · 平台内置 AI 按模型输出量扣 · 约 20 秒热生效 · <strong>此开关不取消已审核创作者商品的独立标价</strong></p>
           </div>
           <div class="adm-actions">
             <button class="adm-btn ghost" :disabled="tkLoading || tkSaving" @click="loadTokenCfg">
@@ -1362,7 +1362,7 @@
           </label>
           <div class="adm-grid2">
             <label class="adm-field">
-              <span>计费倍率 markup（最多两位小数；用户扣量 = 真实 LLM token × 倍率）</span>
+              <span>计费倍率 markup（最多两位小数；用户扣量 = 模型输出 token × 倍率）</span>
               <input v-model.number="tkCfg.markup" type="number" min="0.01" step="0.01" inputmode="decimal" @blur="tkNormalizeConfigNumbers" />
             </label>
             <label class="adm-field">

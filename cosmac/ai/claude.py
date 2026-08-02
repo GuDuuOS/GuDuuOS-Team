@@ -30,6 +30,26 @@ logger = logging.getLogger("cosmac.ai.claude")
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-8"
 
 
+def _usage_output_tokens(response: Any) -> int:
+    """从 Anthropic 响应中提取用户应结算的模型输出 token。
+
+    参数:
+        response: Anthropic SDK 返回的响应对象，期望带 ``usage``。
+    返回:
+        非负的 ``output_tokens``；字段缺失或格式异常时返回 0。
+
+    故意不累加 ``input_tokens``，因为其中含有平台提示词、历史与
+    工具定义；这些实现成本不能因上下文长度而清空用户钱包。
+    """
+    try:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return 0
+        return max(0, int(getattr(usage, "output_tokens", 0) or 0))
+    except (TypeError, ValueError, AttributeError):
+        return 0
+
+
 class ClaudeProvider(LLMProvider):
     """调用 Anthropic Claude 的后端实现（支持工具调用）。"""
 
@@ -177,18 +197,10 @@ class ClaudeProvider(LLMProvider):
                         arguments=dict(block.input or {}),
                     )
                 )
-        # 真实用量（Token 经济计费用）：Anthropic 响应带 usage.input_tokens/output_tokens。
-        usage_tokens = 0
-        try:
-            u = getattr(resp, "usage", None)
-            if u is not None:
-                usage_tokens = int(getattr(u, "input_tokens", 0) or 0) + int(
-                    getattr(u, "output_tokens", 0) or 0
-                )
-        except (TypeError, ValueError, AttributeError):
-            usage_tokens = 0
+        # 用户计费量：只取模型输出 output_tokens。input_tokens 中包含平台
+        # 注入的 system/history/tools，不应因为平台上下文变大就清空用户钱包。
         return TurnResult(
             text="".join(text_parts).strip(),
             tool_calls=tool_calls,
-            usage_tokens=usage_tokens,
+            usage_tokens=_usage_output_tokens(resp),
         )

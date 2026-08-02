@@ -3548,7 +3548,7 @@ export interface TokenPackageDef {
 /** Token 经济配置（管理后台编辑；与后端 cosmac/wallet.py parse_token_config 一致）。 */
 export interface TokenConfigDef {
   enabled: boolean          // 总开关（关=不计量不拦截，前端也隐藏钱包入口）
-  markup: number            // 倍率：用户扣量 = 真实 LLM token × markup
+  markup: number            // 倍率：用户扣量 = 模型输出 token × markup
   tokens_per_yuan: number   // 汇率：1 元 = 多少 token
   free_daily: number        // 每天赠送的免费 token（每天清零）
   free_grant: number        // 新钱包一次性欢迎赠送

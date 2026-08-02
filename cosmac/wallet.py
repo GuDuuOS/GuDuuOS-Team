@@ -1,6 +1,6 @@
 """Token 钱包业务中枢（模块4 变现·Token 经济 P1）。
 
-把「读后台配置（倍率/汇率/赠送/开关）+ 建钱包并赠送 + 用量前拦 + 按真实用量扣费 +
+把「读后台配置（倍率/汇率/赠送/开关）+ 建钱包并赠送 + 用量前拦 + 按模型输出扣费 +
 充值入账 + 管理员调整 + 查流水」串成一个 :class:`WalletStore`，供 bot / trading / HTTP 端点调用。
 
 存储分层（CLAUDE.md §3）：
@@ -9,8 +9,9 @@
 - **余额 + 流水**（派生/审计关系数据）→ 各实例自己的 cosmac DB（``cosmac_token_wallet`` /
   ``cosmac_token_ledger``，见 db/wallet_repo）。
 
-计费模型（负责人拍板）：平台内置 AI 按**真实 LLM 用量 × 倍率**扣；用量是**后付**——回复前
-只能前拦"有没有余额"，回复后按真实 token 结算。若结算额超过余额，则扣到 0 为止（末一次略微
+计费模型：平台内置 AI 按**模型实际输出 token × 倍率**扣；系统提示词、历史上下文
+和工具定义等平台输入不转嫁给用户。用量是**后付**——回复前
+只能前拦"有没有余额"，回复后按真实输出 token 结算。若结算额超过余额，则扣到 0 为止（末一次略微
 补贴，避免把已发出的回复算失败），下一次因余额不足被前拦。创作者商品的明码标价独立于平台
 内置 AI 计费开关：商品一旦审核在售，除创作者本人外都必须按标价结算，不能因平台用量计费
 暂停而自动变成免费。
@@ -266,7 +267,7 @@ class WalletStore:
             "请充值后再用～"
         )
 
-    # —— 按真实用量扣费（回复后结算）——
+    # —— 按模型真实输出扣费（回复后结算）——
 
     def charge_usage(
         self,
@@ -278,7 +279,11 @@ class WalletStore:
         reason: str = "ai_usage",
         note: str = "AI 对话",
     ) -> Dict[str, Any]:
-        """按真实 LLM 用量扣费：应扣 = ceil(real_tokens × markup)，**先扣今日免费额度、再扣钱包余额**。
+        """按模型实际输出量扣费：应扣 = ceil(real_tokens × markup)。
+
+        ``real_tokens`` 保留原参数名以兼容已有调用，它从本版起专指模型输出 token；
+        prompt/history/tools/cache 等平台输入不计入用户余额。**先扣今日免费额度、
+        再扣钱包余额**。
 
         总开关关时不扣（charged=0）。开时两级扣减：
           1) 今日免费额度剩余里扣 from_free（走 cosmac_usage 计数，每天清零）；
@@ -320,7 +325,8 @@ class WalletStore:
                 if charge > 0:
                     bal2 = wallet_repo.try_debit(
                         s, user_id, charge, reason=reason, ref=room_id, note=note,
-                        meta={"real_tokens": rt, "markup": markup, "model": model,
+                        meta={"real_tokens": rt, "billing_basis": "model_output",
+                              "markup": markup, "model": model,
                               "cost": cost, "from_free": from_free,
                               "from_wallet": charge, "capped": capped},
                     )

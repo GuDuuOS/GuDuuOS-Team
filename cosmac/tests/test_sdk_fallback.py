@@ -44,7 +44,7 @@ class TestSdkFallback(unittest.TestCase):
             system_prompt="s",
             run=mock.Mock(side_effect=AssertionError("已动过手，legacy 不应被再次调用")),
         )
-        # 新契约：返回 (回复文本, 真实用量token数)
+        # 新契约：返回 (回复文本, 模型输出 token 数)
         reply, usage = bot._run_agent_engine(
             legacy, "组个专班", ToolContext("!r:h", "@u:h"), "", [])
         self.assertIn("部分操作", reply)      # 告知用户已做部分、已停下
