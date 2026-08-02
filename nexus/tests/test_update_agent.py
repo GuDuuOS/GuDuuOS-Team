@@ -15,6 +15,12 @@ assert _AGENT_SPEC is not None and _AGENT_SPEC.loader is not None
 update_agent = importlib.util.module_from_spec(_AGENT_SPEC)
 _AGENT_SPEC.loader.exec_module(update_agent)
 
+_APPLY_PATH = Path(__file__).resolve().parents[2] / "distro" / "apply_images.py"
+_APPLY_SPEC = importlib.util.spec_from_file_location("guduu_apply_images", _APPLY_PATH)
+assert _APPLY_SPEC is not None and _APPLY_SPEC.loader is not None
+apply_images = importlib.util.module_from_spec(_APPLY_SPEC)
+_APPLY_SPEC.loader.exec_module(apply_images)
+
 
 class UpdateAgentTest(unittest.TestCase):
     """验证代理只读取数据，不执行 env 内容，并严格限制版本与 HTTPS。"""
@@ -56,6 +62,43 @@ class UpdateAgentTest(unittest.TestCase):
         )
         with self.assertRaises(RuntimeError):
             update_agent._validate_endpoint("http://nexus.example.com")
+
+    def test_container_artifact_only_accepts_official_exact_digests(self):
+        """更新代理不能把 Nexus 字段转换成任意镜像或命令。"""
+        update = {
+            "artifact": {
+                "mode": "container",
+                "bot_image": "ghcr.io/guduuos/guduu-os-bot@sha256:" + "a" * 64,
+                "web_image": "ghcr.io/guduuos/guduu-os-web@sha256:" + "b" * 64,
+            }
+        }
+        command = update_agent._artifact_command(update, "1.9.0", "v1.9.0")
+        self.assertIn("apply_images.py", command[1])
+        update["artifact"]["bot_image"] = "evil.example/bot@sha256:" + "a" * 64
+        with self.assertRaises(RuntimeError):
+            update_agent._artifact_command(update, "1.9.0", "v1.9.0")
+
+    def test_apply_image_validation_and_atomic_env_update(self):
+        """镜像执行器严格校验服务名，并只替换 .env 指定字段。"""
+        bot = "ghcr.io/guduuos/guduu-os-bot@sha256:" + "a" * 64
+        web = "ghcr.io/guduuos/guduu-os-web@sha256:" + "b" * 64
+        self.assertEqual(apply_images._validate_image(bot, "bot"), bot)
+        with self.assertRaises(RuntimeError):
+            apply_images._validate_image(web, "bot")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            original_path = apply_images._ENV_FILE
+            path = Path(temp_dir) / ".env"
+            path.write_text("DOMAIN=a.example\nCOSMAC_BOT_IMAGE=old\n", encoding="utf-8")
+            apply_images._ENV_FILE = path
+            try:
+                apply_images._write_env_images(bot, web)
+            finally:
+                apply_images._ENV_FILE = original_path
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("DOMAIN=a.example", text)
+        self.assertIn("COSMAC_BOT_IMAGE=" + bot, text)
+        self.assertIn("COSMAC_WEB_IMAGE=" + web, text)
+        self.assertIn("COSMAC_RELEASE_MODE=container", text)
 
 
 if __name__ == "__main__":

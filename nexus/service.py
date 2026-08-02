@@ -16,6 +16,7 @@
         POST /nexus/user/attribution {key,referral_code,user_id} 用户归属上报
         POST /nexus/update/check   {key,current_version}  拉取已分配的版本更新
         POST /nexus/update/report  {key,release_id,status,...} 上报更新结果
+        POST /nexus/release/manifest  CI 用独立 HMAC 登记不可变镜像摘要
     管理（console 用，须具名管理员会话；服务器应急令牌仅用于首次建号和恢复）：
         POST /nexus/admin/keys       {count,note,token_grant}  签发 KEY（明文仅此一次）
         POST /nexus/admin/revoke     {key_id}                  吊销 KEY
@@ -70,6 +71,7 @@ from nexus import (
     pay,
     passkeys,
     payment_config,
+    release_artifacts,
     releases,
 )
 from nexus.fleet import FleetError
@@ -1178,6 +1180,24 @@ class NexusHandler(BaseHTTPRequestHandler):
 
         body = self._read_body()
 
+        # —— GitHub Actions 镜像构建回调：不走浏览器管理员会话，只认独立 HMAC ——
+        # 签名覆盖时间戳与规范化 JSON；五分钟窗口可阻断截获后的长期重放。清单本身只含
+        # 公开镜像摘要和 commit，不含 GHCR 凭据，登记后同版本不可覆盖。
+        if path == "/nexus/release/manifest":
+            def _register_image_manifest(s):
+                release_artifacts.verify_webhook(
+                    body,
+                    str(self.headers.get("X-Nexus-Timestamp", "")),
+                    str(self.headers.get("X-Nexus-Signature", "")),
+                )
+                self._json(
+                    201,
+                    {"manifest": release_artifacts.register_manifest(s, body)},
+                )
+
+            self._with_session(_register_image_manifest)
+            return
+
         # —— 具名平台主管登录与账号管理 ——
         if path == "/nexus/admin/auth/login":
             if not _auth_rate_ok(self._client_ip()):
@@ -1875,6 +1895,16 @@ class NexusHandler(BaseHTTPRequestHandler):
                                 # 旧版控制台没有 target 字段，继续按节点版本处理，避免
                                 # 发布中心升级瞬间把历史操作语义改成平台公告。
                                 target=str(body.get("target") or "node"),
+                                # 新节点版本默认要求 CI 镜像；严格 Git 只允许运维明确
+                                # 指定 legacy_git，用于首次引导或更新器救援。
+                                delivery_mode=str(
+                                    body.get("delivery_mode")
+                                    or (
+                                        "container"
+                                        if str(body.get("target") or "node") == "node"
+                                        else "legacy_git"
+                                    )
+                                ),
                             )
                         },
                     )

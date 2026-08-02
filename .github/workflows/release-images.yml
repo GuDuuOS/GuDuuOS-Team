@@ -1,0 +1,84 @@
+name: Build release images
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: release-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact release ref
+        uses: actions/checkout@v4
+
+      - name: Validate tag and source versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          VERSION="${GITHUB_REF_NAME#v}"
+          grep -Fq "__version__ = \"${VERSION}\"" cosmac/__init__.py
+          node -e 'const p=require("./client/package.json"); if(p.version!==process.env.GITHUB_REF_NAME.slice(1)) process.exit(1)'
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push bot image
+        id: bot
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: distro/Dockerfile.bot
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/guduuos/guduu-os-bot:${{ github.ref_name }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          cache-from: type=gha,scope=bot
+          cache-to: type=gha,mode=max,scope=bot
+
+      - name: Build and push web image
+        id: web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: distro/Dockerfile.web
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/guduuos/guduu-os-web:${{ github.ref_name }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+      - name: Register immutable image manifest in Nexus
+        env:
+          NEXUS_RELEASE_MANIFEST_URL: ${{ vars.NEXUS_RELEASE_MANIFEST_URL }}
+          NEXUS_RELEASE_WEBHOOK_SECRET: ${{ secrets.NEXUS_RELEASE_WEBHOOK_SECRET }}
+          BOT_IMAGE: ghcr.io/guduuos/guduu-os-bot@${{ steps.bot.outputs.digest }}
+          WEB_IMAGE: ghcr.io/guduuos/guduu-os-web@${{ steps.web.outputs.digest }}
+        run: python3 scripts/publish_release_manifest.py

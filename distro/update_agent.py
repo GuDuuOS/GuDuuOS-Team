@@ -2,9 +2,10 @@
 """GuDuu OS OEM 宿主机自动更新代理。
 
 代理由 systemd timer 以 root 身份定时启动：读取发行版 ``.env`` 中已经存在的 Nexus
-地址与 OEM KEY，询问母舰是否有分配给本实例的版本，然后调用同目录 ``update.sh``。
-它不会开放监听端口，也不接受 Nexus 传入任意命令；唯一允许执行的目标是严格匹配
-``vX.Y.Z`` 的 Git tag。
+地址与 OEM KEY，询问母舰是否有分配给本实例的版本。日常版本调用
+``apply_images.py`` 安装 Nexus 冻结的 GHCR 精确摘要；更新器自身引导/救援仍调用
+``update.sh`` 且只接受严格 ``vX.Y.Z`` Git tag。它不会开放监听端口，也不接受 Nexus
+传入任意命令。
 """
 
 from __future__ import annotations
@@ -22,6 +23,9 @@ from typing import Any, Dict, Optional
 
 
 _VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+_IMAGE_RE = re.compile(
+    r"^ghcr\.io/guduuos/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
+)
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _SCRIPT_DIR.parent
 _ENV_FILE = _SCRIPT_DIR / ".env"
@@ -113,6 +117,41 @@ def _validate_endpoint(url: str) -> str:
     raise RuntimeError("NEXUS_URL 必须使用 HTTPS")
 
 
+def _artifact_command(update: Dict[str, Any], target: str, git_ref: str) -> list:
+    """把 Nexus 的受限交付物转换为固定命令参数。
+
+    新版本只能引用官方 bot/web GHCR 仓库的完整 sha256；历史记录没有 artifact 时
+    保持严格 Git tag 流程，确保当前已安装的旧代理能够完成第一次平滑升级。
+    """
+    artifact = update.get("artifact")
+    if not isinstance(artifact, dict) or artifact.get("mode") == "legacy_git":
+        return ["bash", str(_SCRIPT_DIR / "update.sh"), "--ref", git_ref]
+    if artifact.get("mode") != "container":
+        raise RuntimeError("Nexus 返回了不支持的节点交付方式")
+    bot_image = str(artifact.get("bot_image") or "").strip().lower()
+    web_image = str(artifact.get("web_image") or "").strip().lower()
+    if (
+        not _IMAGE_RE.fullmatch(bot_image)
+        or not bot_image.startswith("ghcr.io/guduuos/guduu-os-bot@sha256:")
+    ):
+        raise RuntimeError("Nexus 返回了不合法的 bot 镜像摘要")
+    if (
+        not _IMAGE_RE.fullmatch(web_image)
+        or not web_image.startswith("ghcr.io/guduuos/guduu-os-web@sha256:")
+    ):
+        raise RuntimeError("Nexus 返回了不合法的 web 镜像摘要")
+    return [
+        sys.executable,
+        str(_SCRIPT_DIR / "apply_images.py"),
+        "--version",
+        target,
+        "--bot-image",
+        bot_image,
+        "--web-image",
+        web_image,
+    ]
+
+
 def _report(
     base: str,
     key: str,
@@ -167,12 +206,14 @@ def run_once() -> int:
     if not release_id or not _VERSION_RE.fullmatch(target) or git_ref != f"v{target}":
         raise RuntimeError("Nexus 返回了不合法的版本任务，已拒绝执行")
 
-    print(f"[更新代理] 收到 {current} → {target}（{git_ref}）")
+    command = _artifact_command(update, target, git_ref)
+    mode = "Docker 摘要" if command[0] == sys.executable else "Git 引导/救援"
+    print(f"[更新代理] 收到 {current} → {target}（{mode}）")
     _report(base, key, release_id, "downloading", version=current)
     _report(base, key, release_id, "installing", version=current)
     try:
         completed = subprocess.run(
-            ["bash", str(_SCRIPT_DIR / "update.sh"), "--ref", git_ref],
+            command,
             cwd=str(_SCRIPT_DIR),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

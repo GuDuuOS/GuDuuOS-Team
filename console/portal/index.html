@@ -531,6 +531,9 @@
           </label>
           <label>版本号<input name="version" required placeholder="1.7.0" /></label>
           <label>Git tag<input name="git_ref" required placeholder="v1.7.0" /></label>
+          <label class="release-image-field" id="release-image-field">节点镜像
+            <input id="release-image-status" value="等待 CI 镜像清单" readonly />
+          </label>
           <label class="release-title-field">版本标题<input name="title" required placeholder="例：OEM 节点自动更新" /></label>
           <label class="release-canary-field" id="release-canary-field">灰度节点
             <select id="release-canary" name="canary_instance_id"></select>

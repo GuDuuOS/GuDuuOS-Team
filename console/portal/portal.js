@@ -1986,6 +1986,13 @@
       var targetBadge = platform
         ? '<span class="badge manual">Nexus 平台</span>'
         : '<span class="badge idle">OEM 节点</span>';
+      var artifact = r.artifact || { mode: "legacy_git" };
+      var deliveryText = platform
+        ? "集中托管"
+        : artifact.mode === "container"
+          ? "Docker 摘要 · bot " + esc((artifact.bot_image || "").slice(-12)) +
+            " · web " + esc((artifact.web_image || "").slice(-12))
+          : "兼容 Git 引导/救援";
       var statusBadge = releaseBadge(
         r.status,
         platform ? PLATFORM_RELEASE_STATUS : RELEASE_STATUS
@@ -2038,7 +2045,8 @@
       return '<article class="release-card"><div class="release-card-head"><div>' +
         '<div class="release-card-title"><b>v' + esc(r.version) + "</b>" +
         targetBadge + statusBadge + "<strong>" + esc(r.title) + "</strong></div>" +
-        '<div class="release-meta">Git ' + esc(r.git_ref) + " · 创建 " + fmtTime(r.created_ts) + "</div></div>" +
+        '<div class="release-meta">' + deliveryText + " · Git " + esc(r.git_ref) +
+        " · 创建 " + fmtTime(r.created_ts) + "</div></div>" +
         '<div class="release-actions">' + actions.join("") + "</div></div>" +
         '<div class="release-notes">' + esc(r.notes) + '</div><div class="release-counts">' + countText + "</div>" +
         detailBlock + "</article>";
@@ -2062,6 +2070,7 @@
     var form = $("#form-release");
     var platform = form.elements.target.value === "nexus";
     $("#release-canary-field").hidden = platform;
+    $("#release-image-field").hidden = platform;
     $("#release-flow-hint").textContent = platform
       ? "Nexus 平台由我们集中部署；发布这里只向全部 OEM 后台展示公告，不更新客户服务器。"
       : "OEM 节点版本流程：保存 → 灰度监测 → 推送全部节点；支持暂停、失败重试和历史版本回撤。";
@@ -2091,6 +2100,10 @@
       form.version.dataset.previousTag = draft.git_ref;
       form.dataset.generatedVersion = draft.version;
       form.dataset.alreadyExists = draft.already_exists ? "true" : "false";
+      form.dataset.imageReady = draft.image_manifest ? "true" : "false";
+      $("#release-image-status").value = draft.image_manifest
+        ? "已登记不可变摘要 · " + (draft.image_manifest.platforms || "")
+        : "尚未登记，请等待 GitHub Actions 构建";
       syncReleaseSubmitState();
       if (draft.already_exists) {
         status.textContent = "已显示 v" + draft.version + " 的完整生成内容；该版本已存在于历史列表，无需重复保存。";
@@ -2722,6 +2735,7 @@
     api("/nexus/admin/releases", {
       body: {
         target: releaseTarget,
+        delivery_mode: releaseTarget === "node" ? "container" : "legacy_git",
         version: form.version.value,
         git_ref: form.git_ref.value,
         title: form.title.value,

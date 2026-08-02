@@ -790,7 +790,8 @@ class NexusInstanceGeo(Base):
 class NexusRelease(Base):
     """超级管理员创建的 GuDuu OS 发行版本。
 
-    版本记录与 Git tag 一一对应。状态机刻意保持很小：``draft`` 仅保存草稿，
+    版本记录仍与 Git tag 一一对应；新节点版本的应用交付物另由不可变镜像摘要表冻结，
+    Git tag 负责源码审计及 bootstrap/救援。状态机刻意保持很小：``draft`` 仅保存草稿，
     ``canary`` 只推给一个灰度节点，``published`` 推给全部在线授权实例，
     ``rollback`` 表示全节点精确回撤到该历史版本，``paused`` 暂停尚未领取的任务。
     发布说明存 Nexus DB，OEM 节点不需要访问 GitHub API 就能取得统一说明。
@@ -825,6 +826,44 @@ class NexusReleaseTrack(Base):
     release_id = Column(Integer, primary_key=True)
     # nexus=集中式平台公告；node=OEM 实例真实安装任务。
     target = Column(String(16), nullable=False, default="node", index=True)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
+class NexusImageManifest(Base):
+    """CI 已登记、尚未绑定到发布记录的不可变镜像清单。
+
+    GitHub Actions 在严格版本 tag 上构建完成后，用独立 HMAC 密钥把两个镜像的完整
+    ``仓库@sha256:digest``、源码 commit 和平台写入这里。版本中心创建节点版本时会
+    冻结一份到 :class:`NexusReleaseArtifact`；后续重复 webhook 只能幂等提交完全相同
+    的内容，不能悄悄替换已经对外使用的版本。
+    """
+
+    __tablename__ = "nexus_image_manifest"
+
+    version = Column(String(32), primary_key=True)
+    git_ref = Column(String(40), nullable=False, unique=True)
+    source_commit = Column(String(64), nullable=False)
+    bot_image = Column(String(255), nullable=False)
+    web_image = Column(String(255), nullable=False)
+    platforms = Column(String(255), nullable=False, default="linux/amd64")
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+
+
+class NexusReleaseArtifact(Base):
+    """节点发布记录冻结的 Docker 应用交付物。
+
+    独立表保持旧 ``nexus_release`` 无损兼容：缺少本行的历史版本继续按严格 Git tag
+    执行；有本行的新版本只能按精确镜像摘要安装。这里不保存任何镜像仓库凭据。
+    """
+
+    __tablename__ = "nexus_release_artifact"
+
+    release_id = Column(Integer, primary_key=True)
+    mode = Column(String(16), nullable=False, default="container")
+    source_commit = Column(String(64), nullable=False)
+    bot_image = Column(String(255), nullable=False)
+    web_image = Column(String(255), nullable=False)
+    platforms = Column(String(255), nullable=False, default="linux/amd64")
     created_ts = Column(BigInteger, nullable=False, default=_now_ms)
 
 

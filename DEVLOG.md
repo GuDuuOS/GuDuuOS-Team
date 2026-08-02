@@ -1,5 +1,16 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-08-02 — GuDuu OS 1.19.0 (minor)
+
+- 新增：OEM 节点应用发布改为 GitHub Actions 构建 bot/web 多架构 Docker 镜像，
+  Nexus 冻结并下发不可变 SHA-256 摘要，不再要求每台客户服务器日常现场编译源码。
+- 新增：节点更新前自动备份 PostgreSQL 并保留当前运行镜像；新版本只切换 bot/web，
+  Caddy 配置校验或完整体检失败时会自动恢复旧镜像并向 Nexus 上报失败。
+- 优化：版本中心显示 Docker 构建清单与镜像摘要状态；严格 Git tag 更新保留为旧节点
+  首次引导、更新器自身升级和故障救援通道，现有灰度、全量、暂停与历史回撤流程不变。
+- 优化：GHCR 拉取凭据使用每台宿主机独立的 root 只读文件，Nexus 与 bot 容器均不保存
+  仓库令牌或 Docker socket，客户域名、KEY、SMTP、证书和数据库不进入镜像。
+
 ## 2026-08-02 — GuDuu OS 1.18.0 (minor)
 
 - 新增：OEM 节点授权申请必须填写计划部署域名，并可选填写静态公网 IP；

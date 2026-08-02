@@ -7,11 +7,14 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import hmac
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
-from nexus import db, fleet, releases
+from nexus import db, fleet, release_artifacts, releases
 from nexus.db import NexusKeyClaim
 from nexus.fleet import FleetError
 
@@ -45,6 +48,99 @@ class ReleaseTest(unittest.TestCase):
             git_ref="v" + version,
             target=target,
         )
+
+    def _register_manifest(self, version: str = "1.7.0"):
+        """登记一份测试用不可变镜像清单，不经过 HTTP/HMAC 层。"""
+        return release_artifacts.register_manifest(
+            self.s,
+            {
+                "version": version,
+                "git_ref": "v" + version,
+                "source_commit": "a" * 40,
+                "bot_image": "ghcr.io/guduuos/guduu-os-bot@sha256:" + "b" * 64,
+                "web_image": "ghcr.io/guduuos/guduu-os-web@sha256:" + "c" * 64,
+                "platforms": "linux/amd64,linux/arm64",
+            },
+        )
+
+    def test_container_release_freezes_manifest_and_check_returns_digests(self):
+        """节点 Docker 发布必须冻结摘要，并把完整摘要下发给自己的更新代理。"""
+        self._register_manifest()
+        release = releases.create_release(
+            self.s,
+            version="1.7.0",
+            title="镜像发布",
+            notes="按不可变摘要安装。",
+            git_ref="v1.7.0",
+            target="node",
+            delivery_mode="container",
+        )
+        self.assertEqual(release["artifact"]["mode"], "container")
+        self.assertTrue(release["artifact"]["bot_image"].endswith("b" * 64))
+        releases.publish(self.s, release["id"])
+        update = releases.check_update(self.s, self.key_a, "1.6.32")
+        self.assertIsNotNone(update)
+        self.assertEqual(update["artifact"]["mode"], "container")
+        self.assertTrue(update["artifact"]["web_image"].endswith("c" * 64))
+
+    def test_container_release_requires_ci_manifest_and_manifest_is_immutable(self):
+        """没有 CI 清单不能创建 Docker 发布，同版本摘要也不能被替换。"""
+        with self.assertRaises(FleetError) as missing:
+            releases.create_release(
+                self.s,
+                version="1.7.0",
+                title="缺清单",
+                notes="不能保存。",
+                git_ref="v1.7.0",
+                target="node",
+                delivery_mode="container",
+            )
+        self.assertEqual(missing.exception.code, "NEXUS_IMAGE_MANIFEST_MISSING")
+        self.s.rollback()
+        original = self._register_manifest()
+        self.assertEqual(original, self._register_manifest())
+        changed = dict(original)
+        changed["bot_image"] = (
+            "ghcr.io/guduuos/guduu-os-bot@sha256:" + "d" * 64
+        )
+        with self.assertRaises(FleetError) as immutable:
+            release_artifacts.register_manifest(self.s, changed)
+        self.assertEqual(immutable.exception.code, "NEXUS_MANIFEST_IMMUTABLE")
+
+    def test_manifest_webhook_requires_valid_fresh_hmac(self):
+        """CI 清单入口必须拒绝过期或伪造签名。"""
+        payload = {
+            "version": "1.7.0",
+            "git_ref": "v1.7.0",
+            "source_commit": "a" * 40,
+            "bot_image": "ghcr.io/guduuos/guduu-os-bot@sha256:" + "b" * 64,
+            "web_image": "ghcr.io/guduuos/guduu-os-web@sha256:" + "c" * 64,
+            "platforms": "linux/amd64,linux/arm64",
+        }
+        secret = "test-release-secret-0123456789-abcdef"
+        stamp = str(int(time.time()))
+        signature = hmac.new(
+            secret.encode("utf-8"),
+            stamp.encode("ascii")
+            + b"\n"
+            + release_artifacts.canonical_payload(payload),
+            hashlib.sha256,
+        ).hexdigest()
+        old = os.environ.get("NEXUS_RELEASE_WEBHOOK_SECRET")
+        os.environ["NEXUS_RELEASE_WEBHOOK_SECRET"] = secret
+        try:
+            release_artifacts.verify_webhook(payload, stamp, "sha256=" + signature)
+            with self.assertRaises(FleetError):
+                release_artifacts.verify_webhook(payload, stamp, "sha256=" + "0" * 64)
+            with self.assertRaises(FleetError):
+                release_artifacts.verify_webhook(
+                    payload, str(int(stamp) - 1000), "sha256=" + signature
+                )
+        finally:
+            if old is None:
+                os.environ.pop("NEXUS_RELEASE_WEBHOOK_SECRET", None)
+            else:
+                os.environ["NEXUS_RELEASE_WEBHOOK_SECRET"] = old
 
     def test_create_requires_semver_and_matching_tag(self):
         """版本号和 tag 必须严格一致，且不能创建倒序版本。"""

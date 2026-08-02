@@ -15,11 +15,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import select
 
 from cosmac import __version__ as PRODUCT_VERSION
-from nexus import fleet
+from nexus import fleet, release_artifacts
 from nexus.db import (
     NexusInstance,
     NexusKeyClaim,
     NexusRelease,
+    NexusReleaseArtifact,
     NexusReleaseDeployment,
     NexusReleaseTrack,
 )
@@ -186,6 +187,7 @@ def build_release_draft(
     exists = s.execute(
         select(NexusRelease.id).where(NexusRelease.version == target)
     ).first()
+    manifest = release_artifacts.find_manifest(s, target)
     return {
         "version": target,
         "git_ref": "v" + target,
@@ -193,6 +195,7 @@ def build_release_draft(
         "notes": notes,
         "source": "DEVLOG.md",
         "already_exists": exists is not None,
+        "image_manifest": manifest,
     }
 
 
@@ -234,6 +237,7 @@ def create_release(
     notes: str,
     git_ref: str,
     target: str = "node",
+    delivery_mode: str = "legacy_git",
 ) -> Dict[str, Any]:
     """创建带明确发布对象的草稿版本。
 
@@ -274,6 +278,14 @@ def create_release(
     s.add(row)
     s.flush()
     s.add(NexusReleaseTrack(release_id=row.id, target=target))
+    # Nexus 平台是集中托管公告，不需要节点交付物。新节点版本由门户显式要求
+    # container；直接调用未传参数时继续兼容历史测试和救援脚本的 strict Git 模式。
+    if target == "node" and delivery_mode == "container":
+        row._nexus_artifact = release_artifacts.freeze_for_release(
+            s, int(row.id), version
+        )
+    elif target == "node" and delivery_mode != "legacy_git":
+        raise FleetError("NEXUS_BAD_DELIVERY_MODE", "节点交付方式不合法")
     s.flush()
     return _release_dict(row, [], target)
 
@@ -343,7 +355,8 @@ def publish(s, release_id: int) -> Dict[str, Any]:
 def rollback(s, release_id: int) -> Dict[str, Any]:
     """把全部活动 OEM 节点回撤到一个曾经全量发布过的历史版本。
 
-    回撤复用历史版本对应的不可变 Git tag，但会重置该版本的逐节点投放状态。这样
+    回撤复用历史版本冻结的不可变镜像摘要；镜像发布前的旧记录则兼容严格 Git tag。
+    同时会重置该版本的逐节点投放状态。这样
     超级管理员看到的始终是“这次回撤”的实时结果，而不是该版本第一次发布时留下的
     success。未全量发布过的草稿/灰度版本不能作为回撤目标，避免把未经验证的代码借
     “回撤”名义推向全舰队。
@@ -457,12 +470,18 @@ def _release_dict(
         state: sum(1 for item in deployments if item["status"] == state)
         for state in ("pending", "downloading", "installing", "success", "failed", "skipped")
     }
+    # 这个函数没有 Session 参数；调用方先临时附加只读属性，避免为了一个扩展表把所有
+    # 组装路径改成额外查询参数。SQLAlchemy 模型允许普通 Python 临时属性。
+    artifact = release_artifacts.artifact_dict(
+        getattr(row, "_nexus_artifact", None)
+    )
     return {
         "id": row.id,
         "version": row.version,
         "title": row.title,
         "notes": row.notes,
         "git_ref": row.git_ref,
+        "artifact": artifact,
         "target": target,
         "status": row.status,
         "canary_instance_id": row.canary_instance_id,
@@ -489,6 +508,7 @@ def get_release(s, release_id: int) -> Dict[str, Any]:
             select(NexusInstance).where(NexusInstance.id.in_(instance_ids))
         ).scalars()
     } if instance_ids else {}
+    release._nexus_artifact = s.get(NexusReleaseArtifact, int(release.id))
     return _release_dict(
         release,
         [_deployment_dict(row, instances) for row in rows],
@@ -651,6 +671,9 @@ def check_update(s, raw_key: str, current_version: str) -> Optional[Dict[str, An
             "title": release.title,
             "notes": release.notes,
             "git_ref": release.git_ref,
+            "artifact": release_artifacts.artifact_dict(
+                s.get(NexusReleaseArtifact, int(release.id))
+            ),
             "published_ts": release.published_ts,
         }
     return None

@@ -36,8 +36,8 @@ git clone <发行版仓库地址> cosmac && cd cosmac/distro
 | 事项 | 命令 |
 |---|---|
 | 体检（装完必跑 / 出问题先跑） | `./doctor.sh` |
-| 手动升级 main 最新版 | `./update.sh` |
-| 手动升级或回撤到指定已发布版本 | `./update.sh --ref vX.Y.Z` |
+| 日常自动升级/回撤 | Nexus 发布中心下发不可变 Docker 摘要，宿主代理自动执行 |
+| 更新器引导或故障救援 | `./update.sh --ref vX.Y.Z`（严格 Git tag，现场构建） |
 | 查看自动更新计划 | `systemctl status guduu-update-agent.timer` |
 | 查看最近更新日志 | `journalctl -u guduu-update-agent.service -n 100` |
 | 看某个组件日志 | `docker compose logs -f synapse\|bot\|web\|postgres` |
@@ -69,6 +69,7 @@ distro/
 │   └── caddy/              # Caddyfile / HTTPS 证书
 ├── install.sh / doctor.sh / update.sh
 ├── update_agent.py         # 每 5 分钟向 Nexus 检查已分配版本并上报结果
+├── apply_images.py         # 按摘要切换 bot/web，体检失败自动回撤
 └── docker-compose.yml
 ```
 
@@ -80,5 +81,9 @@ distro/
 - 联邦范围：GuDuu 生态内互通（P2 起由 GuDuu Nexus 下发成员名单）；不与公网 Matrix 联邦。
 - AI 模型：P0 过渡期在 `.env` 里直连厂商；**P1 起统一经 GuDuu Nexus 的 LLM 网关**
   （按授权码计量、token 钱包扣费，实例侧不再出现任何厂商 key）。
-- 版本更新：宿主机 systemd timer 主动向 Nexus 拉取任务，只接受与版本号一致的
-  `vX.Y.Z` Git tag；Nexus 无需保存 OEM SSH 凭据，bot 容器也不接触 Docker socket。
+- 版本更新：GitHub Actions 从严格 `vX.Y.Z` tag 构建 bot/web 多架构镜像，Nexus 冻结
+  `ghcr.io/...@sha256:...`；宿主机 systemd timer 主动领取后先备份数据库、保留旧镜像、
+  只切换 bot/web 并运行 `doctor.sh`，失败自动回撤。更新器/Compose 自身引导或救援才走
+  严格 Git tag。Nexus 不保存 OEM SSH/仓库凭据，bot 容器也不接触 Docker socket。
+- 私有 GHCR：在每台宿主机的 `/etc/guduu-registry.env` 填写只具备
+  `read:packages` 的账号和令牌并保持 `0600`；不要写进发行版 `.env`。镜像包公开时可留空。

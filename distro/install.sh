@@ -250,6 +250,11 @@ fi
 # systemd timer 只主动出站访问 Nexus，不开放端口，也不需要平台保存客户 SSH 凭据。
 if [ "$(id -u)" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
   DISTRO_DIR="$(pwd -P)"
+  # 私有 GHCR 凭据只留在宿主机 root 文件；模板为空且不会覆盖既有配置。
+  # update agent 需要时通过 docker login --password-stdin 使用，绝不传进 bot 容器。
+  if [ ! -f /etc/guduu-registry.env ]; then
+    install -m 0600 templates/guduu-registry.env.example /etc/guduu-registry.env
+  fi
   say "安装 Nexus 版本更新代理（每 5 分钟检查一次）……"
   render templates/guduu-update-agent.service.tpl \
     /etc/systemd/system/guduu-update-agent.service "DISTRO_DIR=$DISTRO_DIR"

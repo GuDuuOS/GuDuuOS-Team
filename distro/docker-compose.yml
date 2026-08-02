@@ -55,7 +55,9 @@ services:
     # Synapse 误判成 unhealthy，卡死整条依赖链。
 
   bot:
-    # GuDuu OS 主 AI：镜像从仓库根构建（cosmac/ 包 + bootstrap 脚本）
+    # 日常发布由更新代理注入 GHCR 的 ``仓库@sha256:digest``；默认本地名仅供首次
+    # install/bootstrap 构建。镜像引用不包含客户配置，所有环境变量仍来自宿主 .env。
+    image: ${COSMAC_BOT_IMAGE:-cosmac-bot-local}
     build:
       context: ..
       dockerfile: distro/Dockerfile.bot
@@ -130,6 +132,7 @@ services:
   web:
     # Caddy：唯一对公网开放的容器。自动向 Let's Encrypt 签发/续期证书，
     # 同域名下：前端静态(/) + Synapse(/_matrix,/_synapse/client) + bot(/cosmac)。
+    image: ${COSMAC_WEB_IMAGE:-cosmac-web-local}
     build:
       context: ..
       dockerfile: distro/Dockerfile.web

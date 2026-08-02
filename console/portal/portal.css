@@ -351,6 +351,7 @@ label input { margin-top: 5px; }
 }
 .release-form label { margin: 0; }
 .release-form select { width: 100%; margin-top: 5px; }
+.release-image-field { grid-column: 1 / -1; }
 .release-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .release-notes-field { grid-column: 1 / -2; }
 /* 自动生成的版本说明通常有多条内容，默认展开可以直接完成审阅；
