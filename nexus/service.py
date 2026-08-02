@@ -17,7 +17,7 @@
         POST /nexus/update/check   {key,current_version}  拉取已分配的版本更新
         POST /nexus/update/report  {key,release_id,status,...} 上报更新结果
         POST /nexus/release/manifest  CI 用独立 HMAC 登记不可变镜像摘要
-    管理（console 用，须具名管理员会话；服务器应急令牌仅用于首次建号和恢复）：
+    管理（console 用，须具名管理员会话；SSH 单次码仅用于首次建号和恢复）：
         POST /nexus/admin/keys       {count,note,token_grant}  签发 KEY（明文仅此一次）
         POST /nexus/admin/revoke     {key_id}                  吊销 KEY
         GET  /nexus/admin/keys                                 KEY 列表
@@ -38,7 +38,8 @@
 
 安全：
     - 具名管理员账号保存在 Nexus DB；浏览器会话走安全 Cookie，可撤销且 12 小时过期；
-    - NEXUS_ADMIN_TOKEN 无默认值，仅换取 30 分钟恢复 Cookie 或供服务器侧应急；
+    - 忘记密码时必须 SSH 运行 ``python -m nexus.recovery_codes``；单次码
+      只换取 30 分钟恢复 Cookie，网页不接受长期管理令牌；
     - 兑换端点按 IP 限频（内存桶），防 KEY 爆破；
     - 生产部署躲在 Caddy 后面收 TLS，本服务只听内网。
 """
@@ -113,15 +114,11 @@ def _auth_rate_ok(ip: str) -> bool:
         return True
 
 
-def _admin_token() -> str:
-    return os.environ.get("NEXUS_ADMIN_TOKEN", "").strip()
-
-
 def _dash_token() -> str:
     """读取只读大屏令牌。
 
-    独立函数让大屏鉴权与管理员鉴权保持清晰边界，避免以后为了“方便”再次把
-    ``NEXUS_ADMIN_TOKEN`` 当成大屏令牌使用。
+    独立函数让大屏鉴权与管理员鉴权保持清晰边界，禁止将管理
+    会话或 SSH 恢复凭据复用到长时间展示的大屏页面。
     """
     return os.environ.get("NEXUS_DASH_TOKEN", "").strip()
 
@@ -202,24 +199,17 @@ class NexusHandler(BaseHTTPRequestHandler):
         return fwd or (self.client_address[0] if self.client_address else "?")
 
     def _check_admin(self) -> bool:
-        """接受具名管理员短期会话，兼容服务器应急令牌。
+        """只接受具名管理员会话或 SSH 单次码换取的短期恢复会话。
 
-        具名会话优先承担日常操作；环境令牌只保留为灾难恢复和首个管理员引导入口。
         每次成功鉴权都会把当前操作人写到 handler，后续业务审计直接使用真实姓名。
+        服务端不再保留任何长期 HTTP 恢复凭据，避免泄露后成为永久后门。
         """
-        expect = _admin_token()
         bearer_token = self._bearer()
-        if expect and bearer_token and hmac.compare_digest(bearer_token, expect):
-            self._admin_actor_id = 0
-            self._admin_actor_label = "服务器应急令牌"
-            self._admin_auth_kind = "emergency_token"
-            self._admin_session_token = ""
-            return True
         cookie_token = self._cookie_value(self._admin_cookie_name())
         token = bearer_token or cookie_token
         s = db.session()
         try:
-            account = admin_auth.resolve_session(s, token, allow_emergency=bool(expect))
+            account = admin_auth.resolve_session(s, token)
             if account is not None:
                 self._admin_actor_id = int(account.id)
                 self._admin_actor_label = account.display_name
@@ -246,8 +236,12 @@ class NexusHandler(BaseHTTPRequestHandler):
             has_named_admin = admin_auth.active_count(s) > 0
         finally:
             s.close()
-        if not expect and not has_named_admin:
-            self._err(503, "NEXUS_ADMIN_DISABLED", "平台主管鉴权尚未配置")
+        if not has_named_admin:
+            self._err(
+                503,
+                "NEXUS_ADMIN_DISABLED",
+                "请先从服务器 SSH 生成单次恢复码并创建首个管理员",
+            )
         else:
             self._err(401, "NEXUS_FORBIDDEN", "管理员登录已失效")
         return False
@@ -302,7 +296,7 @@ class NexusHandler(BaseHTTPRequestHandler):
         """清空同一 HTTP keep-alive 连接上一个请求留下的身份信息。
 
         ``BaseHTTPRequestHandler`` 会在同一 TCP 连接复用 handler；若不主动清理，先用
-        应急令牌访问、再提交公开登录请求时，后一个请求可能被错误记成应急管理员操作。
+        恢复会话访问、再提交公开登录请求时，后一个请求可能被错误记成恢复管理员操作。
         """
         self._admin_actor_id = 0
         self._admin_actor_label = ""
@@ -439,7 +433,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                             "id": int(getattr(self, "_admin_actor_id", 0)),
                             "display_name": self._admin_actor(),
                             "auth_kind": getattr(
-                                self, "_admin_auth_kind", "emergency_token"
+                                self, "_admin_auth_kind", "named_session"
                             ),
                         }
                     },
@@ -1190,10 +1184,17 @@ class NexusHandler(BaseHTTPRequestHandler):
                     str(self.headers.get("X-Nexus-Timestamp", "")),
                     str(self.headers.get("X-Nexus-Signature", "")),
                 )
-                self._json(
-                    201,
-                    {"manifest": release_artifacts.register_manifest(s, body)},
+                manifest = release_artifacts.register_manifest(s, body)
+                release = releases.ensure_ci_release_draft(
+                    s,
+                    version=str(manifest["version"]),
+                    title=str(body.get("release_title", "")),
+                    notes=str(body.get("release_notes", "")),
                 )
+                # CI 只在收到 201 后结束，所以回应前必须确认镜像
+                # 清单和未发布草稿均已持久化，避免后续查询的竞态。
+                s.commit()
+                self._json(201, {"manifest": manifest, "release": release})
 
             self._with_session(_register_image_manifest)
             return
@@ -1215,6 +1216,9 @@ class NexusHandler(BaseHTTPRequestHandler):
                 token = str(result.pop("token"))
                 result["admin"]["auth_kind"] = "named_cookie"
                 self._set_admin_cookie(token)
+                # 会话必须先落库再把 Cookie 发给浏览器。否则快速网络下
+                # 下一个请求可能早于外层事务提交，被误判为会话无效。
+                s.commit()
                 self._json(200, result)
 
             self._with_session(_admin_login)
@@ -1253,26 +1257,22 @@ class NexusHandler(BaseHTTPRequestHandler):
                 token = str(result.pop("token"))
                 result["admin"]["auth_kind"] = "passkey_cookie"
                 self._set_admin_cookie(token)
+                # WebAuthn 会话与密码会话保持相同的“先持久化、后回应”语义。
+                s.commit()
                 self._json(200, result)
 
             self._with_session(_passkey_login)
             return
 
-        if path == "/nexus/admin/auth/emergency":
+        if path == "/nexus/admin/auth/recovery":
             if not _auth_rate_ok(self._client_ip()):
                 self._err(429, "NEXUS_RATE_LIMIT", "尝试过于频繁，请稍后再试")
                 return
-            expect = _admin_token()
-            submitted = str(body.get("emergency_token", ""))
-            if not expect:
-                self._err(503, "NEXUS_ADMIN_DISABLED", "服务器应急入口未配置")
-                return
-            if not submitted or not hmac.compare_digest(submitted, expect):
-                self._err(401, "NEXUS_FORBIDDEN", "服务器应急令牌无效")
-                return
 
-            def _emergency_login(s):
-                result = admin_auth.issue_emergency_session(s)
+            def _recovery_login(s):
+                result = admin_auth.consume_recovery_code(
+                    s, str(body.get("recovery_code", ""))
+                )
                 token = str(result.pop("token"))
                 self._set_admin_cookie(token)
                 self._admin_actor_id = 0
@@ -1282,12 +1282,15 @@ class NexusHandler(BaseHTTPRequestHandler):
                     s,
                     object_type="admin",
                     object_id=0,
-                    action="emergency_login",
+                    action="recovery_login",
                     actor_type="admin",
                     actor_label="服务器应急恢复",
                     source_ip=self._client_ip(),
                     to_state="active",
                 )
+                # 单次码的已使用标记和恢复会话必须在回传 Cookie 前
+                # 原子提交，同时避免首次建号紧接着请求时出现 503。
+                s.commit()
                 self._json(
                     200,
                     {
@@ -1300,7 +1303,17 @@ class NexusHandler(BaseHTTPRequestHandler):
                     },
                 )
 
-            self._with_session(_emergency_login)
+            self._with_session(_recovery_login)
+            return
+
+        if path == "/nexus/admin/auth/emergency":
+            # 旧路由明确作废，不做静默兼容；这可以让旧页面和脚本
+            # 尽快暴露长期令牌依赖，而不是继续留下难以发现的后门。
+            self._err(
+                410,
+                "NEXUS_EMERGENCY_TOKEN_REMOVED",
+                "长期应急令牌已停用，请从服务器 SSH 生成单次恢复码",
+            )
             return
 
         if path == "/nexus/admin/auth/logout":
@@ -1575,27 +1588,29 @@ class NexusHandler(BaseHTTPRequestHandler):
                     )
                 )
             elif path == "/nexus/oem/login":
-                self._with_session(
-                    lambda s: self._json(
-                        200,
-                        oem_svc.login(
-                            s,
-                            str(body.get("email", "")),
-                            str(body.get("password", "")),
-                        ),
+                def _oem_password_login(s):
+                    """用密码签发 OEM 会话，并确保令牌返回前已落库。"""
+                    result = oem_svc.login(
+                        s,
+                        str(body.get("email", "")),
+                        str(body.get("password", "")),
                     )
-                )
+                    s.commit()
+                    self._json(200, result)
+
+                self._with_session(_oem_password_login)
             elif path == "/nexus/oem/login/code":
-                self._with_session(
-                    lambda s: self._json(
-                        200,
-                        oem_email.login_with_code(
-                            s,
-                            str(body.get("email", "")),
-                            str(body.get("code", "")),
-                        ),
+                def _oem_code_login(s):
+                    """用邮箱验证码签发 OEM 会话，先持久化再回应。"""
+                    result = oem_email.login_with_code(
+                        s,
+                        str(body.get("email", "")),
+                        str(body.get("code", "")),
                     )
-                )
+                    s.commit()
+                    self._json(200, result)
+
+                self._with_session(_oem_code_login)
             else:
                 self._with_session(
                     lambda s: self._json(
@@ -2178,13 +2193,15 @@ def run(host: str = "", port: int = 0) -> None:
     host = host or os.environ.get("NEXUS_LISTEN_HOST", "127.0.0.1")
     port = port or int(os.environ.get("NEXUS_LISTEN_PORT", "9100"))
     db.init_engine()
-    if not _admin_token():
-        s = db.session()
-        try:
-            if admin_auth.active_count(s) == 0:
-                logger.warning("平台主管账号与应急令牌均未配置——管理端点将返回 503")
-        finally:
-            s.close()
+    s = db.session()
+    try:
+        if admin_auth.active_count(s) == 0:
+            logger.warning(
+                "平台主管账号尚未创建——请从 SSH 运行 "
+                "python -m nexus.recovery_codes 完成首次引导"
+            )
+    finally:
+        s.close()
     srv = ThreadingHTTPServer((host, port), NexusHandler)
     logger.info("GuDuu Nexus fleet 服务监听 %s:%s", host, port)
     srv.serve_forever()

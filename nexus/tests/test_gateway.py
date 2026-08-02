@@ -18,12 +18,13 @@ import threading
 import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest import mock
 
 import requests
 from sqlalchemy import select
 
-from nexus import db, fleet
-from nexus.db import NexusLedger
+from nexus import db, fleet, gateway
+from nexus.db import NexusGatewayDebitOutbox, NexusLedger
 from nexus.service import NexusHandler
 
 
@@ -208,7 +209,9 @@ class GatewayTest(unittest.TestCase):
         self.assertEqual(
             _FakeUpstream.seen_headers[-1]["x-api-key"], "vk-anth-real"
         )
-        self.assertEqual(self._balance(key), 985)  # 1000 - (10+5)
+        # 流式响应的结束块会先到达客户端，持久化补偿队列随后
+        # 在同一服务器请求线程结算，因此按最终一致口径等待。
+        self.assertEqual(self._wait_balance(key, 985), 985)  # 1000 - (10+5)
 
     def test_same_instance_concurrent_request_is_rejected(self):
         """同一实例已有在途模型调用时，第二条必须 429，且只产生一次原厂扣费。"""
@@ -246,6 +249,40 @@ class GatewayTest(unittest.TestCase):
         self.assertEqual(first_result["response"].status_code, 200)
         # 第一单用量 150，可按既定后付语义把 100 扣到 -50；第二单没有打到原厂、没有扣费。
         self.assertEqual(self._wait_balance(key, -50), -50)
+
+    def test_failed_debit_stays_in_durable_outbox_and_retries_once(self):
+        """扣账事务短暂失败后必须留存 pending，恢复后且仅扣一次。"""
+        key = self._new_instance(grant=1000)
+        s = db.session()
+        try:
+            instance_id, _ = gateway.authorize(s, key)
+            gateway.enqueue_usage_debit(
+                s,
+                request_id="gwd_test_retry_once",
+                instance_id=instance_id,
+                tokens=125,
+                note="openai/test in=100 out=25",
+            )
+            s.commit()
+        finally:
+            s.close()
+
+        with mock.patch("nexus.gateway.fleet.debit", side_effect=RuntimeError("busy")):
+            failed = gateway.settle_pending_debits()
+        self.assertEqual(failed["failed"], 1)
+        check = db.session()
+        try:
+            row = check.get(NexusGatewayDebitOutbox, "gwd_test_retry_once")
+            self.assertEqual(row.status, "pending")
+            self.assertEqual(row.attempts, 1)
+        finally:
+            check.close()
+
+        applied = gateway.settle_pending_debits()
+        self.assertEqual(applied["applied"], 1)
+        self.assertEqual(self._balance(key), 875)
+        self.assertEqual(gateway.settle_pending_debits()["applied"], 0)
+        self.assertEqual(self._balance(key), 875)
 
     # ---- 拒绝矩阵 ----
 

@@ -1,7 +1,7 @@
 /* GuDuu Nexus 控制台逻辑（vanilla，无构建）
  * ------------------------------------------------
  * 身份两种（OEM token / 管理员非敏感显示信息只存当前标签页）：
- *   admin —— 具名管理员短期会话放 HttpOnly Cookie；服务器令牌仅提交一次作应急入口
+ *   admin —— 具名管理员短期会话放 HttpOnly Cookie；SSH 单次码只作恢复入口
  *   oem   —— 会话令牌（邮箱登录签发），走 /nexus/oem/*（只见自己）
  * 所有权限由服务端强制；任何 401 一律清会话回登录页。
  */
@@ -39,7 +39,7 @@
       ? "GuDuu Nexus · 平台超管登录" : "GuDuu Nexus · 企业控制台";
     $("#login-title").textContent = adminEntry ? "平台超级管理员" : "登录企业控制台";
     $("#login-subtitle").textContent = adminEntry
-      ? "使用具名管理员账号登录；应急令牌仅用于首次建号和故障恢复"
+      ? "使用具名管理员账号登录；SSH 单次码仅用于首次建号和故障恢复"
       : "管理你的 GuDuu OS 实例、授权与企业服务";
     $(".tabs").hidden = adminEntry;
     $("#form-admin").hidden = !adminEntry;
@@ -389,7 +389,7 @@
   var ADMIN_GUIDE = {
     title: "GuDuu Nexus 超级管理员安全操作指南",
     summary: "用于平台主管的日常登录、管理员开通、MFA、Passkey、应急恢复与离职撤权。",
-    updated: "2026-08-02",
+    updated: "2026-08-03",
     sections: [
       {
         title: "1. 先理解两层安全边界",
@@ -406,12 +406,12 @@
         title: "2. 创建首个具名管理员",
         ordered: true,
         items: [
-          "仅在首次建号或故障恢复时使用服务器应急令牌进入控制台。",
+          "仅在首次建号或故障恢复时，通过 Google Cloud SSH 运行 python -m nexus.recovery_codes 生成单次恢复码。",
           "打开“平台安全”，填写独立登录账号、显示名和高强度初始密码，创建具名管理员。",
-          "退出应急身份，使用刚创建的具名账号重新登录。",
+          "退出恢复身份，使用刚创建的具名账号重新登录。",
           "重新进入“平台安全”，为该账号登记 Passkey；建议至少准备两个不同恢复设备。",
         ],
-        note: "应急令牌、密码、动态验证码和 Passkey 二维码都不得通过聊天、截图或邮件传播。",
+        note: "单次恢复码、密码、动态验证码和 Passkey 二维码都不得通过聊天、截图或邮件传播。",
       },
       {
         title: "3. 日常登录流程",
@@ -446,7 +446,7 @@
       {
         title: "6. Nexus Passkey 建议",
         items: [
-          "Passkey 只能由已经登录的具名管理员为自己登记，应急身份不能登记。",
+          "Passkey 只能由已经登录的具名管理员为自己登记，恢复身份不能登记。",
           "Mac 没有 Touch ID 时，可在浏览器提示中选择“使用其他设备”，用 iPhone 扫码并通过 Face ID 保存。",
           "建议至少登记两个不同恢复路径，例如 iPhone Passkey 加密码管理器或实体安全密钥。",
           "设备遗失后立即从“我的 Passkey”移除对应凭据；服务器只保存公钥，不保存设备私钥。",
@@ -457,11 +457,11 @@
         ordered: true,
         items: [
           "先确认 Cloudflare Access 仍能通过；它只保护入口，不会替你恢复 Nexus 密码。",
-          "通过 Google Cloud SSH 在服务器本机读取应急凭据，不要把凭据发送给任何人。",
-          "用应急身份进入“平台安全”，创建具名管理员或为现有管理员重置密码。",
-          "应急会话只用于恢复；完成后立即退出，再用具名账号登录并检查平台操作审计。",
+          "通过 Google Cloud SSH 在 Nexus 目录运行 python -m nexus.recovery_codes，终端会显示一枚 15 分钟单次码。",
+          "用单次码进入“平台安全”，创建具名管理员或为现有管理员重置密码。",
+          "恢复会话只用于恢复；完成后立即退出，再用具名账号登录并检查平台操作审计。",
         ],
-        note: "如果应急凭据疑似泄露，应立即轮换，并同时检查 Cloudflare 与 Nexus 的审计记录。",
+        note: "单次码使用或过期后自动作废；如果疑似被看到，不要使用，等待过期后重新生成。",
       },
       {
         title: "8. 管理员离职或撤权",
@@ -480,7 +480,7 @@
           "每位管理员均已登记 MFA，且没有共用验证器。",
           "每位管理员均使用独立 Nexus 账号，不共享密码。",
           "至少两位管理员拥有可用的 Passkey 或独立恢复路径。",
-          "日常登录不使用服务器应急令牌。",
+          "日常登录不使用 SSH 单次恢复码。",
           "管理员变更、版本发布、支付配置和 KEY 操作均可在审计中追溯。",
         ],
       },
@@ -811,10 +811,10 @@
 
   $("#btn-emergency-login").addEventListener("click", function () {
     var f = $("#form-admin");
-    var tok = f.emergency_token.value.trim();
-    if (!tok) { loginErr("请填写服务器应急令牌"); return; }
-    api("/nexus/admin/auth/emergency", {
-      body: { emergency_token: tok }, noKick: true,
+    var code = f.recovery_code.value.trim();
+    if (!code) { loginErr("请填写 SSH 生成的单次恢复码"); return; }
+    api("/nexus/admin/auth/recovery", {
+      body: { recovery_code: code }, noKick: true,
     }).then(function (r) {
       adminRestoreTried = true;
       setAuth({
@@ -822,8 +822,8 @@
         display_name: r.admin.display_name || "服务器应急恢复",
         auth_kind: "recovery_cookie",
       });
-      // 应急令牌验证成功后立刻从输入框移除，只让它保留在当前浏览器会话中。
-      f.emergency_token.value = "";
+      // 单次码消费成功后立刻从 DOM 移除，浏览器只保留短期 HttpOnly Cookie。
+      f.recovery_code.value = "";
       route();
     }).catch(function (err) { loginErr(err.message); });
   });
@@ -2192,7 +2192,7 @@
       $("#admin-auth-kind").textContent = emergency
         ? "应急恢复" : (passkeySession ? "Passkey" : "密码会话");
       $("#admin-current-identity").innerHTML = emergency
-        ? "<b>服务器应急令牌</b><span>请创建具名管理员并重新登录；该身份的操作仍会写入审计。</span>"
+        ? "<b>SSH 单次恢复</b><span>请创建具名管理员并重新登录；该身份最长 30 分钟，操作仍会写入审计。</span>"
         : "<b>" + esc(identity.display_name || "—") + "</b><span>管理员 #" +
           esc(identity.id) + " · " + (passkeySession ? "Passkey 登录" : "密码备用登录") +
           " · 会话最长 12 小时。</span>";

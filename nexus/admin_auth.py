@@ -1,8 +1,7 @@
 """Nexus 具名超级管理员账号、登录会话与账号管理。
 
-这个模块只处理平台主管身份，不承载任何 OEM 业务权限。数据库永远只保存密码派生串
-与会话令牌哈希；明文密码和令牌只存在于当前请求内。原有 ``NEXUS_ADMIN_TOKEN``
-由 HTTP 层继续作为应急入口，本模块不会读取或复制它。
+这个模块只处理平台主管身份，不承载任何 OEM 业务权限。数据库永远只保存密码派生串、
+会话令牌哈希与单次恢复码哈希；明文只存在当前请求或 SSH 命令输出中。
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from typing import Any, Dict, List, Optional, Union
 from sqlalchemy import delete, func, select
 
 from nexus import audit
-from nexus.db import NexusAdmin, NexusAdminSession
+from nexus.db import NexusAdmin, NexusAdminRecoveryCode, NexusAdminSession
 from nexus.fleet import FleetError
 from nexus.oem import hash_password, password_problem, verify_password
 
@@ -27,8 +26,8 @@ _USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.@-]{3,80}$")
 
 
 @dataclass(frozen=True)
-class EmergencyAdmin:
-    """服务器应急身份的只读描述，不对应真实人员账号。"""
+class RecoveryAdmin:
+    """服务器单次恢复身份的只读描述，不对应真实人员账号。"""
 
     id: int = 0
     display_name: str = "服务器应急恢复"
@@ -172,8 +171,34 @@ def login(s, username: str, password: str, source_ip: str = "") -> Dict[str, Any
     return issue_session(s, row, source_ip=source_ip)
 
 
-def issue_emergency_session(s) -> Dict[str, Any]:
-    """签发 30 分钟应急恢复会话，浏览器不再长期持有服务器静态令牌。"""
+def create_recovery_code(
+    s, *, ttl_minutes: int = 15, created_by: str = "server_ssh"
+) -> Dict[str, Any]:
+    """创建一枚只能从 SSH 命令读取一次的恢复码。
+
+    ``ttl_minutes`` 限制在 5-60 分钟，避免运维误传一个长期凭据。
+    返回值中的 ``code`` 是惟一一次明文暴露，调用方不得写日志或文件。
+    """
+    ttl = int(ttl_minutes)
+    if not 5 <= ttl <= 60:
+        raise FleetError(
+            "NEXUS_RECOVERY_TTL_INVALID", "恢复码有效期必须为 5-60 分钟"
+        )
+    now = _now_ms()
+    code = "NXR-" + secrets.token_urlsafe(24)
+    s.add(
+        NexusAdminRecoveryCode(
+            code_hash=_token_hash(code),
+            created_ts=now,
+            expires_ts=now + ttl * 60 * 1000,
+            created_by=(created_by or "server_ssh")[:120],
+        )
+    )
+    return {"code": code, "expires_ts": now + ttl * 60 * 1000}
+
+
+def _issue_recovery_session(s) -> Dict[str, Any]:
+    """签发 30 分钟恢复会话，仅在单次码消费成功后调用。"""
     now = _now_ms()
     token = "nxr_" + secrets.token_urlsafe(36)
     s.add(
@@ -188,13 +213,32 @@ def issue_emergency_session(s) -> Dict[str, Any]:
     return {"token": token, "expires_ts": now + _RECOVERY_SESSION_TTL_MS}
 
 
-def resolve_session(
-    s, token: str, *, allow_emergency: bool = False
-) -> Optional[Union[NexusAdmin, EmergencyAdmin]]:
+def consume_recovery_code(s, code: str) -> Dict[str, Any]:
+    """原子消费恢复码并签发一个 30 分钟 HttpOnly 恢复会话。
+
+    PostgreSQL 上使用行锁保证两个并发请求不能同时消费一枚码；
+    过期、已用和不存在对外统一为无效，不提供凭据枚举信息。
+    """
+    submitted = (code or "").strip()
+    if not submitted.startswith("NXR-") or len(submitted) < 24:
+        raise FleetError("NEXUS_RECOVERY_INVALID", "恢复码无效或已过期", 401)
+    row = s.execute(
+        select(NexusAdminRecoveryCode)
+        .where(NexusAdminRecoveryCode.code_hash == _token_hash(submitted))
+        .with_for_update()
+    ).scalar_one_or_none()
+    now = _now_ms()
+    if row is None or row.used_ts is not None or int(row.expires_ts or 0) <= now:
+        raise FleetError("NEXUS_RECOVERY_INVALID", "恢复码无效或已过期", 401)
+    row.used_ts = now
+    return _issue_recovery_session(s)
+
+
+def resolve_session(s, token: str) -> Optional[Union[NexusAdmin, RecoveryAdmin]]:
     """解析有效会话；过期、停用或不存在时返回 ``None``。
 
-    ``allow_emergency`` 由 HTTP 层根据服务器是否仍配置应急令牌决定。这样运维删除或
-    轮换静态令牌后，已经签发的恢复 Cookie 也会立即失效。
+    ``nxr_`` 会话只能由已消费的 SSH 单次码签发，且最长 30 分钟，
+    因此不再依赖或信任长期环境令牌。
     """
     if not token or not token.startswith(("nxa_", "nxp_", "nxr_")):
         return None
@@ -207,11 +251,7 @@ def resolve_session(
         s.commit()
         return None
     if int(session_row.admin_id or 0) == 0:
-        if allow_emergency:
-            return EmergencyAdmin()
-        s.delete(session_row)
-        s.commit()
-        return None
+        return RecoveryAdmin()
     admin = s.get(NexusAdmin, session_row.admin_id)
     if admin is None or admin.status != "active":
         s.delete(session_row)
@@ -305,8 +345,9 @@ def reset_password(
 
 __all__ = [
     "active_count",
+    "consume_recovery_code",
     "create_admin",
-    "issue_emergency_session",
+    "create_recovery_code",
     "list_admins",
     "login",
     "logout",

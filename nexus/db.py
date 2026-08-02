@@ -110,6 +110,28 @@ class NexusLedger(Base):
     note = Column(Text, nullable=False, default="")
 
 
+class NexusGatewayDebitOutbox(Base):
+    """AI 上游已成功但钱包尚未结算的持久化补偿任务。
+
+    上游消耗不能因为一次数据库事务冲突就只留在日志中。每个请求使用
+    随机 ``request_id`` 幂等；扣钱流水与 ``applied`` 状态在同一事务提交，
+    即使进程中途重启，重试也不会重复扣款。
+    """
+
+    __tablename__ = "nexus_gateway_debit_outbox"
+
+    request_id = Column(String(64), primary_key=True)
+    instance_id = Column(Integer, nullable=False, index=True)
+    tokens = Column(BigInteger, nullable=False)
+    note = Column(Text, nullable=False, default="")
+    status = Column(String(16), nullable=False, default="pending", index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text, nullable=False, default="")
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    updated_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    applied_ts = Column(BigInteger, nullable=True, default=None, index=True)
+
+
 class NexusHeartbeat(Base):
     """心跳历史（每次上报存一行；大屏增长曲线/在线判定的数据源）。
 
@@ -129,7 +151,7 @@ class NexusHeartbeat(Base):
 class NexusOem(Base):
     """OEM 客户账号（模块6 P1：邮箱+密码独立账号，可拥有多个 KEY/实例）。
 
-    与「平台超管」正交——超管走 NEXUS_ADMIN_TOKEN（看全部、签发 KEY、充值）；
+    与「平台超管」正交——超管走具名短会话（看全部、签发 KEY、充值）；
     OEM 登录后只能看/操作自己认领的 KEY 及其实例（服务端强制分权，见 oem.py）。
     密码只存 pbkdf2 派生串（``pbkdf2$迭代$salt$hash``），绝不存明文。
     """
@@ -221,6 +243,23 @@ class NexusAdminSession(Base):
     admin_id = Column(Integer, nullable=False, index=True)
     created_ts = Column(BigInteger, nullable=False, default=_now_ms)
     expires_ts = Column(BigInteger, nullable=False, index=True)
+
+
+class NexusAdminRecoveryCode(Base):
+    """SSH 生成的短期、单次超管恢复码。
+
+    明文只在服务器命令创建成功时显示一次；数据库仅保存 SHA-256。
+    ``used_ts`` 使用显式状态而不是直接删除，方便后续安全审计区分
+    “已使用”和“从未存在”；业务层仍不会对浏览器暴露这个差异。
+    """
+
+    __tablename__ = "nexus_admin_recovery_code"
+
+    code_hash = Column(String(64), primary_key=True)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    expires_ts = Column(BigInteger, nullable=False, index=True)
+    used_ts = Column(BigInteger, nullable=True, default=None, index=True)
+    created_by = Column(String(120), nullable=False, default="server_ssh")
 
 
 class NexusAdminPasskey(Base):
@@ -892,6 +931,11 @@ class NexusReleaseDeployment(Base):
 
 # 组合索引：按实例翻流水/心跳是最高频查询
 Index("ix_nexus_ledger_inst_ts", NexusLedger.instance_id, NexusLedger.ts)
+Index(
+    "ix_nexus_gateway_debit_pending",
+    NexusGatewayDebitOutbox.status,
+    NexusGatewayDebitOutbox.created_ts,
+)
 Index("ix_nexus_hb_inst_ts", NexusHeartbeat.instance_id, NexusHeartbeat.ts)
 Index(
     "ix_nexus_audit_object_ts",

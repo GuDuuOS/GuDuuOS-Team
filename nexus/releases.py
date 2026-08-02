@@ -290,6 +290,32 @@ def create_release(
     return _release_dict(row, [], target)
 
 
+def ensure_ci_release_draft(
+    s, *, version: str, title: str, notes: str
+) -> Dict[str, Any]:
+    """为 CI 已登记的不可变镜像幂等创建节点发布草稿。
+
+    Git tag 创建后，GitHub Actions 已经完成镜像构建和摘要登记，
+    因此版本中心应立即出现一条“未发布”记录，而不应再依赖人工抄写。
+    重复 webhook 只返回原记录，绝不覆盖已审阅或已发布的内容。
+    """
+    normalized = (version or "").strip()
+    existing = s.execute(
+        select(NexusRelease).where(NexusRelease.version == normalized)
+    ).scalar_one_or_none()
+    if existing is not None:
+        return get_release(s, int(existing.id))
+    return create_release(
+        s,
+        version=normalized,
+        title=title,
+        notes=notes,
+        git_ref="v" + normalized,
+        target="node",
+        delivery_mode="container",
+    )
+
+
 def start_canary(s, release_id: int, instance_id: int) -> Dict[str, Any]:
     """把草稿推送给一个灰度节点，开始真实环境监测。"""
     release = _release(s, release_id)

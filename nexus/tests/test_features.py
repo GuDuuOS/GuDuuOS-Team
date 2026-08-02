@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from nexus import db, features, oem
+from nexus import admin_auth, db, features, oem
 from nexus.fleet import FleetError
 from nexus.service import NexusHandler
 
@@ -76,11 +76,19 @@ class FeatureFlagHttpTests(unittest.TestCase):
             phone="13800000000",
         )
         self.oem_token = oem.login(s, "feature@example.com", "abc12345")["token"]
+        admin_auth.create_admin(
+            s,
+            "feature-owner",
+            "Feature1234!",
+            "功能开关管理员",
+            actor_label="测试引导",
+        )
+        self.admin_token = admin_auth.login(
+            s, "feature-owner", "Feature1234!"
+        )["token"]
         s.commit()
         s.close()
 
-        self._old_admin = os.environ.get("NEXUS_ADMIN_TOKEN")
-        os.environ["NEXUS_ADMIN_TOKEN"] = "feature-admin-token"
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), NexusHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -91,10 +99,6 @@ class FeatureFlagHttpTests(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
-        if self._old_admin is None:
-            os.environ.pop("NEXUS_ADMIN_TOKEN", None)
-        else:
-            os.environ["NEXUS_ADMIN_TOKEN"] = self._old_admin
         os.unlink(self._tmp.name)
 
     def _json_request(
@@ -150,7 +154,7 @@ class FeatureFlagHttpTests(unittest.TestCase):
 
         admin = self._json_request(
             "/nexus/admin/features",
-            "feature-admin-token",
+            self.admin_token,
             {"oem_network_visible": True},
         )
         self.assertTrue(admin["features"]["oem_network_visible"])

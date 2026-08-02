@@ -83,6 +83,27 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(update["artifact"]["mode"], "container")
         self.assertTrue(update["artifact"]["web_image"].endswith("c" * 64))
 
+    def test_ci_manifest_creates_one_unpublished_container_draft(self):
+        """CI 登记镜像后必须自动出现一条未发布节点草稿。"""
+        self._register_manifest()
+        first = releases.ensure_ci_release_draft(
+            self.s,
+            version="1.7.0",
+            title="自动构建已完成",
+            notes="镜像已固定，等待超管灰度。",
+        )
+        second = releases.ensure_ci_release_draft(
+            self.s,
+            version="1.7.0",
+            title="重复回调不应覆盖",
+            notes="这段内容不应被写入。",
+        )
+        self.assertEqual(first["id"], second["id"])
+        self.assertEqual(second["status"], "draft")
+        self.assertEqual(second["target"], "node")
+        self.assertEqual(second["title"], "自动构建已完成")
+        self.assertEqual(second["artifact"]["mode"], "container")
+
     def test_container_release_requires_ci_manifest_and_manifest_is_immutable(self):
         """没有 CI 清单不能创建 Docker 发布，同版本摘要也不能被替换。"""
         with self.assertRaises(FleetError) as missing:

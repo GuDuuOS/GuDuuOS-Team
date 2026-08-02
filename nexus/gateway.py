@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 import threading
 import time
 from typing import Any, Dict, Tuple
@@ -35,7 +36,7 @@ import requests
 from sqlalchemy import select
 
 from nexus import db, fleet
-from nexus.db import NexusInstance, NexusKey, NexusWallet
+from nexus.db import NexusGatewayDebitOutbox, NexusInstance, NexusKey, NexusWallet
 from nexus.keys import hash_key, looks_like_key
 
 logger = logging.getLogger("nexus.gateway")
@@ -241,6 +242,100 @@ def _record_stat(instance_id: int, *, ok: bool, started: float) -> None:
         s.close()
 
 
+def enqueue_usage_debit(
+    s, *, request_id: str, instance_id: int, tokens: int, note: str
+) -> NexusGatewayDebitOutbox:
+    """持久化一条 AI 用量结算任务，重复 request_id 保持幂等。"""
+    rid = (request_id or "").strip()
+    if not rid or int(tokens) <= 0:
+        raise ValueError("用量结算任务缺少请求号或 token")
+    row = s.get(NexusGatewayDebitOutbox, rid)
+    if row is None:
+        row = NexusGatewayDebitOutbox(
+            request_id=rid,
+            instance_id=int(instance_id),
+            tokens=int(tokens),
+            note=(note or "")[:1000],
+        )
+        s.add(row)
+        s.flush()
+    elif int(row.instance_id) != int(instance_id) or int(row.tokens) != int(tokens):
+        # 随机号几乎不可能冲突；一旦出现就必须停下，不能把
+        # 一个请求的用量偷换成另一个实例的扣款。
+        raise ValueError("用量结算请求号冲突")
+    return row
+
+
+def _apply_debit_task(s, request_id: str) -> bool:
+    """在单个事务中锁定任务、扣钱并标记完成。"""
+    row = s.execute(
+        select(NexusGatewayDebitOutbox)
+        .where(NexusGatewayDebitOutbox.request_id == request_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if row is None or row.status == "applied":
+        return False
+    fleet.debit(
+        s,
+        int(row.instance_id),
+        int(row.tokens),
+        note=f"{row.note} request={row.request_id}",
+    )
+    now = int(time.time() * 1000)
+    row.status = "applied"
+    row.applied_ts = now
+    row.updated_ts = now
+    row.last_error = ""
+    return True
+
+
+def settle_pending_debits(limit: int = 100) -> Dict[str, int]:
+    """重试持久化的待结算 AI 用量，供请求后及定时清理共用。
+
+    每条任务使用独立事务，一个异常实例不会阻断其他 OEM 的结算。
+    失败原因只保存截断后的内部摘要，不包含原厂密钥或请求正文。
+    """
+    scan = db.session()
+    try:
+        ids = list(
+            scan.execute(
+                select(NexusGatewayDebitOutbox.request_id)
+                .where(NexusGatewayDebitOutbox.status == "pending")
+                .order_by(NexusGatewayDebitOutbox.created_ts.asc())
+                .limit(max(1, min(int(limit), 1000)))
+            ).scalars()
+        )
+    finally:
+        scan.close()
+    applied = failed = 0
+    for request_id in ids:
+        s = db.session()
+        try:
+            if _apply_debit_task(s, str(request_id)):
+                applied += 1
+            s.commit()
+        except Exception as exc:
+            failed += 1
+            s.rollback()
+            # 主事务回滚后单独记录失败次数；若数据库整体不可用，
+            # 这一步也可以失败，但原 pending 行仍然保留，下次会继续扫到。
+            retry = db.session()
+            try:
+                row = retry.get(NexusGatewayDebitOutbox, str(request_id))
+                if row is not None and row.status == "pending":
+                    row.attempts = int(row.attempts or 0) + 1
+                    row.last_error = str(exc)[:500]
+                    row.updated_ts = int(time.time() * 1000)
+                retry.commit()
+            except Exception:
+                retry.rollback()
+            finally:
+                retry.close()
+        finally:
+            s.close()
+    return {"scanned": len(ids), "applied": applied, "failed": failed}
+
+
 def handle_post(handler, provider: str, suffix: str) -> None:
     """处理一次网关转发。handler 是 NexusHandler（复用其读体/回包工具）。
 
@@ -376,23 +471,35 @@ def _forward_authorized(
     # ④ 记账：上游 2xx 且有用量才扣（4xx/5xx 不该让 OEM 买单）。新开短连。
     total = t_in + t_out
     if upstream.status_code < 400 and total > 0:
+        request_id = "gwd_" + secrets.token_hex(16)
         s2 = db.session()
         try:
-            fleet.debit(
+            enqueue_usage_debit(
                 s2,
-                instance_id,
-                total,
+                request_id=request_id,
+                instance_id=instance_id,
+                tokens=total,
                 note=f"{provider}/{model or '?'} in={t_in} out={t_out}",
             )
             s2.commit()
         except Exception:
             s2.rollback()
-            # 记账失败绝不能丢：这是钱。记 ERROR 级日志，人工对账兜底。
+            # 数据库整体不可用时无法伪造“已持久化”；明确打 ERROR
+            # 并保留 instance/token 摘要，供稀有的整库故障停机对账。
             logger.exception(
-                "扣账失败 instance=%s tokens=%s（需人工对账）", instance_id, total
+                "用量补偿任务持久化失败 instance=%s tokens=%s request=%s",
+                instance_id,
+                total,
+                request_id,
             )
         finally:
             s2.close()
+        # 先持久化再结算；扣钱事务失败时 pending 行会留在库中，
+        # 定时清理或后续请求可安全重试，不再依赖人工翻日志。
+        try:
+            settle_pending_debits(limit=100)
+        except Exception:
+            logger.exception("重试 AI 用量结算任务失败，pending 记录已保留")
     elif upstream.status_code < 400 and total == 0:
         logger.warning(
             "上游成功但未解析到用量（provider=%s model=%s）——本次未计费",

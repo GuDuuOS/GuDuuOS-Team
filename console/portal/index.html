@@ -14,7 +14,7 @@
   ——————————————————————————————
   单页三视图（vanilla JS，与大屏同栈零构建）：
     · /portal/：OEM 邮箱登录/注册
-    · /portal/admin/：独立平台超管登录（应急令牌仅作恢复）
+    · /portal/admin/：独立平台超管登录（SSH 单次码仅作恢复）
     · OEM 门户：我的实例 / 认领授权码 / 我的授权码
     · 超管视图：舰队实例 / KEY 签发与吊销 / 手动充值 / OEM 客户列表
   权限全部由服务端强制（/nexus/admin/* 走管理员会话、/nexus/oem/* 走 OEM 会话），
@@ -93,10 +93,10 @@
       <button id="btn-passkey-login" class="ghost passkey-login" type="button">使用 Passkey 登录</button>
       <p id="passkey-login-hint" class="hint">先填写管理员账号，再使用 Touch ID、安全密钥或已同步的 Passkey。</p>
       <details class="emergency-login">
-        <summary>服务器应急令牌</summary>
-        <label>应急令牌<input name="emergency_token" type="password" autocomplete="off" placeholder="NEXUS_ADMIN_TOKEN" /></label>
-        <button id="btn-emergency-login" class="ghost" type="button">使用应急身份进入</button>
-        <p class="hint">仅用于首个管理员创建和账号故障恢复；日常操作请使用具名账号。</p>
+        <summary>SSH 单次恢复码</summary>
+        <label>恢复码<input name="recovery_code" type="password" autocomplete="off" placeholder="NXR-…" /></label>
+        <button id="btn-emergency-login" class="ghost" type="button">使用恢复身份进入</button>
+        <p class="hint">仅用于首个管理员创建和账号故障恢复；需先在服务器 SSH 生成，15 分钟内只能使用一次。</p>
       </details>
     </form>
 
@@ -648,7 +648,7 @@
     <div class="admin-page" data-admin-view="security" hidden>
       <section class="panel security-identity-panel">
         <div class="panel-head">
-          <div><h2>当前登录身份</h2><p class="hint">日常操作使用具名管理员；应急令牌只用于恢复访问。</p></div>
+          <div><h2>当前登录身份</h2><p class="hint">日常操作使用具名管理员；SSH 单次码只用于恢复访问。</p></div>
           <span id="admin-auth-kind" class="badge idle">读取中</span>
         </div>
         <div id="admin-current-identity" class="security-identity">正在读取…</div>

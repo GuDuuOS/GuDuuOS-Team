@@ -36,7 +36,7 @@ class AdminAuthTests(unittest.TestCase):
             username,
             "Secure1234!",
             "测试管理员",
-            actor_label="服务器应急令牌",
+            actor_label="服务器单次恢复",
             source_ip="127.0.0.1",
         )
 
@@ -88,7 +88,7 @@ class AdminAuthTests(unittest.TestCase):
                 created["id"],
                 "disabled",
                 actor_id=0,
-                actor_label="服务器应急令牌",
+                actor_label="服务器单次恢复",
             )
         self.assertEqual(last_disable.exception.code, "NEXUS_ADMIN_LAST_ACTIVE")
 
@@ -101,18 +101,29 @@ class AdminAuthTests(unittest.TestCase):
         self.assertEqual(events[0]["action"], "login")
         self.assertEqual(events[0]["source_ip"], "10.0.0.8")
 
+    def test_recovery_code_is_short_lived_and_single_use(self) -> None:
+        """SSH 恢复码只能消费一次，且数据库不保存明文。"""
+        created = admin_auth.create_recovery_code(self.s, ttl_minutes=15)
+        self.s.commit()
+        self.assertTrue(created["code"].startswith("NXR-"))
+        result = admin_auth.consume_recovery_code(self.s, created["code"])
+        self.s.commit()
+        resolved = admin_auth.resolve_session(self.s, result["token"])
+        self.assertEqual(resolved.id, 0)
+        with self.assertRaises(FleetError) as reused:
+            admin_auth.consume_recovery_code(self.s, created["code"])
+        self.assertEqual(reused.exception.code, "NEXUS_RECOVERY_INVALID")
+
 
 class AdminAuthHttpTests(unittest.TestCase):
-    """用真实 HTTP 处理器验证应急引导和具名会话都能访问管理端点。"""
+    """用真实 HTTP 处理器验证单次恢复与具名会话鉴权。"""
 
     def setUp(self) -> None:
         """创建临时文件数据库，避免 HTTP 工作线程拿到不同内存连接。"""
         self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
         self._tmp.close()
         db.init_engine("sqlite:///" + self._tmp.name)
-        self._old_admin = os.environ.get("NEXUS_ADMIN_TOKEN")
         self._old_dash = os.environ.get("NEXUS_DASH_TOKEN")
-        os.environ["NEXUS_ADMIN_TOKEN"] = "emergency-test-token"
         os.environ["NEXUS_DASH_TOKEN"] = "readonly-test-token"
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), NexusHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -124,7 +135,6 @@ class AdminAuthHttpTests(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
-        self._restore("NEXUS_ADMIN_TOKEN", self._old_admin)
         self._restore("NEXUS_DASH_TOKEN", self._old_dash)
         os.unlink(self._tmp.name)
 
@@ -172,16 +182,32 @@ class AdminAuthHttpTests(unittest.TestCase):
         with urlopen(request, timeout=3) as response:
             return json.loads(response.read().decode("utf-8")), response.headers
 
-    def test_emergency_token_bootstraps_named_admin(self) -> None:
-        """现有生产令牌可创建首个账号，之后日常接口接受短期会话。"""
+    def _recovery_cookie(self) -> str:
+        """在数据库模拟 SSH 生成单次码，再通过 HTTP 换取恢复 Cookie。"""
+        s = db.session()
+        try:
+            created = admin_auth.create_recovery_code(s, ttl_minutes=15)
+            s.commit()
+        finally:
+            s.close()
+        _, headers = self._exchange(
+            "/nexus/admin/auth/recovery",
+            body={"recovery_code": created["code"]},
+        )
+        return str(headers["Set-Cookie"]).split(";", 1)[0]
+
+    def test_recovery_code_bootstraps_named_admin(self) -> None:
+        """单次恢复会话可创建首个账号，之后日常走具名会话。"""
+        recovery_cookie = self._recovery_cookie()
         created = self._request(
             "/nexus/admin/admins",
-            "emergency-test-token",
-            {
+            body={
                 "username": "owner",
                 "display_name": "平台负责人",
                 "password": "Owner1234!",
             },
+            cookie=recovery_cookie,
+            csrf=True,
         )
         self.assertEqual(created["admin"]["username"], "owner")
         login, login_headers = self._exchange(
@@ -209,26 +235,25 @@ class AdminAuthHttpTests(unittest.TestCase):
             self._request("/nexus/admin/me", cookie=cookie)
         self.assertEqual(raised.exception.code, 401)
 
-    def test_emergency_secret_becomes_short_recovery_cookie(self) -> None:
-        """浏览器提交静态令牌后只能收到短期 HttpOnly 恢复会话。"""
-        payload, headers = self._exchange(
-            "/nexus/admin/auth/emergency",
-            body={"emergency_token": "emergency-test-token"},
-        )
-        self.assertNotIn("token", payload)
-        self.assertEqual(payload["admin"]["auth_kind"], "recovery_cookie")
-        cookie = str(headers["Set-Cookie"]).split(";", 1)[0]
+    def test_recovery_code_becomes_short_recovery_cookie(self) -> None:
+        """浏览器提交单次码后只能收到短期 HttpOnly 恢复会话。"""
+        cookie = self._recovery_cookie()
         me = self._request("/nexus/admin/me", cookie=cookie)
         self.assertEqual(me["admin"]["id"], 0)
         self.assertEqual(me["admin"]["auth_kind"], "recovery_cookie")
 
+    def test_long_lived_emergency_token_endpoint_is_gone(self) -> None:
+        """旧静态令牌端点必须显式返回 410，不得继续开后门。"""
+        with self.assertRaises(HTTPError) as raised:
+            self._request(
+                "/nexus/admin/auth/emergency",
+                body={"emergency_token": "legacy-secret"},
+            )
+        self.assertEqual(raised.exception.code, 410)
+
     def test_cookie_write_requires_csrf_header(self) -> None:
         """即使浏览器自动携带管理 Cookie，跨站写请求也必须被拒绝。"""
-        _, headers = self._exchange(
-            "/nexus/admin/auth/emergency",
-            body={"emergency_token": "emergency-test-token"},
-        )
-        cookie = str(headers["Set-Cookie"]).split(";", 1)[0]
+        cookie = self._recovery_cookie()
         with self.assertRaises(HTTPError) as raised:
             self._request(
                 "/nexus/admin/admins",

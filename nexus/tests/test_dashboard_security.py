@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
@@ -15,6 +16,7 @@ from typing import Optional
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from nexus import admin_auth, db
 from nexus.service import NexusHandler
 
 
@@ -24,6 +26,22 @@ class DashboardSecurityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         """启动仅监听本机随机端口的 Nexus 测试服务。"""
+        cls._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        cls._tmp.close()
+        db.init_engine("sqlite:///" + cls._tmp.name)
+        s = db.session()
+        admin_auth.create_admin(
+            s,
+            "dashboard-owner",
+            "Dashboard1234!",
+            "大屏测试管理员",
+            actor_label="测试引导",
+        )
+        cls.admin_session = admin_auth.login(
+            s, "dashboard-owner", "Dashboard1234!"
+        )["token"]
+        s.commit()
+        s.close()
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), NexusHandler)
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -35,18 +53,16 @@ class DashboardSecurityTests(unittest.TestCase):
         cls.server.shutdown()
         cls.server.server_close()
         cls.thread.join(timeout=2)
+        os.unlink(cls._tmp.name)
 
     def setUp(self) -> None:
-        """为每条用例配置互不相同的管理/只读令牌。"""
-        self.original_admin = os.environ.get("NEXUS_ADMIN_TOKEN")
+        """为每条用例配置只读令牌，管理端使用具名短会话。"""
         self.original_dash = os.environ.get("NEXUS_DASH_TOKEN")
         self.original_admin_url = os.environ.get("NEXUS_ADMIN_PUBLIC_URL")
-        os.environ["NEXUS_ADMIN_TOKEN"] = "test-admin-write-token"
         os.environ["NEXUS_DASH_TOKEN"] = "test-dashboard-read-token"
 
     def tearDown(self) -> None:
         """恢复调用测试前的环境变量，避免污染其它 Nexus 用例。"""
-        self._restore_env("NEXUS_ADMIN_TOKEN", self.original_admin)
         self._restore_env("NEXUS_DASH_TOKEN", self.original_dash)
         self._restore_env("NEXUS_ADMIN_PUBLIC_URL", self.original_admin_url)
 
@@ -59,10 +75,10 @@ class DashboardSecurityTests(unittest.TestCase):
             os.environ[name] = value
 
     def test_dashboard_rejects_admin_token(self) -> None:
-        """写权限管理员令牌不能直接读取大屏接口。"""
+        """写权限管理员会话不能直接读取大屏接口。"""
         request = Request(
             f"{self.base_url}/nexus/dash/summary",
-            headers={"Authorization": "Bearer test-admin-write-token"},
+            headers={"Authorization": "Bearer " + self.admin_session},
         )
         with self.assertRaises(HTTPError) as raised:
             urlopen(request, timeout=3)
@@ -74,7 +90,7 @@ class DashboardSecurityTests(unittest.TestCase):
         """管理员通过受保护端点只能取得只读大屏令牌。"""
         request = Request(
             f"{self.base_url}/nexus/admin/dashboard-token",
-            headers={"Authorization": "Bearer test-admin-write-token"},
+            headers={"Authorization": "Bearer " + self.admin_session},
         )
         with urlopen(request, timeout=3) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -131,7 +147,7 @@ class DashboardSecurityTests(unittest.TestCase):
         ordinary = Request(
             f"{self.base_url}/nexus/admin/dashboard-token",
             headers={
-                "Authorization": "Bearer test-admin-write-token",
+                "Authorization": "Bearer " + self.admin_session,
                 "Host": "dev-nexus.guduu.co",
             },
         )
@@ -142,7 +158,7 @@ class DashboardSecurityTests(unittest.TestCase):
         protected = Request(
             f"{self.base_url}/nexus/admin/dashboard-token",
             headers={
-                "Authorization": "Bearer test-admin-write-token",
+                "Authorization": "Bearer " + self.admin_session,
                 "Host": "admin-nexus.guduu.co",
             },
         )

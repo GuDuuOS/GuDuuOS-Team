@@ -1,7 +1,7 @@
 """Nexus OEM 账号层：注册 / 登录 / 会话 + KEY 认领 + 自有资源查询。
 
 这是「角色分权」的 OEM 一侧（模块6 P1 拍板）：
-    - 平台超管 = 现有 ``NEXUS_ADMIN_TOKEN``（看全部、签发 KEY、充值）——见 service.py；
+    - 平台超管 = 数据库具名管理员短会话（看全部、签发 KEY、充值）；
     - OEM 客户 = 邮箱+密码独立账号，登录拿会话令牌，**只能看/操作自己认领的
       KEY 及其实例**（服务端强制，前端只是配合）。
 
@@ -781,7 +781,7 @@ def my_instance_detail(s, oem_id: int, instance_id: int) -> Dict[str, Any]:
 def list_oems(s) -> List[Dict[str, Any]]:
     """全部 OEM 账号 + 认领的 KEY 数（**超管**控制台"客户列表"数据源）。
 
-    只给超管端点用（service.py 里挂在 /nexus/admin/ 下、走 NEXUS_ADMIN_TOKEN 鉴权），
+    只给超管端点用（service.py 里挂在 /nexus/admin/ 下、走具名短会话鉴权），
     OEM 自己永远看不到别人。
     """
     rows = s.execute(select(NexusOem).order_by(NexusOem.id.desc())).scalars().all()
