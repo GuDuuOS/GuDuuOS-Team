@@ -46,6 +46,30 @@ def fmt_ts(ts: int, fmt: str = "%m-%d %H:%M") -> str:
     return datetime.fromtimestamp(int(ts), product_tz()).strftime(fmt)
 
 
+def utc_iso(value: Optional[datetime]) -> str:
+    """把数据库时间序列化为带 ``Z`` 的 UTC ISO 8601 字符串。
+
+    cosmac 的 ``DateTime`` 列统一保存 naive UTC；若直接 ``isoformat()``，浏览器会把
+    它误认成用户本地时间，东八区界面便会少显示 8 小时。这里显式补上 UTC 语义；如果
+    调用方传入的本来就是带时区时间，则先换算成 UTC。空值返回空串，便于 API 直接下发。
+
+    参数：
+        value: 数据库读出的 naive UTC 或任意带时区 ``datetime``，也可以是 ``None``。
+    返回：
+        形如 ``2026-07-27T02:34:37Z`` 的字符串；前端可据此转换到操作系统时区。
+    """
+    if value is None:
+        return ""
+    if value.tzinfo is None:
+        # SQLAlchemy 的 DateTime 在 SQLite/PG 均按项目约定保存 naive UTC；补 tzinfo
+        # 只声明它原本的语义，不改变钟面数值。
+        utc_value = value.replace(tzinfo=timezone.utc)
+    else:
+        utc_value = value.astimezone(timezone.utc)
+    # 浏览器原生 Date 对 Z 兼容最稳定；同时比 +00:00 更直观地表达 UTC。
+    return utc_value.isoformat().replace("+00:00", "Z")
+
+
 def weekday_table(days: int = 14) -> str:
     """未来 N 天的「日期↔星期」紧凑对照表(从明天起),注入给模型防星期算错。
 

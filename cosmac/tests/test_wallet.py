@@ -233,6 +233,8 @@ class TestWalletStore(unittest.TestCase):
         self.assertEqual(rows[0]["reason"], "recharge")
         self.assertEqual(rows[0]["delta"], 500)
         self.assertEqual(rows[0]["ref"], "o9")
+        # API 必须显式声明数据库时间是 UTC；浏览器才能转成用户的系统时区。
+        self.assertTrue(rows[0]["created_at"].endswith("Z"))
 
     def test_adjust(self) -> None:
         st = self._store()

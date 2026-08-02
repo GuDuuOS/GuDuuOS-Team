@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from cosmac.config import TOKEN_CONFIG_EVENT_TYPE
 from cosmac.db import session_scope, wallet_repo
 from cosmac.db.models import TokenLedger
+from cosmac.tzutil import utc_iso
 
 logger = logging.getLogger("cosmac.wallet")
 
@@ -504,7 +505,9 @@ class WalletStore:
                     "balance_after": int(r.balance_after),
                     "note": r.note,
                     "meta": r.meta or {},
-                    "created_at": r.created_at.isoformat() if r.created_at else "",
+                    # 数据库存的是 naive UTC，必须在 API 边界补 Z；否则浏览器会误当成本地
+                    # 时间，东八区看到的流水会比系统时间少 8 小时。
+                    "created_at": utc_iso(r.created_at),
                 }
                 for r in rows
             ]

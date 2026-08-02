@@ -12,9 +12,10 @@ from __future__ import annotations
 import os
 import re
 import unittest
+from datetime import datetime, timedelta, timezone
 
-from cosmac.tzutil import fmt_ts, now_text, parse_local_to_epoch
 from cosmac.ai.tools import _parse_due_to_epoch
+from cosmac.tzutil import fmt_ts, now_text, parse_local_to_epoch, utc_iso
 
 
 class TestTzUtil(unittest.TestCase):
@@ -51,7 +52,6 @@ class TestTzUtil(unittest.TestCase):
 
     def test_weekday_table(self) -> None:
         # 对照表:从明天起 N 天,格式 MM-DD周X,星期与 zoneinfo 权威推算一致
-        from datetime import datetime, timedelta
         from cosmac.tzutil import product_tz, weekday_table
         os.environ["COSMAC_TZ"] = "Asia/Shanghai"
         table = weekday_table(14)
@@ -71,6 +71,18 @@ class TestTzUtil(unittest.TestCase):
         self.assertEqual(fmt_ts(day), "07-14 23:59")
         os.environ["COSMAC_TZ"] = "Asia/Tokyo"
         self.assertEqual(full - _parse_due_to_epoch("2026-07-14 11:30"), 3600)
+
+    def test_utc_iso_marks_naive_database_time_as_utc(self) -> None:
+        """数据库 naive UTC 必须补 Z，避免浏览器误按本地钟面解释。"""
+        value = datetime(2026, 7, 27, 2, 34, 37)
+        self.assertEqual(utc_iso(value), "2026-07-27T02:34:37Z")
+
+    def test_utc_iso_converts_aware_time_and_accepts_none(self) -> None:
+        """带时区时间先换算 UTC；空数据库字段保持为空字符串。"""
+        shanghai = timezone(timedelta(hours=8))
+        value = datetime(2026, 7, 27, 10, 34, 37, tzinfo=shanghai)
+        self.assertEqual(utc_iso(value), "2026-07-27T02:34:37Z")
+        self.assertEqual(utc_iso(None), "")
 
 
 if __name__ == "__main__":

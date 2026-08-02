@@ -1419,7 +1419,7 @@
               <thead><tr><th>时间</th><th>类型</th><th>变动</th><th>余额</th><th>备注</th></tr></thead>
               <tbody>
                 <tr v-for="it in tkLedger" :key="it.id">
-                  <td>{{ new Date(it.created_at).toLocaleString() }}</td>
+                  <td>{{ formatServerDateTime(it.created_at) }}</td>
                   <td>{{ TK_REASON[it.reason] || it.reason }}</td>
                   <td :style="{ color: it.delta < 0 ? '#c0392b' : '#2c9a5b', fontWeight: 600 }">
                     {{ it.delta > 0 ? '+' : '' }}{{ it.delta.toLocaleString() }}
@@ -1835,6 +1835,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { formatServerDateTime } from '@/utils/dateTime'
 import { rowKey } from '@/utils/rowKey'
 import {
   isServerAdmin,

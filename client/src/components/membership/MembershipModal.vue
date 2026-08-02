@@ -8,6 +8,7 @@ import Icon from '@/components/Icon.vue'
  * 真实支付渠道(Stripe/PayPal/USDT/支付宝/微信)接入后，这里按地区给出对应支付方式。
  */
 import { computed, onMounted, ref } from 'vue'
+import { formatServerDateTime } from '@/utils/dateTime'
 import {
   payGetPlans, payCheckout, payManualConfirm, payGetMe,
   walletGetMe, walletGetLedger, walletCheckout,
@@ -325,7 +326,7 @@ onMounted(load)
             <span class="mm-led-delta" :class="{ neg: it.delta < 0 }">
               {{ it.delta > 0 ? '+' : '' }}{{ it.delta.toLocaleString() }}
             </span>
-            <span class="mm-led-time">{{ new Date(it.created_at).toLocaleString() }}</span>
+            <span class="mm-led-time">{{ formatServerDateTime(it.created_at) }}</span>
           </div>
         </div>
       </template>
