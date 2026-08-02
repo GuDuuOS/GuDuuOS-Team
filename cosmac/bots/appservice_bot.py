@@ -809,19 +809,27 @@ class CosmacBot:
                 user_text, gctx, sender=sender, mentioned_ids=mentioned_ids,
             )
             # 创作者 Agent 按次付费前拦（P2）：固定价/次是预付语义——余额不够这一次就
-            # 明确拒绝，不产生欠账。管理员与创作者本人免（自己用自己的不收）。
+            # 明确拒绝，不产生欠账。仅创作者本人免（自己用自己的不形成销售）。
             cag_listing = int(gctx.get("cagent_listing") or 0)
             cag_price = int(gctx.get("cagent_price") or 0)
+            # 创作者商品不是平台自己的 AI 用量：平台管理员只能豁免平台用量，不能免掉
+            # 应付给第三方创作者的标价，否则管理员测试/使用会让创作者零收益。唯一免付者
+            # 是商品创作者本人（自用不形成虚假销售流水）。
             cag_payer = bool(
                 cag_listing and cag_price > 0
                 and sender != str(gctx.get("cagent_creator") or "")
-                and not self._is_platform_admin(sender)
             )
             if cag_payer:
                 try:
                     blocked = self.wallet.agent_use_precheck(sender, cag_price)
                 except Exception:
-                    blocked = None  # 计费层故障 fail-open，绝不挡人
+                    # 付费商品必须 fail-closed：计费服务坏掉时放行，会直接把创作者的付费
+                    # 商品送成免费。平台内置 AI 仍维持既有 fail-open 可用性口径。
+                    logger.exception(
+                        "创作者 Agent 计费前置校验失败：buyer=%s listing=%s",
+                        sender, cag_listing,
+                    )
+                    blocked = "创作者 Agent 计费服务暂时不可用，本次没有扣费，请稍后再试。"
                 if blocked:
                     self.client.send_text(room_id, blocked)
                     return
@@ -4768,7 +4776,7 @@ class CosmacBot:
             "balance": balance,
             "free_daily": free,
             "tokens_per_yuan": int(cfg.get("tokens_per_yuan") or 1000),
-            # 管理员豁免标记：前端可提示"管理员不消耗 token"
+            # 管理员豁免只覆盖平台内置 AI 用量；创作者付费商品仍按审核标价结算。
             "exempt": self._is_platform_admin(user_id),
             "packages": [
                 {"slug": p["slug"], "name": p["name"], "tokens": p["tokens"],
@@ -6330,7 +6338,8 @@ class CosmacBot:
                     logger.debug("商城列平台知识库失败(跳过该分类)", exc_info=True)
 
         # —— 创作者上架（P2/P4 创作者商城）：在售 listing。人人可获取（unlocked 恒 True），
-        #    cagent=获取免费、**使用时**按次收；cskill=**获取时一次性买断**、之后永久用。
+        #    cagent=加入个人名册时不扣、**使用时**按次收；cskill=**获取时一次性买断**、
+        #    之后永久用。前者在 UI 禁止称“免费获取”，避免误解为使用也免费。
         #    人设/技能正文绝不下发（创作者资产）。——
         if not only_kind or only_kind in ("cagent", "cskill"):
             try:
@@ -6441,7 +6450,8 @@ class CosmacBot:
                                  "在「我的AI工坊 · 已获取」移除不用的，或升级会员扩容。"
                     }
         # 创作者技能=**获取即买断**（P4）：先付清再记获取；扣不动就明确失败、不给货。
-        # 已买断过/免费/自己的/总开关关都由 charge_skill_purchase 内部放行不扣（幂等）。
+        # 已买断过/免费/自己的由 charge_skill_purchase 内部放行不扣（幂等）；平台内置 AI
+        # 计费开关不得把创作者明码标价的商品变免费。
         if want and kind == "cskill":
             # 买断前置守卫(修「钱扣了货没到」)：charge_skill_purchase 自带事务先提交扣款，
             # 若随后 add_acquired 因每人 200 条硬上限失败，就会扣了款却没记获取(需人工退款)。

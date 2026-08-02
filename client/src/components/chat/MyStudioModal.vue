@@ -209,7 +209,7 @@
               <span class="ms-hint">
                 提交后进入<b>平台审核</b>，通过才在售（任何修改都会重新审核，审核期间暂不可售）。上架是「引用」：内容仍归你、不会公开给用户；平台抽成后其余实时充进你的钱包。
                 <template v-if="pubForm.kind === 'skill'"><br>技能是每轮对话自动生效的，所以按<b>一次性买断</b>卖：用户获取时付清、之后永久可用。</template>
-                <template v-else><br>智能体按<b>次</b>卖：用户获取免费，每次 @ 使用时才扣你定的价。</template>
+                <template v-else><br>智能体按<b>次</b>卖：用户加入个人名册时不扣费，每次 @ 使用时才扣你定的价。</template>
               </span>
               <div class="ms-actions">
                 <button class="cam-add-btn" :disabled="busy || !pubForm.agent_slug" @click="publish">{{ busy ? '提交中…' : '提交上架审核' }}</button>

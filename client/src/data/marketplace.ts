@@ -10,7 +10,7 @@ export const CAT_META: Record<MarketCat, { label: string; color: string }> = {
   skill:     { label: '技能',     color: '#6b8e4e' },
   workflow:  { label: '工作流',   color: '#b58932' },
   knowledge: { label: '知识库',   color: '#8a6a8a' },
-  // 创作者商城(Token 经济 P2):创作者上架的 Agent,免费获取、使用按次扣 token
+  // 创作者商城(Token 经济 P2):加入个人名册时不扣，实际使用按次扣 token；UI 禁止称“免费获取”
   cagent:    { label: '创作者',   color: '#4a7b9d' },
   // 创作者上架的技能:一次性买断(获取时付清、之后永久用)
   cskill:    { label: '创作者技能', color: '#5b7f6b' }

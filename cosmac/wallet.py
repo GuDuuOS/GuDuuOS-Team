@@ -11,7 +11,9 @@
 
 计费模型（负责人拍板）：平台内置 AI 按**真实 LLM 用量 × 倍率**扣；用量是**后付**——回复前
 只能前拦"有没有余额"，回复后按真实 token 结算。若结算额超过余额，则扣到 0 为止（末一次略微
-补贴，避免把已发出的回复算失败），下一次因余额不足被前拦。
+补贴，避免把已发出的回复算失败），下一次因余额不足被前拦。创作者商品的明码标价独立于平台
+内置 AI 计费开关：商品一旦审核在售，除创作者本人外都必须按标价结算，不能因平台用量计费
+暂停而自动变成免费。
 
 本期 token = **单用途消费积分（不可退现）**，把储值/资金归集的合规风险关在门外
 （创作者分成/提现是后续单独评估的一步）。
@@ -327,11 +329,13 @@ class WalletStore:
 
         与平台 AI 的"后付扣到 0 为止"不同：固定价/次是**先看得起再用**的预付语义——
         用户对"这一条要花多少"有明确预期，余额不够就明确拒绝，不产生欠账。
-        总开关关 / 价格 0 恒放行。免费日额度**不抵扣**创作者 Agent（那是平台送的
-        平台用量；创作者的钱得真金白银从钱包出，否则分成没有来源）。
+        价格 0 恒放行。这里**不读取平台内置 AI 的 enabled 开关**：审核通过的创作者
+        商品已有独立、明确的按次标价，若跟随平台用量开关变成免费，就会让创作者在不知情
+        时无偿提供服务。免费日额度也不抵扣创作者 Agent（那是平台送的平台用量；创作者的
+        分成必须来自买家钱包）。
         """
         price = max(0, int(price_tokens or 0))
-        if price <= 0 or not self.config().get("enabled"):
+        if price <= 0:
             return None
         self.ensure_wallet(buyer)
         bal = self.balance(buyer)
@@ -361,8 +365,6 @@ class WalletStore:
 
         cfg = self.config()
         out: Dict[str, Any] = {"charged": 0, "fee": 0, "net": 0, "creator": "", "balance": None}
-        if not cfg.get("enabled"):
-            return out
         try:
             with session_scope() as s:
                 listing = listing_repo.get_listing(s, listing_id)
@@ -411,15 +413,14 @@ class WalletStore:
 
         与 Agent 按次的关键差别：**扣不动就必须失败**（返回 ok=False + 提示），由调用方
         拒绝这次「获取」——买断是先付后得，不能像后付那样"扣到 0 为止"还把货给了。
-        已买断过（listing_repo.has_purchased）/ 自己的 / 免费的 / 总开关关 → 直接放行不扣。
+        已买断过（listing_repo.has_purchased）/ 自己的 / 免费的 → 直接放行不扣。平台内置
+        AI 的 enabled 开关不影响创作者商品定价，防止已审核的付费技能被静默改成免费。
         返回 {ok, charged, fee, net, error}。
         """
         from cosmac.db import listing_repo
 
         cfg = self.config()
         out: Dict[str, Any] = {"ok": True, "charged": 0, "fee": 0, "net": 0, "error": ""}
-        if not cfg.get("enabled"):
-            return out
         try:
             # 进程内按 (买家,listing) 串行：读 has_purchased→扣款→记账 整段互斥，
             # 挡住并发/双击「获取」的跨事务重复买断（见 _buy_lock 注释）。

@@ -3626,7 +3626,7 @@ export interface WalletMe {
   balance: number
   free_daily: { total: number; used: number; remaining: number }
   tokens_per_yuan: number
-  exempt: boolean          // 管理员豁免（不消耗 token）
+  exempt: boolean          // 管理员仅豁免平台内置 AI 用量；创作者商品仍按审核价结算
   packages: { slug: string; name: string; tokens: number; prices: Record<string, number> }[]
 }
 

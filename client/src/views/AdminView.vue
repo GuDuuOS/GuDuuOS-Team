@@ -1335,7 +1335,7 @@
         <header class="adm-head">
           <div>
             <h1 class="adm-h1">Token 经济</h1>
-            <p class="adm-hint">用户充值 token · 用 AI 按真实用量扣 · 约 20 秒热生效 · <strong>总开关关闭时完全不计费不拦截</strong></p>
+            <p class="adm-hint">用户充值 token · 平台内置 AI 按真实用量扣 · 约 20 秒热生效 · <strong>此开关不取消已审核创作者商品的独立标价</strong></p>
           </div>
           <div class="adm-actions">
             <button class="adm-btn ghost" :disabled="tkLoading || tkSaving" @click="loadTokenCfg">
@@ -1358,7 +1358,7 @@
           <!-- 基础配置 -->
           <label class="adm-tool">
             <input type="checkbox" v-model="tkCfg.enabled" />
-            <span class="adm-tool-l"><strong>启用 Token 经济</strong>（开启后：免费日额度用尽且余额不足的用户将无法使用 AI，请先配好充值包与免费额度再开）</span>
+            <span class="adm-tool-l"><strong>启用平台 AI 用量计费</strong>（开启后：免费日额度用尽且余额不足的用户将无法使用平台内置 AI；创作者商品始终按审核价格结算）</span>
           </label>
           <div class="adm-grid2">
             <label class="adm-field">
@@ -3456,6 +3456,7 @@ const tkLedger = ref<WalletLedgerItem[]>([])
 const tkQueried = ref(false)
 const TK_REASON: Record<string, string> = {
   recharge: '充值', grant: '赠送', ai_usage: 'AI 对话', adjust: '人工调整', refund: '退款',
+  agent_use: '创作者 Agent', skill_buy: '创作者技能', earning: '创作收益',
 }
 
 function switchToWallet() {

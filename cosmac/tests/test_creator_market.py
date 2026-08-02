@@ -1,7 +1,8 @@
 """创作者商城（模块4 Token 经济 P2）回归测试。
 
 覆盖：listing repo 上架/下架/banned 保护、charge_agent_use 分账（90/10、抽成向上取整、
-余额不足不扣、自用不扣、总开关关不扣）、收益账本汇总/明细、下架后不再计费。
+余额不足不扣、自用不扣、平台用量开关关闭仍按创作者标价扣）、收益账本汇总/明细、
+下架后不再计费。
 零 key、内存 SQLite、假控制室。
 """
 
@@ -12,6 +13,7 @@ from typing import Any, Dict, Optional
 
 from cosmac.config import TOKEN_CONFIG_EVENT_TYPE
 from cosmac.db import init_engine, listing_repo, session_scope, wallet_repo
+from cosmac.db.market_repo import add_acquired
 from cosmac.db.models import SCOPE_USER
 from cosmac.db.repo import upsert_agent
 from cosmac.wallet import WalletStore
@@ -180,13 +182,18 @@ class ChargeAgentUseTests(unittest.TestCase):
         self.assertEqual(r["charged"], 0)
         self.assertEqual(self.st.balance(CREATOR), 1000)
 
-    def test_disabled_or_off_listing_free(self) -> None:
+    def test_platform_usage_switch_does_not_make_listing_free(self) -> None:
         lid = _mk_listing(300)
         self._fund(BUYER, 1000)
-        # 总开关关：不扣
+        # enabled 只控制平台内置 AI 的真实用量计费；创作者审核价不能跟着变成免费。
         st_off = _store(enabled=False)
-        self.assertEqual(st_off.charge_agent_use(BUYER, lid)["charged"], 0)
-        self.assertIsNone(st_off.agent_use_precheck(BUYER, 300))  # 关=前拦也放行
+        self.assertIsNone(st_off.agent_use_precheck(BUYER, 300))
+        self.assertEqual(st_off.charge_agent_use(BUYER, lid)["charged"], 300)
+        self.assertEqual(st_off.balance(BUYER), 700)
+
+    def test_off_listing_is_free(self) -> None:
+        lid = _mk_listing(300)
+        self._fund(BUYER, 1000)
         # 下架：不扣
         with session_scope() as s:
             listing_repo.set_status(s, lid, "off", creator=CREATOR)
@@ -209,6 +216,96 @@ class ChargeAgentUseTests(unittest.TestCase):
             rows = listing_repo.list_earnings(s, CREATOR, limit=2)
             self.assertEqual(len(rows), 2)
             self.assertEqual(listing_repo.earnings_summary(s, CREATOR)["count"], 3)
+
+
+class _ReplyClient(_FakeClient):
+    """记录创作者 Agent 回复的最小 Matrix 客户端，避免端到端测试访问真实 Synapse。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sent = []
+        self.typing = []
+
+    def send_text(self, room_id, text, txn_id=None):
+        """记录消息并模拟 Synapse 成功返回事件 ID。"""
+        self.sent.append((room_id, text))
+        return "$sent"
+
+    def set_typing(self, room_id, typing, timeout_ms=30000):
+        """记录输入状态，满足回复主链的 MatrixClient 契约。"""
+        self.typing.append((room_id, typing))
+
+
+class CreatorAgentReplyBillingTests(unittest.TestCase):
+    """覆盖“商城获取 → @创作者 Agent → 回复成功 → 买家扣费/创作者分成”完整主链。"""
+
+    def setUp(self) -> None:
+        init_engine("sqlite://", create_all=True)
+
+    def _bot(self, listing_id: int):
+        """构建只保留路由与结算真实逻辑的 Bot；其余网络/LLM 环节全部本地打桩。"""
+        from cosmac.bots.appservice_bot import CosmacBot
+        from cosmac.config import CosmacConfig
+
+        bot = CosmacBot(CosmacConfig(llm_provider="echo", server_name="guduu.local"))
+        bot.client = _ReplyClient()
+        # 故意关闭平台 AI 用量计费并把买家标成管理员：这是此前两个免费旁路的组合。
+        bot.wallet = _store(enabled=False)
+        bot._is_platform_admin = lambda user_id: True  # type: ignore
+        bot._rate_quota_blocked = lambda *args, **kwargs: None  # type: ignore
+        bot._wallet_precheck_blocked = lambda user_id: None  # type: ignore
+        bot._apply_runtime_config = lambda: None  # type: ignore
+        bot._group_context = lambda room_id: {  # type: ignore
+            "worker_slugs": [], "persona": "", "skill_slugs": [], "model": "",
+            "task_rule": "", "workflow_slugs": [], "kb_scopes": [],
+            "channel_rules": "", "rule_doc": "",
+        }
+        bot._skill_addendum = lambda *args, **kwargs: ""  # type: ignore
+        bot._recent_history = lambda *args, **kwargs: []  # type: ignore
+        bot._run_agent_engine = lambda *args, **kwargs: ("已完成", 12)  # type: ignore
+        bot._maybe_name_ai_session = lambda *args, **kwargs: None  # type: ignore
+        bot._maybe_update_memory = lambda *args, **kwargs: None  # type: ignore
+        with session_scope() as s:
+            add_acquired(s, user_id=BUYER, kind="cagent", slug=str(listing_id))
+        return bot
+
+    def test_admin_still_pays_creator_price_when_platform_usage_is_off(self) -> None:
+        """管理员豁免只适用于平台 AI；关闭平台用量计费也不能把创作者商品变免费。"""
+        listing_id = _mk_listing(35)
+        with session_scope() as s:
+            wallet_repo.credit(s, BUYER, 100, reason="grant")
+        bot = self._bot(listing_id)
+
+        bot._reply_to_message(
+            "!room:guduu.local", BUYER, "@文案高手 写一句", "写一句", {}, True,
+            "$creator-use", [],
+        )
+
+        self.assertEqual(bot.wallet.balance(BUYER), 65)
+        self.assertEqual(bot.wallet.balance(CREATOR), 31)  # 35 - ceil(10%) = 31
+        self.assertEqual(bot.wallet.ledger(BUYER)[0]["reason"], "agent_use")
+        self.assertEqual(bot.client.sent, [("!room:guduu.local", "已完成")])
+
+    def test_billing_failure_blocks_before_llm(self) -> None:
+        """付费商品计费层异常必须停止调用，不能 fail-open 送出一条免费回复。"""
+        listing_id = _mk_listing(35)
+        with session_scope() as s:
+            wallet_repo.credit(s, BUYER, 100, reason="grant")
+        bot = self._bot(listing_id)
+        bot.wallet.agent_use_precheck = (  # type: ignore
+            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("wallet down"))
+        )
+        called = []
+        bot._run_agent_engine = lambda *args, **kwargs: called.append(True)  # type: ignore
+
+        bot._reply_to_message(
+            "!room:guduu.local", BUYER, "@文案高手 写一句", "写一句", {}, True,
+            "$creator-fail", [],
+        )
+
+        self.assertEqual(called, [])
+        self.assertIn("计费服务暂时不可用", bot.client.sent[0][1])
+        self.assertEqual(bot.wallet.balance(BUYER), 100)
 
 
 def _mk_skill_listing(price: int = 500, *, approve: bool = True) -> int:
@@ -289,13 +386,14 @@ class SkillBuyoutTests(unittest.TestCase):
         self.assertFalse(r["ok"])
         self.assertEqual(self.st.balance(BUYER), 1000)
 
-    def test_disabled_switch_is_passthrough(self) -> None:
+    def test_platform_usage_switch_does_not_cancel_skill_price(self) -> None:
         lid = _mk_skill_listing(500)
         self._fund(BUYER, 1000)
         st_off = _store(enabled=False)
         r = st_off.charge_skill_purchase(BUYER, lid)
         self.assertTrue(r["ok"])
-        self.assertEqual(r["charged"], 0)
+        self.assertEqual(r["charged"], 500)
+        self.assertEqual(st_off.balance(BUYER), 500)
 
     def test_slug_collision_rejected(self) -> None:
         """同一创作者用同一 slug 上架另一类资源 → 显式拒绝（唯一键不含 kind）。"""

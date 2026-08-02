@@ -784,7 +784,7 @@ class MarketListing(Base, TimestampMixin):
 
     创作者（会员等级 creator）把自己「我的AI工坊」的自建资源（scope=user）上架到商城。
     **两种资源、两种计费**（负责人定稿）：
-      - ``kind='agent'``：Agent 按次计费——获取免费，**每次 @使用**扣 price_tokens
+      - ``kind='agent'``：Agent 按次计费——加入个人名册时不扣，**每次 @使用**扣 price_tokens
         （见 wallet.charge_agent_use）。
       - ``kind='skill'``：Skill **一次性买断**——技能是每轮对话自动注入的，按次扣用户
         无法预期花费；故在**获取那一刻**付 price_tokens、之后永久可用

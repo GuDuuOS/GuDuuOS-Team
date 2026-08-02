@@ -99,7 +99,8 @@ function fmtTokens(n: number): string {
 
 const REASON_LABEL: Record<string, string> = {
   recharge: '充值', grant: '赠送', ai_usage: 'AI 对话',
-  adjust: '人工调整', refund: '退款',
+  adjust: '人工调整', refund: '退款', agent_use: '创作者 Agent',
+  skill_buy: '创作者技能', earning: '创作收益',
 }
 
 async function load() {
@@ -269,7 +270,7 @@ onMounted(load)
             <span class="mm-wal-unit">token</span>
           </div>
           <div class="mm-wal-sub">
-            <template v-if="wallet?.exempt">管理员账号不消耗 token</template>
+            <template v-if="wallet?.exempt">平台内置 AI 用量免扣；创作者付费资源仍按标价结算</template>
             <template v-else-if="(wallet?.free_daily?.total || 0) > 0">
               今日免费额度：剩 {{ fmtTokens(wallet?.free_daily?.remaining || 0) }} / {{ fmtTokens(wallet?.free_daily?.total || 0) }}（每天重置）
             </template>
