@@ -108,11 +108,13 @@ class DashboardSecurityTests(unittest.TestCase):
             self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")
 
     def test_portal_page_has_strict_script_csp(self) -> None:
-        """控制台持有管理会话，必须禁止任何内联或第三方脚本执行。"""
+        """控制台只允许同源脚本和固定的 Cloudflare Turnstile 来源。"""
         with urlopen(f"{self.base_url}/portal/", timeout=3) as response:
             policy = response.headers["Content-Security-Policy"]
             self.assertIn("script-src 'self'", policy)
             self.assertNotIn("script-src 'self' 'unsafe-inline'", policy)
+            self.assertIn("https://challenges.cloudflare.com", policy)
+            self.assertIn("frame-src https://challenges.cloudflare.com", policy)
             self.assertIn("frame-ancestors 'none'", policy)
 
     def test_admin_has_independent_noindex_entry(self) -> None:

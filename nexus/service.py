@@ -74,6 +74,7 @@ from nexus import (
     payment_config,
     release_artifacts,
     releases,
+    turnstile,
 )
 from nexus.fleet import FleetError
 
@@ -421,8 +422,15 @@ class NexusHandler(BaseHTTPRequestHandler):
             )
             return
         if path == "/nexus/oem/auth/config":
-            # 只返回布尔能力，不把 SMTP 主机、账号、发件人或其他部署细节暴露给浏览器。
-            self._json(200, {"email_verification": oem_email.enabled()})
+            # 只返回公开 site key 与能力开关；SMTP、Turnstile secret 和预期域名都
+            # 留在服务端，避免门户配置接口成为部署信息泄漏面。
+            self._json(
+                200,
+                {
+                    "email_verification": oem_email.enabled(),
+                    "turnstile": turnstile.public_config(),
+                },
+            )
             return
         if path == "/nexus/admin/me":
             if self._check_admin():
@@ -952,9 +960,12 @@ class NexusHandler(BaseHTTPRequestHandler):
             # 放宽 JavaScript 执行权限。Portal 的凭证预览使用本地 blob URL。
             self.send_header(
                 "Content-Security-Policy",
-                "default-src 'self'; script-src 'self'; "
+                "default-src 'self'; "
+                "script-src 'self' https://challenges.cloudflare.com; "
                 "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
-                "font-src 'self' data:; connect-src 'self'; object-src 'none'; "
+                "font-src 'self' data:; "
+                "connect-src 'self' https://challenges.cloudflare.com; "
+                "frame-src https://challenges.cloudflare.com; object-src 'none'; "
                 "base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
             )
         self.end_headers()
@@ -1565,6 +1576,8 @@ class NexusHandler(BaseHTTPRequestHandler):
                             s,
                             str(body.get("email", "")),
                             str(body.get("purpose", "")),
+                            turnstile_token=str(body.get("turnstile_token", "")),
+                            source_ip=self._client_ip(),
                         ),
                     )
                 )

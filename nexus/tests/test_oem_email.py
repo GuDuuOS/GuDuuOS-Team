@@ -38,6 +38,9 @@ class OemEmailAuthTests(unittest.TestCase):
                 "NEXUS_SMTP_USER",
                 "NEXUS_SMTP_PASSWORD",
                 "NEXUS_SMTP_FROM",
+                "NEXUS_TURNSTILE_SITE_KEY",
+                "NEXUS_TURNSTILE_SECRET_KEY",
+                "NEXUS_TURNSTILE_HOSTNAME",
             )
         }
         os.environ.update(
@@ -49,6 +52,10 @@ class OemEmailAuthTests(unittest.TestCase):
                 "NEXUS_SMTP_FROM": "noreply@test.invalid",
             }
         )
+        # 邮箱领域测试聚焦验证码生命周期，显式关闭可选的 HTTP 人机校验层。
+        os.environ.pop("NEXUS_TURNSTILE_SITE_KEY", None)
+        os.environ.pop("NEXUS_TURNSTILE_SECRET_KEY", None)
+        os.environ.pop("NEXUS_TURNSTILE_HOSTNAME", None)
         self.sent = []
         self._send_patch = patch.object(
             oem_email,
@@ -121,6 +128,21 @@ class OemEmailAuthTests(unittest.TestCase):
                 contact_name="测试人",
                 phone="13800000000",
             )
+
+    def test_request_code_passes_turnstile_context_before_account_lookup(self) -> None:
+        """发码领域入口必须把一次性 token、用途和来源 IP 交给安全校验层。"""
+        with patch.object(oem_email.turnstile, "verify", return_value=True) as verify:
+            result = oem_email.request_code(
+                self.s,
+                "robot-check@example.com",
+                "register",
+                turnstile_token="browser-token",
+                source_ip="203.0.113.9",
+            )
+        self.assertTrue(result["ok"])
+        verify.assert_called_once_with(
+            "browser-token", "register", "203.0.113.9"
+        )
 
     def test_code_login_uses_independent_purpose(self) -> None:
         """注册码不能冒充登录码；登录码验证后签发可解析的 OEM 会话。"""
@@ -213,6 +235,9 @@ class OemEmailAuthHttpTests(unittest.TestCase):
                 "NEXUS_SMTP_HOST",
                 "NEXUS_SMTP_USER",
                 "NEXUS_SMTP_PASSWORD",
+                "NEXUS_TURNSTILE_SITE_KEY",
+                "NEXUS_TURNSTILE_SECRET_KEY",
+                "NEXUS_TURNSTILE_HOSTNAME",
             )
         }
         os.environ.update(
@@ -223,6 +248,10 @@ class OemEmailAuthHttpTests(unittest.TestCase):
                 "NEXUS_SMTP_PASSWORD": "not-a-real-secret",
             }
         )
+        # 默认用未启用状态验证向后兼容；Turnstile 自身由独立测试覆盖。
+        os.environ.pop("NEXUS_TURNSTILE_SITE_KEY", None)
+        os.environ.pop("NEXUS_TURNSTILE_SECRET_KEY", None)
+        os.environ.pop("NEXUS_TURNSTILE_HOSTNAME", None)
         self.sent = []
         self._send_patch = patch.object(
             oem_email,

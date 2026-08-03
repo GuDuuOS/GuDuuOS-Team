@@ -7,9 +7,8 @@
 
 - [ ] **Nexus OEM 邮箱验证验收**：中央 Nexus 已配置 `NEXUS_SMTP_*`，公开能力接口
   已返回 `email_verification: true`；仍需用真实外部邮箱验收注册、验证码登录、找回密码，
-  并为发件域名配置 SPF、DKIM、DMARC，避免企业验证码进入垃圾邮件。
-- [ ] **注册防刷**：在 Cloudflare 为当前注册域名创建 Turnstile Widget，将 Site Key 与
-  Secret 配入 OEM 节点并验证 `/cosmac/auth/config` 返回 `turnstile: true`。
+  并为发件域名配置 SPF、DKIM、DMARC，避免企业验证码进入垃圾邮件；另需为
+  `dev-nexus.guduu.co` 创建独立 Turnstile Managed 小组件、注入 Nexus 环境并验收三种 action。
 - [ ] **平台主管恢复链路**：
   - [ ] 当前具名管理员登记至少两个相互独立的 Nexus Passkey / 恢复设备。
   - [ ] 创建第二位具名管理员；在 Cloudflare Access 精确加入其邮箱，并由本人登记 MFA。

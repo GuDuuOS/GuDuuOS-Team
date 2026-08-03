@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置使用同源外部脚本，既防刷新闪色，也允许 Portal 开启严格脚本 CSP。 -->
 <script src="/portal/theme-init.js?v=1"></script>
-<link rel="stylesheet" href="/portal/portal.css?v=31" />
+<link rel="stylesheet" href="/portal/portal.css?v=32" />
 </head>
 <body>
 <!--
@@ -54,6 +54,10 @@
 
     <form id="form-oem-code-login" class="pane" data-pane="oem-code-login" hidden>
       <label>邮箱<input name="email" type="email" autocomplete="email" required placeholder="you@company.com" /></label>
+      <div class="turnstile-wrap" data-turnstile-purpose="login" hidden>
+        <div class="turnstile-slot"></div>
+        <p class="hint">完成安全验证后即可发送登录验证码。</p>
+      </div>
       <label>邮箱验证码
         <span class="code-field"><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required placeholder="6 位验证码" /><button class="ghost code-send" type="button" data-code-purpose="login">发送验证码</button></span>
       </label>
@@ -66,6 +70,10 @@
       <label>联系人姓名<input name="contact_name" type="text" required placeholder="真实姓名" /></label>
       <label>联系方式<input name="phone" type="text" required placeholder="手机号 / 微信号" /></label>
       <label>邮箱<input name="email" type="email" autocomplete="email" required placeholder="you@company.com" /></label>
+      <div class="turnstile-wrap" data-turnstile-purpose="register" hidden>
+        <div class="turnstile-slot"></div>
+        <p class="hint">完成安全验证后即可发送注册验证码。</p>
+      </div>
       <label>邮箱验证码
         <span class="code-field"><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required placeholder="6 位验证码" /><button class="ghost code-send" type="button" data-code-purpose="register">发送验证码</button></span>
       </label>
@@ -77,6 +85,10 @@
 
     <form id="form-oem-reset" class="pane" data-pane="oem-reset" hidden>
       <label>注册邮箱<input name="email" type="email" autocomplete="email" required placeholder="you@company.com" /></label>
+      <div class="turnstile-wrap" data-turnstile-purpose="reset" hidden>
+        <div class="turnstile-slot"></div>
+        <p class="hint">完成安全验证后即可发送密码重置验证码。</p>
+      </div>
       <label>邮箱验证码
         <span class="code-field"><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required placeholder="6 位验证码" /><button class="ghost code-send" type="button" data-code-purpose="reset">发送验证码</button></span>
       </label>
@@ -863,6 +875,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=41"></script>
+<script src="/portal/portal.js?v=42"></script>
 </body>
 </html>

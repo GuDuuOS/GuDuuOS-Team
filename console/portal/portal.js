@@ -625,6 +625,7 @@
       $all(".tab").forEach(function (b) { b.classList.toggle("on", b === btn); });
       $all(".pane").forEach(function (p) { p.hidden = (p.dataset.pane !== btn.dataset.tab); });
       $("#login-err").hidden = true;
+      activateTurnstileForVisiblePane();
     });
   });
 
@@ -645,14 +646,100 @@
   // 邮件能力由服务端布尔开关决定；浏览器不接触 SMTP 地址、账号或密码。配置未完成时
   // 按钮明确禁用，避免用户填完整张企业表单后才在最后一步发现邮件服务不可用。
   var oemEmailEnabled = false;
+  var oemTurnstileEnabled = false;
+  var oemTurnstileSiteKey = "";
+  var turnstileScriptPromise = null;
+  var turnstileWidgets = {};
+  var turnstileActions = {
+    register: "oem_register_code",
+    login: "oem_login_code",
+    reset: "oem_reset_code",
+  };
+
+  function loadTurnstileScript() {
+    if (window.turnstile) return Promise.resolve(window.turnstile);
+    if (turnstileScriptPromise) return turnstileScriptPromise;
+    turnstileScriptPromise = new Promise(function (resolve, reject) {
+      var script = document.createElement("script");
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.async = true;
+      script.defer = true;
+      script.onload = function () {
+        if (window.turnstile) resolve(window.turnstile);
+        else reject(new Error("Turnstile 未能初始化"));
+      };
+      script.onerror = function () { reject(new Error("Turnstile 脚本加载失败")); };
+      document.head.appendChild(script);
+    });
+    return turnstileScriptPromise;
+  }
+
+  function disableTurnstileSending(message) {
+    $all(".code-send").forEach(function (button) {
+      button.disabled = true;
+      button.title = message;
+    });
+    loginErr(message);
+  }
+
+  function renderTurnstile(purpose) {
+    if (!oemTurnstileEnabled || !purpose || turnstileWidgets[purpose] !== undefined) {
+      return;
+    }
+    var wrap = document.querySelector('[data-turnstile-purpose="' + purpose + '"]');
+    var slot = wrap && wrap.querySelector(".turnstile-slot");
+    if (!slot) return;
+    wrap.hidden = false;
+    loadTurnstileScript().then(function (turnstile) {
+      if (turnstileWidgets[purpose] !== undefined) return;
+      turnstileWidgets[purpose] = turnstile.render(slot, {
+        sitekey: oemTurnstileSiteKey,
+        action: turnstileActions[purpose],
+        theme: "light",
+        size: "flexible",
+        "expired-callback": function () { turnstile.reset(turnstileWidgets[purpose]); },
+        "error-callback": function () {
+          loginErr("人机验证加载失败，请检查网络后刷新页面");
+        },
+      });
+    }).catch(function () {
+      disableTurnstileSending("人机验证暂时无法加载，请检查网络后刷新页面");
+    });
+  }
+
+  function activateTurnstileForVisiblePane() {
+    if (!oemTurnstileEnabled) return;
+    var pane = document.querySelector(".pane:not([hidden])");
+    var wrap = pane && pane.querySelector("[data-turnstile-purpose]");
+    if (wrap) renderTurnstile(wrap.dataset.turnstilePurpose);
+  }
+
+  function turnstileTokenFor(purpose) {
+    if (!oemTurnstileEnabled) return "";
+    var widgetId = turnstileWidgets[purpose];
+    if (widgetId === undefined || !window.turnstile) return "";
+    return window.turnstile.getResponse(widgetId) || "";
+  }
+
+  function resetTurnstile(purpose) {
+    var widgetId = turnstileWidgets[purpose];
+    if (widgetId !== undefined && window.turnstile) window.turnstile.reset(widgetId);
+  }
+
   function loadOemAuthConfig() {
     if (isAdminEntry()) return;
     api("/nexus/oem/auth/config", { noKick: true }).then(function (config) {
       oemEmailEnabled = config.email_verification === true;
+      oemTurnstileEnabled = Boolean(config.turnstile && config.turnstile.enabled);
+      oemTurnstileSiteKey = oemTurnstileEnabled ? String(config.turnstile.site_key || "") : "";
+      $all("[data-turnstile-purpose]").forEach(function (wrap) {
+        wrap.hidden = !oemTurnstileEnabled;
+      });
       $all(".code-send").forEach(function (button) {
         button.disabled = !oemEmailEnabled;
         button.title = oemEmailEnabled ? "" : "邮箱验证服务正在配置中";
       });
+      activateTurnstileForVisiblePane();
     }).catch(function () {
       oemEmailEnabled = false;
       $all(".code-send").forEach(function (button) {
@@ -683,17 +770,30 @@
     button.addEventListener("click", function () {
       var form = button.closest("form");
       var email = form && form.email ? form.email.value.trim() : "";
+      var purpose = button.dataset.codePurpose;
       if (!email) return loginErr("请先填写邮箱");
       if (!oemEmailEnabled) return loginErr("邮箱验证服务正在配置中，请稍后再试");
+      var turnstileToken = turnstileTokenFor(purpose);
+      if (oemTurnstileEnabled && !turnstileToken) {
+        renderTurnstile(purpose);
+        return loginErr("请先完成人机验证");
+      }
       button.disabled = true;
       api("/nexus/oem/email/request-code", {
-        body: { email: email, purpose: button.dataset.codePurpose }, noKick: true,
+        body: {
+          email: email,
+          purpose: purpose,
+          turnstile_token: turnstileToken,
+        },
+        noKick: true,
       }).then(function (result) {
+        resetTurnstile(purpose);
         loginErr("");
         $("#login-err").hidden = true;
         toast("如果邮箱可用，验证码已经发送");
         beginCodeCooldown(button, result.cooldown_seconds);
       }).catch(function (err) {
+        resetTurnstile(purpose);
         button.disabled = false;
         loginErr(err.message);
       });

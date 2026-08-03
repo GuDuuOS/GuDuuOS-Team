@@ -27,7 +27,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from sqlalchemy import delete, select
 
-from nexus import audit
+from nexus import audit, turnstile
 from nexus.db import (
     NexusOem,
     NexusOemEmailChallenge,
@@ -183,7 +183,14 @@ def _active_account(s, email: str) -> Optional[NexusOem]:
     return row if row is not None and row.status == "active" else None
 
 
-def request_code(s, email: str, purpose: str) -> Dict[str, Any]:
+def request_code(
+    s,
+    email: str,
+    purpose: str,
+    *,
+    turnstile_token: str = "",
+    source_ip: str = "",
+) -> Dict[str, Any]:
     """申请一次邮箱验证码。
 
     ``login`` / ``reset`` 对不存在或停用账号返回相同成功响应但不发邮件，避免泄露账号
@@ -193,10 +200,13 @@ def request_code(s, email: str, purpose: str) -> Dict[str, Any]:
         raise FleetError(
             "NEXUS_EMAIL_DISABLED", "邮箱验证服务尚未配置，请联系 GuDuu", 503
         )
-    normalized = _normalize_email(email)
     purpose = (purpose or "").strip().lower()
     if purpose not in _PURPOSES:
         raise FleetError("NEXUS_EMAIL_PURPOSE", "验证码用途不正确")
+    # 邮箱格式不是敏感账号状态，先校验可避免用户因拼写错误浪费一次挑战 token。
+    normalized = _normalize_email(email)
+    # 人机校验仍放在账号查询和 SMTP 之前：既节省邮件成本，也避免利用响应差异枚举账号。
+    turnstile.verify(turnstile_token, purpose, source_ip)
     # 注册冲突必须覆盖 active/disabled 两种状态：同一邮箱永远只能对应一个企业账号。
     existing = _account(s, normalized)
     if purpose == "register" and existing is not None:

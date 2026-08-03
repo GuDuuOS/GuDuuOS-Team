@@ -1,5 +1,12 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-08-03 — GuDuu OS 1.21.0 (minor)
+
+- 新增：Nexus OEM 注册、邮箱验证码登录和找回密码的发码入口接入独立
+  Cloudflare Turnstile，降低机器人批量消耗企业邮箱额度的风险。
+- 优化：服务端同时核验挑战结果、Nexus 门户域名和分用途 action；现有
+  IP/邮箱限频继续生效，最终注册提交与普通密码登录不重复弹出验证。
+
 ## 2026-08-03 — GuDuu OS 1.20.1 (patch)
 
 - 修复：SSH 单次恢复命令会安全读取 Nexus systemd 环境文件中的
