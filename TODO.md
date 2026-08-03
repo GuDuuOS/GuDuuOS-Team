@@ -9,10 +9,6 @@
   已返回 `email_verification: true`；仍需用真实外部邮箱验收注册、验证码登录、找回密码，
   并为发件域名配置 SPF、DKIM、DMARC，避免企业验证码进入垃圾邮件；独立 Turnstile
   Managed 小组件与三种 action 已接入，仍需完成真实邮箱到达验收。
-- [ ] **平台主管恢复链路**：
-  - [ ] 当前具名管理员登记至少两个相互独立的 Nexus Passkey / 恢复设备。
-  - [ ] 创建第二位具名管理员；在 Cloudflare Access 精确加入其邮箱，并由本人登记 MFA。
-  - [ ] 两位管理员均完成独立登录，并演练一次 SSH 单次恢复码流程。
 - [ ] **确认静态公网 IP**：确认 OEM 节点与中央 Nexus 的 Google Cloud 外部 IP 均为保留静态
   地址，避免停机后 DNS 指向失效。
 - [ ] **真实支付闭环**：
