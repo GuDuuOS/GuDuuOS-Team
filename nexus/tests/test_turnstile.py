@@ -111,7 +111,9 @@ class NexusTurnstileTests(unittest.TestCase):
         request = opened.call_args.args[0]
         body = request.data.decode("utf-8")
         self.assertIn("response=browser-token", body)
-        self.assertIn("remoteip=203.0.113.8", body)
+        # 生产反代链当前只能观察到 Cloudflare 边缘地址；remoteip 是可选字段，
+        # 不能把代理地址误发给 Siteverify 导致真实浏览器 token 被拒绝。
+        self.assertNotIn("remoteip=", body)
 
         for invalid in (
             {**payload, "hostname": "dev-os.guduu.co"},

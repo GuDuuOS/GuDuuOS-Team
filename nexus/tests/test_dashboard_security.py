@@ -117,6 +117,20 @@ class DashboardSecurityTests(unittest.TestCase):
             self.assertIn("frame-src https://challenges.cloudflare.com", policy)
             self.assertIn("frame-ancestors 'none'", policy)
 
+    def test_portal_shows_turnstile_result_next_to_each_challenge(self) -> None:
+        """长表单必须就地显示挑战/发码结果，不能只把错误放在页面顶部。"""
+        with urlopen(f"{self.base_url}/portal/", timeout=3) as response:
+            html = response.read().decode("utf-8")
+        self.assertEqual(html.count("turnstile-message"), 3)
+        self.assertEqual(
+            html.count('class="hint turnstile-message" aria-live="polite"'), 3
+        )
+
+        with urlopen(f"{self.base_url}/portal/portal.js", timeout=3) as response:
+            script = response.read().decode("utf-8")
+        self.assertIn("function setTurnstileMessage", script)
+        self.assertIn("验证码已发送；60 秒后可重新验证并发送。", script)
+
     def test_admin_has_independent_noindex_entry(self) -> None:
         """独立超管深链必须可刷新直达，同时明确禁止搜索引擎收录。"""
         with urlopen(f"{self.base_url}/portal/admin/", timeout=3) as response:

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Dict
 from urllib.error import URLError
@@ -24,6 +25,7 @@ from urllib.request import Request, urlopen
 from nexus.fleet import FleetError
 
 _SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+logger = logging.getLogger("nexus.turnstile")
 _ACTIONS = {
     "register": "oem_register_code",
     "login": "oem_login_code",
@@ -82,7 +84,8 @@ def verify(token: str, purpose: str, remote_ip: str = "") -> bool:
     Args:
         token: 浏览器 Turnstile 小组件返回的一次性 response token。
         purpose: 当前邮箱验证码用途，用来隔离 action。
-        remote_ip: Nexus 从可信反向代理链读取的访客 IP，可为空。
+        remote_ip: 调用方观察到的来源 IP。当前仅为兼容既有调用保留；在源站无法证明
+            该值是访客真实 IP 时，绝不能把 Cloudflare 边缘地址提交为 ``remoteip``。
 
     Returns:
         配置未启用或完整校验通过时返回 ``True``。
@@ -103,8 +106,12 @@ def verify(token: str, purpose: str, remote_ip: str = "") -> bool:
         )
 
     fields = {"secret": config["secret_key"], "response": response_token}
-    if remote_ip:
-        fields["remoteip"] = remote_ip.strip()
+    # ``remoteip`` 在 Cloudflare Siteverify 协议中是可选字段。生产 Nexus 位于
+    # Cloudflare → Caddy 之后，而 Caddy 默认会把 X-Forwarded-For 收敛为它直接看到的
+    # Cloudflare 边缘地址；把这个地址误当访客 IP 提交会让一个本来有效的浏览器 token
+    # 校验失败。这里故意不发送该可选字段，仍严格核验 token、hostname 与 action。
+    # 等源站改为只信任 Cloudflare 官方网段并可靠解析 CF-Connecting-IP 后，再评估恢复。
+    _ = remote_ip
     request = Request(
         _SITEVERIFY_URL,
         data=urlencode(fields).encode("utf-8"),
@@ -132,6 +139,17 @@ def verify(token: str, purpose: str, remote_ip: str = "") -> bool:
         or hostname != config["hostname"]
         or action != expected_action
     ):
+        # 只记录 Cloudflare 返回的分类信息，禁止把一次性 token 或 secret 写入日志。
+        # 这能让后续区分 token 过期、重复消费和配置错误，而不用靠用户截图猜测。
+        logger.warning(
+            "Turnstile 校验失败 errors=%s hostname=%s action=%s expected_hostname=%s "
+            "expected_action=%s",
+            payload.get("error-codes") or [],
+            hostname,
+            action,
+            config["hostname"],
+            expected_action,
+        )
         raise FleetError(
             "NEXUS_TURNSTILE_FAILED", "人机验证未通过，请刷新后重试", 400
         )

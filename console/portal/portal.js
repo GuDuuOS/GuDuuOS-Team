@@ -682,6 +682,18 @@
     loginErr(message);
   }
 
+  function setTurnstileMessage(purpose, message, state) {
+    // 发码表单很长，顶部的全局错误在用户滚动到验证码区域后不可见；因此把本次
+    // Turnstile/SMTP 结果同时显示在当前组件旁边。只写 textContent，避免错误文案
+    // 或上游返回内容被当作 HTML 注入。
+    var wrap = document.querySelector('[data-turnstile-purpose="' + purpose + '"]');
+    var target = wrap && wrap.querySelector(".turnstile-message");
+    if (!target) return;
+    target.textContent = message;
+    target.classList.toggle("bad", state === "bad");
+    target.classList.toggle("ok", state === "ok");
+  }
+
   function renderTurnstile(purpose) {
     if (!oemTurnstileEnabled || !purpose || turnstileWidgets[purpose] !== undefined) {
       return;
@@ -697,9 +709,17 @@
         action: turnstileActions[purpose],
         theme: "light",
         size: "flexible",
-        "expired-callback": function () { turnstile.reset(turnstileWidgets[purpose]); },
+        callback: function () {
+          setTurnstileMessage(purpose, "安全验证已完成，可以发送验证码。", "ok");
+        },
+        "expired-callback": function () {
+          setTurnstileMessage(purpose, "安全验证已过期，请重新完成验证。", "bad");
+          turnstile.reset(turnstileWidgets[purpose]);
+        },
         "error-callback": function () {
-          loginErr("人机验证加载失败，请检查网络后刷新页面");
+          var message = "人机验证加载失败，请检查网络后刷新页面";
+          setTurnstileMessage(purpose, message, "bad");
+          loginErr(message);
         },
       });
     }).catch(function () {
@@ -776,6 +796,7 @@
       var turnstileToken = turnstileTokenFor(purpose);
       if (oemTurnstileEnabled && !turnstileToken) {
         renderTurnstile(purpose);
+        setTurnstileMessage(purpose, "请先完成人机验证，再发送验证码。", "bad");
         return loginErr("请先完成人机验证");
       }
       button.disabled = true;
@@ -788,6 +809,7 @@
         noKick: true,
       }).then(function (result) {
         resetTurnstile(purpose);
+        setTurnstileMessage(purpose, "验证码已发送；60 秒后可重新验证并发送。", "ok");
         loginErr("");
         $("#login-err").hidden = true;
         toast("如果邮箱可用，验证码已经发送");
@@ -795,6 +817,7 @@
       }).catch(function (err) {
         resetTurnstile(purpose);
         button.disabled = false;
+        setTurnstileMessage(purpose, err.message, "bad");
         loginErr(err.message);
       });
     });
