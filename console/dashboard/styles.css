@@ -97,8 +97,9 @@ a:focus-visible {
   min-height: 760px;
   padding: 48px;
   background:
-    radial-gradient(circle at 50% 42%, rgba(89, 70, 210, 0.18), transparent 28%),
-    linear-gradient(rgba(5, 6, 12, 0.74), rgba(5, 6, 12, 0.96));
+    radial-gradient(circle at 50% 36%, rgba(255, 255, 255, 0.96), transparent 29%),
+    radial-gradient(circle at 18% 70%, rgba(242, 175, 111, 0.12), transparent 30%),
+    linear-gradient(145deg, #fbf7f1 0%, #f4ede5 54%, #faf6f0 100%);
 }
 
 .dashboard-data-state[hidden],
@@ -113,10 +114,13 @@ a:focus-visible {
   flex-direction: column;
   width: min(560px, 70vw);
   padding: 56px 64px 52px;
-  border: 1px solid rgba(166, 175, 255, 0.17);
+  border: 1px solid rgba(125, 92, 63, 0.14);
   border-radius: 24px;
-  background: rgba(11, 13, 27, 0.9);
-  box-shadow: 0 30px 100px rgba(0, 0, 0, 0.46), inset 0 1px rgba(255, 255, 255, 0.035);
+  background: rgba(255, 253, 249, 0.96);
+  box-shadow:
+    0 28px 80px rgba(99, 71, 46, 0.12),
+    inset 0 1px rgba(255, 255, 255, 0.96);
+  color: #2d2925;
   text-align: center;
 }
 
@@ -127,16 +131,17 @@ a:focus-visible {
   width: 72px;
   height: 72px;
   margin-bottom: 24px;
-  border: 1px solid rgba(139, 124, 255, 0.45);
+  border: 1px solid rgba(225, 121, 28, 0.42);
   border-radius: 50%;
-  box-shadow: 0 0 36px rgba(139, 124, 255, 0.18);
+  background: rgba(255, 247, 237, 0.88);
+  box-shadow: 0 12px 30px rgba(211, 111, 24, 0.13);
 }
 
 .dashboard-data-state__mark::before,
 .dashboard-data-state__mark::after {
   position: absolute;
   inset: 9px -5px;
-  border: 1px solid rgba(53, 217, 255, 0.26);
+  border: 1px solid rgba(235, 153, 78, 0.32);
   border-radius: 50%;
   content: "";
   transform: rotate(-28deg);
@@ -144,7 +149,7 @@ a:focus-visible {
 
 .dashboard-data-state__mark::after {
   inset: -5px 13px;
-  border-color: rgba(139, 124, 255, 0.22);
+  border-color: rgba(205, 104, 20, 0.24);
   transform: rotate(31deg);
 }
 
@@ -152,8 +157,8 @@ a:focus-visible {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: radial-gradient(circle at 34% 28%, #fff, #8b7cff 35%, #382d8a 78%);
-  box-shadow: 0 0 22px rgba(139, 124, 255, 0.75);
+  background: radial-gradient(circle at 34% 28%, #fff, #f5a55c 35%, #d86b10 78%);
+  box-shadow: 0 0 20px rgba(221, 112, 19, 0.35);
 }
 
 .dashboard-data-state__mark b {
@@ -163,8 +168,14 @@ a:focus-visible {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--cyan);
-  box-shadow: 0 0 10px var(--cyan);
+  background: #e47b20;
+  box-shadow: 0 0 10px rgba(228, 123, 32, 0.42);
+}
+
+.dashboard-data-state .eyebrow {
+  color: #b76520;
+  font-weight: 700;
+  letter-spacing: 0.16em;
 }
 
 .dashboard-data-state h1 {
@@ -177,7 +188,7 @@ a:focus-visible {
 .dashboard-data-state p {
   max-width: 430px;
   margin: 0;
-  color: var(--muted-light);
+  color: #756c64;
   font-size: 14px;
   line-height: 1.75;
 }
@@ -185,7 +196,7 @@ a:focus-visible {
 .dashboard-data-state small {
   min-height: 20px;
   margin-top: 10px;
-  color: var(--muted);
+  color: #9a8f85;
   line-height: 1.6;
 }
 
@@ -194,8 +205,8 @@ a:focus-visible {
   width: 28px;
   height: 28px;
   margin-top: 24px;
-  border: 2px solid rgba(139, 124, 255, 0.18);
-  border-top-color: var(--cyan);
+  border: 2px solid rgba(221, 112, 19, 0.15);
+  border-top-color: #df7418;
   border-radius: 50%;
   animation: dashboard-state-spin 0.9s linear infinite;
 }
@@ -210,19 +221,31 @@ a:focus-visible {
 .dashboard-data-state__actions button {
   min-width: 150px;
   padding: 11px 18px;
-  border: 1px solid rgba(139, 124, 255, 0.35);
+  border: 1px solid rgba(218, 112, 19, 0.3);
   border-radius: 10px;
-  background: rgba(139, 124, 255, 0.11);
-  color: var(--text);
+  background: #fffaf5;
+  color: #b45d14;
   cursor: pointer;
   font: inherit;
   text-decoration: none;
 }
 
+.dashboard-data-state__actions a {
+  border-color: #da7118;
+  background: linear-gradient(135deg, #f29a45, #d76a0d);
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(214, 103, 10, 0.2);
+}
+
 .dashboard-data-state__actions a:hover,
 .dashboard-data-state__actions button:hover {
-  border-color: rgba(53, 217, 255, 0.5);
-  background: rgba(53, 217, 255, 0.09);
+  border-color: #ca6209;
+  background: #fff2e5;
+  transform: translateY(-1px);
+}
+
+.dashboard-data-state__actions a:hover {
+  background: linear-gradient(135deg, #f5a251, #c85e05);
 }
 
 .dashboard-demo-badge {
