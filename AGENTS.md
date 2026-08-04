@@ -49,7 +49,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  客户端 (先用 Element 验证；个人主页/交易/工作流 UI 后做)  │
+│  共享 Vue 客户端 → Web / Electron 桌面 / Capacitor 手机   │
 └────────────────────────┬────────────────────────────┘
                          │ Matrix C-S API + GuDuu OS Star 自定义 API
 ┌────────────────────────▼────────────────────────────┐
@@ -74,11 +74,106 @@
   - `cosmac/memory/` —— 群级记忆 / 知识库 / Rule / Skill
   - `cosmac/bots/`、`cosmac/workflows/`、`cosmac/trading/`、`cosmac/profile/` —— 后续模块
   - `cosmac/tests/` —— GuDuu OS Star 自己的测试
+- `client/` —— GuDuu OS Star 的**唯一客户端业务源码**。后续在目录内逐步形成
+  `apps/web`、`apps/desktop`、`apps/mobile` 与共享 `packages/`；桌面和手机壳不得复制
+  一套业务代码另行维护。
 
 > 注：`cosmac/` 目录在对应模块开工时再创建，不提前建空壳。
 
 ### 多模型抽象层（AI 后端可配置）
 主 AI 背后的大模型**必须做成可插拔**：统一接口，支持 Claude / OpenAI / 本地模型等多后端，通过配置切换。不要把任何一家厂商的 SDK 调用散落在业务逻辑里——全部走 `cosmac/ai/` 的统一抽象。
+
+### 多端客户端架构（2026-08 定稿；开发期）
+
+> 目标：网页版、桌面 App、手机 App 使用同一套业务能力与同一份 Vue/TypeScript
+> 源码，避免 Web、Swift、Kotlin 三套实现长期互相追赶。任何历史原生 iOS/Android
+> 试验工程均不作为正式客户端地基，除非负责人以后明确重新启用。
+
+**技术路线（强制）**：
+
+- Web：Vue 3 + TypeScript + Vite。
+- 桌面：Electron，覆盖 macOS / Windows；Linux 后续按需求补。
+- 手机：Capacitor，覆盖 iOS / Android。
+- Matrix 首期统一走 `matrix-js-sdk`；必须把 Matrix 能力收口到可替换的
+  `MatrixPort`/adapter，未来如确有性能、后台同步或原生加密需求，可增加 Matrix Rust
+  SDK 原生桥，但不得因此重写 AI、任务、知识库、会员等业务 UI。
+- Electron 与 Capacitor 只负责系统壳和原生能力（安全存储、推送、文件、深链、托盘、
+  生物识别等）；**业务规则、权限判断和页面数据流不得散落进 Swift/Kotlin/Electron
+  main 进程**。
+
+**目标目录（按模块开工逐步迁移，不提前建空壳）**：
+
+```text
+client/
+├── apps/
+│   ├── web/          # 网页入口
+│   ├── desktop/      # Electron main/preload/打包配置
+│   └── mobile/       # Capacitor 配置及 ios/android 原生壳
+└── packages/
+    ├── core/         # 认证、Matrix、cosmac API、缓存
+    ├── contracts/    # OpenAPI 类型、事件、权限/版本契约
+    ├── features/     # 聊天、AI、任务、KB、会员、后台等业务
+    ├── ui/           # 跨端设计系统与通用组件
+    └── platform/     # Web/Electron/Capacitor 能力接口
+```
+
+**共享与布局边界**：
+
+- 功能和数据契约必须一致，但不要求三端像素级相同。桌面保持工作区/频道/主内容/AI
+  多栏布局；手机采用底部导航和单页推进；平板按宽度恢复分栏。
+- 页面不得依赖固定桌面宽度。新功能必须同时给出 desktop / tablet / mobile 三档行为；
+  大表格、看板和管理后台在手机上必须提供列表/详情模式，不能只靠横向滚动凑合。
+- `client` 内禁止组件到处直接 `fetch()`；Matrix 与 cosmac 调用分别收口到共享 client，
+  服务端 API 优先用 OpenAPI 生成类型，权限仍以服务端为准。
+- 同一产品版本只构建一次共享 Vue 产物；未来进入发布期时，Web、Electron、Capacitor
+  必须消费同一 commit、同一前端产物摘要，禁止各平台从不同分支独立重建。
+
+**跨端安全底线**：
+
+- 不把 Matrix access token 长期留在普通 `localStorage`：Web 使用受控会话策略；桌面用
+  Electron `safeStorage`；iOS 用 Keychain；Android 用 Keystore。
+- Electron 必须开启 sandbox、context isolation，renderer 禁止直接获得 Node 权限；
+  preload 只暴露最小白名单桥。
+- 正式聊天客户端必须明确并验证 Matrix E2EE/Rust Crypto、独立 device ID、密钥恢复、
+  加密附件和多端验证，不得出现 Web 能读而 App 不能读（或反之）的房间。
+- 手机推送走 APNs/FCM + Matrix push gateway；密钥只留在 CI/服务端安全配置，不能进入
+  Vue 包或 OEM 配置。
+
+**OEM 客户端原则**：
+
+- 缺省提供一个 GuDuu OS 通用 App，通过输入域名、邀请链接或二维码连接不同 OEM；
+  依次读取标准 `/.well-known/matrix/client` 和 GuDuu 客户端配置端点，动态加载
+  homeserver、Logo、主题、功能开关、帮助/隐私地址。
+- 大型 OEM 可购买独立白标安装包，但必须由同一源码和 CI 根据受签名的 tenant manifest
+  生成，禁止复制客户分支。桌面可生成独立名称/图标/更新通道；手机白标涉及独立
+  Bundle ID、签名和商店条目，发布期再单独启用。
+- 客户端下发的租户配置只能提供数据和样式，禁止下载并执行可改变 App 功能的远程代码。
+
+**更新分类（开发时就要遵守）**：
+
+1. 服务端数据/配置（Agent、Skill、工作流、套餐、规则、OEM 主题）应让已安装客户端
+   直接同步，通常不要求重新打包。
+2. Vue 界面或共享业务代码变化，未来发布期必须形成同一版本的 Web、Desktop、iOS、
+   Android 产物；后端至少兼容当前与前两个重要客户端版本，并用按平台最低版本的
+   feature flag 避免商店审核时间差导致功能断裂。
+3. 推送、权限、支付、安全存储等原生桥变化只重建受影响平台，但仍登记在同一产品版本
+   清单中；会员权益永远以服务端幂等订单/凭据验签后的状态为准。
+
+**下载与发布预留（当前禁止实施）**：
+
+- 未来官网统一入口预留为 `https://www.guduu.co/download`，稳定下载域名预留为
+  `https://download.guduu.co`；桌面不可变安装包放独立对象存储 + CDN，Nexus 只保存
+  版本、摘要、状态和链接，不把大文件写入 PostgreSQL、Docker Registry 或系统盘。
+- 未来稳定链接按平台重定向到带版本号的不可变文件；官网同时展示 macOS/Windows、
+  App Store、Google Play、网页版和 OEM 邀请二维码。通用 OEM 下载链接负责选择租户，
+  不为普通 OEM 复制安装包。
+- 客户端发布未来使用独立 `client` 轨道，不混入现有 `nexus`/`node` 双轨；版本状态、
+  商店审核、灰度、自动更新、回滚和下载地址在负责人明确启动发布阶段后再补入 Nexus。
+- **当前处于开发设计期**：在负责人明确说“开始发布/上架桌面和手机 App”之前，禁止
+  创建 App Store/Google Play/Microsoft Store 等正式条目，禁止申请或写入生产签名凭据，
+  禁止上传安装包、开放公开下载地址、启用桌面自动更新 feed、创建 Nexus `client`
+  发布轨道或执行任何商店提交。允许本地原型、模拟器/真机调试、测试签名、内部构建和
+  自动化测试；现有 Web 与 OEM 节点的正常发布规则不受此门禁影响。
 
 ### 数据存储分层（写持久化代码前先对照这张表）
 
@@ -129,6 +224,7 @@
 | 4 | 交易系统（会员订阅） | 🟡 进行中 | **主线=会员订阅/充值**，多渠道支付(Stripe/PayPal/USDT/支付宝/微信)按 IP 地理路由，范围"较完整"。**P1 地基已落地+单测**(`cosmac/trading/`)：套餐定义(控制室 `cosmac.plans`)+ 订单(DB `cosmac_order`)+ **可插拔支付抽象** `PaymentProvider`(密钥只进 env)+ 订单服务(下单/支付成功**幂等**开通/**续费按原到期日顺延**)+ 会员**到期**(扩 `members.py`：grant 带 expires_ts、查等级自动判过期)+ 手动/mock 支付(HMAC 验签)。**分期**：P2 Stripe 全链路+webhook+前端套餐页；P3 PayPal/USDT+地理路由；P4 支付宝/微信+对账/退款。 |
 | 5 | 个人主页 | ⬜ | 需要客户端 UI 配合 |
 | 6 | **OEM 体系（GuDuu Nexus + 发行版）** | 🟡 进行中 | 当前增量：完善 Nexus 超级管理员工作台。后台采用左侧功能导航，把舰队总览、版本管理、节点实例、授权申请、OEM 客户、支付订单和只读数据大屏分区呈现；舰队总览加入资金经营视角，展示累计实收、近 30 天实收、待支付、授权码/Token 充值收入构成与支付渠道接入状态，金额只以服务端已确认 `paid` 的订单计入收入，支付宝/微信 API 未接入前明确显示“待接 API”，绝不伪造流水；**OEM 归属体系采用无限层级树**：每个 OEM 只有一个直属上级但可有任意深度下级，不设层数、佣金或分账规则；每个 OEM 获得稳定的随机分享码，门户生成“邀请普通用户”与“邀请下级 OEM”链接及二维码。普通用户通过带分享码的 OEM 实例注册链接建号后，实例本地先持久化归属再通过授权 KEY 幂等同步到 Nexus，Nexus 记录 `用户→直属 OEM→完整祖先链`，母舰暂时只做关系与人数统计，不参与用户密码、聊天数据或收益分配；新版本表单根据当前产品版本与 `DEVLOG.md` 自动生成版本号、Git tag、标题和面向 OEM 的更新说明，仍默认“未发布”；节点版本还必须匹配 CI 登记的 bot/web 不可变 Docker 摘要。超级管理员维护永久历史版本列表，发布流程为“未发布→灰度监测→全量发布→暂停”，并可选择已发布过的旧版本发起全节点回撤。节点升级成功后，同一份版本说明由成功投放记录自动呈现在对应 OEM 门户，作为更新公告（不向客户业务群自动发消息）。节点更新仍由宿主代理按 KEY 主动拉取，禁止 Nexus 主动 SSH OEM 服务器，也禁止给 bot 容器宿主机控制权。 |
+| 7 | **多端客户端（Web / Desktop / Mobile）** | ⬜ 方案已定·未开工 | 唯一正式路线为共享 Vue 3 + TypeScript：Web 直接运行，桌面用 Electron，手机用 Capacitor iOS/Android；共享业务、Matrix/cosmac adapter、响应式布局、安全存储、E2EE、推送与 OEM 动态配置按 §3「多端客户端架构」实施。当前只允许设计、本地开发和测试；桌面安装包、应用商城、公开下载、自动更新及 Nexus `client` 发布轨道必须等负责人明确启动发布阶段。 |
 | R | **品牌化 Matrix→GuDuu OS Star** | ⬜ 持续 | 贯穿全程的横切任务，按 §7 三层红线分层改，每碰到呈现层字样就顺手改 |
 
 > **Nexus 支付渠道更新（2026-08）**：舰队总览同时覆盖国内支付宝/微信与海外
@@ -386,6 +482,13 @@
 不接收 Nexus 自动任务。仅修改 `nexus/`、Nexus 门户/大屏或中央平台运维配置时，
 提交并推送 `main` 后直接部署中央 Nexus，**不升节点版本、不打节点 tag、不构建镜像、
 不推送任何节点**。每次交付必须分别报告 GitHub、双镜像仓、节点任务三项真实状态。
+7.8 **桌面/手机 App 发布门禁（强制，优先于本节通用自动发布规则）**：现阶段只设计、
+开发和本地验证 Electron/Capacitor 客户端。除非负责人在当前任务中明确说“开始发布/上架
+桌面和手机 App”，否则不得创建或操作应用商城正式条目、生产签名、公开安装包、官网
+下载入口、自动更新 feed、Nexus `client` 轨道或商店提交；不得用远程下载 Vue/JS 代码
+绕过应用商店审核。现有 Web、Nexus 与 OEM 节点仍按既有发布规则执行，不因本门禁停更。
+负责人启动 App 发布阶段后，必须先回到本文件补齐真实商店 ID、签名边界、下载存储、
+统一版本清单、审核/灰度/回滚状态机，再进行任何外部发布操作。
 8. **生产基础设施只认当前 Google Cloud 架构**：现役主机、域名、账号和目录以本机被忽略的
    `DEPLOY.md` 为唯一依据。项目规范、待办、架构和用户文档不得保留已退役云厂商、旧服务器
    IP、旧域名、旧面板或旧登录别名；历史经验只保留可复用的技术结论，并改写成不带旧基础
