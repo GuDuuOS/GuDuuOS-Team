@@ -43,16 +43,17 @@ https://dev-nexus.guduu.co/nexus/release/manifest
 
 ### OEM 宿主机拉取权限
 
-默认把 GHCR 包保持私有。每台节点在 `/etc/guduu-registry.env` 直接填写一个只具备
-`read:packages` 的 GitHub classic PAT，并保持文件权限 `0600`：
+bot/web GHCR 发行包设为 public，只提供匿名读取；OEM 客户无需注册
+GitHub 账号或创建 PAT。`/etc/guduu-registry.env` 中 GHCR 字段保持空值：
 
 ```text
-GUDUU_REGISTRY_USER=<只读机器账号>
-GUDUU_REGISTRY_TOKEN=<read:packages token>
+GUDUU_REGISTRY_USER=
+GUDUU_REGISTRY_TOKEN=
 ```
 
-不要把令牌写入 `distro/.env`、Nexus、聊天或版本公告。若以后明确把两个镜像包设为
-public，可以保持两个值为空，更新器会匿名拉取。
+公开拉取不代表免授权：安装器仍必须先向 Nexus 提交 OEM KEY 和审批域名，
+节点未激活时仍由服务端拒绝注册及其他账号登录。公开镜像中不包含 Nexus/OEM
+后台、客户数据、KEY 或平台凭据；CI 的写入权限仍只留在 GitHub Actions。
 
 ## 灰度与回撤
 

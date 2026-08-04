@@ -22,6 +22,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Validate tag and source versions
+        id: release
         shell: bash
         run: |
           set -euo pipefail
@@ -29,6 +30,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           grep -Fq "__version__ = \"${VERSION}\"" cosmac/__init__.py
           node -e 'const p=require("./client/package.json"); if(p.version!==process.env.GITHUB_REF_NAME.slice(1)) process.exit(1)'
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -51,7 +53,10 @@ jobs:
           file: distro/Dockerfile.bot
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ghcr.io/guduuos/guduu-os-bot:${{ github.ref_name }}
+          # 同一不可变版本同时提供带 v 和不带 v 的 Tag；自动更新仍使用 digest。
+          tags: |
+            ghcr.io/guduuos/guduu-os-bot:${{ github.ref_name }}
+            ghcr.io/guduuos/guduu-os-bot:${{ steps.release.outputs.version }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -67,7 +72,9 @@ jobs:
           file: distro/Dockerfile.web
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ghcr.io/guduuos/guduu-os-web:${{ github.ref_name }}
+          tags: |
+            ghcr.io/guduuos/guduu-os-web:${{ github.ref_name }}
+            ghcr.io/guduuos/guduu-os-web:${{ steps.release.outputs.version }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

@@ -1,5 +1,12 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-08-04 — GuDuu OS 1.22.1 (patch)
+
+- 发行：GHCR 同时提供 `vX.Y.Z` 与 `X.Y.Z` 两个不可变版本 Tag，
+  便于人工拉取和灾备排障；OEM 自动安装与升级仍只使用冻结 digest。
+- 修复：自建镜像仓登录或拉取失败时，宿主更新器会自动回退到
+  相同 digest 的 GHCR 灾备镜像，不再因单仓故障阻断节点更新。
+
 ## 2026-08-04 — GuDuu OS 1.22.0 (minor)
 
 - 修复：宿主更新代理使用固定 GuDuu OS 请求标识访问 Nexus，避免 Python urllib
