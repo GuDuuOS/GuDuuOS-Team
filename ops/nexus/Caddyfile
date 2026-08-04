@@ -1,0 +1,63 @@
+{
+	email lgpdao@gmail.com
+}
+
+dev-nexus.guduu.co {
+	encode zstd gzip
+	@cloudflare remote_ip \
+		173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 \
+		103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 \
+		190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 \
+		198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 \
+		104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 \
+		2400:cb00::/32 2606:4700::/32 2803:f800::/32 \
+		2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+	handle @cloudflare {
+		reverse_proxy 127.0.0.1:9100 {
+			# 只有 TCP 对端属于 Cloudflare 官方网段时才读该头，
+			# 使用项目专属头避免 Caddy 2.6 对常见 X-Real-IP 的内置处理。
+			header_up X-Nexus-Client-IP {http.request.header.Cf-Connecting-Ip}
+		}
+	}
+	respond 403
+}
+
+# 平台超级管理员独立入口；Cloudflare Access 与应用鉴权仍同时生效。
+admin-nexus.guduu.co {
+	encode zstd gzip
+	@cloudflare remote_ip \
+		173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 \
+		103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 \
+		190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 \
+		198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 \
+		104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 \
+		2400:cb00::/32 2606:4700::/32 2803:f800::/32 \
+		2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+	handle @cloudflare {
+		@root path /
+		redir @root /portal/admin/ 302
+		reverse_proxy 127.0.0.1:9100 {
+			header_up X-Nexus-Client-IP {http.request.header.Cf-Connecting-Ip}
+		}
+	}
+	respond 403
+}
+
+# 公网 Registry 只允许拉取；宿主同步账号直连 127.0.0.1:5000 写入。
+registry.guduu.co {
+	encode zstd gzip
+	@cloudflare remote_ip \
+		173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 \
+		103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 \
+		190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 \
+		198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 \
+		104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 \
+		2400:cb00::/32 2606:4700::/32 2803:f800::/32 \
+		2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+	handle @cloudflare {
+		@write_requests method POST PUT PATCH DELETE
+		respond @write_requests 405
+		reverse_proxy 127.0.0.1:5000
+	}
+	respond 403
+}

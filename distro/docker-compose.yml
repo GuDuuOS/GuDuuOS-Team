@@ -55,9 +55,9 @@ services:
     # Synapse 误判成 unhealthy，卡死整条依赖链。
 
   bot:
-    # 日常发布由更新代理注入 GHCR 的 ``仓库@sha256:digest``；默认本地名仅供首次
-    # install/bootstrap 构建。镜像引用不包含客户配置，所有环境变量仍来自宿主 .env。
-    image: ${COSMAC_BOT_IMAGE:-cosmac-bot-local}
+    # 首次安装与日常更新都必须由 Nexus 下发 ``仓库@sha256:digest``；网页版没有
+    # 本地源码构建/免授权模式。build 仅供仓库开发者显式执行 docker compose build。
+    image: ${COSMAC_BOT_IMAGE:?请先运行 install.sh 获取正式 bot 镜像}
     build:
       context: ..
       dockerfile: distro/Dockerfile.bot
@@ -123,16 +123,22 @@ services:
       # compose 的 environment 是白名单式,不在此列出则 .env 里配了也传不进容器。
       COSMAC_STREAM_REPLY: ${COSMAC_STREAM_REPLY:-}
       # —— OEM 体系（模块6）：授权码 + 母舰地址（心跳/网关）——
-      COSMAC_OEM_KEY: ${COSMAC_OEM_KEY:-}
-      COSMAC_NEXUS_URL: ${COSMAC_NEXUS_URL:-}
+      COSMAC_OEM_KEY: ${COSMAC_OEM_KEY:?网页版部署必须配置 OEM 授权码}
+      COSMAC_NEXUS_URL: ${COSMAC_NEXUS_URL:?网页版部署必须配置 Nexus 地址}
+      # 首次激活失败时，节点仅允许 bootstrap 管理员完成服务器代办激活。
+      COSMAC_NODE_ACTIVATION_REQUIRED: ${COSMAC_NODE_ACTIVATION_REQUIRED:-1}
+      COSMAC_NODE_ACTIVATION_STATE_PATH: /var/lib/cosmac/node-activation.json
       # bootstrap.py 用：初始管理员
       COSMAC_ADMIN_USER: ${COSMAC_ADMIN_USER:-admin}
       COSMAC_ADMIN_EMAIL: ${COSMAC_ADMIN_EMAIL:-}
+    volumes:
+      # 激活成功状态必须跨 bot 重建保留，且与聊天/业务 DB 分开，方便灾备核查。
+      - ./data/cosmac:/var/lib/cosmac
 
   web:
     # Caddy：唯一对公网开放的容器。自动向 Let's Encrypt 签发/续期证书，
     # 同域名下：前端静态(/) + Synapse(/_matrix,/_synapse/client) + bot(/cosmac)。
-    image: ${COSMAC_WEB_IMAGE:-cosmac-web-local}
+    image: ${COSMAC_WEB_IMAGE:?请先运行 install.sh 获取正式 web 镜像}
     build:
       context: ..
       dockerfile: distro/Dockerfile.web

@@ -14,6 +14,13 @@ COSMAC_ADMIN_EMAIL={{ADMIN_EMAIL}}
 COSMAC_OEM_KEY={{OEM_KEY}}
 # GuDuu Nexus 母舰地址（心跳上报 + LLM 网关都指它）
 COSMAC_NEXUS_URL={{NEXUS_URL}}
+# 仅当安装阶段 Nexus 兑换暂时失败时由 install.sh 置 1；激活成功会写入 data/cosmac，
+# 不把 KEY 或激活结果交给浏览器。
+COSMAC_NODE_ACTIVATION_REQUIRED={{NODE_ACTIVATION_REQUIRED}}
+# 首次安装由 Nexus 正式发布记录下发；始终冻结到不可变 digest，禁止使用 latest。
+COSMAC_VERSION={{INSTALL_VERSION}}
+COSMAC_BOT_IMAGE={{BOT_IMAGE}}
+COSMAC_WEB_IMAGE={{WEB_IMAGE}}
 
 # —— 数据库口令（install.sh 随机生成；首次初始化后改这里不会自动改库，别乱动）——
 PG_SYNAPSE_PASSWORD={{PG_SYNAPSE_PASSWORD}}
@@ -47,7 +54,7 @@ COSMAC_TURNSTILE_SECRET=
 COSMAC_SINGLE_SESSION=
 
 # —— AI 模型（OEM 模式：全部经 GuDuu Nexus 网关，API key 就是你的授权码）——
-# install.sh 已按是否有授权码自动填好；独立模式(无授权码)默认 echo 占位。
+# 网页发行版强制 OEM 授权，install.sh 会统一填入 Nexus 网关。
 # 可选 provider：echo(占位)/claude/openai/deepseek(方舟)/gemini
 COSMAC_LLM_PROVIDER={{LLM_PROVIDER}}
 COSMAC_LLM_MODEL={{LLM_MODEL}}

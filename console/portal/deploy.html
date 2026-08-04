@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GuDuu OS · 部署中心</title>
+<script src="/portal/theme-init.js?v=1"></script>
+<link rel="stylesheet" href="/portal/portal.css?v=34" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-dot"></span><b>GuDuu OS</b><em>部署中心</em></div>
+  <nav class="topnav"><a href="/portal/">OEM 企业控制台</a></nav>
+</header>
+<main class="deploy-wrap">
+  <section class="deploy-hero">
+    <p class="eyebrow">SELF-HOSTED · OEM EDITION</p>
+    <h1>把 GuDuu OS 部署到你的服务器</h1>
+    <p>网页版暂不提供免授权本地版。每个节点都需要独立 OEM 授权，并绑定审批时填写的部署域名。</p>
+    <div class="deploy-actions">
+      <a class="primary deploy-link" href="/portal/?register=1#oem-licenses">注册成为 OEM</a>
+      <a class="ghost deploy-link" href="/portal/#oem-licenses">登录并申请授权</a>
+    </div>
+  </section>
+  <section class="deploy-grid">
+    <article class="panel"><small>01</small><h2>准备服务器与域名</h2><p>Ubuntu 22.04/24.04 或 Debian 12，建议至少 4 核、8 GB 内存；域名 A/AAAA 记录先解析到服务器。</p></article>
+    <article class="panel"><small>02</small><h2>申请节点授权</h2><p>在 OEM 控制台填写部署域名、用途和可选公网 IP，完成付款或平台主管审批后领取 KEY。</p></article>
+    <article class="panel"><small>03</small><h2>运行安装器</h2><p>通过 SSH 在服务器运行发行版安装器。安装器强制校验 KEY 和域名，并直接拉取 CI 冻结的 Docker 摘要，不在服务器编译源码。</p></article>
+    <article class="panel"><small>04</small><h2>浏览器完成激活</h2><p>若网络或 IP 校验暂时失败，节点只开放首次管理员激活页；修正配置后重新验证，成功才开放其他账号登录和注册。</p></article>
+  </section>
+  <section class="panel deploy-requirements">
+    <h2>部署前检查</h2>
+    <ul><li>一个授权对应一个审批域名和一个节点。</li><li>80/443 端口可用，或明确选择已有反向代理模式。</li><li>服务器能够访问 Nexus，以及平台自建镜像仓或 GHCR 至少一处。</li><li>准备 SMTP 配置；不配置时普通用户邮箱注册不可用。</li></ul>
+    <p class="hint">安装命令只在授权获批后提供。请勿从第三方网站下载镜像或脚本，也不要使用可移动的 latest 标签。</p>
+  </section>
+</main>
+</body>
+</html>

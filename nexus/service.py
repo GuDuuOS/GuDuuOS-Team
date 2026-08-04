@@ -47,6 +47,7 @@
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import io
 import json
 import logging
@@ -195,9 +196,32 @@ class NexusHandler(BaseHTTPRequestHandler):
         return payload
 
     def _client_ip(self) -> str:
-        # 生产在 Caddy 后面，以 X-Forwarded-For 第一跳为准；直连时用对端地址
-        fwd = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-        return fwd or (self.client_address[0] if self.client_address else "?")
+        """返回可用于限流、审计与 KEY IP 绑定的可信来源地址。
+
+        Nexus 只监听本机，由宿主 Caddy 在确认 Cloudflare 来源后把解析结果覆盖写入
+        ``X-Nexus-Client-IP``。项目专属头避免 Caddy 2.6 对常见
+        ``X-Real-IP`` 的内置代理处理。这里绝不直接读取客户端
+        可伪造的 ``X-Forwarded-For``；只有 TCP 对端确为 loopback 时
+        才接收 Caddy 写入的单值专属头。开发直连同样会
+        安全地回退到对端地址，避免测试环境必须伪造反代头。
+        """
+        peer = self.client_address[0] if self.client_address else ""
+        try:
+            peer_is_loopback = bool(peer) and ipaddress.ip_address(peer).is_loopback
+        except ValueError:
+            peer_is_loopback = False
+        if peer_is_loopback:
+            supplied = (
+                self.headers.get("X-Nexus-Client-IP")
+                or self.headers.get("X-Real-IP")
+                or ""
+            ).strip()
+            try:
+                # 只接受一个规范 IP，拒绝逗号链和任意文本，确保审计/绑定口径稳定。
+                return str(ipaddress.ip_address(supplied)) if supplied else peer
+            except ValueError:
+                pass
+        return peer or "?"
 
     def _check_admin(self) -> bool:
         """只接受具名管理员会话或 SSH 单次码换取的短期恢复会话。
@@ -1492,6 +1516,24 @@ class NexusHandler(BaseHTTPRequestHandler):
                 self._json(200, out)
 
             self._with_session(_redeem)
+            return
+
+        if path == "/nexus/install/artifact":
+            # 首次安装尚未拥有实例会话，只能用已审批 KEY 获取公开镜像摘要；接口不返回
+            # 仓库凭据，且复用兑换限频，防止被批量探测 KEY 或版本信息。
+            if not _rate_ok(self._client_ip()):
+                self._err(429, "NEXUS_RATE_LIMIT", "尝试过于频繁，请一小时后再试")
+                return
+            self._with_session(
+                lambda s: self._json(
+                    200,
+                    releases.install_artifact(
+                        s,
+                        str(body.get("key", "")),
+                        str(body.get("domain", "")),
+                    ),
+                )
+            )
             return
 
         if path == "/nexus/heartbeat":

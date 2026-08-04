@@ -24,6 +24,7 @@ _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _IMAGE_RE = re.compile(
     r"^ghcr\.io/guduuos/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
 )
+_MIRROR_PREFIX = "registry.guduu.co/guduuos/"
 _MAX_CLOCK_SKEW_SECONDS = 5 * 60
 
 
@@ -141,6 +142,12 @@ def manifest_dict(row: NexusImageManifest) -> Dict[str, Any]:
         "source_commit": row.source_commit,
         "bot_image": row.bot_image,
         "web_image": row.web_image,
+        # 自建仓不重新构建镜像，只把 GHCR 中同一份 manifest
+        # 按原 digest 镜像。因此镜像引用可由已冻结的 GHCR 引用
+        # 唯一推导，
+        # 无需给现有生产表加列，也不会破坏历史发布。
+        "bot_mirror_image": _mirror_image(row.bot_image),
+        "web_mirror_image": _mirror_image(row.web_image),
         "platforms": row.platforms,
         "created_ts": row.created_ts,
     }
@@ -183,5 +190,18 @@ def artifact_dict(row: Optional[NexusReleaseArtifact]) -> Dict[str, Any]:
         "source_commit": row.source_commit,
         "bot_image": row.bot_image,
         "web_image": row.web_image,
+        "bot_mirror_image": _mirror_image(row.bot_image),
+        "web_mirror_image": _mirror_image(row.web_image),
         "platforms": row.platforms,
     }
+
+
+def _mirror_image(ghcr_image: str) -> str:
+    """把官方 GHCR 精确摘要转为自建仓的同摘要引用。
+
+    同步任务使用 ``skopeo copy --all --preserve-digests``，所以这里只替换
+    仓库前缀，``@sha256`` 后的 manifest list 摘要必须原样保留。
+    """
+    if not _IMAGE_RE.fullmatch(ghcr_image):
+        raise FleetError("NEXUS_BAD_MANIFEST", "无法生成自建仓镜像引用")
+    return _MIRROR_PREFIX + ghcr_image.split("/", 2)[-1]

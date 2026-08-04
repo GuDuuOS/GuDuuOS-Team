@@ -899,6 +899,38 @@ def request_key(
     source_ip: str = "",
 ) -> Dict[str, Any]:
     """OEM 提交一张结构化授权申请（一张申请对应一个节点 KEY）。"""
+    # 先锁定 OEM 账号行，再查重与插入。PostgreSQL 下同一账号的
+    # 并发双击会串行化，避免两个请求同时通过“暂无重复”检查。
+    account = s.execute(
+        select(NexusOem)
+        .where(NexusOem.id == int(oem_id))
+        .with_for_update()
+    ).scalar_one_or_none()
+    if account is None:
+        raise FleetError("NEXUS_OEM_NOT_FOUND", "OEM 账号不存在", 404)
+    clean_domain = _clean_domain(deployment_domain)
+    # 一个 OEM 可以购买多个节点，所以不能粗暴限制“每账号一单”；
+    # 真正的重复键是“同账号 + 同部署域名”。已拒绝/已撤回允许重新申请，
+    # 待审、待补资料与已批准都必须复用原记录，不再新建。
+    existing_domains = s.execute(
+        select(NexusKeyRequest, NexusKeyRequestProfile)
+        .join(
+            NexusKeyRequestProfile,
+            NexusKeyRequestProfile.request_id == NexusKeyRequest.id,
+        )
+        .where(
+            NexusKeyRequest.oem_id == int(oem_id),
+            NexusKeyRequest.status.in_(("pending", "needs_info", "approved")),
+            NexusKeyRequestProfile.deployment_domain == clean_domain,
+        )
+    ).first()
+    if existing_domains is not None:
+        existing_request = existing_domains[0]
+        raise FleetError(
+            "NEXUS_REQUEST_DOMAIN_EXISTS",
+            f"该部署域名已有申请 #{existing_request.id}，请查看原申请",
+            409,
+        )
     pending = (
         s.execute(
             select(NexusKeyRequest).where(
@@ -915,14 +947,10 @@ def request_key(
             f"已有 {len(pending)} 张处理中申请，请等待处理或撤回后再提交",
             429,
         )
-    account = s.get(NexusOem, int(oem_id))
-    if account is None:
-        raise FleetError("NEXUS_OEM_NOT_FOUND", "OEM 账号不存在", 404)
     profile = s.get(NexusOemProfile, int(oem_id))
     clean_purpose = (purpose or note or "").strip()[:255]
     if not clean_purpose:
         raise FleetError("NEXUS_REQUEST_PURPOSE_REQUIRED", "请填写使用场景")
-    clean_domain = _clean_domain(deployment_domain)
     # 先把网络策略完整校验并计算成不可逆值，再创建申请主记录，避免脚本调用方
     # 忘记回滚时留下只有主表、没有绑定资料的半成品申请。
     if strict_ip and not (expected_public_ip or "").strip():

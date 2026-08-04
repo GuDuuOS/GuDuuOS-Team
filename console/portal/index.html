@@ -27,6 +27,7 @@
     <b>GuDuu Nexus</b><em>控制台</em>
   </div>
   <nav class="topnav">
+    <a href="/portal/deploy.html">部署中心</a>
     <a class="dashboard-link" href="/" target="_blank" rel="noopener" hidden>数据大屏 ↗</a>
     <button id="btn-theme" class="ghost small" title="切换白色 / 暗色风格">☀️ 白色</button>
     <span id="who" class="who" hidden></span>
@@ -437,7 +438,7 @@
         <span class="admin-menu-icon">⌂</span><span>舰队总览</span>
       </button>
       <button class="admin-menu-item" data-admin-page="releases">
-        <span class="admin-menu-icon">↻</span><span>版本管理</span><em id="nav-count-releases">0</em>
+        <span class="admin-menu-icon">↻</span><span>版本与镜像</span><em id="nav-count-releases">0</em>
       </button>
       <button class="admin-menu-item" data-admin-page="instances">
         <span class="admin-menu-icon">◇</span><span>节点实例</span><em id="nav-count-instances">0</em>
@@ -528,7 +529,7 @@
     <div class="admin-page" data-admin-view="releases" hidden>
       <section class="panel" id="panel-releases">
         <div class="panel-head">
-          <h2>版本发布与历史列表</h2>
+          <div><h2>版本发布与镜像交付</h2><p class="hint">版本负责审批、灰度、全量与回撤；Docker 镜像只作为 OEM 节点的不可变交付物。</p></div>
           <div class="release-head-actions">
             <button id="btn-release-generate" class="primary small" type="button">自动生成最新版本</button>
             <button id="btn-release-refresh" class="ghost small" type="button">刷新状态</button>

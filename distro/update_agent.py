@@ -26,6 +26,9 @@ _VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 _IMAGE_RE = re.compile(
     r"^ghcr\.io/guduuos/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
 )
+_MIRROR_RE = re.compile(
+    r"^registry\.guduu\.co/guduuos/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
+)
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _SCRIPT_DIR.parent
 _ENV_FILE = _SCRIPT_DIR / ".env"
@@ -130,6 +133,8 @@ def _artifact_command(update: Dict[str, Any], target: str, git_ref: str) -> list
         raise RuntimeError("Nexus 返回了不支持的节点交付方式")
     bot_image = str(artifact.get("bot_image") or "").strip().lower()
     web_image = str(artifact.get("web_image") or "").strip().lower()
+    bot_mirror = str(artifact.get("bot_mirror_image") or "").strip().lower()
+    web_mirror = str(artifact.get("web_mirror_image") or "").strip().lower()
     if (
         not _IMAGE_RE.fullmatch(bot_image)
         or not bot_image.startswith("ghcr.io/guduuos/guduu-os-bot@sha256:")
@@ -140,6 +145,14 @@ def _artifact_command(update: Dict[str, Any], target: str, git_ref: str) -> list
         or not web_image.startswith("ghcr.io/guduuos/guduu-os-web@sha256:")
     ):
         raise RuntimeError("Nexus 返回了不合法的 web 镜像摘要")
+    if not _MIRROR_RE.fullmatch(bot_mirror) or not _MIRROR_RE.fullmatch(web_mirror):
+        raise RuntimeError("Nexus 返回了不合法的自建仓镜像摘要")
+    # 两个仓必须指向同一 manifest list；仅比较名字不够，
+    # 直接比较 @sha256 后的内容地址才能阻止镜像被调包。
+    if bot_mirror.rsplit("@", 1)[-1] != bot_image.rsplit("@", 1)[-1]:
+        raise RuntimeError("bot 双仓镜像摘要不一致")
+    if web_mirror.rsplit("@", 1)[-1] != web_image.rsplit("@", 1)[-1]:
+        raise RuntimeError("web 双仓镜像摘要不一致")
     return [
         sys.executable,
         str(_SCRIPT_DIR / "apply_images.py"),
@@ -149,6 +162,10 @@ def _artifact_command(update: Dict[str, Any], target: str, git_ref: str) -> list
         bot_image,
         "--web-image",
         web_image,
+        "--bot-mirror-image",
+        bot_mirror,
+        "--web-mirror-image",
+        web_mirror,
     ]
 
 

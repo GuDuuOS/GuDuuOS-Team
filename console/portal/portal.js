@@ -13,6 +13,7 @@
   var ADMIN_ENTRY_PATH = "/portal/admin/";
   var volatileAuth = null; // 浏览器禁用 Storage 时的当前页面兜底，绝不回落长期存储
   var adminRestoreTried = false;
+  var deploymentIntentApplied = false;
 
   // ---------- 主题（白色/暗色双风格,同一设计语言,只换明暗;选择持久化） ----------
   function applyTheme(theme) {
@@ -375,7 +376,7 @@
   // hash 状态机维护当前功能页；这里只切展示区域，所有权限和数据仍由服务端接口控制。
   var ADMIN_PAGE_TITLES = {
     overview: "舰队总览",
-    releases: "版本管理",
+    releases: "版本与镜像",
     instances: "节点实例",
     licenses: "授权与申请",
     customers: "OEM 客户",
@@ -613,6 +614,17 @@
         return;
       }
       show("#view-oem");
+      var requestedDomain = new URLSearchParams(window.location.search).get("deployment_domain") || "";
+      // 节点激活页带域名跳来时，登录/注册成功后直接落到授权申请并预填域名。只应用
+      // 一次，避免用户随后手工清空或修改表单时又被 URL 强行覆盖。
+      if (requestedDomain && !deploymentIntentApplied) {
+        deploymentIntentApplied = true;
+        window.location.hash = "oem-licenses";
+        var licenseForm = $("#form-request");
+        if (licenseForm && !licenseForm.deployment_domain.value) {
+          licenseForm.deployment_domain.value = requestedDomain.toLowerCase().replace(/\.$/, "");
+        }
+      }
       selectOemPage(oemPageFromHash(), false);
       loadOem();
     }
@@ -640,6 +652,12 @@
     form.inviter.value = invite;
     form.inviter.readOnly = true;
     form.inviter.title = "该直属上级来自邀请链接";
+  })();
+  // 节点激活页明确选择“注册成为 OEM”时直接展示注册表单；普通访问仍默认登录。
+  (function applyActivationRegistrationIntent() {
+    if (new URLSearchParams(window.location.search).get("register") !== "1") return;
+    var tab = document.querySelector('[data-tab="oem-reg"]');
+    if (tab) tab.click();
   })();
   function loginErr(msg) { var el = $("#login-err"); el.textContent = msg; el.hidden = false; }
 

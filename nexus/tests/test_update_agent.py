@@ -71,6 +71,12 @@ class UpdateAgentTest(unittest.TestCase):
                 "mode": "container",
                 "bot_image": "ghcr.io/guduuos/guduu-os-bot@sha256:" + "a" * 64,
                 "web_image": "ghcr.io/guduuos/guduu-os-web@sha256:" + "b" * 64,
+                "bot_mirror_image": (
+                    "registry.guduu.co/guduuos/guduu-os-bot@sha256:" + "a" * 64
+                ),
+                "web_mirror_image": (
+                    "registry.guduu.co/guduuos/guduu-os-web@sha256:" + "b" * 64
+                ),
             }
         }
         command = update_agent._artifact_command(update, "1.9.0", "v1.9.0")
@@ -78,6 +84,38 @@ class UpdateAgentTest(unittest.TestCase):
         update["artifact"]["bot_image"] = "evil.example/bot@sha256:" + "a" * 64
         with self.assertRaises(RuntimeError):
             update_agent._artifact_command(update, "1.9.0", "v1.9.0")
+
+    def test_mirror_digest_must_equal_ghcr_digest(self):
+        """两个仓的名称即使合法，内容摘要不同也必须拒绝。"""
+        update = {
+            "artifact": {
+                "mode": "container",
+                "bot_image": "ghcr.io/guduuos/guduu-os-bot@sha256:" + "a" * 64,
+                "web_image": "ghcr.io/guduuos/guduu-os-web@sha256:" + "b" * 64,
+                "bot_mirror_image": (
+                    "registry.guduu.co/guduuos/guduu-os-bot@sha256:" + "c" * 64
+                ),
+                "web_mirror_image": (
+                    "registry.guduu.co/guduuos/guduu-os-web@sha256:" + "b" * 64
+                ),
+            }
+        }
+        with self.assertRaisesRegex(RuntimeError, "bot 双仓"):
+            update_agent._artifact_command(update, "1.9.0", "v1.9.0")
+
+    def test_mirror_pull_falls_back_as_one_pair(self):
+        """自建仓任一镜像失败时，bot/web 应整组改用 GHCR。"""
+        with mock.patch.object(
+            apply_images, "_run", side_effect=[RuntimeError("镜像仓离线"), ""]
+        ) as run_mock:
+            selected = apply_images._pull_with_fallback(
+                "registry.guduu.co/guduuos/guduu-os-bot@sha256:" + "a" * 64,
+                "registry.guduu.co/guduuos/guduu-os-web@sha256:" + "b" * 64,
+                "ghcr.io/guduuos/guduu-os-bot@sha256:" + "a" * 64,
+                "ghcr.io/guduuos/guduu-os-web@sha256:" + "b" * 64,
+            )
+        self.assertTrue(selected[0].startswith("ghcr.io/"))
+        self.assertEqual(run_mock.call_count, 2)
 
     def test_apply_image_validation_and_atomic_env_update(self):
         """镜像执行器严格校验服务名，并只替换 .env 指定字段。"""

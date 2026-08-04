@@ -1,0 +1,17 @@
+services:
+  registry:
+    image: registry:2.8.3
+    container_name: guduu-registry
+    restart: unless-stopped
+    ports:
+      # 只允许宿主 Caddy 连入；Registry 本身不直接暴露明文端口。
+      - "127.0.0.1:5000:5000"
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+      REGISTRY_AUTH: htpasswd
+      REGISTRY_AUTH_HTPASSWD_REALM: GuDuu Registry
+      REGISTRY_AUTH_HTPASSWD_PATH: /auth/htpasswd
+    volumes:
+      # 生产上该目录必须是独立 Persistent Disk 的挂载点，不得落在系统盘。
+      - /srv/guduu-registry/data:/var/lib/registry
+      - /srv/guduu-registry/auth:/auth:ro

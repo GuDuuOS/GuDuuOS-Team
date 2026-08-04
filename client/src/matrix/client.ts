@@ -106,6 +106,31 @@ export function currentUserId(): string {
   try { return JSON.parse(localStorage.getItem(SESSION_KEY) || '{}')?.userId || '' } catch { return '' }
 }
 
+/** 当前活动会话的 access token；只给节点激活等必须证明本人身份的同源请求使用。 */
+export function currentAccessToken(): string {
+  try { return JSON.parse(localStorage.getItem(SESSION_KEY) || '{}')?.accessToken || '' } catch { return '' }
+}
+
+/** 读取 OEM 节点是否仍处于首次激活受限态；响应不含任何授权码。 */
+export async function getNodeActivation(baseUrl: string): Promise<{ required: boolean; activated: boolean }> {
+  const r = await fetch(`${baseUrl.replace(/\/$/, '')}/cosmac/node/activation`, { cache: 'no-store' })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || '无法读取节点激活状态')
+  return { required: !!j.required, activated: !!j.activated }
+}
+
+/** 由已登录的 bootstrap 管理员请求服务器代办兑换，浏览器不接触 OEM KEY。 */
+export async function activateNode(baseUrl: string): Promise<void> {
+  const token = currentAccessToken()
+  const r = await fetch(`${baseUrl.replace(/\/$/, '')}/cosmac/node/activate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: '{}',
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok || !j?.activated) throw new Error(j?.error || '节点激活失败')
+}
+
 /** 切换到某个已缓存账号：把它设为活动会话。返回是否找到（调用方随后整页 reload 让其生效）。 */
 export function switchToAccount(userId: string): boolean {
   const a = readAccounts().find((x) => x.userId === userId)

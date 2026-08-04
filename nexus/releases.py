@@ -18,6 +18,7 @@ from cosmac import __version__ as PRODUCT_VERSION
 from nexus import fleet, release_artifacts
 from nexus.db import (
     NexusInstance,
+    NexusKeyBinding,
     NexusKeyClaim,
     NexusRelease,
     NexusReleaseArtifact,
@@ -703,6 +704,76 @@ def check_update(s, raw_key: str, current_version: str) -> Optional[Dict[str, An
             "published_ts": release.published_ts,
         }
     return None
+
+
+def install_artifact(s, raw_key: str, domain: str) -> Dict[str, Any]:
+    """向尚未安装的授权节点下发当前正式版不可变镜像清单。
+
+    Args:
+        raw_key: OEM 已获批并领取的完整 KEY。
+        domain: 本次计划安装的节点域名，必须与审批冻结值一致。
+
+    Returns:
+        当前正式节点版本及 bot/web 双仓精确摘要；不包含任何镜像仓凭据。
+
+    Raises:
+        FleetError: KEY 无效、域名不符或平台尚无可安装正式镜像时抛出。
+
+    安装发生在 ``redeem`` 前后都可能：正常网络会先兑换，严格 IP/反代暂时异常时则
+    需要先把受限节点装起来再由管理员重试。因此这里只校验 KEY 与审批域名，不要求
+    KEY 已经绑定实例，也不修改发布或实例状态。
+    """
+    clean_domain = (domain or "").strip().lower().rstrip(".")
+    if not clean_domain:
+        raise FleetError("NEXUS_BAD_DOMAIN", "域名不能为空")
+    key = fleet._key_by_plain(s, raw_key)
+    binding = s.get(NexusKeyBinding, int(key.id))
+    approved_domain = (
+        str(binding.approved_domain).lower().rstrip(".")
+        if binding is not None and binding.approved_domain
+        else ""
+    )
+    # 历史 KEY 可能在部署域名冻结功能上线前已经兑换。它只能为原实例同域重装，
+    # 不能借兼容分支换域名；新签发且尚未兑换的 KEY 仍必须先完成审批冻结。
+    if not approved_domain and key.instance_id is not None:
+        historical_instance = s.get(NexusInstance, int(key.instance_id))
+        if historical_instance is not None:
+            approved_domain = str(historical_instance.domain).lower().rstrip(".")
+    if not approved_domain:
+        raise FleetError(
+            "NEXUS_INSTALL_NOT_APPROVED",
+            "该授权尚未冻结部署域名，请先在 OEM 门户完成授权申请",
+            403,
+        )
+    if approved_domain != clean_domain:
+        raise FleetError(
+            "NEXUS_DOMAIN_MISMATCH",
+            f"该 KEY 仅允许部署到 {approved_domain}",
+            403,
+        )
+
+    candidates = s.execute(
+        select(NexusRelease)
+        .where(NexusRelease.status.in_(("published", "rollback")))
+        .order_by(NexusRelease.updated_ts.desc(), NexusRelease.id.desc())
+    ).scalars()
+    for release in candidates:
+        if _release_target(s, release) != "node":
+            continue
+        artifact = s.get(NexusReleaseArtifact, int(release.id))
+        payload = release_artifacts.artifact_dict(artifact)
+        if payload.get("mode") != "container":
+            continue
+        return {
+            "version": release.version,
+            "git_ref": release.git_ref,
+            "artifact": payload,
+        }
+    raise FleetError(
+        "NEXUS_INSTALL_IMAGE_UNAVAILABLE",
+        "平台当前没有已发布的 Docker 安装镜像，请联系 GuDuu",
+        503,
+    )
 
 
 def report_update(

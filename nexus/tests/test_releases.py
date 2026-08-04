@@ -77,11 +77,79 @@ class ReleaseTest(unittest.TestCase):
         )
         self.assertEqual(release["artifact"]["mode"], "container")
         self.assertTrue(release["artifact"]["bot_image"].endswith("b" * 64))
+        self.assertTrue(
+            release["artifact"]["bot_mirror_image"].startswith(
+                "registry.guduu.co/guduuos/"
+            )
+        )
         releases.publish(self.s, release["id"])
         update = releases.check_update(self.s, self.key_a, "1.6.32")
         self.assertIsNotNone(update)
         self.assertEqual(update["artifact"]["mode"], "container")
         self.assertTrue(update["artifact"]["web_image"].endswith("c" * 64))
+        self.assertEqual(
+            update["artifact"]["web_mirror_image"].rsplit("@", 1)[-1],
+            update["artifact"]["web_image"].rsplit("@", 1)[-1],
+        )
+
+    def test_approved_key_can_fetch_first_install_artifact(self):
+        """首次安装可在兑换前按审批域名获取正式镜像，但不能换域名复用。"""
+        raw_key = fleet.issue_keys(self.s)[0]["key"]
+        key = fleet._key_by_plain(self.s, raw_key)
+        self.s.add(
+            db.NexusKeyBinding(
+                key_id=key.id,
+                approved_domain="new-node.example.com",
+            )
+        )
+        self._register_manifest()
+        release = releases.create_release(
+            self.s,
+            version="1.7.0",
+            title="首次镜像安装",
+            notes="只下发精确摘要。",
+            git_ref="v1.7.0",
+            target="node",
+            delivery_mode="container",
+        )
+        releases.publish(self.s, release["id"])
+        result = releases.install_artifact(
+            self.s, raw_key, "NEW-NODE.EXAMPLE.COM."
+        )
+        self.assertEqual(result["version"], "1.7.0")
+        self.assertEqual(result["artifact"]["mode"], "container")
+        with self.assertRaises(FleetError) as mismatch:
+            releases.install_artifact(self.s, raw_key, "other.example.com")
+        self.assertEqual(mismatch.exception.code, "NEXUS_DOMAIN_MISMATCH")
+
+        # 冻结功能上线前已兑换的历史 KEY 只允许原实例同域重装。
+        self._register_manifest("1.7.1")
+        historical_release = releases.create_release(
+            self.s,
+            version="1.7.1",
+            title="历史节点兼容",
+            notes="同域重装。",
+            git_ref="v1.7.1",
+            target="node",
+            delivery_mode="container",
+        )
+        releases.publish(self.s, historical_release["id"])
+        historical_key = fleet.issue_keys(self.s)[0]["key"]
+        historical_id = fleet.redeem(
+            self.s, historical_key, "historical.example.com"
+        )["instance_id"]
+        historical_row = fleet._key_by_plain(self.s, historical_key)
+        self.s.delete(self.s.get(db.NexusKeyBinding, historical_row.id))
+        self.s.flush()
+        self.assertEqual(historical_row.instance_id, historical_id)
+        self.assertEqual(
+            releases.install_artifact(
+                self.s, historical_key, "historical.example.com"
+            )["version"],
+            "1.7.1",
+        )
+        with self.assertRaises(FleetError):
+            releases.install_artifact(self.s, historical_key, "moved.example.com")
 
     def test_ci_manifest_creates_one_unpublished_container_draft(self):
         """CI 登记镜像后必须自动出现一条未发布节点草稿。"""

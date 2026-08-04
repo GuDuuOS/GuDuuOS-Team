@@ -8,9 +8,11 @@ import { currentUserId } from '@/matrix/client'
 
 const LiveView = () => import('@/views/LiveView.vue')
 const AuthView = () => import('@/views/AuthView.vue')
+const ActivationView = () => import('@/views/ActivationView.vue')
 
 const routes = [
   { path: '/login', component: AuthView },
+  { path: '/activate', component: ActivationView },
   { path: '/', component: LiveView },
   { path: '/s/:space/board', component: LiveView },
   { path: '/s/:space/tasks', component: LiveView },

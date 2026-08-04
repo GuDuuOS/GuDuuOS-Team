@@ -4923,6 +4923,9 @@ class CosmacBot:
         self, body: Dict[str, Any], client_ip: str = ""
     ) -> Tuple[int, Dict[str, Any]]:
         """自建邮箱注册：给邮箱发验证码（公开端点，无 token——用户还没账号）。限频在 registration 内强制。"""
+        from cosmac import node_activation
+        if not node_activation.allows_public_access():
+            return 423, {"error": "节点尚未激活，暂不开放注册"}
         from cosmac import registration
         b0 = body or {}
         return registration.request_code(
@@ -4936,6 +4939,9 @@ class CosmacBot:
         self, body: Dict[str, Any], client_ip: str = ""
     ) -> Tuple[int, Dict[str, Any]]:
         """自建邮箱注册：验码 + 用共享密钥建号（公开端点）。成功回 {user_id, access_token...}。"""
+        from cosmac import node_activation
+        if not node_activation.allows_public_access():
+            return 423, {"error": "节点尚未激活，暂不开放注册"}
         from cosmac import registration
         b = body or {}
         return registration.verify_and_register(
@@ -4975,7 +4981,11 @@ class CosmacBot:
     ) -> Tuple[int, Dict[str, Any]]:
         """邮箱登录：反查用户名 → 登 Synapse → 返回登录响应（公开端点）。"""
         from cosmac import registration
+        from cosmac import node_activation
         b = body or {}
+        # 受限态只允许安装时配置的 bootstrap 管理员邮箱进入激活页。
+        if not node_activation.allows_public_access() and str(b.get("email") or "").strip().lower() != os.environ.get("COSMAC_ADMIN_EMAIL", "").strip().lower():
+            return 423, {"error": "节点尚未激活，请由首次管理员完成激活"}
         return registration.login_email(
             str(b.get("email") or ""), str(b.get("password") or ""),
             hs_url=self.config.homeserver_url, client_ip=client_ip,
@@ -4989,7 +4999,15 @@ class CosmacBot:
         """账号（用户名+密码）登录**收口**：经后端代理 Synapse 登录 + IP 限频 + 记审计（公开端点）。
         原来前端直连 Synapse，后端看不到登录；收口后账号登录与邮箱登录同一道防线。"""
         from cosmac import registration
+        from cosmac import node_activation
         b = body or {}
+        bootstrap = os.environ.get("COSMAC_ADMIN_USER", "admin").strip().lower()
+        identifier = str(b.get("username") or "").strip().lower()
+        if not node_activation.allows_public_access() and identifier not in (
+            bootstrap,
+            f"@{bootstrap}:{self.config.server_name}".lower(),
+        ):
+            return 423, {"error": "节点尚未激活，请由首次管理员完成激活"}
         # str() 归一:JSON 里 username 传成数字/对象时,registration 端的 .strip() 会 AttributeError
         # → 连接被掐(无响应)。这里统一成字符串(低⑤)。
         return registration.login_account(
@@ -4998,6 +5016,26 @@ class CosmacBot:
             code=str(b.get("code") or ""),   # 阶段2:异地二次验证的邮箱验证码(第二步才带)
             server_name=self.config.server_name,  # 停用检测要用它拼 @user:server_name
         )
+
+    def handle_node_activation_status(self) -> Tuple[int, Dict[str, Any]]:
+        """返回不含授权码的节点激活状态，登录页据此决定是否跳转激活页。"""
+        from cosmac import node_activation
+        return 200, node_activation.status()
+
+    def handle_node_activate(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
+        """仅 bootstrap 管理员可触发服务器代办激活，KEY 永不经过浏览器。"""
+        user_id = self.client.whoami(access_token)
+        expected = "@%s:%s" % (
+            os.environ.get("COSMAC_ADMIN_USER", "admin").strip(),
+            self.config.server_name,
+        )
+        if user_id != expected:
+            return 403, {"error": "仅首次管理员可以激活此节点"}
+        from cosmac import node_activation
+        try:
+            return 200, node_activation.activate(self.config)
+        except RuntimeError as error:
+            return 503, {"error": str(error)}
 
     def handle_kb_list_mine(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """列出本人**个人知识库**文档（标题）。给 AI 侧栏「项目文件」展示真实知识库用。需登录。"""
@@ -8240,7 +8278,8 @@ class _Handler(BaseHTTPRequestHandler):
                 or p.startswith("/cosmac/admin/")
                 or p.startswith("/cosmac/channel/")   # 频道规则文档 AI 一键写      # 后台用户列表拉邮箱（GET 带 Authorization 也要预检）
                 or p.startswith("/cosmac/channel/")     # 平台管理员接管频道（bug14）
-                or p.startswith("/cosmac/auth/")):     # 认证前端配置（Turnstile 开关）；都走浏览器，需预检
+                or p.startswith("/cosmac/auth/")
+                or p.startswith("/cosmac/node/")):     # 节点激活：状态公开、提交携带本人 token
             origin = os.environ.get("COSMAC_APP_ORIGIN", "") or "*"
             self.send_response(204)
             self.send_header("Access-Control-Allow-Origin", origin)
@@ -8317,6 +8356,10 @@ class _Handler(BaseHTTPRequestHandler):
                 "turnstile": registration.turnstile_enabled(),
                 "turnstile_site_key": _env("TURNSTILE_SITE_KEY", ""),  # 与 secret 同走 _env(支持前缀回退,低⑦)
             }, cors=True)
+            return
+        if self.path.split("?", 1)[0] == "/cosmac/node/activation":
+            code, payload = self.bot.handle_node_activation_status()
+            self._send_json(code, payload, cors=True)
             return
         # 模块4：公开读上架套餐（给前端「升级会员」展示；无密钥、可跨源）
         if self.path.split("?", 1)[0] == "/cosmac/pay/plans":
@@ -8802,6 +8845,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "请求无效"}, cors=True)
                 return
             code, payload = self.bot.handle_login_account(body, self._client_ip())
+            self._send_json(code, payload, cors=True)
+            return
+
+        if path == "/cosmac/node/activate":
+            # 浏览器只提交自己的 Matrix access token；OEM KEY 由服务器读取环境变量。
+            code, payload = self.bot.handle_node_activate(self._bearer())
             self._send_json(code, payload, cors=True)
             return
 

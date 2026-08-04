@@ -24,6 +24,9 @@ _VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 _IMAGE_RE = re.compile(
     r"^ghcr\.io/guduuos/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
 )
+_MIRROR_RE = re.compile(
+    r"^registry\.guduu\.co/guduuos/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
+)
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _ENV_FILE = _SCRIPT_DIR / ".env"
 _REGISTRY_FILE = Path("/etc/guduu-registry.env")
@@ -94,19 +97,79 @@ def _run(
 
 
 def _registry_login() -> None:
-    """若配置私有 GHCR 凭据，则用 password-stdin 登录且不输出令牌。"""
+    """登录节点已配置的只读镜像仓，全程不输出令牌。"""
     values = _read_env(_REGISTRY_FILE)
     user = values.get("GUDUU_REGISTRY_USER", "")
     token = values.get("GUDUU_REGISTRY_TOKEN", "")
-    if not user and not token:
-        return
-    if not user or not token:
+    if bool(user) != bool(token):
         raise RuntimeError("/etc/guduu-registry.env 必须同时配置用户和只读令牌")
-    _run(
-        ["docker", "login", "ghcr.io", "--username", user, "--password-stdin"],
-        input_text=token + "\n",
-        timeout=60,
-    )
+    if user:
+        _run(
+            ["docker", "login", "ghcr.io", "--username", user, "--password-stdin"],
+            input_text=token + "\n",
+            timeout=60,
+        )
+    mirror_user = values.get("GUDUU_MIRROR_USER", "")
+    mirror_token = values.get("GUDUU_MIRROR_TOKEN", "")
+    if bool(mirror_user) != bool(mirror_token):
+        raise RuntimeError("自建仓用户和只读令牌必须同时配置")
+    if mirror_user:
+        _run(
+            [
+                "docker",
+                "login",
+                "registry.guduu.co",
+                "--username",
+                mirror_user,
+                "--password-stdin",
+            ],
+            input_text=mirror_token + "\n",
+            timeout=60,
+        )
+
+
+def _validate_mirror(value: str, service: str, fallback: str) -> str:
+    """校验自建仓引用的服务名与摘要都和 GHCR 灾备引用一致。"""
+    image = (value or "").strip().lower()
+    expected = "registry.guduu.co/guduuos/guduu-os-" + service + "@sha256:"
+    if not _MIRROR_RE.fullmatch(image) or not image.startswith(expected):
+        raise RuntimeError(service + " 镜像不是受信自建仓精确摘要")
+    if image.rsplit("@", 1)[-1] != fallback.rsplit("@", 1)[-1]:
+        raise RuntimeError(service + " 双仓镜像摘要不一致")
+    return image
+
+
+def _pull_with_fallback(
+    primary_bot: str,
+    primary_web: str,
+    fallback_bot: str,
+    fallback_web: str,
+) -> tuple[str, str]:
+    """优先拉自建仓，任一镜像失败则整组回退 GHCR。
+
+    Docker 在拉取 ``@sha256`` 引用时会校验 manifest 内容；因此
+    拉取成功本身就是摘要校验，不信任 tag 或 Registry 返回的名称。
+    """
+    primary_env = _compose_env(primary_bot, primary_web)
+    try:
+        _run(
+            ["docker", "compose", "pull", "bot", "web"],
+            env=primary_env,
+            timeout=45 * 60,
+        )
+        return primary_bot, primary_web
+    except RuntimeError as exc:
+        print(
+            "[镜像更新] 自建仓拉取失败，回退 GHCR：" + str(exc),
+            file=sys.stderr,
+        )
+        fallback_env = _compose_env(fallback_bot, fallback_web)
+        _run(
+            ["docker", "compose", "pull", "bot", "web"],
+            env=fallback_env,
+            timeout=45 * 60,
+        )
+        return fallback_bot, fallback_web
 
 
 def _backup_database() -> Path:
@@ -218,12 +281,20 @@ def _wait_for_doctor(env: Mapping[str, str], attempts: int = 12) -> None:
     raise last_error
 
 
-def apply(version: str, bot_image: str, web_image: str) -> None:
+def apply(
+    version: str,
+    bot_image: str,
+    web_image: str,
+    bot_mirror_image: str,
+    web_mirror_image: str,
+) -> None:
     """执行一次受保护的镜像切换，失败自动回撤并向调用方返回非零。"""
     if not _VERSION_RE.fullmatch(version):
         raise RuntimeError("目标版本必须是 X.Y.Z")
     bot_image = _validate_image(bot_image, "bot")
     web_image = _validate_image(web_image, "web")
+    bot_mirror_image = _validate_mirror(bot_mirror_image, "bot", bot_image)
+    web_mirror_image = _validate_mirror(web_mirror_image, "web", web_image)
     if not _ENV_FILE.is_file():
         raise RuntimeError("未找到 distro/.env，本机尚未安装")
 
@@ -235,11 +306,12 @@ def apply(version: str, bot_image: str, web_image: str) -> None:
     _run(["docker", "tag", _running_image_id("bot"), rollback_bot], timeout=30)
     _run(["docker", "tag", _running_image_id("web"), rollback_web], timeout=30)
 
-    new_env = _compose_env(bot_image, web_image)
+    selected_bot, selected_web = _pull_with_fallback(
+        bot_mirror_image, web_mirror_image, bot_image, web_image
+    )
+    new_env = _compose_env(selected_bot, selected_web)
     old_env = _compose_env(rollback_bot, rollback_web)
     try:
-        print("[镜像更新] 拉取不可变镜像摘要……")
-        _run(["docker", "compose", "pull", "bot", "web"], env=new_env, timeout=45 * 60)
         print("[镜像更新] 校验新 web 镜像与本机 Caddy 配置……")
         _run(
             [
@@ -282,7 +354,7 @@ def apply(version: str, bot_image: str, web_image: str) -> None:
             ) from rollback_error
         raise RuntimeError("新版本体检失败，已自动恢复原镜像：" + str(install_error))
 
-    _write_env_images(bot_image, web_image)
+    _write_env_images(selected_bot, selected_web)
     _UPDATE_DIR.mkdir(parents=True, exist_ok=True)
     _STATE_FILE.write_text(
         json.dumps(
@@ -290,6 +362,8 @@ def apply(version: str, bot_image: str, web_image: str) -> None:
                 "version": version,
                 "bot_image": bot_image,
                 "web_image": web_image,
+                "selected_bot_image": selected_bot,
+                "selected_web_image": selected_web,
                 "rollback_bot": rollback_bot,
                 "rollback_web": rollback_web,
                 "backup": str(backup),
@@ -311,9 +385,17 @@ def main() -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--bot-image", required=True)
     parser.add_argument("--web-image", required=True)
+    parser.add_argument("--bot-mirror-image", required=True)
+    parser.add_argument("--web-mirror-image", required=True)
     args = parser.parse_args()
     try:
-        apply(args.version, args.bot_image, args.web_image)
+        apply(
+            args.version,
+            args.bot_image,
+            args.web_image,
+            args.bot_mirror_image,
+            args.web_mirror_image,
+        )
         return 0
     except Exception as exc:
         print("[镜像更新] " + str(exc), file=sys.stderr)

@@ -802,6 +802,61 @@ class KeyRequestTest(unittest.TestCase):
         ]
         self.assertEqual(actions, ["submit", "approve", "reveal", "redeem"])
 
+    def test_same_oem_and_domain_cannot_submit_twice(self):
+        """同账号双击或重复提交同域名时只保留第一份申请。"""
+        first = oem.request_key(
+            self.s,
+            self.a,
+            "第一次",
+            deployment_domain="Node.Example.COM.",
+            purpose="企业内部协作",
+        )
+        with self.assertRaises(FleetError) as duplicate:
+            oem.request_key(
+                self.s,
+                self.a,
+                "双击重复",
+                deployment_domain="node.example.com",
+                purpose="企业内部协作",
+            )
+        self.assertEqual(duplicate.exception.code, "NEXUS_REQUEST_DOMAIN_EXISTS")
+        self.assertIn(f"#{first['id']}", duplicate.exception.message)
+        self.assertEqual(self.s.query(db.NexusKeyRequest).count(), 1)
+
+    def test_same_oem_can_request_different_domains(self):
+        """一个 OEM 可合法购买多个不同域名的节点授权。"""
+        oem.request_key(
+            self.s,
+            self.a,
+            deployment_domain="node-a.example.com",
+            purpose="A 节点",
+        )
+        second = oem.request_key(
+            self.s,
+            self.a,
+            deployment_domain="node-b.example.com",
+            purpose="B 节点",
+        )
+        self.assertEqual(second["deployment_domain"], "node-b.example.com")
+        self.assertEqual(self.s.query(db.NexusKeyRequest).count(), 2)
+
+    def test_rejected_domain_can_be_requested_again(self):
+        """被拒绝或撤回不会永久占用域名，OEM 修正资料后可重申。"""
+        first = oem.request_key(
+            self.s,
+            self.a,
+            deployment_domain="retry.example.com",
+            purpose="首次申请",
+        )
+        oem.decide_request(self.s, first["id"], False, decide_note="请补充合同")
+        retried = oem.request_key(
+            self.s,
+            self.a,
+            deployment_domain="retry.example.com",
+            purpose="补充后重申",
+        )
+        self.assertNotEqual(retried["id"], first["id"])
+
     def test_reject_and_pending_cap(self):
         req = oem.request_key(
             self.s, self.a, "拒绝测试", deployment_domain="reject.test"

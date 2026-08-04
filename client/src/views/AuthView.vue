@@ -19,7 +19,7 @@ import {
   loginNoStart, loginWithEmailNoStart,
   registerRequestCode, registerVerify, getReferralInfo,
   resetRequestCode, resetVerify, getAuthConfig,
-  fetchSitePage,
+  fetchSitePage, getNodeActivation,
 } from '@/matrix/client'
 import { defaultHsUrl } from '@/config/hs'
 
@@ -217,7 +217,16 @@ const pwStrength = computed(() => {
 })
 
 /** 认证成功后进入主应用：优先回到守卫记下的目标地址，否则首页。 */
-function proceed() {
+async function proceed() {
+  // OEM 节点安装阶段兑换失败时，bootstrap 管理员登录后必须先完成激活；不能只靠
+  // 前端隐藏注册按钮，真正的注册/登录门禁仍在 bot 服务端。
+  try {
+    const activation = await getNodeActivation(HS)
+    if (activation.required && !activation.activated) {
+      router.push('/activate')
+      return
+    }
+  } catch { /* 激活状态接口不可达时不阻塞既有/独立节点登录。 */ }
   const to = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/')
     ? route.query.redirect
     : '/'
