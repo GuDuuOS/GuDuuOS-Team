@@ -74,6 +74,7 @@ from nexus import (
     passkeys,
     payment_config,
     release_artifacts,
+    release_policy,
     releases,
     turnstile,
 )
@@ -783,6 +784,16 @@ class NexusHandler(BaseHTTPRequestHandler):
             if self._check_admin():
                 self._with_session(
                     lambda s: self._json(200, {"features": features.get_flags(s)})
+                )
+            return
+
+        if path == "/nexus/admin/release_policy":
+            # 只返回节点编号和布尔策略，不包含 KEY、SSH 或镜像仓凭据。
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200, {"release_policy": release_policy.get_policy(s)}
+                    )
                 )
             return
 
@@ -1938,6 +1949,18 @@ class NexusHandler(BaseHTTPRequestHandler):
             if self._check_admin():
                 self._with_session(
                     lambda s: self._json(200, {"features": features.set_flags(s, body)})
+                )
+            return
+
+        if path == "/nexus/admin/release_policy":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "release_policy": release_policy.set_policy(s, body)
+                        },
+                    )
                 )
             return
 

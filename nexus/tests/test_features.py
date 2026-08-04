@@ -230,6 +230,36 @@ class FeatureFlagHttpTests(unittest.TestCase):
         )
         self.assertEqual(visible["request"]["requested_tokens"], 12_345)
 
+    def test_admin_can_read_and_save_release_environment_policy(self) -> None:
+        """超管接口必须返回并持久化开发、灰度、正式三类节点角色。"""
+        original = self._json_request(
+            "/nexus/admin/release_policy", self.admin_token
+        )
+        self.assertEqual(
+            original["release_policy"]["development_instance_ids"], [1]
+        )
+        self.assertEqual(original["release_policy"]["canary_instance_id"], 2)
+        self.assertEqual(
+            original["release_policy"]["production_instance_ids"], [3]
+        )
+
+        saved = self._json_request(
+            "/nexus/admin/release_policy",
+            self.admin_token,
+            {
+                "development_instance_ids": [11],
+                "canary_instance_id": 12,
+                "production_instance_ids": [13, 14],
+                "auto_canary": True,
+                "require_canary_success": True,
+            },
+        )
+        self.assertEqual(saved["release_policy"]["canary_instance_id"], 12)
+        reread = self._json_request(
+            "/nexus/admin/release_policy", self.admin_token
+        )
+        self.assertEqual(reread["release_policy"], saved["release_policy"])
+
 
 if __name__ == "__main__":
     unittest.main()

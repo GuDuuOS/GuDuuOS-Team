@@ -553,6 +553,23 @@ label input { margin-top: 5px; }
 .fleet-overview { display: grid; gap: 14px; margin-bottom: 20px; }
 .platform-feature-panel { background: var(--panel-strong); }
 .platform-settings-list { display: grid; gap: 12px; }
+.platform-policy-form {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;
+}
+.platform-policy-form label { min-width: 0; }
+.platform-policy-form small { display: block; margin-top: 6px; color: var(--muted); }
+.platform-policy-check {
+  display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+}
+.platform-policy-check input { width: auto; margin: 3px 0 0; }
+.platform-policy-check span { display: grid; gap: 2px; }
+.platform-policy-check small { margin: 0; }
+.platform-policy-submit {
+  grid-column: 1 / -1; display: flex; align-items: center;
+  justify-content: space-between; gap: 16px; padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
 .platform-feature-row {
   display: flex; align-items: center; justify-content: space-between; gap: 24px;
   padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px;
@@ -1061,6 +1078,8 @@ textarea:focus { outline: none; border-color: var(--orange); }
 
 @media (max-width: 620px) {
   .platform-feature-row { align-items: flex-start; flex-direction: column; gap: 14px; }
+  .platform-policy-form { grid-template-columns: 1fr; }
+  .platform-policy-submit { align-items: stretch; flex-direction: column; }
   .income-history-grid { grid-template-columns: 1fr; }
   .withdraw-grid { grid-template-columns: 1fr; }
   .withdraw-amount, .withdraw-method, .withdraw-recipient,

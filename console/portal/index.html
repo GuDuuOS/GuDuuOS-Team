@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置使用同源外部脚本，既防刷新闪色，也允许 Portal 开启严格脚本 CSP。 -->
 <script src="/portal/theme-init.js?v=1"></script>
-<link rel="stylesheet" href="/portal/portal.css?v=36" />
+<link rel="stylesheet" href="/portal/portal.css?v=37" />
 </head>
 <body>
 <!--
@@ -546,6 +546,38 @@
           </div>
         </div>
       </section>
+      <section class="panel platform-feature-panel">
+        <div class="panel-head">
+          <div>
+            <h2>节点发布策略</h2>
+            <p class="hint">镜像构建完成后只自动推送灰度节点；灰度成功前，服务端禁止给生产节点建立任务。</p>
+          </div>
+        </div>
+        <form id="form-release-policy" class="platform-policy-form">
+          <label>开发节点编号
+            <input name="development_instance_ids" placeholder="1" />
+            <small>不接收自动灰度、正式发布或回撤任务。</small>
+          </label>
+          <label>灰度测试节点
+            <input name="canary_instance_id" type="number" min="1" step="1" required />
+            <small>CI 登记不可变镜像后自动推送到该节点。</small>
+          </label>
+          <label>生产节点编号
+            <input name="production_instance_ids" placeholder="3" required />
+            <small>多台用英文逗号分隔；只在灰度成功后由超管人工发布。</small>
+          </label>
+          <label class="platform-policy-check"><input name="auto_canary" type="checkbox" />
+            <span><b>镜像登记后自动推送灰度</b><small>仅创建一个灰度任务，绝不自动全量。</small></span>
+          </label>
+          <label class="platform-policy-check"><input name="require_canary_success" type="checkbox" />
+            <span><b>生产发布必须通过灰度门禁</b><small>灰度节点未上报成功时，后端直接拒绝生产发布。</small></span>
+          </label>
+          <div class="platform-policy-submit">
+            <p id="release-policy-summary" class="hint"></p>
+            <button class="primary" type="submit">保存发布策略</button>
+          </div>
+        </form>
+      </section>
     </div>
 
     <div class="admin-page" data-admin-view="releases" hidden>
@@ -898,6 +930,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=45"></script>
+<script src="/portal/portal.js?v=46"></script>
 </body>
 </html>

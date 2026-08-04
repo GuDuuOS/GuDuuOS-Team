@@ -2136,6 +2136,14 @@
     skipped: ["idle", "已跳过"],
   };
   var releaseInstanceCount = 0;
+  var releaseProductionCount = 0;
+  var adminReleasePolicy = {
+    development_instance_ids: [1],
+    canary_instance_id: 2,
+    production_instance_ids: [3],
+    auto_canary: true,
+    require_canary_success: true,
+  };
   // 节点详情使用最近一次管理列表快照，打开弹窗时无需再发请求。
   var adminInstances = [];
   // OEM 实例列表只用于点击前快速确认卡片仍属于当前页面；
@@ -2191,10 +2199,10 @@
         actions.push('<button class="ghost small" data-release-action="pause" data-release-target="nexus" data-release-id="' + r.id + '">撤下公告</button>');
       }
       if (!platform && ["draft", "paused", "canary"].indexOf(r.status) >= 0) {
-        actions.push('<button class="ghost small" data-release-action="canary" data-release-id="' + r.id + '">推送灰度节点</button>');
+        actions.push('<button class="ghost small" data-release-action="canary" data-release-id="' + r.id + '">重推灰度节点</button>');
       }
       if (!platform && ["draft", "canary", "paused"].indexOf(r.status) >= 0) {
-        actions.push('<button class="primary small" data-release-action="publish" data-release-id="' + r.id + '">推送全部节点</button>');
+        actions.push('<button class="primary small" data-release-action="publish" data-release-id="' + r.id + '">发布正式节点</button>');
       }
       if (!platform && (r.status === "canary" || r.status === "published")) {
         actions.push('<button class="ghost small" data-release-action="pause" data-release-id="' + r.id + '">暂停发布</button>');
@@ -2254,7 +2262,9 @@
     $("#release-image-field").hidden = platform;
     $("#release-flow-hint").textContent = platform
       ? "Nexus 平台由我们集中部署；发布这里只向全部 OEM 后台展示公告，不更新客户服务器。"
-      : "OEM 节点版本流程：保存 → 灰度监测 → 推送全部节点；支持暂停、失败重试和历史版本回撤。";
+      : "OEM 节点版本流程：镜像登记 → 自动推送灰度节点 #" +
+        adminReleasePolicy.canary_instance_id +
+        " → 技术验证成功 → 人工发布正式节点；开发节点不接收任务。";
   }
 
   $("#form-release").elements.target.addEventListener("change", syncReleaseTargetUi);
@@ -2356,6 +2366,84 @@
     });
   });
 
+  function parseInstanceIds(value, field) {
+    "use strict";
+    var raw = String(value || "").trim();
+    if (!raw) return [];
+    var result = [];
+    raw.split(",").forEach(function (part) {
+      var text = part.trim();
+      var instanceId = Number(text);
+      if (!/^\d+$/.test(text) || !Number.isSafeInteger(instanceId) || instanceId <= 0) {
+        throw new Error(field + "只能填写正整数，多台节点使用英文逗号分隔");
+      }
+      if (result.indexOf(instanceId) < 0) result.push(instanceId);
+    });
+    return result.sort(function (a, b) { return a - b; });
+  }
+
+  function renderReleasePolicy(policy) {
+    // 页面始终展示服务端最终持久化的环境角色。提交失败时也重新读取旧值，
+    // 避免超管误以为尚未保存的编号已经开始约束真实发布任务。
+    adminReleasePolicy = {
+      development_instance_ids: (policy.development_instance_ids || []).slice(),
+      canary_instance_id: Number(policy.canary_instance_id || 0),
+      production_instance_ids: (policy.production_instance_ids || []).slice(),
+      auto_canary: !!policy.auto_canary,
+      require_canary_success: !!policy.require_canary_success,
+    };
+    var form = $("#form-release-policy");
+    if (!form.contains(document.activeElement)) {
+      form.development_instance_ids.value = adminReleasePolicy.development_instance_ids.join(",");
+      form.canary_instance_id.value = adminReleasePolicy.canary_instance_id || "";
+      form.production_instance_ids.value = adminReleasePolicy.production_instance_ids.join(",");
+      form.auto_canary.checked = adminReleasePolicy.auto_canary;
+      form.require_canary_success.checked = adminReleasePolicy.require_canary_success;
+    }
+    var developmentText = adminReleasePolicy.development_instance_ids.length
+      ? "#" + adminReleasePolicy.development_instance_ids.join("、#")
+      : "未配置";
+    var productionText = adminReleasePolicy.production_instance_ids.length
+      ? "#" + adminReleasePolicy.production_instance_ids.join("、#")
+      : "未配置";
+    $("#release-policy-summary").textContent =
+      "开发 " + developmentText + "（不自动更新） · 灰度 #" +
+      (adminReleasePolicy.canary_instance_id || "未配置") +
+      (adminReleasePolicy.auto_canary ? "（镜像完成后自动）" : "（手工）") +
+      " · 正式 " + productionText;
+    syncReleaseTargetUi();
+  }
+
+  $("#form-release-policy").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var form = e.target;
+    var body;
+    try {
+      body = {
+        development_instance_ids: parseInstanceIds(
+          form.development_instance_ids.value, "开发节点编号"
+        ),
+        canary_instance_id: Number(form.canary_instance_id.value || 0),
+        production_instance_ids: parseInstanceIds(
+          form.production_instance_ids.value, "生产节点编号"
+        ),
+        auto_canary: !!form.auto_canary.checked,
+        require_canary_success: !!form.require_canary_success.checked,
+      };
+    } catch (error) {
+      toast(error.message, true);
+      return;
+    }
+    api("/nexus/admin/release_policy", { body: body }).then(function (result) {
+      renderReleasePolicy(result.release_policy || {});
+      toast("节点发布策略已保存");
+      loadAdmin();
+    }).catch(function (error) {
+      renderReleasePolicy(adminReleasePolicy);
+      toast(error.message, true);
+    });
+  });
+
   var currentAdminIdentity = { id: 0, auth_kind: "" };
 
   function auditObjectLabel(event) {
@@ -2445,6 +2533,7 @@
       api("/nexus/admin/finance_summary"),
       api("/nexus/admin/payment_configs"),
       api("/nexus/admin/features"),
+      api("/nexus/admin/release_policy"),
       api("/nexus/admin/withdrawals"),
       api("/nexus/admin/oem_commercial_terms"),
     ]).then(function (rs) {
@@ -2455,24 +2544,28 @@
       var finance = rs[7] || {};
       var configs = rs[8].payment_configs || [];
       var featureFlags = rs[9].features || {};
-      var withdrawals = rs[10].withdrawals || [];
-      var commercialTerms = rs[11].terms || [];
+      var releasePolicy = rs[10].release_policy || {};
+      var withdrawals = rs[11].withdrawals || [];
+      var commercialTerms = rs[12].terms || [];
       adminInstances = insts.slice();
       manualTransferOems = oems.slice();
       renderFinanceOverview(finance, configs);
       renderPlatformFeatures(featureFlags);
+      renderReleasePolicy(releasePolicy);
 
-      // 灰度节点选择器随实例列表更新，但保留管理员当前已选值。
+      // 灰度选择器只呈现策略中固定的技术测试节点。服务端还会再次校验，
+      // 所以页面被篡改也不能把候选镜像推给开发或生产节点。
       var canarySelect = $("#release-canary");
-      var selectedCanary = canarySelect.value;
-      canarySelect.innerHTML = insts.map(function (i) {
+      var configuredCanary = Number(adminReleasePolicy.canary_instance_id || 0);
+      var canaryInstances = insts.filter(function (i) {
+        return Number(i.id) === configuredCanary;
+      });
+      canarySelect.innerHTML = canaryInstances.map(function (i) {
         return '<option value="' + i.id + '">#' + i.id + " · " + esc(i.domain) +
           "（" + esc(i.version || "未知版本") + "）</option>";
-      }).join("") || '<option value="">暂无可用实例</option>';
-      if (selectedCanary && insts.some(function (i) { return String(i.id) === selectedCanary; })) {
-        canarySelect.value = selectedCanary;
-      }
-      releaseInstanceCount = insts.length;
+      }).join("") || '<option value="">灰度节点 #' + configuredCanary + " 尚未部署或已停用</option>";
+      releaseProductionCount = adminReleasePolicy.production_instance_ids.length;
+      releaseInstanceCount = releaseProductionCount + (configuredCanary ? 1 : 0);
       renderReleases(releases);
 
       // 左侧数量让超管不进入页面也能看到各功能区规模；待处理申请尤其需要醒目，避免
@@ -3421,19 +3514,22 @@
       var promptText = action === "publish" && platformRelease
         ? "确认把这条 Nexus 平台更新公告展示给全部 OEM 客户？这不会更新或重启客户节点。"
         : action === "publish"
-        ? "确认向全部 " + releaseInstanceCount + " 个实例发布此版本？节点将在下一轮检查时自动安装。"
+        ? "确认把已通过灰度的同一镜像摘要发布到 " + releaseProductionCount +
+          " 个正式节点？开发节点不会收到任务。"
         : action === "rollback"
-          ? "确认把全部 " + releaseInstanceCount + " 个实例回撤到 v" + (t.dataset.releaseVersion || "") + "？这会真实切换线上运行版本。"
+          ? "确认把灰度与正式环境共 " + releaseInstanceCount + " 个节点回撤到 v" +
+            (t.dataset.releaseVersion || "") + "？开发节点不会收到任务。"
         : action === "pause" && platformRelease
           ? "确认从全部 OEM 后台撤下这条 Nexus 平台公告？历史记录仍会保留。"
         : action === "pause"
           ? "确认暂停该版本？已经开始安装的节点不会被中断。"
           : action === "retry"
             ? "确认让该版本所有失败节点重新尝试一次？"
-            : "确认把该版本推送到当前选中的灰度节点？";
+            : "确认把该版本重新推送到固定灰度节点 #" +
+              adminReleasePolicy.canary_instance_id + "？";
       var dangerousReleaseAction = (action === "publish" && !platformRelease) || action === "rollback";
       var releaseOkText = action === "publish"
-        ? (platformRelease ? "发布公告" : "确认全量发布")
+        ? (platformRelease ? "发布公告" : "发布正式节点")
         : (action === "rollback" ? "确认回撤" : "确认");
       uiConfirm(promptText, dangerousReleaseAction, releaseOkText).then(function (ok) {
         if (!ok) return;

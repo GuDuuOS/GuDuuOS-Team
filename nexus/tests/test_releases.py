@@ -14,7 +14,7 @@ import time
 import unittest
 from pathlib import Path
 
-from nexus import db, fleet, release_artifacts, releases
+from nexus import db, fleet, release_artifacts, release_policy, releases
 from nexus.db import NexusKeyClaim
 from nexus.fleet import FleetError
 
@@ -33,6 +33,18 @@ class ReleaseTest(unittest.TestCase):
         self.inst_b = fleet.redeem(self.s, self.key_b, "b.example.com")["instance_id"]
         fleet.heartbeat(self.s, self.key_a, "1.6.32")
         fleet.heartbeat(self.s, self.key_b, "1.6.32")
+        # 旧状态机测试需要两台节点都作为正式目标；自动灰度的
+        # 1/2/3 真实策略由下面独立用例覆盖，避免改变旧回归语义。
+        release_policy.set_policy(
+            self.s,
+            {
+                "development_instance_ids": [],
+                "canary_instance_id": 0,
+                "production_instance_ids": [self.inst_a, self.inst_b],
+                "auto_canary": False,
+                "require_canary_success": False,
+            },
+        )
 
     def tearDown(self):
         self.s.close()
@@ -171,6 +183,75 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(second["target"], "node")
         self.assertEqual(second["title"], "自动构建已完成")
         self.assertEqual(second["artifact"]["mode"], "container")
+
+    def test_ci_manifest_auto_canaries_and_production_requires_success(self):
+        """CI 完成后只推灰度节点，成功前不得给生产节点建任务。"""
+        key_c = fleet.issue_keys(self.s)[0]["key"]
+        inst_c = fleet.redeem(self.s, key_c, "production.example.com")[
+            "instance_id"
+        ]
+        fleet.heartbeat(self.s, key_c, "1.6.32")
+        release_policy.set_policy(
+            self.s,
+            {
+                "development_instance_ids": [self.inst_a],
+                "canary_instance_id": self.inst_b,
+                "production_instance_ids": [inst_c],
+                "auto_canary": True,
+                "require_canary_success": True,
+            },
+        )
+        self._register_manifest()
+        release = releases.ensure_ci_release_draft(
+            self.s,
+            version="1.7.0",
+            title="自动灰度",
+            notes="不可变镜像已固定。",
+        )
+        self.assertEqual(release["status"], "canary")
+        self.assertEqual(release["canary_instance_id"], self.inst_b)
+        self.assertEqual(
+            [item["instance_id"] for item in release["deployments"]],
+            [self.inst_b],
+        )
+        self.assertIsNone(releases.check_update(self.s, self.key_a, "1.6.32"))
+        self.assertIsNotNone(releases.check_update(self.s, self.key_b, "1.6.32"))
+        self.assertIsNone(releases.check_update(self.s, key_c, "1.6.32"))
+
+        with self.assertRaises(FleetError) as blocked:
+            releases.publish(self.s, release["id"])
+        self.assertEqual(blocked.exception.code, "NEXUS_CANARY_NOT_PASSED")
+
+        releases.report_update(
+            self.s,
+            raw_key=self.key_b,
+            release_id=release["id"],
+            status="success",
+            current_version="1.7.0",
+            detail="公司技术节点验证通过",
+        )
+
+        # 生产节点尚未部署或已停用时，不能把零台投放伪装成发布成功。
+        release_policy.set_policy(
+            self.s,
+            {"production_instance_ids": [999]},
+        )
+        with self.assertRaises(FleetError) as missing:
+            releases.publish(self.s, release["id"])
+        self.assertEqual(missing.exception.code, "NEXUS_RELEASE_TARGET_MISSING")
+
+        release_policy.set_policy(
+            self.s,
+            {"production_instance_ids": [inst_c]},
+        )
+        published = releases.publish(self.s, release["id"])
+        self.assertEqual(published["status"], "published")
+        self.assertEqual(
+            {item["instance_id"] for item in published["deployments"]},
+            {self.inst_b, inst_c},
+        )
+        self.assertIsNone(releases.check_update(self.s, self.key_a, "1.6.32"))
+        self.assertIsNotNone(releases.check_update(self.s, key_c, "1.6.32"))
 
     def test_container_release_requires_ci_manifest_and_manifest_is_immutable(self):
         """没有 CI 清单不能创建 Docker 发布，同版本摘要也不能被替换。"""

@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import select
 
 from cosmac import __version__ as PRODUCT_VERSION
-from nexus import fleet, release_artifacts
+from nexus import fleet, release_artifacts, release_policy
 from nexus.db import (
     NexusInstance,
     NexusKeyBinding,
@@ -218,6 +218,37 @@ def _ensure_deployment(
     return row
 
 
+def _active_instances_for_ids(s, instance_ids: List[int], role: str) -> List[NexusInstance]:
+    """按发布策略取出全部活动节点，缺失任意一个就安全拒绝。
+
+    正式发布不能把“3 号节点还没有部署”误当成零台发布成功；
+    否则管理员会看到已发布，实际却没有任何生产服务器收到任务。
+    """
+    expected = sorted(set(int(item) for item in instance_ids))
+    if not expected:
+        raise FleetError(
+            "NEXUS_RELEASE_TARGETS_EMPTY", f"尚未配置{role}节点，不能发布"
+        )
+    rows = (
+        s.execute(
+            select(NexusInstance).where(
+                NexusInstance.id.in_(expected), NexusInstance.status == "active"
+            )
+        )
+        .scalars()
+        .all()
+    )
+    found = {int(row.id) for row in rows}
+    missing = [str(item) for item in expected if item not in found]
+    if missing:
+        raise FleetError(
+            "NEXUS_RELEASE_TARGET_MISSING",
+            f"{role}节点 #" + "、#".join(missing) + " 尚未部署或已停用",
+            409,
+        )
+    return sorted(rows, key=lambda row: int(row.id))
+
+
 def _pause_other_active(s, keep_id: int) -> None:
     """激活节点版本时只暂停其他节点轨道，绝不撤下 Nexus 平台公告。"""
     rows = s.execute(
@@ -305,16 +336,32 @@ def ensure_ci_release_draft(
         select(NexusRelease).where(NexusRelease.version == normalized)
     ).scalar_one_or_none()
     if existing is not None:
-        return get_release(s, int(existing.id))
-    return create_release(
-        s,
-        version=normalized,
-        title=title,
-        notes=notes,
-        git_ref="v" + normalized,
-        target="node",
-        delivery_mode="container",
-    )
+        result = get_release(s, int(existing.id))
+    else:
+        result = create_release(
+            s,
+            version=normalized,
+            title=title,
+            notes=notes,
+            git_ref="v" + normalized,
+            target="node",
+            delivery_mode="container",
+        )
+
+    policy = release_policy.get_policy(s)
+    canary_id = int(policy["canary_instance_id"] or 0)
+    if (
+        policy["auto_canary"]
+        and canary_id
+        and result["target"] == "node"
+        and result["status"] == "draft"
+    ):
+        canary = s.get(NexusInstance, canary_id)
+        # CI 镜像登记不能因灰度机临时离线而整体失败。此时保留
+        # draft，超管页会明确显示尚未推送；节点恢复后可手工重试。
+        if canary is not None and canary.status == "active":
+            return start_canary(s, int(result["id"]), canary_id)
+    return result
 
 
 def start_canary(s, release_id: int, instance_id: int) -> Dict[str, Any]:
@@ -323,6 +370,16 @@ def start_canary(s, release_id: int, instance_id: int) -> Dict[str, Any]:
     _require_node_target(s, release, "节点灰度")
     if release.status not in {"draft", "paused", "canary"}:
         raise FleetError("NEXUS_RELEASE_STATE", "当前版本状态不能重新开始灰度")
+    policy = release_policy.get_policy(s)
+    configured_canary = int(policy["canary_instance_id"] or 0)
+    # 浏览器下拉框不是安全边界。服务端再次比对固定灰度编号，阻止有人
+    # 直接构造 API 请求，把未经验证的镜像先推给开发机或正式生产机。
+    if configured_canary and int(instance_id) != configured_canary:
+        raise FleetError(
+            "NEXUS_CANARY_TARGET_MISMATCH",
+            f"灰度任务只能推送到已配置的节点 #{configured_canary}",
+            409,
+        )
     instance = s.get(NexusInstance, int(instance_id))
     if instance is None:
         raise FleetError("NEXUS_INSTANCE_NOT_FOUND", "灰度实例不存在", 404)
@@ -355,6 +412,26 @@ def publish(s, release_id: int) -> Dict[str, Any]:
 
     if release.status not in {"draft", "canary", "paused", "published"}:
         raise FleetError("NEXUS_RELEASE_STATE", "当前版本状态不能全量发布")
+    policy = release_policy.get_policy(s)
+    canary_id = int(policy["canary_instance_id"] or 0)
+    if policy["require_canary_success"]:
+        deployment = (
+            s.get(
+                NexusReleaseDeployment,
+                {"release_id": release.id, "instance_id": canary_id},
+            )
+            if canary_id
+            else None
+        )
+        if deployment is None or deployment.status != "success":
+            raise FleetError(
+                "NEXUS_CANARY_NOT_PASSED",
+                f"灰度节点 #{canary_id or '未配置'} 尚未安装成功，禁止发布到生产节点",
+                409,
+            )
+    production_instances = _active_instances_for_ids(
+        s, policy["production_instance_ids"], "生产"
+    )
     _pause_other_active(s, release.id)
     now = _now_ms()
     release.status = "published"
@@ -362,10 +439,9 @@ def publish(s, release_id: int) -> Dict[str, Any]:
     if release.published_ts is None:
         release.published_ts = now
 
-    instances = s.execute(
-        select(NexusInstance).where(NexusInstance.status == "active")
-    ).scalars()
-    for instance in instances:
+    # 开发节点和灰度节点都不在正式目标列表中。灰度节点已有原任务，
+    # 开发节点则由研发人员自行控制，两者都不能被“正式发布”意外改写。
+    for instance in production_instances:
         deployment = _ensure_deployment(s, release, instance)
         # 人工提前升级到目标或更高版本的节点直接记成功，不再重复构建。
         if _version_tuple(instance.version, strict=False) >= _version_tuple(
@@ -407,9 +483,12 @@ def rollback(s, release_id: int) -> Dict[str, Any]:
     release.canary_instance_id = None
     release.updated_ts = now
 
-    instances = s.execute(
-        select(NexusInstance).where(NexusInstance.status == "active")
-    ).scalars()
+    policy = release_policy.get_policy(s)
+    rollback_ids = list(policy["production_instance_ids"])
+    canary_id = int(policy["canary_instance_id"] or 0)
+    if canary_id:
+        rollback_ids.append(canary_id)
+    instances = _active_instances_for_ids(s, rollback_ids, "灰度/生产")
     for instance in instances:
         deployment = _ensure_deployment(s, release, instance)
         deployment.from_version = instance.version or ""
