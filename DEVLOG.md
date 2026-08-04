@@ -1,5 +1,16 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-08-05 — GuDuu OS 1.23.0 (minor)
+
+- 新增：macOS 与 Windows 桌面端首个可运行版本，共享现有 Vue/TypeScript
+  页面与业务能力，不复制维护另一套客户端源码。
+- 新增：预留官网直装、Mac App Store 沙盒和 Microsoft Store MSIX 四类包装目标，
+  当前仅供本地开发与验证，不开放下载、不启用自动更新、不提交应用商城。
+- 安全：桌面端只加载安装包内的本地代码，启用 Chromium 沙盒、上下文隔离、
+  最小 preload、CSP、权限默认拒绝和 Electron fuses，并限制导航与外部协议。
+- 优化：Web 产物改用相对静态资源并移除远程字体依赖，确保同一构建可由 Web 与
+  Electron 共同消费；生产构建不再误读本机 homeserver 覆盖配置。
+
 ## 2026-08-05 — Nexus OEM 购买与充值竖屏适配（不触发节点镜像）
 
 - 修复：OEM“购买与充值”在手机竖屏下改为单列选择与全宽操作，

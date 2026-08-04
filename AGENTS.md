@@ -101,6 +101,26 @@
   生物识别等）；**业务规则、权限判断和页面数据流不得散落进 Swift/Kotlin/Electron
   main 进程**。
 
+**桌面应用商城合规（从第一行桌面代码起执行）**：
+
+- Electron 只使用官方仍处于支持期的稳定版，跟进 Electron 官方“最近三个稳定大版本”
+  安全支持窗口；renderer 只执行随安装包签名封装的本地 Vue 代码，不把生产网站当远程
+  壳加载，也不得从服务器下载 JS/CSS 来新增或显著改变功能。
+- Electron 主窗口必须 `sandbox: true`、`contextIsolation: true`、`nodeIntegration: false`、
+  `webSecurity: true`；禁止 `<webview>`，限制导航/新窗口/外部协议，IPC 校验 sender，
+  preload 只暴露逐项命名的最小 API，并在打包时关闭不需要的 Electron fuses。
+- macOS 同时维护官网直装与 Mac App Store 两个包装目标：直装版走 Developer ID +
+  notarization + 自有更新；商城版必须使用 Electron `mas` 构建、Apple App Sandbox、最小
+  entitlement 与商城更新，禁止在 MAS 包内启用自有 updater。摄像头、麦克风、文件等能力
+  只有真实功能使用时才加权限说明和 entitlement，禁止为“以后也许用”提前索权。
+- Windows 同时维护官网直装与 Microsoft Store 两个包装目标：官网版使用标准用户级安装
+  且不得要求管理员权限；商城首选 MSIX，Package Identity/Publisher 在发布期从 Partner
+  Center 注入，禁止写死个人证书。正式候选必须在 Windows CI/真机运行 Windows App
+  Certification Kit；Store/MSIX 包走商城更新，官网包才可走自有更新。
+- 直装版、MAS版、MSIX版共享同一产品版本、commit 和 Vue 产物摘要，但产物、签名、权限
+  与更新通道严格分开；开发期允许生成未签名本地包，不得把测试证书或占位 Publisher
+  当成正式身份。
+
 **目标目录（按模块开工逐步迁移，不提前建空壳）**：
 
 ```text
@@ -224,7 +244,7 @@ client/
 | 4 | 交易系统（会员订阅） | 🟡 进行中 | **主线=会员订阅/充值**，多渠道支付(Stripe/PayPal/USDT/支付宝/微信)按 IP 地理路由，范围"较完整"。**P1 地基已落地+单测**(`cosmac/trading/`)：套餐定义(控制室 `cosmac.plans`)+ 订单(DB `cosmac_order`)+ **可插拔支付抽象** `PaymentProvider`(密钥只进 env)+ 订单服务(下单/支付成功**幂等**开通/**续费按原到期日顺延**)+ 会员**到期**(扩 `members.py`：grant 带 expires_ts、查等级自动判过期)+ 手动/mock 支付(HMAC 验签)。**分期**：P2 Stripe 全链路+webhook+前端套餐页；P3 PayPal/USDT+地理路由；P4 支付宝/微信+对账/退款。 |
 | 5 | 个人主页 | ⬜ | 需要客户端 UI 配合 |
 | 6 | **OEM 体系（GuDuu Nexus + 发行版）** | 🟡 进行中 | 当前增量：完善 Nexus 超级管理员工作台。后台采用左侧功能导航，把舰队总览、版本管理、节点实例、授权申请、OEM 客户、支付订单和只读数据大屏分区呈现；舰队总览加入资金经营视角，展示累计实收、近 30 天实收、待支付、授权码/Token 充值收入构成与支付渠道接入状态，金额只以服务端已确认 `paid` 的订单计入收入，支付宝/微信 API 未接入前明确显示“待接 API”，绝不伪造流水；**OEM 归属体系采用无限层级树**：每个 OEM 只有一个直属上级但可有任意深度下级，不设层数、佣金或分账规则；每个 OEM 获得稳定的随机分享码，门户生成“邀请普通用户”与“邀请下级 OEM”链接及二维码。普通用户通过带分享码的 OEM 实例注册链接建号后，实例本地先持久化归属再通过授权 KEY 幂等同步到 Nexus，Nexus 记录 `用户→直属 OEM→完整祖先链`，母舰暂时只做关系与人数统计，不参与用户密码、聊天数据或收益分配；新版本表单根据当前产品版本与 `DEVLOG.md` 自动生成版本号、Git tag、标题和面向 OEM 的更新说明，仍默认“未发布”；节点版本还必须匹配 CI 登记的 bot/web 不可变 Docker 摘要。超级管理员维护永久历史版本列表，发布流程为“未发布→灰度监测→全量发布→暂停”，并可选择已发布过的旧版本发起全节点回撤。节点升级成功后，同一份版本说明由成功投放记录自动呈现在对应 OEM 门户，作为更新公告（不向客户业务群自动发消息）。节点更新仍由宿主代理按 KEY 主动拉取，禁止 Nexus 主动 SSH OEM 服务器，也禁止给 bot 容器宿主机控制权。 |
-| 7 | **多端客户端（Web / Desktop / Mobile）** | ⬜ 方案已定·未开工 | 唯一正式路线为共享 Vue 3 + TypeScript：Web 直接运行，桌面用 Electron，手机用 Capacitor iOS/Android；共享业务、Matrix/cosmac adapter、响应式布局、安全存储、E2EE、推送与 OEM 动态配置按 §3「多端客户端架构」实施。当前只允许设计、本地开发和测试；桌面安装包、应用商城、公开下载、自动更新及 Nexus `client` 发布轨道必须等负责人明确启动发布阶段。 |
+| 7 | **多端客户端（Web / Desktop / Mobile）** | 🟡 进行中 | 当前增量：先开发 macOS/Windows 桌面端，采用共享 Vue 3 + TypeScript + Electron；从开发期即按 Mac App Store沙箱和 Microsoft Store MSIX要求设计，同时保留官网直装包装目标。手机端后续走 Capacitor iOS/Android。当前只允许本地开发、测试与未签名构建；安装包公开发布、应用商城、下载入口、自动更新及 Nexus `client` 发布轨道必须等负责人明确启动发布阶段。 |
 | R | **品牌化 Matrix→GuDuu OS Star** | ⬜ 持续 | 贯穿全程的横切任务，按 §7 三层红线分层改，每碰到呈现层字样就顺手改 |
 
 > **Nexus 支付渠道更新（2026-08）**：舰队总览同时覆盖国内支付宝/微信与海外

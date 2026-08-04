@@ -18,7 +18,8 @@ export function defaultHsUrl(): string {
   // 配合 vite.config 的 /_matrix、/cosmac 代理即可全链路连本机 Synapse+bot。
   // 生产构建不设该变量，走下面的正常解析，线上零影响。
   const override = (import.meta as any).env?.VITE_HS_URL
-  if (override) return String(override).replace(/\/$/, '')
+  if ((import.meta as any).env?.DEV && override) return String(override).replace(/\/$/, '')
+  if (window.guduuDesktop?.isDesktop) return 'https://dev-hs.guduu.co'
   if (MAIN_SITE_HOSTS.includes(window.location.hostname)) {
     return 'https://dev-hs.guduu.co'
   }

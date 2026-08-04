@@ -1,14 +1,19 @@
 {
   "name": "cosmac-workbench",
   "private": true,
-  "version": "1.22.4",
+  "version": "1.23.0",
   "type": "module",
-  "description": "GuDuu OS · 行业 AI 工作台 Demo",
+  "description": "GuDuu OS · AI 工作台",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --port 4173",
-    "type-check": "vue-tsc --noEmit"
+    "type-check": "vue-tsc --noEmit",
+    "desktop:dev": "npm --prefix apps/desktop run dev",
+    "desktop:check": "npm --prefix apps/desktop run check",
+    "desktop:package:mac": "npm --prefix apps/desktop run package:mac",
+    "desktop:package:mas": "npm --prefix apps/desktop run package:mas",
+    "desktop:package:windows": "npm --prefix apps/desktop run package:windows"
   },
   "dependencies": {
     "chart.js": "^4.4.6",
