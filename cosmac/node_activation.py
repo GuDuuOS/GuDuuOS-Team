@@ -53,8 +53,11 @@ def activate(config: CosmacConfig) -> Dict[str, Any]:
         return current
     nexus_url = _env("NEXUS_URL").rstrip("/")
     raw_key = _env("OEM_KEY")
-    if not nexus_url or not raw_key:
-        raise RuntimeError("节点未配置 Nexus 地址或 OEM 授权码，请联系平台处理")
+    node_region = _env("NODE_REGION")
+    if not nexus_url or not raw_key or not node_region:
+        raise RuntimeError(
+            "节点未配置 Nexus 地址、OEM 授权码或机房地域，请联系平台处理"
+        )
     try:
         response = requests.post(
             nexus_url + "/nexus/redeem",
@@ -62,6 +65,7 @@ def activate(config: CosmacConfig) -> Dict[str, Any]:
                 "key": raw_key,
                 "domain": config.server_name,
                 "admin_email": _env("ADMIN_EMAIL"),
+                "region": node_region,
             },
             timeout=20,
         )

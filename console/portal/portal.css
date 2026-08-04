@@ -570,6 +570,8 @@ label input { margin-top: 5px; }
   justify-content: space-between; gap: 16px; padding-top: 14px;
   border-top: 1px solid var(--line);
 }
+.instance-region-cell { min-width: 190px; }
+.instance-region-select { width: 128px; margin: 0 6px 0 0; padding: 6px 8px; }
 .platform-feature-row {
   display: flex; align-items: center; justify-content: space-between; gap: 24px;
   padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px;

@@ -24,6 +24,7 @@ class NodeActivationTests(unittest.TestCase):
         )
         os.environ["COSMAC_NEXUS_URL"] = "https://nexus.test"
         os.environ["COSMAC_OEM_KEY"] = "CMK-AAAA-BBBB-CCCC-DDDD"
+        os.environ["COSMAC_NODE_REGION"] = "CN-BJ"
 
     def tearDown(self) -> None:
         """还原进程环境，避免污染其他单测。"""
@@ -43,7 +44,16 @@ class NodeActivationTests(unittest.TestCase):
         post.return_value.json.return_value = {"instance_id": 42}
         result = node_activation.activate(CosmacConfig(server_name="oem.test"))
         self.assertEqual(result["instance_id"], 42)
+        self.assertEqual(post.call_args.kwargs["json"]["region"], "CN-BJ")
         with open(os.environ["COSMAC_NODE_ACTIVATION_STATE_PATH"], encoding="utf-8") as handle:
             stored = handle.read()
         self.assertNotIn(os.environ["COSMAC_OEM_KEY"], stored)
         self.assertTrue(node_activation.allows_public_access())
+
+    @patch("cosmac.node_activation.requests.post")
+    def test_activation_without_region_stays_restricted(self, post) -> None:
+        """受限态重试不能漏掉地域，否则节点会接入统计却不出现在地图。"""
+        del os.environ["COSMAC_NODE_REGION"]
+        with self.assertRaisesRegex(RuntimeError, "机房地域"):
+            node_activation.activate(CosmacConfig(server_name="oem.test"))
+        post.assert_not_called()

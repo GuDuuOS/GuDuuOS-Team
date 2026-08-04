@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置使用同源外部脚本，既防刷新闪色，也允许 Portal 开启严格脚本 CSP。 -->
 <script src="/portal/theme-init.js?v=1"></script>
-<link rel="stylesheet" href="/portal/portal.css?v=37" />
+<link rel="stylesheet" href="/portal/portal.css?v=38" />
 </head>
 <body>
 <!--
@@ -620,7 +620,7 @@
       <section class="panel">
         <div class="panel-head"><h2>节点实例</h2><button id="btn-refresh" class="ghost small">刷新</button></div>
         <table class="tbl" id="admin-instances">
-          <thead><tr><th>#</th><th>域名</th><th>OEM 企业</th><th>状态</th><th>版本</th><th>人员构成</th><th>最近心跳</th><th>余额</th><th>操作</th></tr></thead>
+          <thead><tr><th>#</th><th>域名</th><th>OEM 企业</th><th>状态</th><th>版本</th><th>地域</th><th>人员构成</th><th>最近心跳</th><th>余额</th><th>操作</th></tr></thead>
           <tbody></tbody>
         </table>
       </section>
@@ -930,6 +930,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=46"></script>
+<script src="/portal/portal.js?v=47"></script>
 </body>
 </html>

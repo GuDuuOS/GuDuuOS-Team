@@ -94,15 +94,25 @@ printf '%s' "$OEM_KEY" | grep -Eq '^CMK-[A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+$
 # —— 兑换授权（P1③：有授权码就向 GuDuu Nexus 真兑换，失败即终止）——
 NODE_ACTIVATION_REQUIRED="0"
 if [ -n "$OEM_KEY" ]; then
-  # 机房地域：只用于 GuDuu 运营大屏在地图上标出你的实例位置。你自己最清楚机器在哪，
-  # 所以这里选一下——比用 IP 猜准得多（云服务器 IP 的归属常常是服务商注册地）。
-  # 留空也能装，之后可由 GuDuu 侧在后台补填。
+  # 机房地域：用于 GuDuu 运营大屏在地图上标出实例位置。云服务器 IP 的注册地
+  # 经常不等于真实机房，所以必须由部署人选择，不能留空后再让系统猜。
   if [ -z "${REGION:-}" ]; then
-    echo "机房地域代码（仅用于运营大屏地图标点，可留空）："
+    echo "机房地域代码（必填，用于运营大屏地图标点）："
     echo "  中国大陆示例：CN-BJ 北京 / CN-SH 上海 / CN-ZJ 浙江 / CN-GD 广东 / CN-SC 四川"
     echo "  港澳台与境外：CN-HK 香港 / CN-TW 台湾 / SG 新加坡 / JP 日本 / US 美国 / DE 德国"
-    read -rp "地域代码（留空跳过）: " REGION
+    read -rp "地域代码: " REGION
   fi
+  [ -n "${REGION:-}" ] || die "机房地域不能为空；所有 OEM 节点都必须接入运营大屏。"
+  REGIONS_RESP=$(curl -fsS --max-time 20 "$NEXUS_URL/nexus/regions") \
+    || die "暂时无法读取 Nexus 地域列表，请检查网络后重试。"
+  REGION=$(printf '%s' "$REGIONS_RESP" | python3 -c '
+import json,sys
+requested=sys.argv[1].strip().upper()
+codes={str(item.get("code", "")).upper() for item in json.load(sys.stdin).get("regions", [])}
+if requested not in codes:
+    raise SystemExit(2)
+print(requested)
+' "$REGION") || die "不支持的机房地域代码：$REGION"
   say "向 GuDuu Nexus（$NEXUS_URL）兑换授权……"
   REDEEM_RESP=$(curl -sS --max-time 20 -X POST "$NEXUS_URL/nexus/redeem" \
     -A "GuDuu-Node-Installer/1.0" \
@@ -213,7 +223,7 @@ GW_KEY="$OEM_KEY"
 render templates/dotenv.tpl .env \
   "DOMAIN=$DOMAIN" "ADMIN_USER=admin" "ADMIN_EMAIL=$ADMIN_EMAIL" "OEM_KEY=$OEM_KEY" "NODE_ACTIVATION_REQUIRED=$NODE_ACTIVATION_REQUIRED" \
   "INSTALL_VERSION=$INSTALL_VERSION" "BOT_IMAGE=$BOT_IMAGE" "WEB_IMAGE=$WEB_IMAGE" \
-  "NEXUS_URL=$NEXUS_URL" \
+  "NEXUS_URL=$NEXUS_URL" "NODE_REGION=$REGION" \
   "PG_SYNAPSE_PASSWORD=$PG_SYNAPSE_PASSWORD" "COSMAC_DB_PASSWORD=$COSMAC_DB_PASSWORD" \
   "AS_TOKEN=$AS_TOKEN" "HS_TOKEN=$HS_TOKEN" \
   "ADMIN_TOKEN=$ADMIN_TOKEN" "REGISTRATION_SHARED_SECRET=$REGISTRATION_SHARED_SECRET" \

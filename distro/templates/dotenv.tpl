@@ -14,6 +14,8 @@ COSMAC_ADMIN_EMAIL={{ADMIN_EMAIL}}
 COSMAC_OEM_KEY={{OEM_KEY}}
 # GuDuu Nexus 母舰地址（心跳上报 + LLM 网关都指它）
 COSMAC_NEXUS_URL={{NEXUS_URL}}
+# 机房地域是大屏地图的定位真值；由安装器强制选择，激活重试必须继续携带。
+COSMAC_NODE_REGION={{NODE_REGION}}
 # 仅当安装阶段 Nexus 兑换暂时失败时由 install.sh 置 1；激活成功会写入 data/cosmac，
 # 不把 KEY 或激活结果交给浏览器。
 COSMAC_NODE_ACTIVATION_REQUIRED={{NODE_ACTIVATION_REQUIRED}}

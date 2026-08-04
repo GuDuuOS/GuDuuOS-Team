@@ -155,6 +155,7 @@ def redeem(
     ):
         raise FleetError("NEXUS_BAD_DOMAIN", "域名不合法")
     key = _key_by_plain(s, raw_key)
+    region_code = geo.normalize(region)
     binding = s.get(NexusKeyBinding, key.id)
     # 新签发 KEY 已在审批时冻结域名；历史 KEY 没有绑定记录，首次兑换仍保持兼容，
     # 但会立即把实际域名冻结下来，之后不能换服务器域名复用。
@@ -195,6 +196,10 @@ def redeem(
         inst = s.get(NexusInstance, key.instance_id)
         if inst is not None and inst.domain == domain:
             # 重装同域名：幂等放行
+            # 新安装器会在每次兑换时携带地域。历史实例过去可能漏填，
+            # 因此重装/补激活时允许顺手补齐或纠正，不要求人工改数据库。
+            if region_code:
+                set_geo(s, int(inst.id), region_code)
             if observed_hash:
                 binding.activation_ip_hash = observed_hash
                 binding.activation_ip_masked = observed_masked
@@ -240,14 +245,14 @@ def redeem(
                 note=f"KEY#{key.id} 兑换附赠",
             )
         )
-    # 地域：兑码时 OEM 选的（install 引导传上来）。非法/未传就留空，之后 console 补填。
-    code = geo.normalize(region)
-    if code:
-        info = geo.lookup(code)
+    # 地域：真实 HTTP 部署已在 ``deployment_region`` 强制校验；这里仍兼容
+    # 内部历史脚本，避免数据库修复工具因旧参数立即失效。
+    if region_code:
+        info = geo.lookup(region_code)
         s.add(
             NexusInstanceGeo(
                 instance_id=inst.id,
-                region_code=code,
+                region_code=region_code,
                 region_label=info["label"],
                 lat=info["lat"],
                 lon=info["lon"],
@@ -259,6 +264,46 @@ def redeem(
         "reinstall": False,
         "warnings": warnings,
     }
+
+
+def deployment_region(s, raw_key: str, region: str) -> str:
+    """校验真实 HTTP 部署请求的地域，并兼容已有定位的历史实例。
+
+    首次部署必须提供 ``geo.REGIONS`` 中的地域代码，保证实例一登记就能在
+    大屏地图定位。历史实例重装时若请求未携带地域，只在数据库已经存在
+    有效定位时复用旧值；历史实例本身也缺定位则继续拒绝，不能静默消失。
+
+    Args:
+        s: Nexus 数据库会话。
+        raw_key: 节点提交的 OEM KEY 明文，仅用于查询其绑定实例。
+        region: 安装器或受限激活服务提交的地域代码。
+
+    Returns:
+        规范化后的有效地域代码。
+
+    Raises:
+        FleetError: KEY 无效、地域缺失或地域代码不受支持。
+    """
+    key = _key_by_plain(s, raw_key)
+    supplied = (region or "").strip()
+    normalized = geo.normalize(supplied)
+    if normalized:
+        return normalized
+    if supplied:
+        raise FleetError(
+            "NEXUS_BAD_REGION",
+            "机房地域代码无效，请重新选择部署地域",
+            400,
+        )
+    if key.instance_id is not None:
+        row = s.get(NexusInstanceGeo, int(key.instance_id))
+        if row is not None and geo.is_valid(row.region_code or ""):
+            return geo.normalize(row.region_code)
+    raise FleetError(
+        "NEXUS_REGION_REQUIRED",
+        "部署必须选择机房地域，节点才能接入运营大屏地图",
+        400,
+    )
 
 
 # ---------- 心跳（实例定期回连）----------
@@ -401,7 +446,7 @@ def request_stats(s, since_ms: int = 0) -> Dict[int, Dict[str, Any]]:
 
 
 def set_geo(s, instance_id: int, region_code: str) -> Dict[str, Any]:
-    """设置/修改实例地域。region_code 传空串=清空（大屏不再打点）。
+    """设置或修改实例地域；已部署节点不允许清空定位。
 
     坐标从字典查出来**冗余存下**：字典将来微调坐标不影响历史展示，大屏读表即可、免查表。
     """
@@ -409,17 +454,23 @@ def set_geo(s, instance_id: int, region_code: str) -> Dict[str, Any]:
     if inst is None:
         raise FleetError("NEXUS_INSTANCE_MISSING", "实例不存在", 404)
     code = geo.normalize(region_code)
-    if region_code and not code:
+    if not (region_code or "").strip():
+        raise FleetError(
+            "NEXUS_REGION_REQUIRED",
+            "已部署节点必须保留机房地域，不能从运营大屏地图移除",
+            400,
+        )
+    if not code:
         raise FleetError("NEXUS_BAD_REGION", "地域代码不合法", 400)
     row = s.get(NexusInstanceGeo, inst.id)
     if row is None:
         row = NexusInstanceGeo(instance_id=inst.id)
         s.add(row)
-    info = geo.lookup(code) if code else None
+    info = geo.lookup(code)
     row.region_code = code
-    row.region_label = info["label"] if info else ""
-    row.lat = info["lat"] if info else None
-    row.lon = info["lon"] if info else None
+    row.region_label = info["label"]
+    row.lat = info["lat"]
+    row.lon = info["lon"]
     row.updated_ts = _now_ms()
     s.flush()
     return {"instance_id": inst.id, "region": code, "label": row.region_label}
@@ -686,7 +737,8 @@ def list_instances(s) -> List[Dict[str, Any]]:
                 "tokens_today": today_usage.get(r.id, {}).get("tokens", 0),
                 "requests_total": all_usage.get(r.id, {}).get("requests", 0),
                 "requests_today": today_usage.get(r.id, {}).get("requests", 0),
-                # 地域（大屏地图打点；未填时 lat/lon 为 None，前端跳过该点）
+                # 地域（大屏地图打点）；历史缺失记录仍在 totals.unlocated 中显式告警，
+                # 新部署由 HTTP 兑换入口强制选择，不能再静默漏点。
                 **_geo_of(s, r.id),
             }
         )
@@ -907,6 +959,9 @@ def dash_summary(s) -> Dict[str, Any]:
         "generated_ts": now,
         "totals": {
             "instances": len(oems),
+            # 即使历史节点缺地域也必须计入接入总数，并把缺口显式交给大屏；
+            # 不能因为地图无法打点就让整台 OEM 节点看起来不存在。
+            "unlocated": sum(1 for o in oems if not o.get("region_label")),
             "online": online,
             "users": sum(o["users"] for o in oems),
             "accounts_total": sum(o["accounts_total"] for o in oems),

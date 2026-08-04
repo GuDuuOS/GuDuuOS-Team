@@ -2995,8 +2995,12 @@
     $("#today-token").textContent = `${todaySum.toFixed(2)}${TOKEN_UNIT.label}`;
     $("#node-count").textContent = formattedNodeCount;
     overviewOemTotal.textContent = formattedOverviewOemCount;
+    const unlocatedCount = realTotals
+      ? Math.max(0, Number(realTotals.unlocated) || 0)
+      : 0;
     $("#map-node-summary").textContent = REAL_SUMMARY
-      ? `${state.nodes.length} 个接入实例 · 在线 ${onlineNodeCount}`
+      ? `${state.nodes.length} 个接入实例 · 已定位 ${Math.max(0, state.nodes.length - unlocatedCount)}` +
+        (unlocatedCount ? ` · 待定位 ${unlocatedCount}` : ` · 在线 ${onlineNodeCount}`)
       : `${state.nodes.length} 个区域节点 · 覆盖 6 大洲`;
     if (totalChanged && state.running) {
       overviewOemTotal.animate(

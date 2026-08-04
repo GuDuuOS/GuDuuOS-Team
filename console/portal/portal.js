@@ -2146,6 +2146,7 @@
   };
   // 节点详情使用最近一次管理列表快照，打开弹窗时无需再发请求。
   var adminInstances = [];
+  var adminRegions = [];
   // OEM 实例列表只用于点击前快速确认卡片仍属于当前页面；
   // 真正的归属校验仍在服务端做，不信任这个前端数组。
   var oemInstances = [];
@@ -2534,6 +2535,7 @@
       api("/nexus/admin/payment_configs"),
       api("/nexus/admin/features"),
       api("/nexus/admin/release_policy"),
+      api("/nexus/admin/regions"),
       api("/nexus/admin/withdrawals"),
       api("/nexus/admin/oem_commercial_terms"),
     ]).then(function (rs) {
@@ -2545,9 +2547,11 @@
       var configs = rs[8].payment_configs || [];
       var featureFlags = rs[9].features || {};
       var releasePolicy = rs[10].release_policy || {};
-      var withdrawals = rs[11].withdrawals || [];
-      var commercialTerms = rs[12].terms || [];
+      var regions = rs[11].regions || [];
+      var withdrawals = rs[12].withdrawals || [];
+      var commercialTerms = rs[13].terms || [];
       adminInstances = insts.slice();
+      adminRegions = regions.slice();
       manualTransferOems = oems.slice();
       renderFinanceOverview(finance, configs);
       renderPlatformFeatures(featureFlags);
@@ -2853,12 +2857,22 @@
           ? '<b>业务 ' + esc(instanceStatText(nodeStats.users_business)) + '</b><div class="hint">管理员 ' +
             esc(instanceStatText(nodeStats.users_admin || 0)) + ' · AI ' + esc(instanceStatText(nodeStats.users_ai || 0)) + '</div>'
           : '<span class="hint">账号总数 ' + esc(instanceStatText(nodeStats.users)) + '<br>待节点升级后分类</span>';
+        var regionOptions = '<option value="" disabled' + (i.region ? "" : " selected") + '>待定位</option>' +
+          adminRegions.map(function (item) {
+            return '<option value="' + esc(item.code) + '"' +
+              (item.code === i.region ? " selected" : "") + '>' +
+              esc(item.label + "（" + item.code + "）") + "</option>";
+          }).join("");
+        var regionEditor = '<select class="instance-region-select" data-instance-region="' + i.id + '">' +
+          regionOptions + '</select><button class="ghost small" data-save-instance-region="' +
+          i.id + '">保存</button>';
         return "<tr><td>#" + i.id + "</td><td>" + esc(i.domain) + "</td><td class=\"zh\">" + company + "</td><td class=\"zh\">" + badge(hbStatus(i)) + "</td>" +
-          "<td>" + esc(i.version || "—") + "</td><td class=\"zh\">" + people + "</td><td>" + fmtTime(i.last_seen_ts) + "</td>" +
+          "<td>" + esc(i.version || "—") + "</td><td class=\"zh instance-region-cell\">" + regionEditor +
+          "</td><td class=\"zh\">" + people + "</td><td>" + fmtTime(i.last_seen_ts) + "</td>" +
           "<td>" + fmtTokens(i.balance_tokens) + "</td>" +
           '<td class="zh"><button class="ghost small" data-instance-detail="' + i.id + '">详情</button> ' +
           '<button class="ghost small" data-topup="' + i.id + '" data-domain="' + esc(i.domain) + '">充值</button></td></tr>';
-      }).join("") || '<tr><td colspan="9" class="zh empty">暂无实例</td></tr>';
+      }).join("") || '<tr><td colspan="10" class="zh empty">暂无实例</td></tr>';
 
       // KEY 表（吊销）
       $("#admin-keys tbody").innerHTML = keys.map(function (k) {
@@ -3467,6 +3481,21 @@
     }
     if (t.dataset && t.dataset.instanceDetail) {
       openInstanceDetail(Number(t.dataset.instanceDetail));
+      return;
+    }
+    if (t.dataset && t.dataset.saveInstanceRegion) {
+      var regionInstanceId = Number(t.dataset.saveInstanceRegion);
+      var regionSelect = document.querySelector(
+        '[data-instance-region="' + regionInstanceId + '"]'
+      );
+      var regionCode = regionSelect ? regionSelect.value : "";
+      if (!regionCode) return toast("请选择节点机房地域", true);
+      api("/nexus/admin/instance_region", {
+        body: { instance_id: regionInstanceId, region: regionCode },
+      }).then(function () {
+        toast("节点地域已保存，大屏地图会自动更新");
+        loadAdmin();
+      }).catch(function (err) { toast(err.message, true); });
       return;
     }
     var oemInstanceTarget = t.closest ? t.closest("[data-oem-instance-detail]") : null;

@@ -89,7 +89,8 @@ class InstanceGeoTest(unittest.TestCase):
         fleet.heartbeat(self.s, k, "1.6.4", {})
         self.assertIsNone(self.s.get(NexusInstanceGeo, 1))
 
-    def test_set_geo_and_clear(self):
+    def test_set_geo_can_change_but_cannot_clear(self):
+        """已部署节点允许纠正地域，但不能再次从大屏地图消失。"""
         out = fleet.redeem(self.s, self._key(), "f.example.com")
         iid = out["instance_id"]
         fleet.set_geo(self.s, iid, "SG")
@@ -98,11 +99,37 @@ class InstanceGeoTest(unittest.TestCase):
         # 改到别的地域
         fleet.set_geo(self.s, iid, "CN-GD")
         self.assertEqual(self.s.get(NexusInstanceGeo, iid).region_label, "广东")
-        # 清空 → 大屏不再打点
-        fleet.set_geo(self.s, iid, "")
+        # 清空会让大屏漏掉已部署节点，因此必须拒绝并保留旧值。
+        with self.assertRaisesRegex(FleetError, "必须保留"):
+            fleet.set_geo(self.s, iid, "")
         row = self.s.get(NexusInstanceGeo, iid)
-        self.assertEqual(row.region_code, "")
-        self.assertIsNone(row.lat)
+        self.assertEqual(row.region_code, "CN-GD")
+        self.assertIsNotNone(row.lat)
+
+    def test_http_deployment_requires_supported_region(self):
+        """真实部署入口不能再接受空地域或伪造代码。"""
+        raw_key = self._key()
+        with self.assertRaisesRegex(FleetError, "必须选择"):
+            fleet.deployment_region(self.s, raw_key, "")
+        with self.assertRaisesRegex(FleetError, "无效"):
+            fleet.deployment_region(self.s, raw_key, "火星基地")
+        self.assertEqual(fleet.deployment_region(self.s, raw_key, "cn-bj"), "CN-BJ")
+
+    def test_existing_located_instance_can_reuse_region(self):
+        """已定位节点的旧更新器即使未传地域，重装仍可复用数据库真值。"""
+        raw_key = self._key()
+        fleet.redeem(self.s, raw_key, "reuse.example.com", region="SG")
+        self.assertEqual(fleet.deployment_region(self.s, raw_key, ""), "SG")
+
+    def test_existing_unlocated_instance_must_be_repaired(self):
+        """历史漏定位节点不能借重装继续绕过大屏门禁。"""
+        raw_key = self._key()
+        out = fleet.redeem(self.s, raw_key, "repair.example.com")
+        with self.assertRaisesRegex(FleetError, "必须选择"):
+            fleet.deployment_region(self.s, raw_key, "")
+        fleet.redeem(self.s, raw_key, "repair.example.com", region="CN-BJ")
+        row = self.s.get(NexusInstanceGeo, out["instance_id"])
+        self.assertEqual(row.region_code, "CN-BJ")
 
     def test_set_geo_rejects_bad_code_and_missing_instance(self):
         out = fleet.redeem(self.s, self._key(), "g.example.com")
@@ -186,6 +213,12 @@ class RequestStatTest(unittest.TestCase):
         fleet.set_geo(self.s, self.iid, "CN-ZJ")
         self.s.commit()
         self.assertIn("浙江", fleet.dash_summary(self.s)["totals"]["regions"])
+
+    def test_unlocated_total_keeps_missing_marker_visible(self) -> None:
+        """历史缺定位节点仍计入实例总数，并单独暴露待定位数量。"""
+        summary = fleet.dash_summary(self.s)
+        self.assertEqual(summary["totals"]["instances"], 1)
+        self.assertEqual(summary["totals"]["unlocated"], 1)
 
 if __name__ == "__main__":
     unittest.main()

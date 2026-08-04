@@ -439,6 +439,11 @@ class NexusHandler(BaseHTTPRequestHandler):
         if path == "/nexus/health":
             self._json(200, {"ok": True, "ts": int(time.time() * 1000)})
             return
+        if path == "/nexus/regions":
+            # 安装器在兑换 KEY 之前也需要校验地域。字典不含客户数据或密钥，
+            # 公开只读返回可避免安装脚本复制一份容易过期的地区列表。
+            self._json(200, {"regions": geo.options()})
+            return
         if path == "/nexus/referral":
             qs = parse_qs(urlsplit(self.path).query)
             code = str((qs.get("code") or [""])[0])
@@ -1516,17 +1521,21 @@ class NexusHandler(BaseHTTPRequestHandler):
                 return
 
             def _redeem(s):
+                raw_key = str(body.get("key", ""))
+                region_code = fleet.deployment_region(
+                    s, raw_key, str(body.get("region", ""))
+                )
                 out = fleet.redeem(
                     s,
-                    str(body.get("key", "")),
+                    raw_key,
                     str(body.get("domain", "")),
                     str(body.get("admin_email", "")),
-                    str(body.get("region", "")),  # OEM 兑码时选的机房地域（大屏地图用）
+                    region_code,
                     # 来源由 Nexus 自己读取，安装脚本不能通过自报地址绕过 IP 风控。
                     client_ip=self._client_ip(),
                 )
                 # 装机成功后销毁申请单里存的交付明文（阅后即焚的"焚"时刻）
-                oem_svc.clear_plain_by_key(s, str(body.get("key", "")))
+                oem_svc.clear_plain_by_key(s, raw_key)
                 self._json(200, out)
 
             self._with_session(_redeem)
