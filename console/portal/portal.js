@@ -78,6 +78,14 @@
     function p(x) { return (x < 10 ? "0" : "") + x; }
     return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
   }
+  function installCommand(domain) {
+    // 安装命令只带已审批域名，绝不把长期 OEM KEY 放进 URL、
+    // DOM 属性或 Shell history。KEY 由客户在服务器终端的交互提示中输入。
+    var clean = String(domain || "").trim().toLowerCase().replace(/\.$/, "");
+    if (!/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(clean)) return "";
+    return "curl -fsSL " + window.location.origin +
+      "/portal/install.sh | sudo bash -s -- --domain " + clean;
+  }
   function activeDays(createdTs) {
     // 节点兑换开通当天记为第 1 天；未有真实开通时间时不猜测。
     var created = Number(createdTs) || 0;
@@ -1805,12 +1813,16 @@
       }
       $("#oem-keys").innerHTML = keys.map(function (key) {
         var instance = key.instance_id ? instancesById[Number(key.instance_id)] : null;
+        var approvedDomain = String(key.approved_domain || "").trim().toLowerCase().replace(/\.$/, "");
+        var command = installCommand(approvedDomain);
         var bindingBadge = key.instance_id
           ? '<span class="badge active">已绑定</span>'
           : (key.status === "active"
             ? '<span class="badge idle">待部署兑换</span>'
             : '<span class="badge idle">未绑定</span>');
-        var domain = instance ? esc(instance.domain) : (key.instance_id ? "节点数据待同步" : "尚未绑定节点");
+        var domain = instance ? esc(instance.domain) : (key.instance_id
+          ? "节点数据待同步"
+          : (approvedDomain ? esc(approvedDomain) : "尚未绑定节点"));
         var currentBalance = instance ? fmtTokens(instance.balance_tokens) : "—";
         var nodeVersion = instance ? esc(instance.version || "—") : "—";
         var actions = instance
@@ -1818,7 +1830,9 @@
             (key.status === "active"
               ? '<button type="button" class="primary small" data-key-topup-instance="' + instance.id + '">Token 充值</button>'
               : "")
-          : "";
+          : (key.status === "active" && command
+            ? '<button type="button" class="primary small" data-copy-install-domain="' + esc(approvedDomain) + '">复制安装命令</button>'
+            : "");
         return '<article class="key-card">' +
           '<div class="key-card-head"><div><small>授权 KEY #' + key.id + '</small><b>···' + esc(key.tail) + '</b></div>' +
           '<div class="key-card-badges">' + keyAuthorizationBadge(key.status) + bindingBadge + keyNodeBadge(instance, !!key.instance_id) + "</div></div>" +
@@ -1868,7 +1882,10 @@
     var plain = revealedRequestKeys[q.id];
     if (plain) {
       return '<span class="request-key-value">' + esc(plain) + '</span> ' +
-        '<button class="ghost small" data-copy-request-key="' + q.id + '">复制</button>';
+        '<button class="ghost small" data-copy-request-key="' + q.id + '">复制 KEY</button> ' +
+        (installCommand(q.deployment_domain)
+          ? '<button class="primary small" data-copy-install-domain="' + esc(q.deployment_domain) + '">复制安装命令</button>'
+          : "");
     }
     if (q.delivery_status === "ready" || q.delivery_status === "legacy_ready" || q.delivery_status === "revealed") {
       return '<button class="primary small" data-reveal-request="' + q.id + '">查看授权码</button>';
@@ -3280,6 +3297,17 @@
       copyText(revealedRequestKeys[copyId] || "")
         .then(function () { toast("授权码已复制"); })
         .catch(function () { toast("复制失败，请手动选择", true); });
+      return;
+    }
+    if (t.dataset && t.dataset.copyInstallDomain) {
+      var command = installCommand(t.dataset.copyInstallDomain);
+      if (!command) {
+        toast("审批域名无效，请联系平台核对授权", true);
+        return;
+      }
+      copyText(command)
+        .then(function () { toast("安装命令已复制，请到新服务器 SSH 终端执行"); })
+        .catch(function () { toast("复制失败，请重试", true); });
       return;
     }
     if (t.dataset && t.dataset.editRequest) {

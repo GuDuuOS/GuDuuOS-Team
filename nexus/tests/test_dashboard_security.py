@@ -131,6 +131,26 @@ class DashboardSecurityTests(unittest.TestCase):
         self.assertIn("function setTurnstileMessage", script)
         self.assertIn("验证码已发送；60 秒后可重新验证并发送。", script)
 
+    def test_public_installer_is_safe_bootstrap_without_embedded_key(self) -> None:
+        """公开安装器必须锁定严格版本，并且绝不携带客户 KEY。"""
+        with urlopen(f"{self.base_url}/portal/install.sh", timeout=3) as response:
+            script = response.read().decode("utf-8")
+            self.assertEqual(
+                response.headers["Content-Type"],
+                "text/x-shellscript; charset=utf-8",
+            )
+        self.assertIn('RELEASE_TAG="v1.22.2"', script)
+        self.assertIn('exec ./install.sh "$@"', script)
+        self.assertNotIn("CMK-", script)
+        self.assertNotIn("--key", script)
+
+        # 门户只用审批域名组装命令；KEY 继续走 SSH 交互输入。
+        with urlopen(f"{self.base_url}/portal/portal.js", timeout=3) as response:
+            portal_script = response.read().decode("utf-8")
+        self.assertIn("function installCommand(domain)", portal_script)
+        self.assertIn("data-copy-install-domain", portal_script)
+        self.assertIn("/portal/install.sh | sudo bash -s -- --domain ", portal_script)
+
     def test_admin_has_independent_noindex_entry(self) -> None:
         """独立超管深链必须可刷新直达，同时明确禁止搜索引擎收录。"""
         with urlopen(f"{self.base_url}/portal/admin/", timeout=3) as response:

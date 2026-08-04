@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置使用同源外部脚本，既防刷新闪色，也允许 Portal 开启严格脚本 CSP。 -->
 <script src="/portal/theme-init.js?v=1"></script>
-<link rel="stylesheet" href="/portal/portal.css?v=33" />
+<link rel="stylesheet" href="/portal/portal.css?v=35" />
 </head>
 <body>
 <!--
@@ -407,8 +407,14 @@
     <div class="panel-head key-list-head">
       <div>
         <h2>我的授权</h2>
-        <p class="hint">完整 KEY 只在签发或获批领取窗口展示一次；此处长期只显示尾号。</p>
+        <p class="hint">完整 KEY 只在签发或获批领取窗口展示；安装命令不包含 KEY，执行后在服务器终端安全输入。</p>
       </div>
+    </div>
+    <div class="key-install-guide">
+      <b>新节点部署流程</b>
+      <span>1. 复制对应审批域名的安装命令</span>
+      <span>2. 在 Ubuntu / Debian 服务器 SSH 终端执行</span>
+      <span>3. 按提示输入管理员邮箱与 OEM 授权码</span>
     </div>
     <div class="key-card-grid" id="oem-keys"></div>
   </section>
@@ -876,6 +882,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=43"></script>
+<script src="/portal/portal.js?v=44"></script>
 </body>
 </html>
