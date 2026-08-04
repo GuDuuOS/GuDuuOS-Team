@@ -1140,6 +1140,8 @@ class NexusHandler(BaseHTTPRequestHandler):
                     deployment_domain=str(checkout_body.get("deployment_domain", "")),
                     purpose=str(checkout_body.get("purpose", "")),
                     expected_date=str(checkout_body.get("expected_date", "")),
+                    # 付款领域层还会再根据平台开关强制归零；
+                    # 这里保留原始值，便于开启功能时处理人工授权。
                     requested_tokens=int(checkout_body.get("requested_tokens") or 0),
                     expected_public_ip=str(checkout_body.get("expected_public_ip", "")),
                     strict_ip=bool(checkout_body.get("strict_ip", False)),
@@ -1716,7 +1718,13 @@ class NexusHandler(BaseHTTPRequestHandler):
                             deployment_domain=str(body.get("deployment_domain", "")),
                             purpose=str(body.get("purpose", "")),
                             expected_date=str(body.get("expected_date", "")),
-                            requested_tokens=int(body.get("requested_tokens") or 0),
+                            requested_tokens=(
+                                int(body.get("requested_tokens") or 0)
+                                if features.get_flags(s)[
+                                    "oem_token_grant_request_visible"
+                                ]
+                                else 0
+                            ),
                             expected_public_ip=str(body.get("expected_public_ip", "")),
                             strict_ip=bool(body.get("strict_ip", False)),
                             source_ip=self._client_ip(),
@@ -1748,7 +1756,13 @@ class NexusHandler(BaseHTTPRequestHandler):
                         deployment_domain=str(body.get("deployment_domain", "")),
                         purpose=str(body.get("purpose", "")),
                         expected_date=str(body.get("expected_date", "")),
-                        requested_tokens=int(body.get("requested_tokens") or 0),
+                        requested_tokens=(
+                            int(body.get("requested_tokens") or 0)
+                            if features.get_flags(s)[
+                                "oem_token_grant_request_visible"
+                            ]
+                            else 0
+                        ),
                         expected_public_ip=str(body.get("expected_public_ip", "")),
                         strict_ip=bool(body.get("strict_ip", False)),
                         source_ip=self._client_ip(),
@@ -2034,7 +2048,15 @@ class NexusHandler(BaseHTTPRequestHandler):
                                 s,
                                 int(body.get("request_id") or 0),
                                 bool(body.get("approve")),
-                                token_grant=int(body.get("token_grant") or 0),
+                                # 超管端也不能绕过平台开关：关闭时即使
+                                # 手工构造 HTTP 请求，新签发 KEY 的额度仍为 0。
+                                token_grant=(
+                                    int(body.get("token_grant") or 0)
+                                    if features.get_flags(s)[
+                                        "oem_token_grant_request_visible"
+                                    ]
+                                    else 0
+                                ),
                                 decide_note=str(body.get("decide_note", "")),
                                 action=str(body.get("action", "")),
                                 actor_label=self._admin_actor(),

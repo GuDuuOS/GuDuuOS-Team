@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置使用同源外部脚本，既防刷新闪色，也允许 Portal 开启严格脚本 CSP。 -->
 <script src="/portal/theme-init.js?v=1"></script>
-<link rel="stylesheet" href="/portal/portal.css?v=35" />
+<link rel="stylesheet" href="/portal/portal.css?v=36" />
 </head>
 <body>
 <!--
@@ -365,7 +365,7 @@
         <option value="manual_review">合同 / 免费授权（人工审批）</option>
       </select></label>
       <label id="license-online-channel" class="license-conditional" hidden>在线支付渠道<select name="channel" id="license-channel"></select></label>
-      <label id="license-manual-tokens" class="license-conditional" hidden>申请附赠 Token<input name="requested_tokens" type="number" min="0" max="1000000000000" value="100000000" /></label>
+      <label id="license-manual-tokens" class="license-conditional" hidden>申请附赠 Token<input name="requested_tokens" type="number" min="0" max="1000000000000" value="0" /></label>
       <div id="license-transfer-fields" class="license-transfer-fields">
         <label>付款企业<input name="payer_company" maxlength="200" required placeholder="银行回单上的付款企业" /></label>
         <label>银行流水号<input name="transaction_id" maxlength="200" placeholder="可留空，以凭证为准" /></label>
@@ -378,7 +378,7 @@
     <p class="hint">系统只认服务端支付回调或超管确认的真实到账；转账凭证和 AI 识别结果不会自动发 KEY。获批后请在 7 天内领取。</p>
     <div class="table-scroll">
       <table class="tbl" id="oem-requests" hidden>
-        <thead><tr><th>#</th><th>状态</th><th>节点 / 场景</th><th>付款 / 额度</th><th>授权码</th><th>申请时间</th><th>操作</th></tr></thead>
+        <thead><tr><th>#</th><th>状态</th><th>节点 / 场景</th><th id="oem-request-payment-head">付款</th><th>授权码</th><th>申请时间</th><th>操作</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -458,6 +458,9 @@
       <button class="admin-menu-item" data-admin-page="billing">
         <span class="admin-menu-icon">¥</span><span>支付与订单</span><em id="nav-count-orders">0</em>
       </button>
+      <button class="admin-menu-item" data-admin-page="settings">
+        <span class="admin-menu-icon">⚙</span><span>平台设置</span>
+      </button>
       <button class="admin-menu-item" data-admin-page="security">
         <span class="admin-menu-icon">⌾</span><span>平台安全</span><em id="nav-count-admins">0</em>
       </button>
@@ -482,24 +485,6 @@
 
     <div class="admin-page" data-admin-view="overview">
       <section id="admin-stats" class="fleet-overview"></section>
-      <section class="panel platform-feature-panel">
-        <div class="panel-head">
-          <div>
-            <h2>OEM 功能开关</h2>
-            <p class="hint">控制客户后台可见功能；关闭只隐藏并拦截客户访问，不删除已经保存的真实关系数据。</p>
-          </div>
-        </div>
-        <div class="platform-feature-row">
-          <div>
-            <h3>层级与归属用户数据</h3>
-            <p>关闭后 OEM 仍可使用分享链接和二维码，但不显示层级统计、下属 OEM 清单与归属用户清单。</p>
-          </div>
-          <button id="toggle-oem-network" class="feature-switch" type="button" role="switch" aria-checked="false" disabled>
-            <span class="feature-switch-track"><i></i></span>
-            <b>读取中</b>
-          </button>
-        </div>
-      </section>
       <section class="panel finance-panel">
         <div class="panel-head finance-panel-head">
           <div>
@@ -529,6 +514,37 @@
           <p class="hint">汇总全部 OEM 节点、在线状态、Token 用量和地域分布，仅平台超级管理员可查看。</p>
         </div>
         <a class="primary dashboard-link" href="/" target="_blank" rel="noopener" hidden>打开数据大屏 ↗</a>
+      </section>
+    </div>
+
+    <div class="admin-page" data-admin-view="settings" hidden>
+      <section class="panel platform-feature-panel">
+        <div class="panel-head">
+          <div>
+            <h2>OEM 功能开关</h2>
+            <p class="hint">开关由 Nexus 服务端持久化并强制执行；关闭功能不删除已有历史数据。</p>
+          </div>
+        </div>
+        <div class="platform-settings-list">
+          <div class="platform-feature-row">
+            <div>
+              <h3>层级与归属用户数据</h3>
+              <p>关闭后 OEM 仍可使用分享链接和二维码，但不显示层级统计、下属 OEM 与归属用户清单。</p>
+            </div>
+            <button id="toggle-oem-network" data-feature-flag="oem_network_visible" class="feature-switch" type="button" role="switch" aria-checked="false" disabled>
+              <span class="feature-switch-track"><i></i></span><b>读取中</b>
+            </button>
+          </div>
+          <div class="platform-feature-row">
+            <div>
+              <h3>OEM 授权申请附赠 Token</h3>
+              <p>默认关闭：OEM 自由选择 API 接入方，申请表单不显示 Token 字段，服务端将额度强制归零。</p>
+            </div>
+            <button id="toggle-oem-token-grant" data-feature-flag="oem_token_grant_request_visible" class="feature-switch" type="button" role="switch" aria-checked="false" disabled>
+              <span class="feature-switch-track"><i></i></span><b>读取中</b>
+            </button>
+          </div>
+        </div>
       </section>
     </div>
 
@@ -882,6 +898,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=44"></script>
+<script src="/portal/portal.js?v=45"></script>
 </body>
 </html>

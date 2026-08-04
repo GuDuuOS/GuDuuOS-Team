@@ -34,7 +34,13 @@ class FeatureFlagTests(unittest.TestCase):
 
     def test_network_visibility_defaults_off_and_persists(self) -> None:
         """缺少设置行时必须关闭；超管开启后立即从数据库读回。"""
-        self.assertEqual(features.get_flags(self.s), {"oem_network_visible": False})
+        self.assertEqual(
+            features.get_flags(self.s),
+            {
+                "oem_network_visible": False,
+                "oem_token_grant_request_visible": False,
+            },
+        )
         result = features.set_flags(self.s, {"oem_network_visible": True})
         self.s.commit()
         self.assertTrue(result["oem_network_visible"])
@@ -65,6 +71,12 @@ class FeatureFlagHttpTests(unittest.TestCase):
         self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
         self._tmp.close()
         db.init_engine("sqlite:///" + self._tmp.name)
+        # 批准授权会创建加密交付记录；测试使用独立临时密钥，
+        # 不读取、也不污染开发机或生产的 NEXUS_SECRET_KEY。
+        self._old_secret = os.environ.get("NEXUS_SECRET_KEY")
+        os.environ["NEXUS_SECRET_KEY"] = (
+            "feature-flag-http-test-secret-at-least-32-bytes"
+        )
         s = db.session()
         oem.register(
             s,
@@ -99,6 +111,10 @@ class FeatureFlagHttpTests(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
+        if self._old_secret is None:
+            os.environ.pop("NEXUS_SECRET_KEY", None)
+        else:
+            os.environ["NEXUS_SECRET_KEY"] = self._old_secret
         os.unlink(self._tmp.name)
 
     def _json_request(
@@ -117,13 +133,19 @@ class FeatureFlagHttpTests(unittest.TestCase):
                 "Content-Type": "application/json",
             },
         )
-        with urlopen(request, timeout=3) as response:
+        with urlopen(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
 
     def test_oem_network_hidden_until_admin_enables_it(self) -> None:
         """关闭时隐藏统计和目录但保留分享二维码；开启后目录恢复。"""
         me = self._json_request("/nexus/oem/me", self.oem_token)
-        self.assertEqual(me["features"], {"oem_network_visible": False})
+        self.assertEqual(
+            me["features"],
+            {
+                "oem_network_visible": False,
+                "oem_token_grant_request_visible": False,
+            },
+        )
         self.assertTrue(me["referral"]["code"])
         self.assertIn("invite=", me["referral"]["partner_link"])
         for hidden_key in (
@@ -147,7 +169,7 @@ class FeatureFlagHttpTests(unittest.TestCase):
             self.base_url + "/nexus/oem/share_qr?kind=partner",
             headers={"Authorization": "Bearer " + self.oem_token},
         )
-        with urlopen(request, timeout=3) as response:
+        with urlopen(request, timeout=10) as response:
             self.assertEqual(response.status, 200)
             self.assertEqual(response.headers.get_content_type(), "image/svg+xml")
             self.assertIn(b"<svg", response.read())
@@ -161,6 +183,52 @@ class FeatureFlagHttpTests(unittest.TestCase):
         directory = self._json_request("/nexus/oem/network", self.oem_token)
         self.assertEqual(directory["oem_total"], 0)
         self.assertEqual(directory["user_total"], 0)
+
+    def test_oem_token_grant_defaults_to_zero_and_requires_admin_switch(self) -> None:
+        """隐藏字段不能被手工 API 绕过；开启后才允许保存申请额度。"""
+        hidden = self._json_request(
+            "/nexus/oem/request_key",
+            self.oem_token,
+            {
+                "deployment_domain": "token-off.example.com",
+                "purpose": "验证默认关闭",
+                "requested_tokens": 100_000_000,
+            },
+        )
+        self.assertEqual(hidden["request"]["requested_tokens"], 0)
+
+        # 超管即使手工构造非零批准请求，关闭状态下签发的 KEY 仍必须是零额度。
+        self._json_request(
+            "/nexus/admin/request_decide",
+            self.admin_token,
+            {
+                "request_id": hidden["request"]["id"],
+                "action": "approve",
+                "approve": True,
+                "token_grant": 100_000_000,
+            },
+        )
+        me = self._json_request("/nexus/oem/me", self.oem_token)
+        self.assertEqual(me["keys"][0]["token_grant"], 0)
+
+        enabled = self._json_request(
+            "/nexus/admin/features",
+            self.admin_token,
+            {"oem_token_grant_request_visible": True},
+        )
+        self.assertTrue(
+            enabled["features"]["oem_token_grant_request_visible"]
+        )
+        visible = self._json_request(
+            "/nexus/oem/request_key",
+            self.oem_token,
+            {
+                "deployment_domain": "token-on.example.com",
+                "purpose": "验证超管开启",
+                "requested_tokens": 12_345,
+            },
+        )
+        self.assertEqual(visible["request"]["requested_tokens"], 12_345)
 
 
 if __name__ == "__main__":

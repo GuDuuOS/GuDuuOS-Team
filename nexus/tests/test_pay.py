@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from nexus import db, fleet, oem, pay
+from nexus import db, features, fleet, oem, pay
 from nexus.fleet import FleetError
 
 
@@ -146,6 +146,37 @@ class PayTest(unittest.TestCase):
         again = pay.mark_paid(self.s, order_no, "DUPLICATE-CALLBACK")
         self.assertEqual(again["key_id"], paid["key_id"])
         self.assertEqual(len(oem.my_keys(self.s, self.buyer)), 1)
+
+    def test_disabling_token_grant_before_payment_forces_zero_fulfillment(self):
+        """付款前关闭赠送时，迟到回调不得按下单时快照继续发 Token。"""
+        pay.set_pricing(
+            self.s,
+            {"key_price_cents": 19_900, "key_token_grant": 88_000_000},
+        )
+        features.set_flags(
+            self.s, {"oem_token_grant_request_visible": True}
+        )
+        checkout = pay.create_license_checkout(
+            self.s,
+            self.buyer,
+            "online",
+            channel="mock",
+            deployment_domain="switch-off-before-pay.example.com",
+            purpose="验证履约时二次守卫",
+        )
+        self.assertEqual(checkout["request"]["requested_tokens"], 88_000_000)
+
+        features.set_flags(
+            self.s, {"oem_token_grant_request_visible": False}
+        )
+        pay.mark_paid(
+            self.s,
+            checkout["order"]["order_no"],
+            "PAYMENT-AFTER-SWITCH-OFF",
+            paid_amount_cents=19_900,
+            paid_currency="CNY",
+        )
+        self.assertEqual(oem.my_keys(self.s, self.buyer)[0]["token_grant"], 0)
 
     def test_online_callback_amount_mismatch_never_issues_key(self):
         """支付回调金额不匹配时必须保持待支付，不得产生 KEY。"""

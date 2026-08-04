@@ -3,10 +3,10 @@
 这些开关属于运营控制项：超管需要在不重启服务的情况下决定某项 OEM 功能
 是否对客户可见，因此持久化到 ``NexusSetting``，不能只放浏览器或环境变量。
 
-当前首个开关 ``oem_network_visible`` 只控制 OEM 门户的层级统计、下属 OEM
-与归属用户数据。分享页、注册链接和二维码始终保留；默认关闭时服务端拒绝
-网络目录接口，避免仅靠前端隐藏。关系边仍会保留在数据库中，重新开启后可
-继续展示既有真实数据。
+``oem_network_visible`` 控制 OEM 门户的层级与归属数据；
+``oem_token_grant_request_visible`` 控制 OEM 能否在授权申请里索要平台
+Token。两者均默认关闭，而且必须在服务端同步执行，避免只隐藏前端
+后被直接调用 API 绕过。
 """
 
 from __future__ import annotations
@@ -22,6 +22,8 @@ _SETTING_KEY = "feature_flags"
 _DEFAULTS: Dict[str, bool] = {
     # 负责人 2026-08-01 拍板：层级和归属用户数据先隐藏，由超管手动开放。
     "oem_network_visible": False,
+    # OEM 可自由选择自己的 API 接入方；平台默认不附赠 Token。
+    "oem_token_grant_request_visible": False,
 }
 
 

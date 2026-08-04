@@ -334,8 +334,10 @@
     licenses: "授权申请",
     keys: "我的 KEY",
   };
-  // 服务端返回开关之前采用安全默认值 false，避免页面初始渲染时短暂露出层级数据。
+  // 服务端返回开关之前采用安全默认值 false，避免页面初始渲染时
+  // 短暂露出层级数据或 Token 申请入口。
   var oemNetworkVisible = false;
+  var oemTokenGrantRequestVisible = false;
   function oemPageFromHash() {
     var value = window.location.hash.replace(/^#oem-/, "").trim();
     return Object.prototype.hasOwnProperty.call(OEM_PAGE_TITLES, value) ? value : "overview";
@@ -364,6 +366,9 @@
   }
   function applyOemFeatureFlags(flags) {
     oemNetworkVisible = !!(flags && flags.oem_network_visible);
+    oemTokenGrantRequestVisible = !!(
+      flags && flags.oem_token_grant_request_visible
+    );
     // 分享入口与二维码始终保留；开关只控制统计和名单两块敏感运营数据。
     $("#oem-network-stats").hidden = !oemNetworkVisible;
     $("#panel-network-directory").hidden = !oemNetworkVisible;
@@ -372,6 +377,10 @@
       // 清空浏览器 DOM 里的旧层级与名单数据，但不能清除分享链接和二维码。
       clearOemNetworkData();
     }
+    var paymentHead = $("#oem-request-payment-head");
+    if (paymentHead) paymentHead.textContent = oemTokenGrantRequestVisible ? "付款 / 额度" : "付款";
+    // 开关可在 OEM 页面打开期间被超管改动；每次刷新数据都重算表单状态。
+    syncLicensePaymentForm();
   }
   $all("button[data-oem-page]").forEach(function (button) {
     button.addEventListener("click", function () {
@@ -389,6 +398,7 @@
     licenses: "授权与申请",
     customers: "OEM 客户",
     billing: "支付与订单",
+    settings: "平台设置",
     security: "平台安全",
     guide: "使用教程",
   };
@@ -1149,7 +1159,11 @@
     var topupOn = pricing.topup_packs.length > 0 && instances.length > 0;
     $("#shop-key").hidden = !keyOn;
     if (keyOn) {
-      $("#shop-key-desc").textContent = "附赠 " + fmtTokens(pricing.key_token_grant) + " token · 支付与部署资料统一进入授权申请";
+      // Token 附赠是独立运营能力；关闭后授权商品只卖节点使用权，
+      // 不再用定价里的历史额度误导 OEM 认为必须使用平台 API。
+      $("#shop-key-desc").textContent = oemTokenGrantRequestVisible
+        ? "附赠 " + fmtTokens(pricing.key_token_grant) + " token · 支付与部署资料统一进入授权申请"
+        : "节点永久授权 · API 接入方由 OEM 自由选择";
       $("#shop-key-btns").innerHTML = '<span class="shop-price">' + fmtYuan(pricing.key_price_cents) + "</span>" +
         chButtons("buykey") + '<button class="ghost small" data-buykey-transfer="1">企业转账购买</button>';
     }
@@ -1186,11 +1200,14 @@
     var online = method === "online" && !editing;
     $("#license-transfer-fields").hidden = !transfer;
     $("#license-online-channel").hidden = !online;
-    $("#license-manual-tokens").hidden = method !== "manual_review";
+    $("#license-manual-tokens").hidden =
+      method !== "manual_review" || !oemTokenGrantRequestVisible;
     form.payer_company.required = transfer;
     form.voucher.required = transfer;
     form.payment_method.disabled = editing;
-    form.requested_tokens.disabled = editing && method !== "manual_review";
+    // 关闭时不只隐藏，还禁用控件并在提交处强制传 0。
+    form.requested_tokens.disabled = !oemTokenGrantRequestVisible ||
+      (editing && method !== "manual_review");
     var priced = Number(licensePricing.key_price_cents) > 0;
     var summary = $("#license-price-summary");
     if (editing) {
@@ -1198,8 +1215,10 @@
     } else if (method === "manual_review") {
       summary.textContent = "合同/免费授权不创建付款单，由超管人工决定是否签发。";
     } else if (priced) {
-      summary.textContent = "应付 " + fmtYuan(licensePricing.key_price_cents) + " · 附赠 " +
-        fmtTokens(licensePricing.key_token_grant) + " Token";
+      summary.textContent = "应付 " + fmtYuan(licensePricing.key_price_cents) +
+        (oemTokenGrantRequestVisible
+          ? " · 附赠 " + fmtTokens(licensePricing.key_token_grant) + " Token"
+          : " · 仅节点授权，不绑定平台 Token");
     } else {
       summary.textContent = "平台尚未设置授权售价，请选择合同/免费授权。";
     }
@@ -1907,10 +1926,12 @@
           '<button class="ghost small" data-cancel-request="' + q.id + '">撤回</button>'
         : q.status === "needs_info"
           ? '<button class="primary small" data-edit-request="' + q.id + '">补充资料</button>' : "—";
+      var tokenText = oemTokenGrantRequestVisible
+        ? " · " + fmtTokens(q.requested_tokens) + " Token"
+        : "";
       var payment = '<b>' + esc(PAYMENT_METHOD_ZH[q.payment_method] || q.payment_method || "人工审批") +
         '</b><div class="hint">' + esc(PAYMENT_STATUS_ZH[q.payment_status] || q.payment_status || "—") +
-        (q.payment_amount_cents ? " · " + fmtYuan(q.payment_amount_cents) : "") + " · " +
-        fmtTokens(q.requested_tokens) + " Token</div>";
+        (q.payment_amount_cents ? " · " + fmtYuan(q.payment_amount_cents) : "") + tokenText + "</div>";
       return "<tr><td>#" + q.id + '</td><td class="zh"><span class="badge ' +
         (REQUEST_CLASS[q.status] || "idle") + '">' + (REQUEST_LABEL[q.status] || q.status) +
         "</span>" + message + '</td><td class="zh"><b>' + esc(q.deployment_domain || "待定") +
@@ -1962,7 +1983,9 @@
       deployment_domain: f.deployment_domain.value,
       purpose: f.purpose.value,
       expected_date: f.expected_date.value,
-      requested_tokens: Number(f.requested_tokens.value) || 0,
+      requested_tokens: oemTokenGrantRequestVisible
+        ? (Number(f.requested_tokens.value) || 0)
+        : 0,
       expected_public_ip: f.expected_public_ip.value,
       strict_ip: !!f.strict_ip.checked,
     };
@@ -1972,7 +1995,7 @@
       api("/nexus/oem/request_action", { body: payload })
         .then(function () {
           toast("申请资料已更新");
-          editingRequestId = 0; f.reset(); f.requested_tokens.value = "100000000";
+          editingRequestId = 0; f.reset(); f.requested_tokens.value = "0";
           f.payment_method.disabled = false; syncLicensePaymentForm(); loadOem();
         })
         .catch(function (err) { toast(err.message, true); });
@@ -2008,7 +2031,7 @@
         ? "转账凭证已提交，超管确认真实到账后自动发 KEY"
         : (payload.payment_method === "online" ? "订单已创建，请完成支付" : "授权申请已提交");
       toast(message);
-      f.reset(); f.requested_tokens.value = "100000000"; syncLicensePaymentForm(); loadOem();
+      f.reset(); f.requested_tokens.value = "0"; syncLicensePaymentForm(); loadOem();
     }).catch(function (err) {
       toast(err.message, true);
     }).then(function () {
@@ -2284,36 +2307,52 @@
       "&q=" + encodeURIComponent(query);
   }
 
-  var adminFeatureFlags = { oem_network_visible: false };
+  var adminFeatureFlags = {
+    oem_network_visible: false,
+    oem_token_grant_request_visible: false,
+  };
   function renderPlatformFeatures(flags) {
     // 超管看到的是服务端最终持久化状态；按钮文字、颜色和 aria-checked
     // 三处同步，便于视觉与辅助技术都能准确判断开关。
     adminFeatureFlags = {
       oem_network_visible: !!(flags && flags.oem_network_visible),
+      oem_token_grant_request_visible: !!(
+        flags && flags.oem_token_grant_request_visible
+      ),
     };
-    var button = $("#toggle-oem-network");
-    var enabled = adminFeatureFlags.oem_network_visible;
-    button.disabled = false;
-    button.classList.toggle("on", enabled);
-    button.setAttribute("aria-checked", enabled ? "true" : "false");
-    button.querySelector("b").textContent = enabled ? "已开启" : "已关闭";
+    $all("[data-feature-flag]").forEach(function (button) {
+      var name = button.dataset.featureFlag;
+      var enabled = !!adminFeatureFlags[name];
+      button.disabled = false;
+      button.classList.toggle("on", enabled);
+      button.setAttribute("aria-checked", enabled ? "true" : "false");
+      button.querySelector("b").textContent = enabled ? "已开启" : "已关闭";
+    });
   }
 
-  $("#toggle-oem-network").addEventListener("click", function () {
-    var button = this;
-    var nextValue = !adminFeatureFlags.oem_network_visible;
-    button.disabled = true;
-    button.querySelector("b").textContent = "保存中";
-    api("/nexus/admin/features", {
-      body: { oem_network_visible: nextValue },
-    }).then(function (result) {
-      renderPlatformFeatures(result.features || {});
-      toast(nextValue
-        ? "OEM 层级与归属用户数据已开放"
-        : "OEM 层级与归属用户数据已隐藏，分享二维码继续可用");
-    }).catch(function (error) {
-      renderPlatformFeatures(adminFeatureFlags);
-      toast(error.message, true);
+  $all("[data-feature-flag]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var name = button.dataset.featureFlag;
+      var nextValue = !adminFeatureFlags[name];
+      var body = {};
+      body[name] = nextValue;
+      button.disabled = true;
+      button.querySelector("b").textContent = "保存中";
+      api("/nexus/admin/features", { body: body }).then(function (result) {
+        renderPlatformFeatures(result.features || {});
+        if (name === "oem_network_visible") {
+          toast(nextValue
+            ? "OEM 层级与归属用户数据已开放"
+            : "OEM 层级与归属用户数据已隐藏，分享二维码继续可用");
+        } else {
+          toast(nextValue
+            ? "OEM 授权申请可选平台 Token 附赠"
+            : "OEM Token 附赠已关闭，新申请将强制归零");
+        }
+      }).catch(function (error) {
+        renderPlatformFeatures(adminFeatureFlags);
+        toast(error.message, true);
+      });
     });
   });
 
@@ -2534,14 +2573,21 @@
             '<button class="ghost small" data-needs-info="' + q.id + '">补资料</button> ' +
             '<button class="ghost small" data-reject="' + q.id + '">拒绝</button>';
         }
-        var requested = q.requested_tokens || 100000000;
+        // 旧页面曾把空额度默认成 1 亿；关闭开关时必须显式为 0，
+        // 且不渲染可编辑输入框，防止超管误操作。
+        var requested = Number(q.requested_tokens) || 0;
         var paymentCell = q.payment_method === "manual_review"
-          ? '<input type="number" min="0" max="1000000000000" value="' + requested +
-            '" style="width:130px" data-grantfor="' + q.id + '" title="附赠 token" ' +
-            (q.status === "pending" ? "" : "disabled") + " />"
+          ? (adminFeatureFlags.oem_token_grant_request_visible
+            ? '<input type="number" min="0" max="1000000000000" value="' + requested +
+              '" style="width:130px" data-grantfor="' + q.id + '" title="附赠 token" ' +
+              (q.status === "pending" ? "" : "disabled") + " />"
+            : '<span class="hint">不附赠 Token</span>')
           : '<b>' + esc(PAYMENT_METHOD_ZH[q.payment_method] || q.payment_method) + '</b><div class="hint">' +
             esc(PAYMENT_STATUS_ZH[q.payment_status] || q.payment_status) + " · " + fmtYuan(q.payment_amount_cents) +
-            "<br>" + fmtTokens(requested) + " Token" + (q.transfer_no ? " · " + esc(q.transfer_no) : "") + "</div>";
+            (adminFeatureFlags.oem_token_grant_request_visible
+              ? "<br>" + fmtTokens(requested) + " Token"
+              : "<br>不附赠 Token") +
+            (q.transfer_no ? " · " + esc(q.transfer_no) : "") + "</div>";
         return "<tr><td>#" + q.id + '</td><td class="zh"><b>' + esc(q.company || "未补企业名") +
           '</b><div class="hint">' + esc(q.oem_email) + '</div></td><td class="zh"><b>' +
           esc(q.deployment_domain || "域名待定") + '</b><div class="hint">' + esc(q.purpose || q.note || "—") +
@@ -3555,7 +3601,10 @@
       var rid = t.dataset.approve;
       var grantInput = document.querySelector('input[data-grantfor="' + rid + '"]');
       var grant = grantInput ? Number(grantInput.value) || 0 : 0;
-      uiConfirm("确认批准申请 #" + rid + " 并附赠 " + fmtTokens(grant) + " Token？系统只会签发一把 KEY。", false, "批准并签发").then(function (ok) {
+      var approveMessage = "确认批准申请 #" + rid +
+        (grant > 0 ? " 并附赠 " + fmtTokens(grant) + " Token" : "（不附赠 Token）") +
+        "？系统只会签发一把 KEY。";
+      uiConfirm(approveMessage, false, "批准并签发").then(function (ok) {
         if (!ok) return;
         t.disabled = true;
         api("/nexus/admin/request_decide", { body: { request_id: Number(rid), action: "approve", approve: true, token_grant: grant } })

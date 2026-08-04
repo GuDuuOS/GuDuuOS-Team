@@ -139,7 +139,7 @@ class DashboardSecurityTests(unittest.TestCase):
                 response.headers["Content-Type"],
                 "text/x-shellscript; charset=utf-8",
             )
-        self.assertIn('RELEASE_TAG="v1.22.2"', script)
+        self.assertIn('RELEASE_TAG="v1.22.3"', script)
         self.assertIn('exec ./install.sh "$@"', script)
         self.assertNotIn("CMK-", script)
         self.assertNotIn("--key", script)

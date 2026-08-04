@@ -6,7 +6,7 @@
 # 仍由客户在服务器终端交互输入，避免泄露到 Shell history 或反向代理日志。
 set -euo pipefail
 
-RELEASE_TAG="v1.22.2"
+RELEASE_TAG="v1.22.3"
 ARCHIVE_URL="https://github.com/GuDuuOS/GuDuuOS-Team/archive/refs/tags/${RELEASE_TAG}.tar.gz"
 INSTALL_ROOT="${GUDUU_INSTALL_ROOT:-/opt/guduu-os}"
 

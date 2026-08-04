@@ -599,7 +599,7 @@ def create_license_checkout(
     在线支付和企业转账的金额/Token 都取当前定价快照，不信任浏览器
     传入的金额。任何一步失败由 HTTP 层回滚整个事务，不留孤儿申请。
     """
-    from nexus import audit, manual_transfer, oem as oem_svc
+    from nexus import audit, features, manual_transfer, oem as oem_svc
 
     selected = (method or "").strip().lower()
     if selected not in ("online", "corporate_transfer", "manual_review"):
@@ -612,9 +612,16 @@ def create_license_checkout(
             "NEXUS_NOT_FOR_SALE",
             "节点授权尚未设置售价，请选择合同/免费授权申请",
         )
-    effective_tokens = (
-        grant if selected != "manual_review" else int(requested_tokens or 0)
-    )
+    # OEM 使用自有 API 接入方时，授权和平台 Token 必须解耦。
+    # 服务端在开关关闭时强制归零，不信任浏览器隐藏字段。
+    token_grant_enabled = features.get_flags(s)[
+        "oem_token_grant_request_visible"
+    ]
+    effective_tokens = 0
+    if token_grant_enabled:
+        effective_tokens = (
+            grant if selected != "manual_review" else int(requested_tokens or 0)
+        )
     request = oem_svc.request_key(
         s,
         int(oem_id),
@@ -744,7 +751,7 @@ def mark_paid(
 
     履约动作与人工批准（oem.decide_request）同构：付款=自动批准。
     """
-    from nexus import fleet, oem as oem_svc  # 延迟导入避免环
+    from nexus import features, fleet, oem as oem_svc  # 延迟导入避免环
 
     # 新授权单涉及申请、付款关联和订单三张表。先无锁定位不可变主键，再统一按
     # “申请 → 付款关联 → 订单”顺序加锁；撤回、拒绝和企业转账确认也遵循同一顺序，
@@ -796,10 +803,17 @@ def mark_paid(
                 )
             link.status = "paid"
             link.updated_ts = int(time.time() * 1000)
+            # 履约时再读一次开关：下单后、付款前若超管关闭
+            # Token 附赠，迟到的支付回调也不能继续发放历史额度。
+            grant_tokens = (
+                int(order.tokens)
+                if features.get_flags(s)["oem_token_grant_request_visible"]
+                else 0
+            )
             request = oem_svc.approve_paid_request(
                 s,
                 link.request_id,
-                int(order.tokens),
+                grant_tokens,
                 action="payment_auto_approve",
                 actor_label=f"支付回调 · {order.channel}",
                 note=f"在线订单 {order.order_no} 已验签到账",
@@ -855,7 +869,7 @@ def decide_license_transfer(
     凭证、支付关联、申请状态、KEY 与审计事件在同一数据库事务中提交；
     任何一步失败都不会出现“计了收入但没发 KEY”的半完成状态。
     """
-    from nexus import audit, manual_transfer, oem as oem_svc
+    from nexus import audit, features, manual_transfer, oem as oem_svc
 
     located_link = s.execute(
         select(NexusLicensePayment).where(
@@ -897,10 +911,15 @@ def decide_license_transfer(
         link.status = "paid"
         link.updated_ts = int(time.time() * 1000)
         request_snapshot = oem_svc.request_detail(s, link.request_id)
+        grant_tokens = (
+            int(request_snapshot.get("requested_tokens") or 0)
+            if features.get_flags(s)["oem_token_grant_request_visible"]
+            else 0
+        )
         request = oem_svc.approve_paid_request(
             s,
             link.request_id,
-            int(request_snapshot.get("requested_tokens") or 0),
+            grant_tokens,
             action="transfer_confirm",
             actor_label=actor_label,
             source_ip=source_ip,
