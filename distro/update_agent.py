@@ -94,7 +94,12 @@ def _post(url: str, payload: Dict[str, Any], timeout: int = 30) -> Dict[str, Any
     request = urllib.request.Request(
         url,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            # Cloudflare 会把 urllib 默认的 Python User-Agent 误判为通用机器人。
+            # 使用固定产品标识便于边缘规则精确放行，同时不携带 KEY、域名等租户信息。
+            "User-Agent": "GuDuuOS-Node-Updater/1.0",
+        },
         method="POST",
     )
     try:

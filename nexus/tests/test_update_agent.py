@@ -64,6 +64,20 @@ class UpdateAgentTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             update_agent._validate_endpoint("http://nexus.example.com")
 
+    def test_update_request_has_fixed_product_user_agent(self):
+        """节点代理必须带固定产品标识，避免被 Cloudflare 当成 urllib 机器人。"""
+        with mock.patch.object(
+            update_agent.urllib.request,
+            "urlopen",
+            side_effect=RuntimeError("只检查请求，不访问网络"),
+        ) as opened:
+            with self.assertRaises(RuntimeError):
+                update_agent._post("https://nexus.example.com/check", {"key": "x"})
+        request = opened.call_args.args[0]
+        self.assertEqual(
+            request.get_header("User-agent"), "GuDuuOS-Node-Updater/1.0"
+        )
+
     def test_container_artifact_only_accepts_official_exact_digests(self):
         """更新代理不能把 Nexus 字段转换成任意镜像或命令。"""
         update = {
@@ -115,6 +129,25 @@ class UpdateAgentTest(unittest.TestCase):
                 "ghcr.io/guduuos/guduu-os-web@sha256:" + "b" * 64,
             )
         self.assertTrue(selected[0].startswith("ghcr.io/"))
+        self.assertEqual(run_mock.call_count, 2)
+
+    def test_mirror_login_failure_does_not_block_ghcr_fallback(self):
+        """自建仓登录失败时不能在拉取前终止整个更新。"""
+        values = {
+            "GUDUU_REGISTRY_USER": "ghcr-reader",
+            "GUDUU_REGISTRY_TOKEN": "ghcr-token",
+            "GUDUU_MIRROR_USER": "mirror-reader",
+            "GUDUU_MIRROR_TOKEN": "mirror-token",
+        }
+        with mock.patch.object(
+            apply_images, "_read_env", return_value=values
+        ), mock.patch.object(
+            apply_images,
+            "_run",
+            side_effect=["", RuntimeError("自建仓暂时不可用")],
+        ) as run_mock:
+            apply_images._registry_login()
+
         self.assertEqual(run_mock.call_count, 2)
 
     def test_apply_image_validation_and_atomic_env_update(self):

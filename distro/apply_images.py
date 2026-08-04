@@ -97,7 +97,11 @@ def _run(
 
 
 def _registry_login() -> None:
-    """登录节点已配置的只读镜像仓，全程不输出令牌。"""
+    """登录节点已配置的只读镜像仓，全程不输出令牌。
+
+    GHCR 是发布灾备仓，其凭据配置错误时必须终止；自建仓只是优先拉取
+    通道，登录失败不应该阻断后续 GHCR 回退。镜像本身仍由不可变摘要校验。
+    """
     values = _read_env(_REGISTRY_FILE)
     user = values.get("GUDUU_REGISTRY_USER", "")
     token = values.get("GUDUU_REGISTRY_TOKEN", "")
@@ -112,20 +116,31 @@ def _registry_login() -> None:
     mirror_user = values.get("GUDUU_MIRROR_USER", "")
     mirror_token = values.get("GUDUU_MIRROR_TOKEN", "")
     if bool(mirror_user) != bool(mirror_token):
-        raise RuntimeError("自建仓用户和只读令牌必须同时配置")
-    if mirror_user:
-        _run(
-            [
-                "docker",
-                "login",
-                "registry.guduu.co",
-                "--username",
-                mirror_user,
-                "--password-stdin",
-            ],
-            input_text=mirror_token + "\n",
-            timeout=60,
+        print(
+            "[镜像更新] 自建仓凭据不完整，将直接使用 GHCR 灾备仓。",
+            file=sys.stderr,
         )
+        return
+    if mirror_user:
+        try:
+            _run(
+                [
+                    "docker",
+                    "login",
+                    "registry.guduu.co",
+                    "--username",
+                    mirror_user,
+                    "--password-stdin",
+                ],
+                input_text=mirror_token + "\n",
+                timeout=60,
+            )
+        except RuntimeError as exc:
+            print(
+                "[镜像更新] 自建仓登录失败，仍将尝试拉取并在失败后回退 GHCR："
+                + str(exc),
+                file=sys.stderr,
+            )
 
 
 def _validate_mirror(value: str, service: str, fallback: str) -> str:
