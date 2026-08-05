@@ -10,6 +10,7 @@ from nexus.db import (
     NexusAdminSession,
     NexusGatewayDebitOutbox,
     NexusHeartbeat,
+    NexusRequestLatencyBucket,
     NexusRequestStat,
 )
 
@@ -51,6 +52,12 @@ class MaintenanceTests(unittest.TestCase):
                     ok_count=1,
                     fail_count=0,
                 ),
+                NexusRequestLatencyBucket(
+                    instance_id=1,
+                    minute_ts=now - 200 * day,
+                    upper_ms=500,
+                    count=1,
+                ),
                 NexusGatewayDebitOutbox(
                     request_id="gwd_pending",
                     instance_id=1,
@@ -76,6 +83,7 @@ class MaintenanceTests(unittest.TestCase):
         self.assertEqual(counts["admin_sessions"], 1)
         self.assertEqual(counts["heartbeats"], 1)
         self.assertEqual(counts["request_stats"], 1)
+        self.assertEqual(counts["request_latency_buckets"], 1)
         self.assertIsNotNone(
             self.s.get(NexusGatewayDebitOutbox, "gwd_pending")
         )

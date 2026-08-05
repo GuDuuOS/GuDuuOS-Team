@@ -16,6 +16,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import case, func, select, update
+from sqlalchemy.exc import IntegrityError
 
 from nexus import geo
 from nexus.db import (
@@ -28,6 +29,7 @@ from nexus.db import (
     NexusLedger,
     NexusOem,
     NexusOemProfile,
+    NexusRequestLatencyBucket,
     NexusRequestStat,
     NexusWallet,
 )
@@ -359,11 +361,56 @@ def heartbeat(
 # ---------- 网关请求统计（成功率 / 延迟 / 峰值）----------
 
 
+# 正常 AI 请求应远低于 300 秒；超过最大边界使用独立哨兵桶。若 P95 落入该档，
+# 前端必须显示“≥ 300s”而不是假装它有一个精确上界。
+_LATENCY_BUCKETS_MS = (
+    100,
+    250,
+    500,
+    1000,
+    2000,
+    3000,
+    5000,
+    10000,
+    20000,
+    30000,
+    60000,
+    120000,
+    300000,
+)
+_LATENCY_OVERFLOW_BUCKET = 2_147_483_647
+
+
+def _latency_bucket(ms: int) -> int:
+    """把延迟归入第一个不小于它的固定上界；超长请求落到最后一个溢出桶。"""
+    return next(
+        (upper for upper in _LATENCY_BUCKETS_MS if ms <= upper),
+        _LATENCY_OVERFLOW_BUCKET,
+    )
+
+
+def _p95_from_buckets(bucket_counts: Dict[int, int]) -> tuple[Optional[int], bool]:
+    """从直方图返回 P95 所在桶的边界与“溢出”标记。"""
+    total = sum(max(0, int(count)) for count in bucket_counts.values())
+    if total <= 0:
+        return None, False
+    target = (total * 95 + 99) // 100
+    cumulative = 0
+    for upper, count in sorted(bucket_counts.items()):
+        cumulative += max(0, int(count))
+        if cumulative >= target:
+            if int(upper) == _LATENCY_OVERFLOW_BUCKET:
+                return _LATENCY_BUCKETS_MS[-1], True
+            return int(upper), False
+    return _LATENCY_BUCKETS_MS[-1], True
+
+
 def record_request(s, instance_id: int, *, ok: bool, latency_ms: int = 0) -> None:
-    """记一次网关请求到**分钟桶**。成败都要记——只记成功的话成功率永远是 100%。
+    """记一次请求分钟桶；成功请求另记延迟直方图。
 
     并发收敛：先原子 UPDATE 累加,rowcount=0 说明本分钟还没有行,再 INSERT;
-    INSERT 撞唯一键(另一并发线程刚建)就重试一次 UPDATE。
+    INSERT 撞唯一键(另一并发线程刚建)就在嵌套事务回滚后重试 UPDATE，不回滚调用方
+    同一事务里已经完成的鉴权/结算工作。
     延迟只累计成功请求(失败多是秒回的 4xx,混进来会把均值拉得虚低)。
     **best-effort**:统计失败绝不能影响网关转发,调用方吞异常。
     """
@@ -371,8 +418,9 @@ def record_request(s, instance_id: int, *, ok: bool, latency_ms: int = 0) -> Non
     ms = max(0, int(latency_ms))
     inc_ok, inc_fail = (1, 0) if ok else (0, 1)
     lat_sum = ms if ok else 0
+    max_candidate = ms if ok else 0
 
-    def _update() -> int:
+    def _update_stat() -> int:
         res = s.execute(
             update(NexusRequestStat)
             .where(
@@ -384,34 +432,65 @@ def record_request(s, instance_id: int, *, ok: bool, latency_ms: int = 0) -> Non
                 fail_count=NexusRequestStat.fail_count + inc_fail,
                 latency_sum_ms=NexusRequestStat.latency_sum_ms + lat_sum,
                 latency_max_ms=case(
-                    (NexusRequestStat.latency_max_ms < ms, ms),
+                    (NexusRequestStat.latency_max_ms < max_candidate, max_candidate),
                     else_=NexusRequestStat.latency_max_ms,
                 ),
             )
         )
         return res.rowcount or 0
 
-    if _update():
+    if not _update_stat():
+        try:
+            with s.begin_nested():
+                s.add(
+                    NexusRequestStat(
+                        instance_id=int(instance_id),
+                        minute_ts=minute,
+                        ok_count=inc_ok,
+                        fail_count=inc_fail,
+                        latency_sum_ms=lat_sum,
+                        latency_max_ms=max_candidate,
+                    )
+                )
+                s.flush()
+        except IntegrityError:
+            _update_stat()
+
+    if not ok:
         return
-    try:
-        s.add(
-            NexusRequestStat(
-                instance_id=int(instance_id),
-                minute_ts=minute,
-                ok_count=inc_ok,
-                fail_count=inc_fail,
-                latency_sum_ms=lat_sum,
-                latency_max_ms=ms if ok else 0,
+
+    upper = _latency_bucket(ms)
+
+    def _update_latency_bucket() -> int:
+        result = s.execute(
+            update(NexusRequestLatencyBucket)
+            .where(
+                NexusRequestLatencyBucket.instance_id == int(instance_id),
+                NexusRequestLatencyBucket.minute_ts == minute,
+                NexusRequestLatencyBucket.upper_ms == upper,
             )
+            .values(count=NexusRequestLatencyBucket.count + 1)
         )
-        s.flush()
-    except Exception:
-        s.rollback()
-        _update()  # 撞并发插入:回到累加路径
+        return result.rowcount or 0
+
+    if not _update_latency_bucket():
+        try:
+            with s.begin_nested():
+                s.add(
+                    NexusRequestLatencyBucket(
+                        instance_id=int(instance_id),
+                        minute_ts=minute,
+                        upper_ms=upper,
+                        count=1,
+                    )
+                )
+                s.flush()
+        except IntegrityError:
+            _update_latency_bucket()
 
 
 def request_stats(s, since_ms: int = 0) -> Dict[int, Dict[str, Any]]:
-    """按实例聚合请求统计：{instance_id: {ok, fail, success_pct, avg_ms, peak_per_min}}。
+    """按实例聚合请求量、成功率、平均延迟、直方图 P95 与分钟峰值。
 
     success_pct 为 None 表示**这段时间内一次请求都没有**——大屏必须显示「—」而不是 0%
     （0% 成功率读起来像"全线故障",比不显示更误导）。
@@ -437,8 +516,34 @@ def request_stats(s, since_ms: int = 0) -> Dict[int, Dict[str, Any]]:
             "fail": fail,
             "success_pct": round(ok / total * 100, 2) if total else None,
             "avg_ms": int((lat_sum or 0) / ok) if ok else None,
+            "latency_sum_ms": int(lat_sum or 0),
             "peak_per_min": int(peak or 0),
+            "latency_buckets": {},
         }
+
+    bucket_query = select(
+        NexusRequestLatencyBucket.instance_id,
+        NexusRequestLatencyBucket.upper_ms,
+        func.sum(NexusRequestLatencyBucket.count),
+    )
+    if since_ms:
+        bucket_query = bucket_query.where(
+            NexusRequestLatencyBucket.minute_ts >= since_ms
+        )
+    for iid, upper, count in s.execute(
+        bucket_query.group_by(
+            NexusRequestLatencyBucket.instance_id,
+            NexusRequestLatencyBucket.upper_ms,
+        )
+    ).all():
+        row = out.get(int(iid))
+        if row is not None:
+            row["latency_buckets"][int(upper)] = int(count or 0)
+
+    for row in out.values():
+        p95_ms, overflow = _p95_from_buckets(row["latency_buckets"])
+        row["p95_ms"] = p95_ms
+        row["p95_overflow"] = overflow
     return out
 
 
@@ -870,6 +975,28 @@ def dash_summary(s) -> Dict[str, Any]:
         for i in range(24)
     ]
 
+    # 近 24 小时逐小时请求尝试数。与 Token 趋势分开：这里包含成功与失败请求，
+    # 地图的“网关调用趋势”不能再拿 Token 消耗柱形冒充请求流量。
+    request_hour_expr = NexusRequestStat.minute_ts.op("/")(hour_ms)
+    request_hour_rows = s.execute(
+        select(
+            request_hour_expr,
+            func.sum(NexusRequestStat.ok_count + NexusRequestStat.fail_count),
+        )
+        .where(NexusRequestStat.minute_ts >= since_24h)
+        .group_by(request_hour_expr)
+    ).all()
+    requests_by_bucket = {
+        int(bucket): int(count or 0) for bucket, count in request_hour_rows
+    }
+    request_hourly = [
+        {
+            "ts": (start_bucket + i) * hour_ms,
+            "requests": requests_by_bucket.get(start_bucket + i, 0),
+        }
+        for i in range(24)
+    ]
+
     # 总发放（grant+topup 的正数流水合计）：配额面板"已消耗/总发放"的分母
     granted_total = int(
         s.execute(
@@ -880,8 +1007,38 @@ def dash_summary(s) -> Dict[str, Any]:
         or 0
     )
 
-    # 今日请求质量（成功率/延迟/峰值）——分钟桶聚合，一次查完供所有实例用
+    # 今日请求质量（成功率/延迟/P95/峰值）——分钟桶和直方图一次聚合供所有实例用。
     req_stats = request_stats(s, since_ms=today0)
+    # 近 5 分钟均值不是瞬时采样值，固定以 300 秒为分母；前端必须明确写“近 5 分钟”。
+    req_stats_5m = request_stats(s, since_ms=now - 5 * 60 * 1000)
+    recent_requests = sum(
+        row["ok"] + row["fail"] for row in req_stats_5m.values()
+    )
+    request_rate_5m = round(recent_requests / 300, 3)
+
+    total_ok = sum(row["ok"] for row in req_stats.values())
+    total_fail = sum(row["fail"] for row in req_stats.values())
+    total_attempts = total_ok + total_fail
+    total_latency_sum = sum(row["latency_sum_ms"] for row in req_stats.values())
+    combined_buckets: Dict[int, int] = {}
+    for row in req_stats.values():
+        for upper, count in row["latency_buckets"].items():
+            combined_buckets[int(upper)] = (
+                combined_buckets.get(int(upper), 0) + int(count)
+            )
+    total_p95_ms, total_p95_overflow = _p95_from_buckets(combined_buckets)
+    # 舰队分钟峰值需要把同一分钟的各实例相加，不能取“单节点峰值的最大值”。
+    fleet_minute_rows = s.execute(
+        select(
+            NexusRequestStat.minute_ts,
+            func.sum(NexusRequestStat.ok_count + NexusRequestStat.fail_count),
+        )
+        .where(NexusRequestStat.minute_ts >= today0)
+        .group_by(NexusRequestStat.minute_ts)
+    ).all()
+    fleet_peak_per_min = max(
+        [int(count or 0) for _, count in fleet_minute_rows] or [0]
+    )
 
     # 大屏里的“OEM 数”必须按企业去重，不能再把一家公司部署的多台实例误算成
     # 多个 OEM。归属仍沿 KEY 认领表读取，不在实例表复制企业字段。
@@ -948,14 +1105,30 @@ def dash_summary(s) -> Dict[str, Any]:
                 "balance_tokens": int(wallet.balance_tokens) if wallet else 0,
                 "tokens_total": all_usage.get(inst.id, {}).get("tokens", 0),
                 "tokens_today": t_today,
-                "requests_today": today_usage.get(inst.id, {}).get("requests", 0),
+                # 请求总尝试数来自分钟桶，包含失败；Token 账本只负责成功用量与扣费。
+                "requests_today": (
+                    (req_stats.get(inst.id) or {}).get("ok", 0)
+                    + (req_stats.get(inst.id) or {}).get("fail", 0)
+                ),
                 "models_today": len(models_by_inst.get(inst.id, ())),
                 "delta_pct": delta,
                 # 请求质量（网关分钟桶聚合）：无请求时 success_pct/avg_ms 为 None,
                 # 前端必须显示「—」而不是 0%——0% 成功率读起来像"全线故障"。
                 "success_pct": (req_stats.get(inst.id) or {}).get("success_pct"),
                 "avg_latency_ms": (req_stats.get(inst.id) or {}).get("avg_ms"),
+                "p95_latency_ms": (req_stats.get(inst.id) or {}).get("p95_ms"),
+                "p95_latency_overflow": (req_stats.get(inst.id) or {}).get(
+                    "p95_overflow", False
+                ),
                 "peak_per_min": (req_stats.get(inst.id) or {}).get("peak_per_min", 0),
+                "request_rate_5m": round(
+                    (
+                        (req_stats_5m.get(inst.id) or {}).get("ok", 0)
+                        + (req_stats_5m.get(inst.id) or {}).get("fail", 0)
+                    )
+                    / 300,
+                    3,
+                ),
                 # 地域（大屏地图按真实经纬度打点；未填时 lat/lon=None，前端跳过不画）
                 **_geo_of(s, inst.id),
                 "users": business_users,
@@ -1007,21 +1180,20 @@ def dash_summary(s) -> Dict[str, Any]:
             "tokens_total": sum(o["tokens_total"] for o in oems),
             "tokens_today": sum(o["tokens_today"] for o in oems),
             "tokens_yesterday": tokens_yesterday,
-            "requests_today": sum(o["requests_today"] for o in oems),
+            "requests_today": total_attempts,
+            "requests_per_second_5m": request_rate_5m,
             "balance_total": sum(o["balance_tokens"] for o in oems),
             "granted_total": granted_total,
-            # 全舰队今日请求质量：成功率(无请求=None,前端显示「—」)/峰值 req/min
+            # 全舰队今日请求质量：无请求时均为 None，前端必须显示「—」。
             "success_pct": (
-                round(
-                    sum(v["ok"] for v in req_stats.values())
-                    / max(1, sum(v["ok"] + v["fail"] for v in req_stats.values()))
-                    * 100,
-                    2,
-                )
-                if any(v["ok"] + v["fail"] for v in req_stats.values())
-                else None
+                round(total_ok / total_attempts * 100, 2) if total_attempts else None
             ),
-            "peak_per_min": max([v["peak_per_min"] for v in req_stats.values()] or [0]),
+            "avg_latency_ms": (
+                int(total_latency_sum / total_ok) if total_ok else None
+            ),
+            "p95_latency_ms": total_p95_ms,
+            "p95_latency_overflow": total_p95_overflow,
+            "peak_per_min": fleet_peak_per_min,
             # 舰队覆盖的地域（底部 Region 用；多地域显示"N 个地域"）。
             # 统计**所有已定位实例**而非仅在线——否则单实例偶发掉线时底栏会闪成「—」，
             # 而"部署在哪"这件事并不随在线状态变化。
@@ -1032,5 +1204,6 @@ def dash_summary(s) -> Dict[str, Any]:
         "oems": oems,
         "models": models_top,
         "hourly": hourly,
+        "request_hourly": request_hourly,
         "recent": recent,
     }

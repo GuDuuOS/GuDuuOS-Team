@@ -23,6 +23,7 @@ from nexus.db import (
     NexusHeartbeat,
     NexusKeyRequestDelivery,
     NexusOemEmailChallenge,
+    NexusRequestLatencyBucket,
     NexusRequestStat,
     NexusSession,
 )
@@ -79,6 +80,11 @@ def cleanup(
             s,
             NexusRequestStat,
             NexusRequestStat.minute_ts < now - stat_days * _DAY_MS,
+        ),
+        "request_latency_buckets": _deleted(
+            s,
+            NexusRequestLatencyBucket,
+            NexusRequestLatencyBucket.minute_ts < now - stat_days * _DAY_MS,
         ),
         # 已完成的补偿任务保留 30 天供对账；pending 永不自动删除。
         "applied_debits": _deleted(

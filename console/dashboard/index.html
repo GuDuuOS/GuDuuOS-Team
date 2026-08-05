@@ -416,22 +416,24 @@
                 <span class="eyebrow">EFFICIENCY</span>
                 <h2>调用效率</h2>
               </div>
-              <span class="status-dot">优秀</span>
+              <span class="status-dot" id="efficiency-status">优秀</span>
             </div>
             <div class="efficiency-grid">
               <article>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M4 12h3l2-6 4 12 2-6h5"></path>
                 </svg>
-                <span>平均响应</span>
-                <strong>1.28<small>s</small></strong>
+                <span>平均 / P95</span>
+                <strong class="efficiency-grid__latency" id="efficiency-latency">
+                  1.28 / 2.10<small>s</small>
+                </strong>
               </article>
               <article>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="m5 12 4 4L19 6"></path>
                 </svg>
                 <span>成功率</span>
-                <strong>99.94<small>%</small></strong>
+                <strong id="efficiency-success">99.94<small>%</small></strong>
               </article>
             </div>
           </section>
@@ -672,7 +674,7 @@
               </article>
               <i></i>
               <article>
-                <span>每秒调用</span>
+                <span id="live-rps-label">每秒调用</span>
                 <strong id="live-rps">12,840</strong>
               </article>
             </div>

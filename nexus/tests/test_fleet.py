@@ -307,6 +307,10 @@ class FleetTest(unittest.TestCase):
         )
         fleet.debit(self.s, inst, 150, "openai/gpt-4o in=100 out=50")
         fleet.debit(self.s, inst, 30, "anthropic/claude-x in=20 out=10")
+        # 请求观测与 Token 账本是两套口径：失败也属于今日调用，但不会产生 usage 流水。
+        fleet.record_request(self.s, inst, ok=True, latency_ms=250)
+        fleet.record_request(self.s, inst, ok=True, latency_ms=1200)
+        fleet.record_request(self.s, inst, ok=False, latency_ms=10)
         # 实例B：兑换后从未心跳 → 大屏应判 offline
         fleet.redeem(self.s, self._one_key(), "im.dash-b.test")
 
@@ -318,13 +322,19 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(out["totals"]["unlocated"], 2)
         self.assertEqual(out["totals"]["online"], 1)
         self.assertEqual(out["totals"]["tokens_today"], 180)
-        self.assertEqual(out["totals"]["requests_today"], 2)
+        self.assertEqual(out["totals"]["requests_today"], 3)
+        self.assertEqual(out["totals"]["avg_latency_ms"], 725)
+        self.assertEqual(out["totals"]["p95_latency_ms"], 2000)
+        self.assertEqual(out["totals"]["success_pct"], 66.67)
+        self.assertEqual(out["totals"]["peak_per_min"], 3)
+        self.assertEqual(out["totals"]["requests_per_second_5m"], 0.01)
 
         by_domain = {o["domain"]: o for o in out["oems"]}
         a = by_domain["im.dash-a.test"]
         self.assertEqual(a["status"], "active")
         self.assertEqual(a["tokens_total"], 180)
-        self.assertEqual(a["requests_today"], 2)
+        self.assertEqual(a["requests_today"], 3)
+        self.assertEqual(a["p95_latency_ms"], 2000)
         self.assertEqual(a["models_today"], 2)  # gpt-4o + claude-x
         self.assertEqual(a["users"], 9)
         self.assertEqual(a["accounts_total"], 12)
@@ -346,6 +356,8 @@ class FleetTest(unittest.TestCase):
         # 24 小时趋势：24 个桶，总和=今日消耗（都发生在最近一小时内）
         self.assertEqual(len(out["hourly"]), 24)
         self.assertEqual(sum(h["tokens"] for h in out["hourly"]), 180)
+        self.assertEqual(len(out["request_hourly"]), 24)
+        self.assertEqual(sum(h["requests"] for h in out["request_hourly"]), 3)
         # 总发放 = A 附赠 1000 + B 附赠 500（_one_key 默认）
         self.assertEqual(out["totals"]["granted_total"], 1500)
         self.assertEqual(out["totals"]["tokens_yesterday"], 0)

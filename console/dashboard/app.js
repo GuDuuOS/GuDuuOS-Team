@@ -516,7 +516,10 @@
       regionCode: o.region || "",
       successPct: o.success_pct === null || o.success_pct === undefined ? null : Number(o.success_pct),
       avgLatencyMs: o.avg_latency_ms === null || o.avg_latency_ms === undefined ? null : Number(o.avg_latency_ms),
+      p95LatencyMs: o.p95_latency_ms === null || o.p95_latency_ms === undefined ? null : Number(o.p95_latency_ms),
+      p95LatencyOverflow: Boolean(o.p95_latency_overflow),
       peakPerMin: Number(o.peak_per_min || 0),
+      requestRate5m: Number(o.request_rate_5m || 0),
       geoKnown: o.lat !== null && o.lat !== undefined
         && o.lon !== null && o.lon !== undefined
         && Number.isFinite(Number(o.lat)) && Number.isFinite(Number(o.lon)),
@@ -698,7 +701,11 @@
         Object.assign(node, {
           token: fresh.token, today: fresh.today, requests: fresh.requests,
           delta: fresh.delta, status: fresh.status, models: fresh.models,
-          balance: fresh.balance, users: fresh.users,
+          balance: fresh.balance, users: fresh.users, latency: fresh.latency,
+          successPct: fresh.successPct, avgLatencyMs: fresh.avgLatencyMs,
+          p95LatencyMs: fresh.p95LatencyMs,
+          p95LatencyOverflow: fresh.p95LatencyOverflow,
+          peakPerMin: fresh.peakPerMin, requestRate5m: fresh.requestRate5m,
         });
         const base = OEMS.find((n) => n.id === node.id);
         if (base) Object.assign(base, node);
@@ -712,6 +719,7 @@
   // —— 真实模式的面板接管：把演示件逐个换成母舰数据 / 无数据源的演示件隐藏 ——
   let REAL_SUMMARY = null;   // 最近一次 summary（refreshTotals/drawTrend 的真实分支用）
   let REAL_TREND = null;     // 近 24 小时逐小时消耗序列
+  let REAL_REQUEST_TREND = null; // 近 24 小时逐小时请求尝试数（成功 + 失败）
 
   function tokenParts(n) {
     const v = Math.abs(Number(n) || 0);
@@ -724,6 +732,13 @@
   function fmtTokens(n) {
     const parts = tokenParts(n);
     return `${parts.value}${parts.unit === "Token" ? " " : ""}${parts.unit}`;
+  }
+
+  /** 直方图 P95 是所在桶的边界；最后一档是溢出桶，必须显示“≥”而不是伪造上界。 */
+  function fmtP95(ms, overflow = false) {
+    if (ms === null || ms === undefined || !Number.isFinite(Number(ms))) return "P95 —";
+    const seconds = (Number(ms) / 1000).toFixed(2);
+    return `P95 ${overflow ? "≥" : "≤"} ${seconds}s`;
   }
 
   function fmtMoney(cents) {
@@ -886,23 +901,24 @@
     const meta = $("#today-second-meta"); if (meta) meta.textContent = "经网关计量";
     // ③ 24 小时趋势（真实小时桶）+ 峰值
     REAL_TREND = (data.hourly || []).map((h) => h.tokens || 0);
+    REAL_REQUEST_TREND = (data.request_hourly || []).map((h) => h.requests || 0);
     const peakEl = $("#trend-peak");
     if (peakEl) peakEl.textContent = `峰值 ${fmtTokens(Math.max(0, ...REAL_TREND))} / h`;
     resizeTrend();
     // ④ 模型分布 & ⑤ 实时动态
     renderModelDist(data.models || [], tt.tokens_today || 0);
     renderRecent(data.recent || []);
-    // ⑥ 地图三角标：接入实例 / 今日调用 / 实例在线率
+    // ⑥ 地图三角标：接入实例 / 近 5 分钟调用均值 / 实例在线率
     const instanceCount = Math.max(0, Number(tt.instances) || 0);
-    const requestCount = Math.max(0, Number(tt.requests_today) || 0);
+    const requestRate5m = Math.max(0, Number(tt.requests_per_second_5m) || 0);
     const onlineCount = Math.max(0, Number(tt.online) || 0);
     const onlinePct = instanceCount ? (onlineCount / instanceCount) * 100 : 0;
     setMapMetric($("#map-region-label"), "接入实例", "map-region-value", instanceCount);
     setMapMetric(
       $("#map-rps-label"),
-      "今日调用",
+      "近 5 分钟均值",
       "map-rps-value",
-      requestCount.toLocaleString("en-US"),
+      `${requestRate5m.toLocaleString("en-US", { maximumFractionDigits: 3 })} req/s`,
     );
     setMapMetric(
       $("#map-availability-label"),
@@ -919,7 +935,46 @@
       if (em) em.textContent = "次 · 今日";
     }
     const tstat = $("#map-traffic-status"); if (tstat) tstat.textContent = `${tt.online || 0} 实例在线`;
-    // ⑧ 营收页只展示已确认订单与企业转账；钱包 Token 余额绝不能冒充货币收入。
+    const liveLabel = $("#live-rps-label"); if (liveLabel) liveLabel.textContent = "近 5 分钟均值";
+    const liveValue = $("#live-rps");
+    if (liveValue) liveValue.textContent = requestRate5m.toLocaleString("en-US", { maximumFractionDigits: 3 });
+    // ⑧ 调用效率：平均值和成功率来自分钟桶，P95 来自成功延迟直方图。
+    const avgLatency = tt.avg_latency_ms === null || tt.avg_latency_ms === undefined
+      ? NaN
+      : Number(tt.avg_latency_ms);
+    const p95Latency = tt.p95_latency_ms === null || tt.p95_latency_ms === undefined
+      ? NaN
+      : Number(tt.p95_latency_ms);
+    const latencyMetric = $("#efficiency-latency");
+    if (latencyMetric) {
+      const averageText = Number.isFinite(avgLatency) ? (avgLatency / 1000).toFixed(2) : "—";
+      const p95Text = Number.isFinite(p95Latency)
+        ? `${tt.p95_latency_overflow ? "≥" : "≤"}${(p95Latency / 1000).toFixed(2)}`
+        : "—";
+      const unit = document.createElement("small");
+      unit.textContent = Number.isFinite(avgLatency) || Number.isFinite(p95Latency) ? "s" : "";
+      latencyMetric.replaceChildren(document.createTextNode(`${averageText} / ${p95Text}`), unit);
+    }
+    const successMetric = $("#efficiency-success");
+    if (successMetric) {
+      const successValue = tt.success_pct === null || tt.success_pct === undefined
+        ? NaN
+        : Number(tt.success_pct);
+      const unit = document.createElement("small");
+      unit.textContent = Number.isFinite(successValue) ? "%" : "";
+      successMetric.replaceChildren(
+        document.createTextNode(Number.isFinite(successValue) ? successValue.toFixed(2) : "—"),
+        unit,
+      );
+    }
+    const efficiencyStatus = $("#efficiency-status");
+    if (efficiencyStatus) {
+      efficiencyStatus.textContent = tt.success_pct === null || tt.success_pct === undefined
+        ? "无调用"
+        : tt.success_pct >= 99 ? "优秀" : tt.success_pct >= 95 ? "注意" : "异常";
+      efficiencyStatus.title = `${fmtP95(tt.p95_latency_ms, tt.p95_latency_overflow)} · 今日真实请求`;
+    }
+    // ⑨ 营收页只展示已确认订单与企业转账；钱包 Token 余额绝不能冒充货币收入。
     const finance = data.finance || {};
     const rev = $("#total-revenue");
     if (rev) {
@@ -941,7 +996,7 @@
     if (revenueMonthMeta) revenueMonthMeta.textContent = `${Number(finance.pending_order_count || 0)} 笔待支付`;
     const revenueTrend = $(".overview-slide--revenue .trend-chart-wrap");
     if (revenueTrend) revenueTrend.style.display = "none";
-    // ⑨ OEM 企业与节点必须分开计数；待定位也直接显示真实缺口。
+    // ⑩ OEM 企业与节点必须分开计数；待定位也直接显示真实缺口。
     const oemTotal = Math.max(0, Number(tt.oem_accounts) || 0);
     const unlocated = Math.max(0, Number(tt.unlocated) || 0);
     const oemHero = $("#overview-oem-total");
@@ -960,15 +1015,15 @@
     if (secondaryMeta) secondaryMeta.textContent = unlocated ? "需补录机房地域" : "全部已定位";
     const oemChart = $(".overview-slide--oem .trend-chart-wrap");
     if (oemChart) oemChart.style.display = "none";
-    // ⑩ 健康分：真实=在线率（不再演示 98.7）
+    // ⑪ 健康分：真实=在线率（不再演示 98.7）
     const scoreEl = $("#health-score");
     if (scoreEl) scoreEl.textContent = onlinePct.toFixed(1);
     const gradeEl = $("#health-grade");
     if (gradeEl) gradeEl.textContent = onlinePct >= 99 ? "A+" : onlinePct >= 90 ? "A" : onlinePct >= 75 ? "B" : "C";
-    // ⑪ 还没有数据源的指标一律落成诚实占位，绝不留演示数字。
+    // ⑫ 还没有数据源的指标一律落成诚实占位，绝不留演示数字。
     neutralizeUnsourcedMetrics(tt);
-    // ⑩ 无真实数据源的演示件：整体隐藏（调用效率/并发/存储/区域延迟/模拟接入按钮）
-    for (const sel of ["#efficiency-panel", "#capacity-row-rps", "#capacity-row-storage", "#health-regions", "#add-oem"]) {
+    // ⑬ 无真实数据源的演示件：整体隐藏（并发/存储/区域延迟/模拟接入按钮）。
+    for (const sel of ["#capacity-row-rps", "#capacity-row-storage", "#health-regions", "#add-oem"]) {
       const el = $(sel);
       if (el) el.style.display = "none";
     }
@@ -1637,10 +1692,10 @@
 
     const traffic = $("#map-traffic-bars");
     if (traffic) {
-      // 真实模式:用**真实的 24 小时逐时消耗**画柱子(这份数据本来就有,之前没接上,
-      // 柱形是 sin 波生成的装饰——数字真、波形假,容易被当成真实流量形态)。
+      // 真实模式：用成功 + 失败的 24 小时逐时请求数画柱子，不能拿 Token 消耗
+      // 或 sin 波装饰冒充网关调用趋势。
       // 没有真实数据(演示模式)时才回落到原来的装饰波形。
-      const real = REAL_TREND && REAL_TREND.length ? REAL_TREND : null;
+      const real = REAL_REQUEST_TREND && REAL_REQUEST_TREND.length ? REAL_REQUEST_TREND : null;
       if (real) {
         const peak = Math.max(1, ...real);
         traffic.innerHTML = real
@@ -2261,11 +2316,10 @@
     $("#drawer-success-meta").textContent = successOk ? "网关实测（今日）" : "今日无请求";
     $("#drawer-latency-label").textContent = "平均延迟";
     $("#drawer-latency").textContent = node.latency;
-    // 真实模式下延迟暂未采集（latency="—"），P95 跟着显示占位而不是 NaN
-    const latencySeconds = Number.parseFloat(node.latency);
-    $("#drawer-latency-meta").textContent = Number.isFinite(latencySeconds)
-      ? `P95 ${(latencySeconds * 2).toFixed(2)}s`
-      : "P95 —";
+    $("#drawer-latency-meta").textContent = fmtP95(
+      node.p95LatencyMs,
+      node.p95LatencyOverflow,
+    );
     const total = state.nodes.reduce((sum, item) => sum + item.token, 0);
     $("#drawer-share").textContent = `全局占比 ${((node.token / total) * 100).toFixed(1)}%`;
     $("#drawer-planet").style.setProperty("--drawer-color", safeHexColor(node.color));
@@ -3425,10 +3479,13 @@
   }
 
   function initLiveMetrics() {
-    // 真实模式：显示真实的今日网关调用数，不跑随机数动画
+    // 真实模式：显示真实的近 5 分钟平均 req/s，不跑随机数动画。
     if (REAL_SUMMARY) {
       $("#live-rps").textContent =
-        (REAL_SUMMARY.totals.requests_today || 0).toLocaleString("en-US");
+        (REAL_SUMMARY.totals.requests_per_second_5m || 0).toLocaleString(
+          "en-US",
+          { maximumFractionDigits: 3 },
+        );
       return;
     }
     window.setInterval(() => {

@@ -72,5 +72,16 @@ assert(
   "HTML 必须默认隐藏演示占位，并提供真实数据状态页与 Demo 标识",
 );
 
+// 运营指标真实性：P95 必须来自后端直方图，今日调用包含失败，近 5 分钟速率有明确口径。
+assert(!appSource.includes("latencySeconds * 2"), "P95 禁止再使用平均延迟乘二估算");
+assert(
+  appSource.includes("p95_latency_ms") && appSource.includes("p95_latency_overflow"),
+  "大屏必须消费服务端真实 P95 及溢出标记",
+);
+assert(
+  appSource.includes("requests_per_second_5m") && appSource.includes("request_hourly"),
+  "大屏必须消费近 5 分钟调用速率与真实逐小时请求趋势",
+);
+
 // 让成功输出可被本地验证和 CI 日志明确识别。
 console.log(`Nexus dashboard security checks passed (${dashboardRoot})`);

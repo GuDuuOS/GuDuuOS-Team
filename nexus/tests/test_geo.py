@@ -191,7 +191,32 @@ class RequestStatTest(unittest.TestCase):
         fleet.record_request(self.s, self.iid, ok=True, latency_ms=1000)
         fleet.record_request(self.s, self.iid, ok=True, latency_ms=3000)
         fleet.record_request(self.s, self.iid, ok=False, latency_ms=5)
-        self.assertEqual(fleet.request_stats(self.s)[self.iid]["avg_ms"], 2000)
+        stats = fleet.request_stats(self.s)[self.iid]
+        self.assertEqual(stats["avg_ms"], 2000)
+        self.assertEqual(stats["p95_ms"], 3000)
+        self.assertFalse(stats["p95_overflow"])
+
+    def test_p95_comes_from_real_histogram(self) -> None:
+        """P95 必须按真实延迟分布落桶，不能再由平均值乘常数估算。"""
+        for _ in range(19):
+            fleet.record_request(self.s, self.iid, ok=True, latency_ms=80)
+        fleet.record_request(self.s, self.iid, ok=True, latency_ms=2800)
+        stats = fleet.request_stats(self.s)[self.iid]
+        self.assertEqual(stats["p95_ms"], 100)
+
+    def test_p95_marks_overflow_bucket(self) -> None:
+        """超过直方图上限的极慢请求必须显式标记，不能伪装成精确上界。"""
+        fleet.record_request(self.s, self.iid, ok=True, latency_ms=400000)
+        stats = fleet.request_stats(self.s)[self.iid]
+        self.assertEqual(stats["p95_ms"], 300000)
+        self.assertTrue(stats["p95_overflow"])
+
+    def test_p95_at_last_finite_bucket_is_not_overflow(self) -> None:
+        """仍在 300 秒内的请求属于有限上界，不能误标成“至少 300 秒”。"""
+        fleet.record_request(self.s, self.iid, ok=True, latency_ms=250000)
+        stats = fleet.request_stats(self.s)[self.iid]
+        self.assertEqual(stats["p95_ms"], 300000)
+        self.assertFalse(stats["p95_overflow"])
 
     def test_no_requests_yields_none_not_zero(self) -> None:
         """没有请求时成功率必须是 None（前端显示「—」）——绝不能落成 0%。"""
@@ -199,6 +224,7 @@ class RequestStatTest(unittest.TestCase):
         summary = fleet.dash_summary(self.s)
         self.assertIsNone(summary["oems"][0]["success_pct"])
         self.assertIsNone(summary["totals"]["success_pct"])
+        self.assertIsNone(summary["totals"]["p95_latency_ms"])
 
     def test_peak_per_min_and_summary(self) -> None:
         for _ in range(5):
@@ -208,6 +234,7 @@ class RequestStatTest(unittest.TestCase):
         self.assertEqual(summary["oems"][0]["peak_per_min"], 5)
         self.assertEqual(summary["oems"][0]["success_pct"], 100.0)
         self.assertEqual(summary["totals"]["peak_per_min"], 5)
+        self.assertEqual(summary["totals"]["p95_latency_ms"], 100)
 
     def test_regions_only_counts_located_instances(self) -> None:
         fleet.set_geo(self.s, self.iid, "CN-ZJ")

@@ -1304,6 +1304,11 @@ a:focus-visible {
   font-size: 8px;
 }
 
+.efficiency-grid strong.efficiency-grid__latency {
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 .universe-panel {
   display: grid;
   grid-template-rows: 62px minmax(0, 1fr) 34px;

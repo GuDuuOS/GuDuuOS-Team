@@ -804,6 +804,22 @@ class NexusRequestStat(Base):
     latency_max_ms = Column(Integer, nullable=False, default=0)
 
 
+class NexusRequestLatencyBucket(Base):
+    """成功请求延迟的分钟级固定边界直方图。
+
+    ``NexusRequestStat`` 只能算平均值，无法恢复分位数；逐请求保存又会让观测表快速膨胀。
+    因此每个实例、每分钟、每个上界只保留一个计数，P95 用累计计数落入的桶上界表示。
+    这是独立新表，生产重启时可由 ``create_all`` 安全创建，不依赖 ALTER 旧表。
+    """
+
+    __tablename__ = "nexus_request_latency_bucket"
+
+    instance_id = Column(Integer, primary_key=True)
+    minute_ts = Column(BigInteger, primary_key=True)
+    upper_ms = Column(Integer, primary_key=True)
+    count = Column(Integer, nullable=False, default=0)
+
+
 class NexusInstanceGeo(Base):
     """实例地域（大屏地图打点用）。**独立表**，理由同 NexusKeyClaim——本项目没有迁移
     框架，给现存的 nexus_instance 加列不会自动 ALTER，新开一张表零迁移风险。
