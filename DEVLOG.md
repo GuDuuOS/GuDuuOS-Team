@@ -1,5 +1,17 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-08-05 — GuDuu OS 1.24.1 (patch)
+
+- 修复：公开 OEM 安装器在受支持的干净 Ubuntu 22.04+ / Debian 12+ 上自动准备
+  基础工具、Docker Engine 与 Compose 插件，不再要求客户先手动安装 Docker。
+- 新增：为存量 OEM 节点提供严格 Git tag 的一次性宿主更新工具迁移；迁移持有升级锁、
+  备份旧代理与 systemd 单元，只更新宿主工具并默认关闭客户节点自动安装，不重建或
+  切换 bot/web 容器，也不覆盖 ``.env``、数据库、证书及反向代理定制。
+- 优化：Web 多架构镜像只在 GitHub Runner 原生架构构建一次与 CPU 无关的 Vue 产物，
+  再装入 amd64/arm64 Caddy 运行时，避免 arm64 QEMU 重复执行 npm 构建导致任务长时间卡住。
+- 文档：部署中心明确安装命令已自动填入审批域名、DNS 可在安装后解析，以及解析生效后
+  Caddy 会自动签发 HTTPS 证书；品牌、邮箱、主 AI 与支付统一在网页首次向导配置。
+
 ## 2026-08-05 — GuDuu OS 1.24.0 (minor)
 
 - 新增：OEM 节点安装完成后，初始管理员首次进入 OS 必须依次配置品牌名称与 Logo、

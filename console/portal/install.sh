@@ -6,7 +6,7 @@
 # 仍由客户在服务器终端交互输入，避免泄露到 Shell history 或反向代理日志。
 set -euo pipefail
 
-RELEASE_TAG="v1.24.0"
+RELEASE_TAG="v1.24.1"
 ARCHIVE_URL="https://github.com/GuDuuOS/GuDuuOS-Team/archive/refs/tags/${RELEASE_TAG}.tar.gz"
 INSTALL_ROOT="${GUDUU_INSTALL_ROOT:-/opt/guduu-os}"
 
@@ -33,9 +33,9 @@ SOURCE_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'GuDuuOS-Te
 
 install -d -m 0755 "$INSTALL_ROOT"
 cp -a "$SOURCE_DIR/distro/." "$INSTALL_ROOT/"
-chmod 0755 "$INSTALL_ROOT/install.sh" "$INSTALL_ROOT/doctor.sh" \
+chmod 0755 "$INSTALL_ROOT/install.sh" "$INSTALL_ROOT/ensure_host.sh" "$INSTALL_ROOT/doctor.sh" \
   "$INSTALL_ROOT/update.sh" "$INSTALL_ROOT/update_agent.py" \
-  "$INSTALL_ROOT/apply_images.py"
+  "$INSTALL_ROOT/apply_images.py" "$INSTALL_ROOT/migrate_host_tools.sh"
 
 say "发行工具已安装到 ${INSTALL_ROOT}，现在进入节点配置。"
 cd "$INSTALL_ROOT"

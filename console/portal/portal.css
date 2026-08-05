@@ -94,6 +94,8 @@ body {
 .deploy-grid p, .deploy-requirements li { color: var(--muted); }
 .deploy-requirements { margin-top: 16px; }
 .deploy-requirements ul { margin: 12px 0 16px 22px; }
+.deploy-requirements pre { overflow-x: auto; padding: 13px 15px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); }
+.deploy-requirements code { font: 12px/1.7 var(--mono); white-space: pre; user-select: all; }
 @media (max-width: 700px) { .deploy-grid { grid-template-columns: 1fr; } .deploy-actions { flex-direction: column; } }
 
 /* —— 顶栏 —— */

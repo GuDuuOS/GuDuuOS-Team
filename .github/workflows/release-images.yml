@@ -17,6 +17,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # 正常 bot+web 多架构构建约十几分钟；超过一小时视为 QEMU/Registry 异常，
+    # 明确失败比占用 Runner 数小时却没有镜像清单更容易发现和重跑。
+    timeout-minutes: 60
     steps:
       - name: Checkout exact release ref
         uses: actions/checkout@v4

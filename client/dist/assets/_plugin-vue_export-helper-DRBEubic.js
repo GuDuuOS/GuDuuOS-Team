@@ -1,1 +1,0 @@
-const e=["dev-app.guduu.co","localhost","127.0.0.1"];function c(){var o;return(o=window.guduuDesktop)!=null&&o.isDesktop||e.includes(window.location.hostname)?"https://dev-hs.guduu.co":window.location.origin}const r=(o,u)=>{const t=o.__vccOpts||o;for(const[n,s]of u)t[n]=s;return t};export{r as _,c as d};

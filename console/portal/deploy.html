@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>GuDuu OS · 部署中心</title>
 <script src="/portal/theme-init.js?v=1"></script>
-<link rel="stylesheet" href="/portal/portal.css?v=39" />
+<link rel="stylesheet" href="/portal/portal.css?v=40" />
 </head>
 <body>
 <header class="topbar">
@@ -23,15 +23,21 @@
     </div>
   </section>
   <section class="deploy-grid">
-    <article class="panel"><small>01</small><h2>准备服务器与域名</h2><p>Ubuntu 22.04/24.04 或 Debian 12，建议至少 4 核、8 GB 内存；域名 A/AAAA 记录先解析到服务器。</p></article>
+    <article class="panel"><small>01</small><h2>准备服务器与域名</h2><p>干净 Ubuntu 22.04/24.04 或 Debian 12，建议至少 4 核、8 GB 内存；安装器会自动准备 Docker。域名可在安装前或安装后解析到服务器。</p></article>
     <article class="panel"><small>02</small><h2>申请节点授权</h2><p>在 OEM 控制台填写部署域名、用途和可选公网 IP，完成付款或平台主管审批后领取 KEY。</p></article>
-    <article class="panel"><small>03</small><h2>运行安装器</h2><p>通过 SSH 在服务器运行发行版安装器。安装器强制校验 KEY 和域名，并直接拉取 CI 冻结的 Docker 摘要，不在服务器编译源码。</p></article>
+    <article class="panel"><small>03</small><h2>运行安装器</h2><p>在“我的 KEY”复制已经填好审批域名的一条命令并粘贴到 SSH。安装器自动准备 Docker、校验 KEY，并直接拉取 CI 冻结的 Docker 摘要，不在服务器编译源码。</p></article>
     <article class="panel"><small>04</small><h2>浏览器完成激活</h2><p>若网络或 IP 校验暂时失败，节点只开放首次管理员激活页；修正配置后重新验证，成功才开放其他账号登录和注册。</p></article>
   </section>
   <section class="panel deploy-requirements">
     <h2>部署前检查</h2>
-    <ul><li>一个授权对应一个审批域名和一个节点。</li><li>80/443 端口可用，或明确选择已有反向代理模式。</li><li>服务器能够访问 Nexus，以及平台自建镜像仓或 GHCR 至少一处。</li><li>准备 SMTP 配置；不配置时普通用户邮箱注册不可用。</li></ul>
+    <ul><li>一个授权对应一个审批域名和一个节点；命令中的域名已自动填好，不需要手改。</li><li>80/443 端口可用，或明确选择已有反向代理模式。</li><li>服务器能够访问 Nexus，以及平台自建镜像仓或 GHCR 至少一处。</li><li>域名尚未解析时安装仍可完成；添加 A/AAAA 记录后 Caddy 会自动申请 HTTPS 证书。</li><li>品牌、SMTP、主 AI 与支付资料在安装后由初始管理员通过网页向导配置。</li></ul>
     <p class="hint">安装命令只在授权获批后于 OEM 控制台“我的 KEY”中提供。命令不包含长期 KEY，执行后在服务器终端输入；请勿使用第三方脚本或可移动的 latest 标签。</p>
+  </section>
+  <section class="panel deploy-requirements">
+    <h2>已有节点：升级宿主更新工具</h2>
+    <p>这是一次性迁移，只更新更新代理与 systemd 定时器，不重建 bot/web、不修改数据库、证书或 OEM 配置。完成后客户节点只接收版本通知，必须由节点管理员确认才会拉取镜像。</p>
+    <pre><code>curl -fsSL https://dev-nexus.guduu.co/portal/host-tools.sh | sudo bash</code></pre>
+    <p class="hint">公司内部灰度节点如需自动安装候选版本，应由技术人员迁移完成后再单独设置；普通 OEM 节点缺省关闭自动安装。</p>
   </section>
 </main>
 </body>

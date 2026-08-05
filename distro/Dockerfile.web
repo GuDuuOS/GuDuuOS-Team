@@ -8,7 +8,9 @@
 # ============================================================
 
 # —— 阶段①：构建前端 ——
-FROM node:20-alpine AS build
+# Vue 产物与 CPU 架构无关。强制在 GitHub Runner 的原生架构构建一次，随后分别复制到
+# amd64/arm64 Caddy 运行时；避免 arm64 QEMU 重跑 npm ci/build 数小时卡住发布任务。
+FROM --platform=$BUILDPLATFORM node:20-alpine AS build
 WORKDIR /build
 # 先拷依赖清单单独 npm ci，利用层缓存
 COPY client/package.json client/package-lock.json ./

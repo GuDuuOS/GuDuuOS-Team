@@ -44,12 +44,13 @@ render() { # render <模板> <输出> <K=V>...
 }
 
 # ---------- 0. 前置检查 ----------
-[ "$(id -u)" -eq 0 ] || warn "建议以 root 运行（docker 权限）；当前非 root，若报权限错请 sudo 重跑。"
-command -v docker >/dev/null 2>&1 || die "未安装 docker。请先执行：curl -fsSL https://get.docker.com | sh"
-docker compose version >/dev/null 2>&1 || die "docker compose 插件不可用（docker compose version 失败）。"
-command -v openssl >/dev/null 2>&1 || die "缺少 openssl（生成密钥用）。"
-command -v curl >/dev/null 2>&1 || die "缺少 curl。"
-command -v python3 >/dev/null 2>&1 || die "缺少 python3（安全生成/解析 Nexus JSON 用）。"
+# 官网命令以 sudo 启动；干净 Ubuntu/Debian 会在这里自动安装基础工具、Docker Engine
+# 与 Compose 插件。已有依赖的开发机不会重复改软件源。
+[ -r ./ensure_host.sh ] || die "发行包缺少 ensure_host.sh，请重新下载官方安装器。"
+# shellcheck source=ensure_host.sh
+source ./ensure_host.sh
+say "检查并准备宿主机依赖……"
+guduu_ensure_host || exit 1
 
 if [ -f .env ]; then
   die "检测到 .env —— 本机已装过实例。升级请用 ./update.sh；确要重装请先自行备份并删除 .env 与 data/。"
