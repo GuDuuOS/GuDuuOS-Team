@@ -163,6 +163,70 @@ class ReleaseTest(unittest.TestCase):
         with self.assertRaises(FleetError):
             releases.install_artifact(self.s, historical_key, "moved.example.com")
 
+    def test_canary_node_reinstall_receives_its_assigned_artifact(self):
+        """灰度节点清空重装时仍安装已分配候选版，其他 OEM 不得越权取得。"""
+        self._register_manifest("1.7.0")
+        stable = releases.create_release(
+            self.s,
+            version="1.7.0",
+            title="当前正式版",
+            notes="首次安装的稳定基线。",
+            git_ref="v1.7.0",
+            target="node",
+            delivery_mode="container",
+        )
+        releases.publish(self.s, stable["id"])
+
+        self._register_manifest("1.8.0")
+        candidate = releases.create_release(
+            self.s,
+            version="1.8.0",
+            title="一键重装候选版",
+            notes="只分配给公司灰度节点。",
+            git_ref="v1.8.0",
+            target="node",
+            delivery_mode="container",
+        )
+        release_policy.set_policy(
+            self.s,
+            {
+                "development_instance_ids": [self.inst_a],
+                "canary_instance_id": self.inst_b,
+                "production_instance_ids": [],
+                "auto_canary": False,
+                "require_canary_success": True,
+            },
+        )
+        releases.start_canary(self.s, candidate["id"], self.inst_b)
+
+        assigned = releases.install_artifact(self.s, self.key_b, "b.example.com")
+        self.assertEqual(assigned["version"], "1.8.0")
+        self.assertEqual(assigned["source"], "assigned")
+
+        new_key = fleet.issue_keys(self.s)[0]["key"]
+        new_key_row = fleet._key_by_plain(self.s, new_key)
+        self.s.add(
+            db.NexusKeyBinding(
+                key_id=new_key_row.id,
+                approved_domain="new-oem.example.com",
+            )
+        )
+        ordinary = releases.install_artifact(
+            self.s, new_key, "new-oem.example.com"
+        )
+        self.assertEqual(ordinary["version"], "1.7.0")
+        self.assertEqual(ordinary["source"], "published")
+
+        deployment = self.s.get(
+            db.NexusReleaseDeployment,
+            {"release_id": candidate["id"], "instance_id": self.inst_b},
+        )
+        deployment.status = "failed"
+        retry_blocked = releases.install_artifact(
+            self.s, self.key_b, "b.example.com"
+        )
+        self.assertEqual(retry_blocked["version"], "1.7.0")
+
     def test_ci_manifest_creates_one_unpublished_container_draft(self):
         """CI 登记镜像后必须自动出现一条未发布节点草稿。"""
         self._register_manifest()

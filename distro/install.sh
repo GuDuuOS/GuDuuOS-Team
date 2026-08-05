@@ -2,15 +2,15 @@
 # ============================================================
 # GuDuu OS 发行版 —— OEM 一键安装脚本（模块6 P0）
 # ------------------------------------------------------------
-# 目标：一台干净的 Ubuntu 22.04+/Debian 12 服务器 + 一个解析好的域名，
-#       跑一遍本脚本 = 一个完整可用的 GuDuu OS 实例（自动 HTTPS）。
+# 目标：一台干净的 Ubuntu 22.04+/Debian 12 服务器 + 一个已审批域名，
+#       跑一遍本脚本 = 一个完整 GuDuu OS 实例；DNS 生效后自动签发 HTTPS。
 #
 # 用法（在 distro/ 目录下）：
 #   ./install.sh                # 交互式提问
 #   ./install.sh --domain im.example.com --email admin@example.com  # 半自动
 #
 # 干了什么（顺序即依赖）：
-#   1. 环境自检（docker / 端口 / DNS）
+#   1. 自动准备宿主依赖（基础工具 / Docker / Compose）
 #   2. 收集配置（域名/管理员邮箱/SMTP/OEM 授权码；网页版不提供免授权模式）
 #   3. 生成全部密钥 + 渲染配置（.env / homeserver.yaml / appservice / Caddyfile）
 #   4. synapse generate（产出签名密钥、日志配置），再覆盖为我们的主配置
@@ -78,7 +78,7 @@ while [ $# -gt 0 ]; do
 done
 
 say "== GuDuu OS 实例安装 =="
-[ -n "$DOMAIN" ] || { read -rp "实例域名（如 im.example.com，需已解析到本机公网 IP）: " DOMAIN; }
+[ -n "$DOMAIN" ] || { read -rp "已审批的实例域名（如 im.example.com，DNS 可在安装后解析）: " DOMAIN; }
 [ -n "$DOMAIN" ] || die "域名不能为空。"
 case "$DOMAIN" in
   *[!a-zA-Z0-9.-]*|.*|*.) die "域名格式不合法：$DOMAIN" ;;
@@ -329,6 +329,6 @@ say "  访问地址： https://$DOMAIN"
 say "  管理员账号/初始密码见上方 bootstrap 输出（仅显示一次，登录后请修改）"
 say "  管理后台： https://$DOMAIN/#/admin"
 say "  体检：     ./doctor.sh    升级： ./update.sh"
-say "  自动更新： systemctl status guduu-update-agent.timer"
+say "  更新检查： systemctl status guduu-update-agent.timer（客户节点默认不自动安装）"
 say "  配置文件： distro/.env（密钥在内，妥善保管）"
 say "=============================================="

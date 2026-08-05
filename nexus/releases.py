@@ -249,14 +249,24 @@ def _active_instances_for_ids(s, instance_ids: List[int], role: str) -> List[Nex
     return sorted(rows, key=lambda row: int(row.id))
 
 
-def _pause_other_active(s, keep_id: int) -> None:
-    """激活节点版本时只暂停其他节点轨道，绝不撤下 Nexus 平台公告。"""
+def _pause_other_active(
+    s, keep_id: int, *, preserve_published: bool = False
+) -> None:
+    """激活节点版本时只暂停其他节点轨道，绝不撤下 Nexus 平台公告。
+
+    开始灰度时必须保留上一个正式版，否则灰度期间新 OEM 将没有可安装镜像。
+    真正全量发布或回撤时才暂停旧正式版。
+    """
     rows = s.execute(
         select(NexusRelease).where(NexusRelease.status.in_(_ACTIVE_RELEASE_STATES))
     ).scalars()
     now = _now_ms()
     for row in rows:
-        if row.id != keep_id and _release_target(s, row) == "node":
+        if (
+            row.id != keep_id
+            and _release_target(s, row) == "node"
+            and not (preserve_published and row.status == "published")
+        ):
             row.status = "paused"
             row.updated_ts = now
 
@@ -386,7 +396,7 @@ def start_canary(s, release_id: int, instance_id: int) -> Dict[str, Any]:
     if instance.status != "active":
         raise FleetError("NEXUS_INSTANCE_INACTIVE", "灰度实例当前已停用")
 
-    _pause_other_active(s, release.id)
+    _pause_other_active(s, release.id, preserve_published=True)
     release.status = "canary"
     release.canary_instance_id = instance.id
     release.updated_ts = _now_ms()
@@ -786,21 +796,24 @@ def check_update(s, raw_key: str, current_version: str) -> Optional[Dict[str, An
 
 
 def install_artifact(s, raw_key: str, domain: str) -> Dict[str, Any]:
-    """向尚未安装的授权节点下发当前正式版不可变镜像清单。
+    """向首次安装或同域重装的授权节点下发不可变镜像清单。
 
     Args:
         raw_key: OEM 已获批并领取的完整 KEY。
         domain: 本次计划安装的节点域名，必须与审批冻结值一致。
 
     Returns:
-        当前正式节点版本及 bot/web 双仓精确摘要；不包含任何镜像仓凭据。
+        已绑定节点如果有属于自己的待安装灰度/回撤任务，优先返回该
+        候选版；否则返回当前正式节点版本。两者都只包含 bot/web 双仓
+        精确摘要，不包含任何镜像仓凭据。
 
     Raises:
         FleetError: KEY 无效、域名不符或平台尚无可安装正式镜像时抛出。
 
     安装发生在 ``redeem`` 前后都可能：正常网络会先兑换，严格 IP/反代暂时异常时则
-    需要先把受限节点装起来再由管理员重试。因此这里只校验 KEY 与审批域名，不要求
-    KEY 已经绑定实例，也不修改发布或实例状态。
+    需要先把受限节点装起来再由管理员重试。因此未绑定的新 KEY 只能取正式版；
+    已绑定 KEY 才能取得明确分配给该实例的候选版。本接口不修改发布、任务或
+    实例状态。
     """
     clean_domain = (domain or "").strip().lower().rstrip(".")
     if not clean_domain:
@@ -831,6 +844,40 @@ def install_artifact(s, raw_key: str, domain: str) -> Dict[str, Any]:
             403,
         )
 
+    # 公司灰度节点可能通过“清空后一键重装”验收新镜像。如果这把 KEY
+    # 已绑定实例，且该实例确实有平台创建的活动投放任务，重装必须继续使用
+    # 这份候选摘要，否则会悄悄退回旧正式版，无法验收。未分配的 OEM 没有
+    # deployment 记录，仍然只能走下方的正式版分支。
+    if key.instance_id is not None:
+        assigned = s.execute(
+            select(NexusReleaseDeployment, NexusRelease)
+            .join(
+                NexusRelease,
+                NexusRelease.id == NexusReleaseDeployment.release_id,
+            )
+            .where(
+                NexusReleaseDeployment.instance_id == int(key.instance_id),
+                NexusReleaseDeployment.status.in_(
+                    ("pending", "downloading", "installing", "success")
+                ),
+                NexusRelease.status.in_(_ACTIVE_RELEASE_STATES),
+            )
+            .order_by(NexusRelease.updated_ts.desc(), NexusRelease.id.desc())
+        ).all()
+        for _deployment, release in assigned:
+            if _release_target(s, release) != "node":
+                continue
+            artifact = s.get(NexusReleaseArtifact, int(release.id))
+            payload = release_artifacts.artifact_dict(artifact)
+            if payload.get("mode") != "container":
+                continue
+            return {
+                "version": release.version,
+                "git_ref": release.git_ref,
+                "artifact": payload,
+                "source": "assigned",
+            }
+
     candidates = s.execute(
         select(NexusRelease)
         .where(NexusRelease.status.in_(("published", "rollback")))
@@ -847,6 +894,7 @@ def install_artifact(s, raw_key: str, domain: str) -> Dict[str, Any]:
             "version": release.version,
             "git_ref": release.git_ref,
             "artifact": payload,
+            "source": "published",
         }
     raise FleetError(
         "NEXUS_INSTALL_IMAGE_UNAVAILABLE",
