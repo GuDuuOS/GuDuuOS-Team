@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import hmac
+import hashlib
 import json
 import logging
 import os
@@ -1685,8 +1686,16 @@ class CosmacBot:
         if cached is not None:
             return cached
         try:
+            secure: Dict[str, Any] = {}
+            try:
+                from cosmac.node_settings import runtime_ai
+
+                secure = runtime_ai()
+            except Exception:
+                logger.debug("按群模型读取节点 AI 密钥失败，回退 env", exc_info=True)
             llm = build_provider(
-                provider, api_key="", model=model, system_prompt=applied_sys
+                provider, api_key=str(secure.get("api_key") or ""), model=model,
+                system_prompt=applied_sys, base_url=str(secure.get("base_url") or ""),
             )
             ag = Agent(llm=llm, toolbox=self.toolbox, system_prompt=applied_sys)
             self._model_agents[model] = ag
@@ -2972,7 +2981,7 @@ class CosmacBot:
                 if isinstance(ev, dict):
                     # 只取我们认识的字段，避免脏数据。
                     # 安全：**绝不**从控制室事件读 api_key——state event 无法加密、会明文
-                    # 进 DB/历史/被全员可读。密钥只走服务端环境变量/Secret Manager。
+                    # 进 DB/历史/被全员可读。密钥只走节点加密设置或服务端环境变量。
                     for k in (
                         "provider", "model", "system_prompt", "enabled_tools"
                     ):
@@ -2991,19 +3000,34 @@ class CosmacBot:
         """把控制室下发的配置应用到 llm/agent/toolbox（按需热重建，幂等）。
 
         管理后台可下发 provider / model / 人设 / 工具开关。任一缺省时用启动配置兜底。
-        **api_key 永远不从网页/控制室来**：密钥只走服务端环境变量/Secret Manager
-        （build_provider 传 api_key="" 即让各 SDK 自己读环境变量）。
+        **api_key 永远不从 Matrix 控制室事件来**：密钥只走节点加密设置；旧节点在
+        尚未配置向导时继续回退服务端环境变量。
         """
         ov = self._read_overrides()
-        provider = ov.get("provider") or self.config.llm_provider
-        model = ov.get("model") or self.config.llm_model
+        secure: Dict[str, Any] = {}
+        try:
+            from cosmac.node_settings import runtime_ai
+
+            secure = runtime_ai()
+        except Exception:
+            logger.debug("节点 AI 设置暂不可读，回退启动配置", exc_info=True)
+        # provider/model 与 API key 必须来自同一份节点设置，避免“Matrix 选了 A 厂商、
+        # 加密库却保存 B 厂商 key”的错配。旧节点没有设置行时才兼容控制室/启动配置。
+        provider = secure.get("provider") or ov.get("provider") or self.config.llm_provider
+        model = secure.get("model") or ov.get("model") or self.config.llm_model
         system_prompt = ov.get("system_prompt") or self.config.system_prompt
-        sig = (provider, model, system_prompt, "")
+        api_key = str(secure.get("api_key") or "")
+        base_url = str(secure.get("base_url") or "")
+        # 签名只放 key 的哈希前缀，既能在管理员换 key 后触发热重建，又绝不把明文留在内存日志。
+        key_sig = hashlib.sha256(api_key.encode()).hexdigest()[:12] if api_key else ""
+        secure_sig = (key_sig + "|" + base_url) if (key_sig or base_url) else ""
+        sig = (provider, model, system_prompt, secure_sig)
         if sig != self._applied_sig:
             try:
-                # api_key="" → 各 provider SDK 从环境变量读密钥（绝不接受网页传入的 key）
+                # API key 来自 node_settings 解密结果；为空时 provider 工厂兼容回退 env。
                 self.llm = build_provider(
-                    provider, api_key="", model=model, system_prompt=system_prompt
+                    provider, api_key=api_key, model=model,
+                    system_prompt=system_prompt, base_url=base_url,
                 )
                 self.agent = Agent(
                     llm=self.llm, toolbox=self.toolbox, system_prompt=system_prompt
@@ -3735,6 +3759,101 @@ class CosmacBot:
             return 403, {"error": "仅平台管理员可查看平台运营指标"}
         out = self.operating_stats()
         return 200, out
+
+    def handle_node_settings_get(
+        self, access_token: str
+    ) -> Tuple[int, Dict[str, Any]]:
+        """读取节点系统设置；仅服务器管理员可读，且响应永不包含密钥原文。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(user_id):
+            return 403, {"error": "仅平台管理员可配置节点"}
+        try:
+            from cosmac.node_settings import admin_config
+
+            return 200, admin_config()
+        except Exception:
+            logger.exception("读取节点系统设置失败")
+            return 500, {"error": "读取节点设置失败，请检查数据库与设置主密钥"}
+
+    def handle_node_settings_save(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """保存首次部署向导/系统设置；只有服务器管理员可以改。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(user_id):
+            return 403, {"error": "仅平台管理员可配置节点"}
+        from cosmac.node_settings import NodeSettingsError, save_admin_config
+        try:
+            payload = save_admin_config(body or {})
+            # 清掉 Matrix state 的 20 秒缓存，使新 provider/model 下一轮消息立即生效。
+            self._cfg_cache_ts = float("-inf")
+            self._apply_runtime_config()
+            return 200, payload
+        except NodeSettingsError as exc:
+            return 400, {"error": str(exc)}
+        except Exception:
+            logger.exception("保存节点系统设置失败")
+            return 500, {"error": "保存失败，请检查数据库与设置主密钥"}
+
+    def handle_node_update_status(
+        self, access_token: str
+    ) -> Tuple[int, Dict[str, Any]]:
+        """读取宿主代理缓存的新版本通知；仅管理员可见，不包含镜像凭据或安装命令。"""
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(user_id):
+            return 403, {"error": "仅平台管理员可查看节点更新"}
+        path = os.environ.get(
+            "COSMAC_PENDING_UPDATE_PATH", "/var/lib/cosmac/pending-update.json"
+        )
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                value = json.load(handle)
+            if not isinstance(value, dict):
+                raise ValueError("invalid update state")
+            return 200, {"update": value}
+        except FileNotFoundError:
+            return 200, {"update": None}
+        except Exception:
+            logger.exception("读取节点更新通知失败")
+            return 500, {"error": "更新状态文件损坏"}
+
+    def handle_node_update_approve(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """批准代理下一轮安装指定版本；浏览器只能批准当前待处理 release_id。"""
+        code, current = self.handle_node_update_status(access_token)
+        if code != 200:
+            return code, current
+        update = current.get("update")
+        if not isinstance(update, dict):
+            return 404, {"error": "当前没有待安装版本"}
+        try:
+            expected = int(update.get("release_id") or 0)
+            requested = int((body or {}).get("release_id") or 0)
+        except (TypeError, ValueError):
+            return 400, {"error": "版本任务无效"}
+        if not expected or requested != expected:
+            return 409, {"error": "待安装版本已经变化，请刷新后重新确认"}
+        path = os.environ.get(
+            "COSMAC_APPROVED_UPDATE_PATH", "/var/lib/cosmac/approved-update.json"
+        )
+        temp = path + ".tmp"
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(temp, "w", encoding="utf-8") as handle:
+                json.dump({"release_id": expected, "approved_by": user_id}, handle)
+            os.chmod(temp, 0o600)
+            os.replace(temp, path)
+            return 200, {"approved": True, "release_id": expected}
+        except Exception:
+            logger.exception("写入节点更新批准文件失败")
+            return 500, {"error": "无法通知宿主更新代理，请检查数据目录权限"}
 
     def handle_hr_employees(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """人事花名册（给前端「组织/人事」页用）：公司概览 + 部门分组 + 员工列表。
@@ -8335,6 +8454,27 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(503, {"errcode": "M_UNAVAILABLE"})
 
     def do_GET(self) -> None:  # noqa: N802
+        # 登录前读取的最小实例品牌配置：只含名称/Logo/向导状态，绝不解密任何凭据。
+        if self.path.split("?", 1)[0] == "/cosmac/instance/config":
+            try:
+                from cosmac.node_settings import public_config
+
+                self._send_json(200, public_config(), cors=True)
+            except Exception:
+                logger.exception("读取公开实例配置失败")
+                self._send_json(200, {
+                    "setup_completed": False,
+                    "brand": {"product_name": "GuDuu OS", "company_name": "", "logo_data_url": ""},
+                }, cors=True)
+            return
+        if self.path.split("?", 1)[0] == "/cosmac/admin/node-settings":
+            code, payload = self.bot.handle_node_settings_get(self._bearer())
+            self._send_json(code, payload, cors=True)
+            return
+        if self.path.split("?", 1)[0] == "/cosmac/admin/node-update":
+            code, payload = self.bot.handle_node_update_status(self._bearer())
+            self._send_json(code, payload, cors=True)
+            return
         # OEM 邀请注册页：实例代前端向 Nexus 校验分享码，避免跨域和暴露实例授权 KEY。
         if self.path.split("?", 1)[0] == "/cosmac/register/referral":
             from urllib.parse import parse_qs, urlparse
@@ -8713,6 +8853,23 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
+
+        if path == "/cosmac/admin/node-settings":
+            body = self._read_json_body(900_000)
+            if body is None:
+                self._send_json(400, {"error": "请求无效或 Logo 文件过大"}, cors=True)
+                return
+            code, payload = self.bot.handle_node_settings_save(self._bearer(), body)
+            self._send_json(code, payload, cors=True)
+            return
+        if path == "/cosmac/admin/node-update/approve":
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_node_update_approve(self._bearer(), body)
+            self._send_json(code, payload, cors=True)
+            return
 
         # 后台频道管理:批量判房型(space/ai/dm/channel,仅平台管理员)
         if path == "/cosmac/admin/room_kinds":

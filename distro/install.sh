@@ -166,17 +166,10 @@ else
   BOT_IMAGE="$BOT_GHCR_IMAGE"; WEB_IMAGE="$WEB_GHCR_IMAGE"
 fi
 
-# SMTP：OEM 自己的发信邮箱。可留空（届时邮箱验证码注册不可用，仅管理员手动建号）
-say "配置发信邮箱（注册验证码从这里发出；全部留空可跳过，之后编辑 .env 补配）"
-read -rp "SMTP 服务器（如 smtp.example.com，留空跳过）: " SMTP_HOST
+# SMTP、主 AI、支付与品牌统一移到安装后的网页首次配置向导。安装器只负责把 OS
+# 安全地拉起，避免客户在终端和网页各填一遍，也不让渠道密钥留在 shell history。
+SMTP_HOST=""
 SMTP_PORT="465"; SMTP_USER=""; SMTP_PASSWORD=""; SMTP_FROM=""; SMTP_FROM_NAME=""
-if [ -n "$SMTP_HOST" ]; then
-  read -rp "SMTP 端口 [465]: " SMTP_PORT; SMTP_PORT="${SMTP_PORT:-465}"
-  read -rp "SMTP 账号: " SMTP_USER
-  read -rsp "SMTP 密码: " SMTP_PASSWORD; echo
-  read -rp "发件地址（默认同账号）: " SMTP_FROM; SMTP_FROM="${SMTP_FROM:-$SMTP_USER}"
-  read -rp "发件人名称 [GuDuu OS]: " SMTP_FROM_NAME; SMTP_FROM_NAME="${SMTP_FROM_NAME:-GuDuu OS}"
-fi
 
 # ---------- 2. DNS / 端口体检（只警告不拦截：可能在 LB/NAT 后面）----------
 PUB_IP="$(curl -4fsS --max-time 8 https://ifconfig.me 2>/dev/null || true)"
@@ -203,6 +196,7 @@ AS_TOKEN="$(gen_secret)"
 HS_TOKEN="$(gen_secret)"
 REGISTRATION_SHARED_SECRET="$(gen_secret)"
 ADMIN_TOKEN="$(gen_secret)"
+NODE_SETTINGS_SECRET="$(gen_secret)"
 MACAROON_SECRET_KEY="$(gen_secret)"
 FORM_SECRET="$(gen_secret)"
 PG_SYNAPSE_PASSWORD="$(gen_secret)"
@@ -227,6 +221,7 @@ render templates/dotenv.tpl .env \
   "PG_SYNAPSE_PASSWORD=$PG_SYNAPSE_PASSWORD" "COSMAC_DB_PASSWORD=$COSMAC_DB_PASSWORD" \
   "AS_TOKEN=$AS_TOKEN" "HS_TOKEN=$HS_TOKEN" \
   "ADMIN_TOKEN=$ADMIN_TOKEN" "REGISTRATION_SHARED_SECRET=$REGISTRATION_SHARED_SECRET" \
+  "NODE_SETTINGS_SECRET=$NODE_SETTINGS_SECRET" \
   "SMTP_HOST=$SMTP_HOST" "SMTP_PORT=$SMTP_PORT" "SMTP_USER=$SMTP_USER" \
   "SMTP_PASSWORD=$SMTP_PASSWORD" "SMTP_FROM=$SMTP_FROM" "SMTP_FROM_NAME=$SMTP_FROM_NAME" \
   "LLM_PROVIDER=$LLM_PROVIDER" "LLM_MODEL=$LLM_MODEL" \

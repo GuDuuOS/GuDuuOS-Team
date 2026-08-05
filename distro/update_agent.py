@@ -33,6 +33,29 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _SCRIPT_DIR.parent
 _ENV_FILE = _SCRIPT_DIR / ".env"
 _VERSION_FILE = _REPO_ROOT / "cosmac" / "__init__.py"
+_STATE_DIR = _SCRIPT_DIR / "data" / "cosmac"
+_PENDING_FILE = _STATE_DIR / "pending-update.json"
+_APPROVAL_FILE = _STATE_DIR / "approved-update.json"
+
+
+def _write_json_atomic(path: Path, value: Dict[str, Any]) -> None:
+    """原子写宿主更新状态，避免 bot 正在读取时看见半份 JSON。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+    os.chmod(temp, 0o600)
+    temp.replace(path)
+
+
+def _approved(release_id: int, env: Dict[str, str]) -> bool:
+    """客户节点默认手动；只有显式审批或内部灰度 opt-in 才执行。"""
+    if str(env.get("COSMAC_AUTO_UPDATE") or "").strip() == "1":
+        return True
+    try:
+        value = json.loads(_APPROVAL_FILE.read_text(encoding="utf-8"))
+        return int(value.get("release_id") or 0) == release_id
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return False
 
 
 def _read_env(path: Path = _ENV_FILE) -> Dict[str, str]:
@@ -219,6 +242,7 @@ def run_once() -> int:
     )
     update: Optional[Dict[str, Any]] = result.get("update")
     if not isinstance(update, dict):
+        _PENDING_FILE.unlink(missing_ok=True)
         print(f"[更新代理] 当前 {current}，没有待安装版本。")
         return 0
 
@@ -227,6 +251,23 @@ def run_once() -> int:
     git_ref = str(update.get("git_ref") or "")
     if not release_id or not _VERSION_RE.fullmatch(target) or git_ref != f"v{target}":
         raise RuntimeError("Nexus 返回了不合法的版本任务，已拒绝执行")
+
+    # 先把经过格式校验的公开更新信息落到宿主状态目录，OS 后台据此展示“有新版本”。
+    # artifact 摘要仍由代理自己持有并复验，浏览器无权篡改安装命令。
+    _write_json_atomic(_PENDING_FILE, {
+        "release_id": release_id,
+        "current_version": current,
+        "version": target,
+        "title": str(update.get("title") or f"GuDuu OS {target}")[:200],
+        "notes": str(update.get("notes") or "")[:8000],
+        "git_ref": git_ref,
+    })
+    if not _approved(release_id, env):
+        print(
+            f"[更新代理] 发现 {current} → {target}，已发布更新通知；"
+            "等待节点管理员在 OS 后台确认安装。"
+        )
+        return 0
 
     command = _artifact_command(update, target, git_ref)
     mode = "Docker 摘要" if command[0] == sys.executable else "Git 引导/救援"
@@ -256,6 +297,7 @@ def run_once() -> int:
     if completed.returncode != 0:
         detail = f"update.sh 退出码 {completed.returncode}\n{output[-1500:]}"
         _report(base, key, release_id, "failed", version=current, detail=detail)
+        _APPROVAL_FILE.unlink(missing_ok=True)
         return completed.returncode or 1
 
     installed = _installed_version()
@@ -263,9 +305,12 @@ def run_once() -> int:
         detail = f"升级脚本完成，但本机版本为 {installed}，目标为 {target}"
         _report(base, key, release_id, "failed", version=installed, detail=detail)
         print(f"[更新代理] {detail}", file=sys.stderr)
+        _APPROVAL_FILE.unlink(missing_ok=True)
         return 1
     _report(base, key, release_id, "success", version=installed, detail="升级完成")
     print(f"[更新代理] 已成功升级到 {installed}。")
+    _APPROVAL_FILE.unlink(missing_ok=True)
+    _PENDING_FILE.unlink(missing_ok=True)
     return 0
 
 

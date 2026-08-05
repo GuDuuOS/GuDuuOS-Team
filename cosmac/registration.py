@@ -12,7 +12,8 @@
 安全 / 健壮（单实例「够用即止」，与 wf 同口径）：
   · 验证码存**内存**（带 TTL + 线程锁）——单 bot 实例足够；将来多实例再迁 DB。
   · 限频：同邮箱发码有冷却 + 每小时上限；验码有尝试次数上限（防爆破）。
-  · 真密钥（SMTP 密码 / registration_shared_secret）只从**服务端 env** 读，绝不进代码/前端/Matrix。
+  · 真密钥（SMTP 密码 / registration_shared_secret）只从节点加密设置或服务端 env 读，
+    绝不进代码、Matrix state 或浏览器响应。
 
 涉及的 env（生产用 systemd Environment / Secret Manager 注入；本地不配则注册不可用、优雅报错）：
   COSMAC_SMTP_HOST / COSMAC_SMTP_PORT(默认465) / COSMAC_SMTP_USER / COSMAC_SMTP_PASSWORD /
@@ -23,6 +24,7 @@
 from __future__ import annotations
 
 import hashlib
+import html as html_lib
 import hmac
 import logging
 import re
@@ -195,15 +197,23 @@ def _verify_turnstile(token: str, client_ip: str = "") -> bool:
 
 
 def _smtp_conf() -> Optional[Dict[str, Any]]:
-    """读 SMTP 配置；缺关键项则返回 None（注册功能视为未启用）。"""
-    host = _env("SMTP_HOST")
-    user = _env("SMTP_USER")
-    password = _env("SMTP_PASSWORD")
-    sender = _env("SMTP_FROM") or user
+    """读 SMTP 配置；向导数据库优先，旧节点环境变量继续兼容。"""
+    runtime: Dict[str, Any] = {}
+    try:
+        from cosmac.node_settings import runtime_email
+
+        runtime = runtime_email()
+    except Exception:
+        # 首次建表前、旧节点还没生成设置主密钥时继续走既有 env，不能让注册服务崩掉。
+        logger.debug("节点 SMTP 设置暂不可读，回退环境变量", exc_info=True)
+    host = str(runtime.get("host") or _env("SMTP_HOST"))
+    user = str(runtime.get("user") or _env("SMTP_USER"))
+    password = str(runtime.get("password") or _env("SMTP_PASSWORD"))
+    sender = str(runtime.get("from_address") or _env("SMTP_FROM") or user)
     if not (host and user and password and sender):
         return None
     try:
-        port = int(_env("SMTP_PORT", "465"))
+        port = int(runtime.get("port") or _env("SMTP_PORT", "465"))
     except ValueError:
         port = 465
     return {
@@ -212,7 +222,8 @@ def _smtp_conf() -> Optional[Dict[str, Any]]:
         "user": user,
         "password": password,
         "from": sender,
-        "from_name": _env("SMTP_FROM_NAME", "GuDuu OS"),
+        "from_name": str(runtime.get("from_name") or _env("SMTP_FROM_NAME", "GuDuu OS")),
+        "security": str(runtime.get("security") or "ssl"),
     }
 
 
@@ -234,8 +245,18 @@ def _build_email(code: str, kind: str = "register") -> Tuple[str, str, str]:
     外链图会拉低投递评分（更易进垃圾箱），所以不放 logo 图。
     """
     mins = _CODE_TTL // 60
+    product_name = "GuDuu OS"
+    try:
+        from cosmac.node_settings import public_config
+
+        product_name = str(
+            (public_config().get("brand") or {}).get("product_name") or product_name
+        )
+    except Exception:
+        pass
+    html_product_name = html_lib.escape(product_name)
     if kind == "login":
-        subject = f"【GuDuu OS】登录安全验证码 {code}"
+        subject = f"【{product_name}】登录安全验证码 {code}"
         heading = "验证是你本人在登录"
         intro = "检测到你的账号在**新设备/新地点**尝试登录。请在登录页输入下面的验证码完成验证："
         plain = (
@@ -245,35 +266,37 @@ def _build_email(code: str, kind: str = "register") -> Tuple[str, str, str]:
         )
         note = "如果这不是你本人的操作，说明有人可能知道了你的密码，请立即用「忘记密码」修改密码。"
     elif kind == "reset":
-        subject = f"【GuDuu OS】重置密码验证码 {code}"
+        subject = f"【{product_name}】重置密码验证码 {code}"
         heading = "重置你的密码"
-        intro = "你正在重置 GuDuu OS 的登录密码。请在页面输入下面的验证码："
+        intro = f"你正在重置 {product_name} 的登录密码。请在页面输入下面的验证码："
         plain = (
-            f"你正在重置 GuDuu OS 的登录密码。\n\n"
+            f"你正在重置 {product_name} 的登录密码。\n\n"
             f"验证码：{code}\n\n"
             f"{mins} 分钟内有效。如果这不是你本人的操作，忽略本邮件即可，密码不会被更改。"
         )
         note = "如果这不是你本人的操作，忽略本邮件即可，你的密码不会被更改。"
     else:
-        subject = f"【GuDuu OS】注册验证码 {code}"
+        subject = f"【{product_name}】注册验证码 {code}"
         heading = "验证你的邮箱"
-        intro = "你正在注册 GuDuu OS。请在页面输入下面的验证码完成注册："
+        intro = f"你正在注册 {product_name}。请在页面输入下面的验证码完成注册："
         plain = (
-            f"你正在注册 GuDuu OS。\n\n"
+            f"你正在注册 {product_name}。\n\n"
             f"验证码：{code}\n\n"
             f"{mins} 分钟内有效。如果这不是你本人的操作，忽略本邮件即可，账号不会有任何变化。"
         )
         note = "如果这不是你本人的操作，忽略本邮件即可，你的账号不会有任何变化。"
+    html_intro = html_lib.escape(intro)
+    html_note = html_lib.escape(note)
     html = f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
 <body style="margin:0;background:#f1efe9;font-family:-apple-system,'PingFang SC',sans-serif;">
 <div style="padding:32px 16px;">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="width:100%;max-width:480px;margin:0 auto;background:#ffffff;border-radius:16px;border:1px solid #eae6df;">
 <tr><td style="padding:30px 36px 8px;">
-<div style="font-size:19px;font-weight:600;color:#2c2a26;letter-spacing:.3px;"><span style="color:#c96442;">✦</span>&nbsp;GuDuu OS&nbsp;<span style="color:#c96442;">Star</span></div>
+<div style="font-size:19px;font-weight:600;color:#2c2a26;letter-spacing:.3px;"><span style="color:#c96442;">✦</span>&nbsp;{html_product_name}</div>
 </td></tr>
 <tr><td style="padding:14px 36px 0;">
 <div style="font-size:20px;font-weight:600;color:#2c2a26;">{heading}</div>
-<div style="font-size:14px;line-height:1.7;color:#6b665e;margin-top:10px;">{intro}</div>
+<div style="font-size:14px;line-height:1.7;color:#6b665e;margin-top:10px;">{html_intro}</div>
 </td></tr>
 <tr><td style="padding:22px 36px 6px;">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:#faece7;border:1px solid #f0d8cd;border-radius:12px;">
@@ -283,10 +306,10 @@ def _build_email(code: str, kind: str = "register") -> Tuple[str, str, str]:
 <div style="font-size:12px;color:#8a8378;margin-top:10px;text-align:center;">验证码 {mins} 分钟内有效</div>
 </td></tr>
 <tr><td style="padding:14px 36px 0;">
-<div style="font-size:13px;line-height:1.7;color:#8a8378;">{note}</div>
+<div style="font-size:13px;line-height:1.7;color:#8a8378;">{html_note}</div>
 </td></tr>
 <tr><td style="padding:22px 36px 28px;">
-<div style="border-top:1px solid #eee9e1;padding-top:14px;font-size:12px;color:#ada699;line-height:1.6;">此邮件由系统自动发送，请勿直接回复。<br>© GuDuu OS</div>
+<div style="border-top:1px solid #eee9e1;padding-top:14px;font-size:12px;color:#ada699;line-height:1.6;">此邮件由系统自动发送，请勿直接回复。<br>© {html_product_name}</div>
 </td></tr>
 </table>
 </div>
@@ -307,7 +330,7 @@ def _smtp_send(to_addr: str, subject: str, plain: str, html: str) -> None:
     msg.add_alternative(html, subtype="html")    # 品牌化 HTML 正文（现代客户端显示这个）
     ctx = ssl.create_default_context()
     # 465=SSL 直连；587=STARTTLS。Lark 两个都给，这里按端口择一。
-    if conf["port"] == 587:
+    if conf.get("security") == "starttls" or conf["port"] == 587:
         with smtplib.SMTP(conf["host"], conf["port"], timeout=20) as s:
             s.starttls(context=ctx)
             s.login(conf["user"], conf["password"])

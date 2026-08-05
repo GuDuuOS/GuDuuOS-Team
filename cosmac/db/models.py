@@ -23,6 +23,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -469,6 +470,25 @@ class OemUserAttribution(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<OemUserAttribution {self.user_id} {self.status}>"
+
+
+class NodeSetting(Base, TimestampMixin):
+    """OEM 节点首次部署及后续“系统设置”的单例配置。
+
+    ``public_config`` 只保存产品名、Logo、SMTP 主机、模型名称等可展示字段；
+    ``encrypted_secrets`` 保存 SMTP 密码、模型 API Key、支付密钥。把两类数据物理分开，
+    可以保证公开品牌接口永远不需要先解密，也降低日后误把密钥序列化给浏览器的风险。
+    当前每个 OEM 节点只有一份设置，固定使用主键 1。
+    """
+
+    __tablename__ = "cosmac_node_setting"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    setup_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    public_config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    encrypted_secrets: Mapped[bytes] = mapped_column(
+        LargeBinary, nullable=False, default=b""
+    )
 
 
 class AuthEvent(Base, TimestampMixin):

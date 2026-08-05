@@ -8,7 +8,7 @@
         <span class="adm-logo"><Icon name="settings" /></span>
         <div>
           <div class="adm-title">管理后台</div>
-          <div class="adm-sub">GuDuu OS 运营控制台</div>
+          <div class="adm-sub">{{ instanceBrand.productName }} 运营控制台</div>
         </div>
       </div>
       <nav class="adm-menu">
@@ -21,6 +21,9 @@
           <span class="adm-mi-ic"><Icon name="data" /></span> 数据概览
         </button>
         </template>
+        <button class="adm-mi" @click="router.push('/setup?edit=1')">
+          <span class="adm-mi-ic"><Icon name="settings" /></span> 系统设置
+        </button>
 
         <button class="adm-menu-cap" @click="toggleMenuGroup('uc')">
           <svg class="adm-cap-caret" :class="{ open: !menuFold.uc }" width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M9 6 15 12 9 18z" /></svg>用户与频道
@@ -370,23 +373,11 @@
         <div v-if="aiLoading" class="adm-center"><div class="adm-spin" /> 加载配置…</div>
 
         <div v-else class="adm-form">
-          <!-- 模型后端：选 provider + 模型 id。API Key 不在网页配，只在服务端 -->
-          <label class="adm-field">
-            <span>模型后端</span>
-            <select v-model="aiForm.provider">
-              <option v-for="p in AI_PROVIDERS" :key="p.value" :value="p.value">{{ p.label }}</option>
-            </select>
-            <em class="adm-note">选「默认」= 用服务器配置的后端；选某家则切到它（需服务器已配好它的 API Key）。</em>
-          </label>
-
-          <template v-if="aiForm.provider">
-            <label class="adm-field">
-              <span>模型 id</span>
-              <input v-model.trim="aiForm.model" :placeholder="providerMeta.modelPlaceholder" />
-              <em class="adm-note">⚠️ 填错会让 AI 回话报错；DeepSeek/Gemini 填方舟/Google 的模型 id 或接入点。</em>
-            </label>
-            <em class="adm-note">🔒 出于安全，<b>API Key 不在网页配置</b>——密钥只在服务器环境变量/Secret&nbsp;Manager 里设（平台事件无法加密，存进去会明文泄露）。切到服务器没配 key 的后端，AI 将无法回话。</em>
-          </template>
+          <!-- provider/model/key 必须作为一组进服务端加密设置，防止厂商与密钥错配。 -->
+          <div class="adm-warnbar">
+            主 AI 提供方、模型、Base URL 与 API Key 已统一移到“系统设置”并加密保存；
+            本页只维护人设与工具权限。<button class="adm-op" @click="router.push('/setup?edit=1')">打开系统设置</button>
+          </div>
 
           <label class="adm-field">
             <span>主 AI 人设（system prompt）</span>
@@ -1835,6 +1826,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { instanceBrand } from '@/config/instance'
 import { formatServerDateTime } from '@/utils/dateTime'
 import { rowKey } from '@/utils/rowKey'
 import {
@@ -1906,7 +1899,6 @@ import {
   QUOTA_CATALOG,
   type QuotaLimits,
   AI_TOOL_CATALOG,
-  AI_PROVIDERS,
   botId,
   isAiWorkerId,
   fetchAdminArchives,
@@ -1933,6 +1925,7 @@ import { useListSearch, useEnabledFilter } from '@/composables/useListSearch'
 
 // 作为覆盖层使用：关闭时通知父组件（LiveView）收起
 const emit = defineEmits<{ (e: 'close'): void }>()
+const router = useRouter()
 
 const { success, warn } = useToast()
 
@@ -2522,11 +2515,6 @@ const aiForm = reactive<{
   tools: new Set(AI_TOOL_CATALOG.map((t) => t.name)), // 默认全开
 })
 
-// 当前选中 provider 的元信息（模型占位符等）
-const providerMeta = computed(
-  () => AI_PROVIDERS.find((p) => p.value === aiForm.provider) || AI_PROVIDERS[0],
-)
-
 function isToolOn(name: string): boolean {
   return aiForm.tools.has(name)
 }
@@ -2558,18 +2546,15 @@ async function loadAi() {
 }
 
 async function saveAi() {
-  // 选了某家 provider → 提醒「key 在服务器配」（网页不再收 key）
-  if (aiForm.provider) {
-    if (!confirm(`已选「${providerMeta.value.label}」。请确认服务器已为它配好 API Key（环境变量/Secret Manager），否则 AI 无法回话。仍要保存吗？`)) return
-  }
   aiSaving.value = true
   try {
     const all = AI_TOOL_CATALOG.map((t) => t.name)
     // 全开 → 存 null（表示不限制）；否则存当前集合
     const enabled = all.every((n) => aiForm.tools.has(n)) ? null : [...aiForm.tools]
     await setAiConfig({
-      provider: aiForm.provider,
-      model: aiForm.model,
+      // provider/model/key 统一由节点系统设置负责；控制室只保存非敏感的人设/工具。
+      provider: '',
+      model: '',
       system_prompt: aiForm.system_prompt,
       enabled_tools: enabled,
     })

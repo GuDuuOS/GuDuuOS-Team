@@ -8,9 +8,9 @@
   - gemini          ：Google Gemini（OpenAI 兼容端点，key: GEMINI_API_KEY）
 
 业务代码只依赖统一接口，绝不直接调用某家厂商 SDK，方便随时切换模型后端。
-API key **只来自服务端环境变量 / Secret Manager**——管理后台只下发 provider/模型，
-**绝不下发 key**（Matrix state event 无法加密，放 key 会明文泄露）。取不到 key、或
-缺对应 SDK，则优雅降级到 echo。（build_provider 保留 api_key 形参仅供测试，生产恒传空。）
+API key 来自节点加密设置或服务端环境变量，绝不写入 Matrix state event；取不到 key、
+或缺对应 SDK时优雅降级到 echo。业务层仍只通过 ``build_provider`` 传递已经在服务端
+解密的值，浏览器接口不会读回密钥原文。
 """
 
 from __future__ import annotations
@@ -61,6 +61,7 @@ def build_provider(
     api_key: str = "",
     model: str = "",
     system_prompt: str = "",
+    base_url: str = "",
 ) -> LLMProvider:
     """按「provider 名 + 显式 key + 模型」构造后端（多模型抽象的总入口）。
 
@@ -91,7 +92,8 @@ def build_provider(
             from cosmac.ai.claude import ClaudeProvider
 
             return ClaudeProvider(
-                model=use_model, system_prompt=system_prompt, api_key=key
+                model=use_model, system_prompt=system_prompt, api_key=key,
+                base_url=base_url,
             )
         # 其余都是 OpenAI 兼容：只是 base_url 不同
         from cosmac.ai.openai_compat import OpenAICompatProvider
@@ -99,14 +101,14 @@ def build_provider(
         logger.warning("provider=%s 所需 SDK 未安装，主 AI 暂时降级为 echo 占位。", name)
         return EchoProvider()
 
-    base_url: Optional[str] = None
-    if name in ("deepseek", "ark"):
-        base_url = os.environ.get("ARK_BASE_URL", ARK_BASE_URL)
-    elif name == "gemini":
-        base_url = GEMINI_BASE_URL
+    resolved_base_url: Optional[str] = base_url or None
+    if not resolved_base_url and name in ("deepseek", "ark"):
+        resolved_base_url = os.environ.get("ARK_BASE_URL", ARK_BASE_URL)
+    elif not resolved_base_url and name == "gemini":
+        resolved_base_url = GEMINI_BASE_URL
     # openai：base_url=None → 用 OpenAI 官方端点
     return OpenAICompatProvider(
-        api_key=key, model=use_model, system_prompt=system_prompt, base_url=base_url
+        api_key=key, model=use_model, system_prompt=system_prompt, base_url=resolved_base_url
     )
 
 

@@ -5,14 +5,17 @@
 // 详见 memory `client-root-is-liveview`（已随本次「独立 AuthView」重构更新）。
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { currentUserId } from '@/matrix/client'
+import { loadInstanceConfig } from '@/config/instance'
 
 const LiveView = () => import('@/views/LiveView.vue')
 const AuthView = () => import('@/views/AuthView.vue')
 const ActivationView = () => import('@/views/ActivationView.vue')
+const SetupView = () => import('@/views/SetupView.vue')
 
 const routes = [
   { path: '/login', component: AuthView },
   { path: '/activate', component: ActivationView },
+  { path: '/setup', component: SetupView },
   { path: '/', component: LiveView },
   { path: '/s/:space/board', component: LiveView },
   { path: '/s/:space/tasks', component: LiveView },
@@ -37,9 +40,18 @@ export const router = createRouter({
 // 注（bug8）：登录页**始终可达**——不再把"已登录"用户从 /login 弹回首页。否则已登录用户在登录页
 // 想切换账号、正输账号时一刷新就被弹去首页（"账号没输完就跳首页"）。正常登录后仍由 proceed()
 // 主动 push 到目标页，不依赖这个弹走逻辑。
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
+  // 仅 Vite 开发态允许无会话预览向导布局；生产构建会编译掉此分支，保存接口仍有管理员鉴权。
+  if (import.meta.env.DEV && to.path === '/setup' && to.query.preview === '1') return true
   const authed = !!currentUserId()
   if (to.path === '/login') return true
   if (!authed) return { path: '/login', query: { redirect: to.fullPath } }
+  if (to.path !== '/setup') {
+    const config = await loadInstanceConfig()
+    // 新安装只有 bootstrap 的 @admin 账号；仅把它强制送入向导。这样旧 OEM 节点
+    // 升级到 1.24.0 时，普通成员不会在管理员尚未补配置前被一并挡在向导外。
+    const localpart = currentUserId().replace(/^@/, '').split(':')[0]
+    if (!config.setup_completed && localpart === 'admin') return { path: '/setup' }
+  }
   return true
 })

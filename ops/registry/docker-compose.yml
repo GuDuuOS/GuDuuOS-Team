@@ -8,10 +8,8 @@ services:
       - "127.0.0.1:5000:5000"
     environment:
       REGISTRY_STORAGE_DELETE_ENABLED: "true"
-      REGISTRY_AUTH: htpasswd
-      REGISTRY_AUTH_HTPASSWD_REALM: GuDuu Registry
-      REGISTRY_AUTH_HTPASSWD_PATH: /auth/htpasswd
     volumes:
       # 生产上该目录必须是独立 Persistent Disk 的挂载点，不得落在系统盘。
       - /srv/guduu-registry/data:/var/lib/registry
-      - /srv/guduu-registry/auth:/auth:ro
+      # Registry 只监听宿主回环；公网唯一入口 Caddy 会拒绝所有写方法，因此匿名只读
+      # 不需要给客户分发账号。写入仍只有宿主 systemd 同步任务能够直连 127.0.0.1。

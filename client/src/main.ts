@@ -6,5 +6,7 @@ import App from './App.vue'
 import './styles/tokens.css'
 import './styles/reset.css'
 import { router } from './router'
+import { loadInstanceConfig } from './config/instance'
 
-createApp(App).use(router).mount('#app')
+// 在挂载登录页前先取一次同域公开品牌，避免页面先闪出默认 Logo/名称再替换。
+loadInstanceConfig().finally(() => createApp(App).use(router).mount('#app'))

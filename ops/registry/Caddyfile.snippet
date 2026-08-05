@@ -1,4 +1,8 @@
 registry.guduu.co {
 	encode zstd gzip
+	# Registry 容器只监听 127.0.0.1；公网仅允许 Docker Registry 的匿名读取方法。
+	# 宿主同步任务绕过 Caddy 直连回环端口，因此外部永远拿不到写入口。
+	@write_requests method POST PUT PATCH DELETE
+	respond @write_requests 405
 	reverse_proxy 127.0.0.1:5000
 }

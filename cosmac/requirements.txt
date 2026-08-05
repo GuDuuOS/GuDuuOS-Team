@@ -7,5 +7,7 @@ openai>=1.50
 SQLAlchemy>=2.0
 # 生产连 Postgres 用（本地走 SQLite 时不需要）。装不上不影响本地开发/测试。
 psycopg[binary]>=3.1; platform_system != "Windows"
+# 节点首次配置向导：SMTP、模型与支付密钥使用 Fernet 加密后写入 cosmac DB。
+cryptography>=42.0
 # 知识库向量检索（pgvector）后续接入时再启用：
 # pgvector>=0.2

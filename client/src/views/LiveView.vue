@@ -97,7 +97,7 @@ import {
 } from '@/matrix/client'
 import { tenant } from '@/config/tenant'
 import { defaultHsUrl } from '@/config/hs'
-import logoUrl from '@/assets/cosmac-logo.png'
+import { instanceBrand } from '@/config/instance'
 
 // ── 复刻 DEMO 的按键功能：直接复用演示版的弹窗/面板组件 + 它们的 composable ──
 // 这些组件都是"常驻挂载、内部 v-if(visible)"模式；按键只需调对应 composable 的 open()。
@@ -2281,8 +2281,8 @@ onBeforeUnmount(() => {
             <circle cx="3" cy="9" r="1.6" /><circle cx="9" cy="9" r="1.6" /><circle cx="15" cy="9" r="1.6" />
             <circle cx="3" cy="15" r="1.6" /><circle cx="9" cy="15" r="1.6" /><circle cx="15" cy="15" r="1.6" />
           </svg>
-          <img :src="logoUrl" alt="" class="logo" />
-          <span class="product-name">GuDuu OS<span class="product-x">X</span>{{ activeSpaceName }}</span>
+          <img :src="instanceBrand.logoUrl" alt="" class="logo" />
+          <span class="product-name">{{ instanceBrand.productName }}<span class="product-x">X</span>{{ activeSpaceName }}</span>
         </button>
         <div v-if="appMenuOpen" class="tas-pop" @click.stop>
           <button class="tas-item active"><span class="tas-ic"><Icon name="message" :size="16" /></span><span class="tas-label">频道</span><span class="tas-check"><Icon name="check" :size="13" /></span></button>

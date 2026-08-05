@@ -131,6 +131,67 @@ export async function activateNode(baseUrl: string): Promise<void> {
   if (!r.ok || !j?.activated) throw new Error(j?.error || '节点激活失败')
 }
 
+export interface NodeAdminSettings {
+  setup_completed: boolean
+  brand: { product_name: string; company_name: string; logo_data_url: string }
+  email: Record<string, any>
+  ai: Record<string, any>
+  payment: Record<string, any>
+}
+
+/** 管理员读取节点设置；服务端只返回密钥“已配置”标记，不返回原文。 */
+export async function getNodeAdminSettings(): Promise<NodeAdminSettings> {
+  const response = await fetch('/cosmac/admin/node-settings', {
+    cache: 'no-store',
+    headers: { Authorization: `Bearer ${currentAccessToken()}` },
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error || '无法读取节点设置')
+  return payload
+}
+
+/** 保存首次部署向导或系统设置；空白密钥表示保留服务器中的旧值。 */
+export async function saveNodeAdminSettings(body: Record<string, any>): Promise<NodeAdminSettings> {
+  const response = await fetch('/cosmac/admin/node-settings', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${currentAccessToken()}`,
+    },
+    body: JSON.stringify(body),
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error || '保存节点设置失败')
+  return payload
+}
+
+export interface PendingNodeUpdate {
+  release_id: number
+  current_version: string
+  version: string
+  title: string
+  notes: string
+}
+
+export async function getPendingNodeUpdate(): Promise<PendingNodeUpdate | null> {
+  const response = await fetch('/cosmac/admin/node-update', {
+    cache: 'no-store', headers: { Authorization: `Bearer ${currentAccessToken()}` },
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error || '无法读取更新信息')
+  return payload?.update || null
+}
+
+export async function approvePendingNodeUpdate(releaseId: number): Promise<void> {
+  const response = await fetch('/cosmac/admin/node-update/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${currentAccessToken()}` },
+    body: JSON.stringify({ release_id: releaseId }),
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error || '批准更新失败')
+}
+
 /** 切换到某个已缓存账号：把它设为活动会话。返回是否找到（调用方随后整页 reload 让其生效）。 */
 export function switchToAccount(userId: string): boolean {
   const a = readAccounts().find((x) => x.userId === userId)

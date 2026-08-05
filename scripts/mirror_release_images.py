@@ -3,8 +3,8 @@
 
 该脚本只在 Nexus 宿主机的 systemd 任务中运行，通过本机数据库读取
 已经 HMAC 验证的镜像清单。它不把 Docker socket 交给 Nexus Web，也不读取
-客户节点凭据。Registry 登录由 root 预先写入独立 authfile，避免密码出现在
-命令行和 journal 中。
+客户节点凭据。Registry 只监听宿主回环地址，公网写方法由 Caddy 拒绝；同步任务
+因此无需保存仓库密码，也不会把上传端点暴露给外部节点。
 """
 
 from __future__ import annotations
@@ -14,8 +14,7 @@ import os
 import re
 import subprocess
 import sys
-from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Tuple
 
 from nexus import db
 from nexus.db import NexusImageManifest
@@ -23,11 +22,6 @@ from nexus.db import NexusImageManifest
 
 _GHCR_RE = re.compile(
     r"^ghcr\.io/guduuos/guduu-os-(?:bot|web)@sha256:([0-9a-f]{64})$"
-)
-_AUTH_FILE = Path(
-    os.environ.get(
-        "GUDUU_MIRROR_AUTHFILE", "/etc/guduu-registry/skopeo-auth.json"
-    )
 )
 _LOCAL_REGISTRY = "localhost:5000"
 
@@ -53,68 +47,39 @@ def _run(args: list[str]) -> bytes:
     return completed.stdout
 
 
-def _sync_one(source: str) -> None:
-    """同步单个多架构镜像，并对目标 manifest 原文重算 SHA-256。"""
+def _sync_one(source: str, version: str) -> None:
+    """同步单个多架构镜像，并同时建立 vX.Y.Z / X.Y.Z 两个标准版本 Tag。"""
     match = _GHCR_RE.fullmatch(source)
     if match is None:
         raise RuntimeError("镜像引用不合法：" + source)
     target = _mirror_ref(source)
-    # 写入账号只在 Nexus 宿主机使用，直连回环 Registry，
-    # 不把 PATCH/PUT 上传流量绕经 Caddy 与 Cloudflare。外部节点仍然只看到
-    # registry.guduu.co 的 TLS 拉取端点，且使用独立只读账号。
-    local_target = _LOCAL_REGISTRY + "/" + target.split("/", 1)[1]
-    auth = ["--authfile", str(_AUTH_FILE)]
-    # timer 会周期执行；目标摘要已正确时立即跳过，避免重复
-    # 传输大层和占用 GHCR 带宽。inspect 失败通常表示镜像尚未同步，
-    # 可以继续 copy；inspect 成功但摘要不同则也重新按原摘要覆盖。
-    try:
-        existing = _run(
-            [
-                "skopeo",
-                "inspect",
-                "--raw",
-                "--tls-verify=false",
-                *auth,
-                "docker://" + local_target,
-            ]
-        )
-    except RuntimeError:
-        existing = b""
-    if existing and hashlib.sha256(existing).hexdigest() == match.group(1):
-        print("已存在且摘要正确，跳过 " + target)
-        return
-    _run(
-        [
-            "skopeo",
-            "copy",
-            "--all",
-            "--preserve-digests",
+    # 宿主同步任务直连回环 Registry，不把 PATCH/PUT 上传流量绕经 Caddy 与
+    # Cloudflare；外部节点只看到由 Caddy 限制为匿名只读的 TLS 拉取端点。
+    local_repo = _LOCAL_REGISTRY + "/" + target.split("/", 1)[1].split("@", 1)[0]
+    if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", version):
+        raise RuntimeError("数据库中出现不合法版本号：" + version)
+    for tag in ("v" + version, version):
+        local_target = local_repo + ":" + tag
+        # copy 到 Tag 才会进入 /tags/list；只 copy @digest 虽能按摘要拉取，却不会有人工可见 Tag。
+        _run([
+            "skopeo", "copy", "--all", "--preserve-digests",
             "--dest-tls-verify=false",
-            *auth,
-            "docker://" + source,
+            "docker://" + source, "docker://" + local_target,
+        ])
+        raw = _run([
+            "skopeo", "inspect", "--raw", "--tls-verify=false",
             "docker://" + local_target,
-        ]
-    )
-    raw = _run(
-        [
-            "skopeo",
-            "inspect",
-            "--raw",
-            "--tls-verify=false",
-            *auth,
-            "docker://" + local_target,
-        ]
-    )
-    actual = hashlib.sha256(raw).hexdigest()
-    if actual != match.group(1):
-        raise RuntimeError(
-            "自建仓 manifest 摘要不一致：期望 %s，实际 %s"
-            % (match.group(1), actual)
-        )
-    print("已同步并校验 " + target)
+        ])
+        actual = hashlib.sha256(raw).hexdigest()
+        if actual != match.group(1):
+            raise RuntimeError(
+                "自建仓 Tag 摘要不一致：%s 期望 %s，实际 %s"
+                % (tag, match.group(1), actual)
+            )
+    print("已同步并校验 %s（v%s / %s）" % (target, version, version))
 
 
-def _sources() -> Iterable[str]:
+def _sources() -> Iterable[Tuple[str, str]]:
     """按版本顺序读取 Nexus 已登记的 bot/web 镜像。"""
     session = db.session()
     try:
@@ -122,25 +87,24 @@ def _sources() -> Iterable[str]:
             NexusImageManifest.created_ts.asc()
         )
         for row in rows:
-            yield str(row.bot_image)
-            yield str(row.web_image)
+            yield str(row.bot_image), str(row.version)
+            yield str(row.web_image), str(row.version)
     finally:
         session.close()
 
 
 def main() -> int:
     """校验运行环境并幂等同步所有已登记摘要。"""
-    if not _AUTH_FILE.is_file():
-        raise RuntimeError("缺少 root-only skopeo authfile：" + str(_AUTH_FILE))
     database_url = os.environ.get("NEXUS_DATABASE_URL", "").strip()
     if not database_url:
         raise RuntimeError("NEXUS_DATABASE_URL 未配置")
     db.init_engine(database_url)
-    seen: set[str] = set()
-    for source in _sources():
-        if source not in seen:
-            _sync_one(source)
-            seen.add(source)
+    seen: set[Tuple[str, str]] = set()
+    for source, version in _sources():
+        key = (source, version)
+        if key not in seen:
+            _sync_one(source, version)
+            seen.add(key)
     print("双仓同步完成，共校验 %d 个镜像。" % len(seen))
     return 0
 

@@ -83,7 +83,7 @@ class TestRuntimeConfig(unittest.TestCase):
 
     def test_api_key_from_control_room_is_ignored(self) -> None:
         # 安全回归：即便控制室事件里塞了 api_key，bot 也绝不采用它——
-        # 密钥只走服务端环境变量；签名里的 key 段恒为 ""（build_provider 传 api_key=""）。
+        # 控制室事件中的密钥永远被忽略；未配置节点加密设置时签名 key 段仍为空。
         bot = _bot(
             "!ctrl:host",
             {"provider": "deepseek", "api_key": "leaked-key", "model": "x"},

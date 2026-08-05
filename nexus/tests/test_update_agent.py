@@ -64,6 +64,22 @@ class UpdateAgentTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             update_agent._validate_endpoint("http://nexus.example.com")
 
+    def test_customer_update_requires_explicit_approval(self):
+        """客户节点缺省不能因收到任务就安装；灰度 opt-in 或当前任务批准才放行。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            original = update_agent._APPROVAL_FILE
+            update_agent._APPROVAL_FILE = Path(temp_dir) / "approved.json"
+            try:
+                self.assertFalse(update_agent._approved(23, {}))
+                self.assertTrue(update_agent._approved(23, {"COSMAC_AUTO_UPDATE": "1"}))
+                update_agent._APPROVAL_FILE.write_text(
+                    '{"release_id":23}', encoding="utf-8"
+                )
+                self.assertTrue(update_agent._approved(23, {}))
+                self.assertFalse(update_agent._approved(24, {}))
+            finally:
+                update_agent._APPROVAL_FILE = original
+
     def test_update_request_has_fixed_product_user_agent(self):
         """节点代理必须带固定产品标识，避免被 Cloudflare 当成 urllib 机器人。"""
         with mock.patch.object(
