@@ -144,6 +144,15 @@ class NexusHandler(BaseHTTPRequestHandler):
     def _json(self, status: int, payload: Dict[str, Any]) -> None:
         # Session 包装会据此判断管理写操作是否真正成功，再追加全局审计事件。
         self._last_response_status = int(status)
+        if getattr(self, "_defer_json_response", False):
+            # 数据库事务内先暂存响应；只有 commit 成功后才真正写入 socket，避免浏览器
+            # 收到成功后立即发起下一请求，却仍读到尚未提交的旧状态。
+            self._pending_json_response = (int(status), payload)
+            return
+        self._send_json(status, payload)
+
+    def _send_json(self, status: int, payload: Dict[str, Any]) -> None:
+        """立即发送 JSON；事务包装之外以及 commit 完成后使用。"""
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -224,6 +233,54 @@ class NexusHandler(BaseHTTPRequestHandler):
                 pass
         return peer or "?"
 
+    def _admin_permission(self) -> str:
+        """把管理 API 归到稳定职责域，未知接口默认落入最高敏感的安全域。"""
+        path = self.path.split("?", 1)[0]
+        method = self.command.upper()
+        write = method not in ("GET", "HEAD", "OPTIONS")
+        if path in (
+            "/nexus/admin/me",
+            "/nexus/admin/passkeys",
+            "/nexus/admin/auth/logout",
+            "/nexus/admin/passkey/register/options",
+            "/nexus/admin/passkey/register/verify",
+            "/nexus/admin/passkey/delete",
+        ):
+            return ""
+        if path == "/nexus/admin/audit":
+            return "audit.read"
+        if path in (
+            "/nexus/admin/orders",
+            "/nexus/admin/withdrawals",
+            "/nexus/admin/finance_summary",
+            "/nexus/admin/payment_configs",
+            "/nexus/admin/pricing",
+            "/nexus/admin/oem_commercial_terms",
+            "/nexus/admin/manual_transfer/recognize",
+            "/nexus/admin/manual_transfers",
+            "/nexus/admin/topup_transfer_decide",
+            "/nexus/admin/withdrawal_decide",
+            "/nexus/admin/payment_config",
+        ) or path.startswith("/nexus/admin/manual_transfer_voucher/"):
+            return "finance.write" if write else "finance.read"
+        if path in (
+            "/nexus/admin/releases",
+            "/nexus/admin/release_draft",
+            "/nexus/admin/release_policy",
+            "/nexus/admin/release_action",
+        ):
+            return "release.write" if write else "release.read"
+        if path in (
+            "/nexus/admin/admins",
+            "/nexus/admin/admin_status",
+            "/nexus/admin/admin_password",
+            "/nexus/admin/admin_role",
+        ):
+            return "security.write" if write else "security.read"
+        if path.startswith("/nexus/admin/"):
+            return "operations.write" if write else "operations.read"
+        return ""
+
     def _check_admin(self) -> bool:
         """只接受具名管理员会话或 SSH 单次码换取的短期恢复会话。
 
@@ -239,6 +296,7 @@ class NexusHandler(BaseHTTPRequestHandler):
             if account is not None:
                 self._admin_actor_id = int(account.id)
                 self._admin_actor_label = account.display_name
+                self._admin_role = getattr(account, "role", "superadmin")
                 self._admin_auth_kind = (
                     "recovery_cookie"
                     if int(account.id) == 0
@@ -257,6 +315,14 @@ class NexusHandler(BaseHTTPRequestHandler):
                     and self.headers.get("X-Nexus-CSRF") != "1"
                 ):
                     self._err(403, "NEXUS_CSRF", "管理请求缺少安全校验头")
+                    return False
+                permission = self._admin_permission()
+                if not admin_auth.has_permission(self._admin_role, permission):
+                    self._err(
+                        403,
+                        "NEXUS_ADMIN_PERMISSION_DENIED",
+                        "当前管理员角色无权执行此操作",
+                    )
                     return False
                 return True
             has_named_admin = admin_auth.active_count(s) > 0
@@ -327,9 +393,12 @@ class NexusHandler(BaseHTTPRequestHandler):
         self._admin_actor_id = 0
         self._admin_actor_label = ""
         self._admin_auth_kind = ""
+        self._admin_role = ""
         self._admin_session_token = ""
         self._last_response_status = 0
         self._pending_set_cookies = []
+        self._defer_json_response = False
+        self._pending_json_response = None
 
     def _bearer(self) -> str:
         """取 Authorization: Bearer <token> 里的 token（无则空串）。"""
@@ -470,6 +539,14 @@ class NexusHandler(BaseHTTPRequestHandler):
                         "admin": {
                             "id": int(getattr(self, "_admin_actor_id", 0)),
                             "display_name": self._admin_actor(),
+                            "role": getattr(self, "_admin_role", "superadmin"),
+                            "role_label": admin_auth.ADMIN_ROLES.get(
+                                getattr(self, "_admin_role", "superadmin"),
+                                getattr(self, "_admin_role", "superadmin"),
+                            ),
+                            "permissions": admin_auth.role_permissions(
+                                getattr(self, "_admin_role", "superadmin")
+                            ),
                             "auth_kind": getattr(
                                 self, "_admin_auth_kind", "named_session"
                             ),
@@ -591,7 +668,14 @@ class NexusHandler(BaseHTTPRequestHandler):
             return
         if path == "/nexus/dash/summary":
             if self._check_dash():
-                self._with_session(lambda s: self._json(200, fleet.dash_summary(s)))
+                def _dashboard_summary(s):
+                    """合并舰队运行数据与真实资金口径供只读大屏使用。"""
+                    payload = fleet.dash_summary(s)
+                    # 复用超管舰队总览的已确认资金聚合，不能由前端自行拼演示金额。
+                    payload["finance"] = pay.finance_summary(s)
+                    return self._json(200, payload)
+
+                self._with_session(_dashboard_summary)
             return
         # —— OEM 门户：登录后看自己的账号 + 实例 + KEY ——
         if path == "/nexus/oem/me":
@@ -1470,6 +1554,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                                 str(body.get("username", "")),
                                 str(body.get("password", "")),
                                 str(body.get("display_name", "")),
+                                role=str(body.get("role", "superadmin")),
                                 actor_label=self._admin_actor(),
                                 source_ip=self._client_ip(),
                             )
@@ -1488,6 +1573,25 @@ class NexusHandler(BaseHTTPRequestHandler):
                                 s,
                                 int(body.get("admin_id") or 0),
                                 str(body.get("status", "")),
+                                actor_id=int(getattr(self, "_admin_actor_id", 0)),
+                                actor_label=self._admin_actor(),
+                                source_ip=self._client_ip(),
+                            )
+                        },
+                    )
+                )
+            return
+
+        if path == "/nexus/admin/admin_role":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "admin": admin_auth.set_role(
+                                s,
+                                int(body.get("admin_id") or 0),
+                                str(body.get("role", "")),
                                 actor_id=int(getattr(self, "_admin_actor_id", 0)),
                                 actor_label=self._admin_actor(),
                                 source_ip=self._client_ip(),
@@ -2264,6 +2368,8 @@ class NexusHandler(BaseHTTPRequestHandler):
 
     def _with_session(self, fn) -> None:
         s = db.session()
+        self._defer_json_response = True
+        self._pending_json_response = None
         try:
             fn(s)
             # 每个成功的管理写请求都追加一条平台级审计。授权、KEY 等领域函数仍保留
@@ -2287,11 +2393,20 @@ class NexusHandler(BaseHTTPRequestHandler):
                     metadata={"path": path},
                 )
             s.commit()
+            pending = self._pending_json_response
+            self._defer_json_response = False
+            self._pending_json_response = None
+            if pending is not None:
+                self._send_json(pending[0], pending[1])
         except FleetError as e:
             s.rollback()
+            self._defer_json_response = False
+            self._pending_json_response = None
             self._err(e.http_status, e.code, e.message)
         except Exception:
             s.rollback()
+            self._defer_json_response = False
+            self._pending_json_response = None
             logger.exception("nexus 内部错误 %s", self.path)
             self._err(500, "NEXUS_INTERNAL", "内部错误")
         finally:

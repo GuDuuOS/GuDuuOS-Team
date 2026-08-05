@@ -883,10 +883,37 @@ def dash_summary(s) -> Dict[str, Any]:
     # 今日请求质量（成功率/延迟/峰值）——分钟桶聚合，一次查完供所有实例用
     req_stats = request_stats(s, since_ms=today0)
 
+    # 大屏里的“OEM 数”必须按企业去重，不能再把一家公司部署的多台实例误算成
+    # 多个 OEM。归属仍沿 KEY 认领表读取，不在实例表复制企业字段。
+    instance_rows = list(
+        s.execute(select(NexusInstance).order_by(NexusInstance.id)).scalars()
+    )
+    key_ids = [int(inst.key_id) for inst in instance_rows]
+    owners: Dict[int, Dict[str, Any]] = {}
+    if key_ids:
+        owner_rows = s.execute(
+            select(
+                NexusKeyClaim.key_id,
+                NexusOem.id,
+                NexusOem.email,
+                NexusOem.name,
+                NexusOemProfile.company,
+            )
+            .join(NexusOem, NexusOem.id == NexusKeyClaim.oem_id)
+            .outerjoin(NexusOemProfile, NexusOemProfile.oem_id == NexusOem.id)
+            .where(NexusKeyClaim.key_id.in_(key_ids))
+        ).all()
+        for key_id, oem_id, email, name, company in owner_rows:
+            owners[int(key_id)] = {
+                "oem_id": int(oem_id),
+                "company_name": (company or name or email or "").strip(),
+            }
+
     oems: List[Dict[str, Any]] = []
     online = 0
-    for inst in s.execute(select(NexusInstance).order_by(NexusInstance.id)).scalars():
+    for inst in instance_rows:
         wallet = s.get(NexusWallet, inst.id)
+        owner = owners.get(int(inst.key_id), {})
         try:
             stats = json.loads(inst.stats_json or "{}")
         except Exception:
@@ -912,6 +939,9 @@ def dash_summary(s) -> Dict[str, Any]:
             {
                 "id": inst.id,
                 "domain": inst.domain,
+                "created_ts": inst.created_ts,
+                "oem_id": owner.get("oem_id"),
+                "company_name": owner.get("company_name", ""),
                 "status": status,
                 "version": inst.version,
                 "last_seen_ts": inst.last_seen_ts,
@@ -955,10 +985,17 @@ def dash_summary(s) -> Dict[str, Any]:
     tokens_yesterday = sum(
         yesterday_usage.get(o["id"], {}).get("tokens", 0) for o in oems
     )
+    owner_ids = {int(o["oem_id"]) for o in oems if o.get("oem_id")}
+    since_30d = now - 30 * 24 * 3600 * 1000
     return {
         "generated_ts": now,
         "totals": {
             "instances": len(oems),
+            "instances_30d": sum(
+                1 for o in oems if int(o.get("created_ts") or 0) >= since_30d
+            ),
+            "oem_accounts": len(owner_ids),
+            "unclaimed_instances": sum(1 for o in oems if not o.get("oem_id")),
             # 即使历史节点缺地域也必须计入接入总数，并把缺口显式交给大屏；
             # 不能因为地图无法打点就让整台 OEM 节点看起来不存在。
             "unlocated": sum(1 for o in oems if not o.get("region_label")),

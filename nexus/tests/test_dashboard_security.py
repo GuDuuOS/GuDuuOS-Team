@@ -107,6 +107,24 @@ class DashboardSecurityTests(unittest.TestCase):
             self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
             self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")
 
+    def test_dashboard_demo_mode_is_local_only(self) -> None:
+        """生产域名不能用公开查询参数把虚构运营数据伪装成真实大屏。"""
+        with urlopen(f"{self.base_url}/app.js", timeout=3) as response:
+            script = response.read().decode("utf-8")
+        self.assertIn('new Set(["localhost", "127.0.0.1", "::1"])', script)
+        self.assertIn("DEMO_REQUESTED && DEMO_HOSTS.has", script)
+
+    def test_dashboard_summary_contains_real_finance_shape(self) -> None:
+        """只读大屏接口必须返回真实资金聚合，而不是由前端填写演示金额。"""
+        request = Request(
+            f"{self.base_url}/nexus/dash/summary",
+            headers={"Authorization": "Bearer test-dashboard-read-token"},
+        )
+        with urlopen(request, timeout=3) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        self.assertIn("finance", payload)
+        self.assertEqual(payload["finance"]["paid_revenue_cents"], 0)
+
     def test_portal_page_has_strict_script_csp(self) -> None:
         """控制台只允许同源脚本和固定的 Cloudflare Turnstile 来源。"""
         with urlopen(f"{self.base_url}/portal/", timeout=3) as response:
@@ -139,7 +157,7 @@ class DashboardSecurityTests(unittest.TestCase):
                 response.headers["Content-Type"],
                 "text/x-shellscript; charset=utf-8",
             )
-        self.assertIn('RELEASE_TAG="v1.24.0"', script)
+        self.assertIn('RELEASE_TAG="v1.24.1"', script)
         self.assertIn('exec ./install.sh "$@"', script)
         self.assertNotIn("CMK-", script)
         self.assertNotIn("--key", script)

@@ -487,7 +487,7 @@
 
     <div class="admin-page" data-admin-view="overview">
       <section id="admin-stats" class="fleet-overview"></section>
-      <section class="panel finance-panel">
+      <section class="panel finance-panel" id="admin-finance-overview">
         <div class="panel-head finance-panel-head">
           <div>
             <h2>资金与经营概览</h2>
@@ -513,7 +513,7 @@
       <section class="panel dashboard-entry">
         <div>
           <h2>OEM 数据大屏</h2>
-          <p class="hint">汇总全部 OEM 节点、在线状态、Token 用量和地域分布，仅平台超级管理员可查看。</p>
+          <p class="hint">汇总全部 OEM 节点、在线状态、Token 用量和地域分布；按平台主管角色只读开放。</p>
         </div>
         <a class="primary dashboard-link" href="/" target="_blank" rel="noopener" hidden>打开数据大屏 ↗</a>
       </section>
@@ -729,11 +729,18 @@
         </div>
         <div id="admin-passkeys" class="passkey-list"><p class="hint">正在读取…</p></div>
       </section>
-      <section class="panel">
-        <div class="panel-head"><div><h2>具名管理员</h2><p class="hint">创建、停用或重置密码都会进入不可变审计记录；停用会立即撤销该账号全部会话。</p></div></div>
+      <section class="panel" id="admin-account-management">
+        <div class="panel-head"><div><h2>具名管理员</h2><p class="hint">创建、分配职责、停用或重置密码都会进入不可变审计记录；角色权限由服务端强制执行。</p></div></div>
         <form id="form-admin-create" class="admin-create-form">
           <label>登录账号<input name="username" required minlength="3" maxlength="80" placeholder="例如 operations" /></label>
           <label>显示名<input name="display_name" required minlength="2" maxlength="120" placeholder="例如 李明 · 平台运营" /></label>
+          <label>职责角色<select name="role" required>
+            <option value="operations">运营管理员</option>
+            <option value="finance">财务管理员</option>
+            <option value="release">发布管理员</option>
+            <option value="auditor">只读审计员</option>
+            <option value="superadmin">超级管理员</option>
+          </select></label>
           <label>初始密码<input name="password" type="password" required minlength="8" autocomplete="new-password" /></label>
           <button class="primary" type="submit">创建管理员</button>
         </form>

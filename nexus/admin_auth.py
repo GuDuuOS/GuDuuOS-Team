@@ -24,6 +24,29 @@ _SESSION_TTL_MS = 12 * 3600 * 1000
 _RECOVERY_SESSION_TTL_MS = 30 * 60 * 1000
 _USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.@-]{3,80}$")
 
+ADMIN_ROLES = {
+    "superadmin": "超级管理员",
+    "operations": "运营管理员",
+    "finance": "财务管理员",
+    "release": "发布管理员",
+    "auditor": "只读审计员",
+}
+
+_ROLE_PERMISSIONS = {
+    "superadmin": {"*"},
+    "operations": {"operations.read", "operations.write", "audit.read"},
+    "finance": {"operations.read", "finance.read", "finance.write", "audit.read"},
+    "release": {"operations.read", "release.read", "release.write", "audit.read"},
+    # 审计员可核对所有业务面板，但永远不能提交管理写操作。
+    "auditor": {
+        "operations.read",
+        "finance.read",
+        "release.read",
+        "security.read",
+        "audit.read",
+    },
+}
+
 
 @dataclass(frozen=True)
 class RecoveryAdmin:
@@ -32,6 +55,7 @@ class RecoveryAdmin:
     id: int = 0
     display_name: str = "服务器应急恢复"
     status: str = "active"
+    role: str = "superadmin"
 
 
 def _now_ms() -> int:
@@ -51,6 +75,7 @@ def public_admin(row: NexusAdmin) -> Dict[str, Any]:
         "username": row.username,
         "display_name": row.display_name,
         "role": row.role,
+        "role_label": ADMIN_ROLES.get(row.role, row.role),
         "status": row.status,
         "created_ts": row.created_ts,
         "password_changed_ts": row.password_changed_ts,
@@ -70,12 +95,48 @@ def active_count(s) -> int:
     )
 
 
+def active_superadmin_count(s) -> int:
+    """返回仍可登录的超级管理员数量，防止误删最后一个总控入口。"""
+    return int(
+        s.execute(
+            select(func.count()).select_from(NexusAdmin).where(
+                NexusAdmin.status == "active",
+                NexusAdmin.role == "superadmin",
+            )
+        ).scalar()
+        or 0
+    )
+
+
+def normalize_role(role: str) -> str:
+    """校验平台主管角色，拒绝浏览器自造的未知权限名。"""
+    normalized = (role or "superadmin").strip().lower()
+    if normalized not in ADMIN_ROLES:
+        raise FleetError("NEXUS_ADMIN_ROLE_INVALID", "管理员角色不合法")
+    return normalized
+
+
+def has_permission(role: str, permission: str) -> bool:
+    """判断角色是否拥有服务端权限；空权限仅代表完成登录。"""
+    if not permission:
+        return True
+    granted = _ROLE_PERMISSIONS.get((role or "").strip().lower(), set())
+    return "*" in granted or permission in granted
+
+
+def role_permissions(role: str) -> List[str]:
+    """返回前端可用于隐藏无权入口的权限列表，服务端仍是最终边界。"""
+    granted = _ROLE_PERMISSIONS.get((role or "").strip().lower(), set())
+    return ["*"] if "*" in granted else sorted(granted)
+
+
 def create_admin(
     s,
     username: str,
     password: str,
     display_name: str,
     *,
+    role: str = "superadmin",
     actor_label: str,
     source_ip: str = "",
 ) -> Dict[str, Any]:
@@ -97,11 +158,12 @@ def create_admin(
     ).scalar_one_or_none()
     if exists is not None:
         raise FleetError("NEXUS_ADMIN_EXISTS", "该管理员账号已存在", 409)
+    normalized_role = normalize_role(role)
     row = NexusAdmin(
         username=username,
         display_name=display_name,
         password_hash=hash_password(password),
-        role="superadmin",
+        role=normalized_role,
         status="active",
     )
     s.add(row)
@@ -115,7 +177,11 @@ def create_admin(
         actor_label=actor_label,
         source_ip=source_ip,
         to_state="active",
-        metadata={"username": username, "display_name": display_name},
+        metadata={
+            "username": username,
+            "display_name": display_name,
+            "role": normalized_role,
+        },
     )
     return public_admin(row)
 
@@ -293,6 +359,15 @@ def set_status(
         raise FleetError("NEXUS_ADMIN_SELF_DISABLE", "不能停用当前登录账号", 409)
     if status == "disabled" and row.status == "active" and active_count(s) <= 1:
         raise FleetError("NEXUS_ADMIN_LAST_ACTIVE", "不能停用最后一个有效管理员", 409)
+    if (
+        status == "disabled"
+        and row.status == "active"
+        and row.role == "superadmin"
+        and active_superadmin_count(s) <= 1
+    ):
+        raise FleetError(
+            "NEXUS_ADMIN_LAST_SUPERADMIN", "不能停用最后一个有效超级管理员", 409
+        )
     old = row.status
     row.status = status
     if status == "disabled":
@@ -308,6 +383,49 @@ def set_status(
         from_state=old,
         to_state=status,
     )
+    return public_admin(row)
+
+
+def set_role(
+    s,
+    admin_id: int,
+    role: str,
+    *,
+    actor_id: int,
+    actor_label: str,
+    source_ip: str = "",
+) -> Dict[str, Any]:
+    """修改管理员职责；禁止自降权或移除最后一个有效超级管理员。"""
+    normalized = normalize_role(role)
+    row = s.get(NexusAdmin, int(admin_id))
+    if row is None:
+        raise FleetError("NEXUS_ADMIN_NOT_FOUND", "管理员不存在", 404)
+    if int(actor_id or 0) == int(row.id) and normalized != row.role:
+        raise FleetError("NEXUS_ADMIN_SELF_ROLE", "不能修改当前登录账号自己的角色", 409)
+    if (
+        row.status == "active"
+        and row.role == "superadmin"
+        and normalized != "superadmin"
+        and active_superadmin_count(s) <= 1
+    ):
+        raise FleetError(
+            "NEXUS_ADMIN_LAST_SUPERADMIN", "不能移除最后一个有效超级管理员", 409
+        )
+    old = row.role
+    row.role = normalized
+    if old != normalized:
+        s.execute(delete(NexusAdminSession).where(NexusAdminSession.admin_id == row.id))
+        audit.record(
+            s,
+            object_type="admin",
+            object_id=row.id,
+            action="set_role",
+            actor_type="admin",
+            actor_label=actor_label,
+            source_ip=source_ip,
+            from_state=old,
+            to_state=normalized,
+        )
     return public_admin(row)
 
 
@@ -345,6 +463,8 @@ def reset_password(
 
 __all__ = [
     "active_count",
+    "active_superadmin_count",
+    "ADMIN_ROLES",
     "consume_recovery_code",
     "create_admin",
     "create_recovery_code",
@@ -352,7 +472,10 @@ __all__ = [
     "login",
     "logout",
     "public_admin",
+    "has_permission",
+    "role_permissions",
     "reset_password",
     "resolve_session",
     "set_status",
+    "set_role",
 ]

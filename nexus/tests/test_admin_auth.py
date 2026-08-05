@@ -101,6 +101,39 @@ class AdminAuthTests(unittest.TestCase):
         self.assertEqual(events[0]["action"], "login")
         self.assertEqual(events[0]["source_ip"], "10.0.0.8")
 
+    def test_roles_enforce_scoped_permissions_and_protect_last_superadmin(self) -> None:
+        """细分角色只能命中自己的职责域，且最后一个超级管理员不能被降权。"""
+        owner = self._create()
+        operator = admin_auth.create_admin(
+            self.s,
+            "operator",
+            "Secure1234!",
+            "运营同事",
+            role="operations",
+            actor_label="测试管理员",
+        )
+        self.assertTrue(admin_auth.has_permission("operations", "operations.write"))
+        self.assertFalse(admin_auth.has_permission("operations", "finance.read"))
+        self.assertTrue(admin_auth.has_permission("auditor", "finance.read"))
+        self.assertFalse(admin_auth.has_permission("auditor", "finance.write"))
+        with self.assertRaises(FleetError) as last_owner:
+            admin_auth.set_role(
+                self.s,
+                owner["id"],
+                "auditor",
+                actor_id=0,
+                actor_label="服务器单次恢复",
+            )
+        self.assertEqual(last_owner.exception.code, "NEXUS_ADMIN_LAST_SUPERADMIN")
+        changed = admin_auth.set_role(
+            self.s,
+            operator["id"],
+            "finance",
+            actor_id=owner["id"],
+            actor_label="测试管理员",
+        )
+        self.assertEqual(changed["role"], "finance")
+
     def test_recovery_code_is_short_lived_and_single_use(self) -> None:
         """SSH 恢复码只能消费一次，且数据库不保存明文。"""
         created = admin_auth.create_recovery_code(self.s, ttl_minutes=15)
@@ -265,6 +298,41 @@ class AdminAuthHttpTests(unittest.TestCase):
                 cookie=cookie,
             )
         self.assertEqual(raised.exception.code, 403)
+
+    def test_http_role_permissions_are_enforced_by_server(self) -> None:
+        """隐藏按钮不是权限边界：直接请求无权 API 也必须返回 403。"""
+        recovery_cookie = self._recovery_cookie()
+        self._request(
+            "/nexus/admin/admins",
+            body={
+                "username": "operator",
+                "display_name": "运营管理员",
+                "password": "Operator1234!",
+                "role": "operations",
+            },
+            cookie=recovery_cookie,
+            csrf=True,
+        )
+        _, headers = self._exchange(
+            "/nexus/admin/auth/login",
+            body={"username": "operator", "password": "Operator1234!"},
+        )
+        cookie = str(headers["Set-Cookie"]).split(";", 1)[0]
+        me = self._request("/nexus/admin/me", cookie=cookie)
+        self.assertEqual(me["admin"]["role"], "operations")
+        self.assertIn("operations.write", me["admin"]["permissions"])
+        self._request("/nexus/admin/instances", cookie=cookie)
+        with self.assertRaises(HTTPError) as finance_denied:
+            self._request("/nexus/admin/finance_summary", cookie=cookie)
+        self.assertEqual(finance_denied.exception.code, 403)
+        with self.assertRaises(HTTPError) as release_denied:
+            self._request(
+                "/nexus/admin/release_action",
+                body={"release_id": 1, "action": "publish"},
+                cookie=cookie,
+                csrf=True,
+            )
+        self.assertEqual(release_denied.exception.code, 403)
 
 
 if __name__ == "__main__":

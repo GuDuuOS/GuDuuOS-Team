@@ -46,10 +46,11 @@ assert(
 );
 assert(tokenSource.includes("history.replaceState"), "读取令牌后必须从地址栏移除 token hash");
 
-// 运营数据真实性回归：生产默认节点数组必须为空；虚构舰队只能由显式 ?demo=1 启用。
+// 运营数据真实性回归：生产默认节点数组必须为空；虚构舰队只能在本机显式启用。
 assert(
-  appSource.includes('const DEMO_MODE = new URLSearchParams(window.location.search).get("demo") === "1"'),
-  "演示数据必须由显式 ?demo=1 开关控制",
+  appSource.includes('new Set(["localhost", "127.0.0.1", "::1"])')
+    && appSource.includes("DEMO_REQUESTED && DEMO_HOSTS.has"),
+  "演示数据必须同时受 ?demo=1 与本机 hostname 限制",
 );
 assert(
   appSource.includes("const OEMS = DEMO_MODE ? DEMO_OEMS.map") && appSource.includes(": [];"),

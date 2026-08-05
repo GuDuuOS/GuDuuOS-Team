@@ -312,6 +312,9 @@ class FleetTest(unittest.TestCase):
 
         out = fleet.dash_summary(self.s)
         self.assertEqual(out["totals"]["instances"], 2)
+        self.assertEqual(out["totals"]["instances_30d"], 2)
+        self.assertEqual(out["totals"]["oem_accounts"], 0)
+        self.assertEqual(out["totals"]["unclaimed_instances"], 2)
         self.assertEqual(out["totals"]["unlocated"], 2)
         self.assertEqual(out["totals"]["online"], 1)
         self.assertEqual(out["totals"]["tokens_today"], 180)

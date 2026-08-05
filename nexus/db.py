@@ -216,8 +216,9 @@ class NexusAdmin(Base):
     """Nexus 平台具名超级管理员账号。
 
     平台管理员与 OEM 客户完全分表，避免把平台主管误挂进 OEM 层级和收益关系。
-    当前第一阶段只有 ``superadmin`` 一个角色；先把共享令牌替换成可识别、可停用的
-    人员账号，等真实团队扩大后再在这个稳定边界上增加细分权限。
+    ``superadmin`` 负责账号与平台设置；``operations``、``finance``、``release``
+    分别承担运营、财务和发布职责，``auditor`` 只能读取经营、发布与审计信息。
+    权限由服务端接口强制执行，前端隐藏菜单只用于减少误操作。
     """
 
     __tablename__ = "nexus_admin"
@@ -844,7 +845,8 @@ class NexusRelease(Base):
     notes = Column(Text, nullable=False, default="")
     # 自动更新只接受 vX.Y.Z 形式的 tag，避免后台内容变成任意 git 参数。
     git_ref = Column(String(40), nullable=False, unique=True)
-    # draft / canary / published / rollback / paused
+    # draft / canary / published / rollback / paused / archived
+    # archived 只表示只读历史基线，不能重新进入发布状态机。
     status = Column(String(16), nullable=False, default="draft", index=True)
     canary_instance_id = Column(Integer, nullable=True, default=None)
     created_ts = Column(BigInteger, nullable=False, default=_now_ms)

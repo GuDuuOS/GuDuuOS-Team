@@ -596,6 +596,22 @@ class ReleaseTest(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.code, "NEXUS_UPDATE_NOT_ASSIGNED")
 
+    def test_archived_baseline_is_read_only_and_never_offered_as_update(self):
+        """历史基线只用于审计，不得继续向节点下发或重新发布。"""
+        release = self._create("1.7.0")
+        releases.start_canary(self.s, release["id"], self.inst_b)
+        row = self.s.get(db.NexusRelease, release["id"])
+        row.status = "archived"
+        self.s.flush()
+
+        self.assertIsNone(releases.check_update(self.s, self.key_b, "1.6.32"))
+        with self.assertRaises(FleetError) as publish_error:
+            releases.publish(self.s, release["id"])
+        self.assertEqual(publish_error.exception.code, "NEXUS_RELEASE_STATE")
+        self.assertEqual(
+            releases.get_release(self.s, release["id"])["status"], "archived"
+        )
+
     def test_history_list_and_rollback_to_lower_version(self):
         """历史版本永久保留，回撤时当前版本高于目标也必须领取旧 tag。"""
         old_id = self._create("1.7.0")["id"]

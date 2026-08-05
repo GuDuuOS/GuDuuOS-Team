@@ -6,7 +6,11 @@
 
   // 演示舰队只能在地址显式带 ``?demo=1`` 时启用。生产默认绝不能把这组虚构客户
   // 当成真实运营数据；否则令牌失效、网络故障或零客户时都会误导管理员。
-  const DEMO_MODE = new URLSearchParams(window.location.search).get("demo") === "1";
+  const DEMO_REQUESTED = new URLSearchParams(window.location.search).get("demo") === "1";
+  const DEMO_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+  // 演示数据只允许本机设计预览。生产域名即使有人拼上 ?demo=1 也仍要求真实只读授权，
+  // 避免公开地址被截屏后把虚构营收、Token 或 OEM 数量当成线上事实。
+  const DEMO_MODE = DEMO_REQUESTED && DEMO_HOSTS.has(window.location.hostname);
   const DEMO_OEMS = [
     {
       id: "sg",
@@ -397,7 +401,7 @@
   // 令牌只放 sessionStorage，关闭当前标签页即失效；同时立刻从地址栏移除，避免截屏、
   // 复制链接或浏览器崩溃恢复时继续暴露。无令牌、接口失败、真实空数据必须分别展示
   // 明确状态；只有显式 ``?demo=1`` 才能进入带虚构数据的演示模式。
-  const TOKEN_UNIT = { div: 1e9, label: "B" }; // 演示默认 B；真实模式按量级自适应
+  const TOKEN_UNIT = { div: 1e9, label: "B Token" }; // 演示默认 B Token；真实模式自适应
   const DASH_TOKEN_KEY = "nexus_dash_token";
   let volatileDashToken = ""; // 浏览器禁用 Storage 时，仅在当前页面内存中保留
   let lastDataUpdatedAt = 0;   // 刷新失败时告诉管理员最后一次真实数据更新时间
@@ -483,7 +487,8 @@
     // 展示名取域名里最有辨识度的一段：首段是 im/chat 这类通用词时用第二段
     const labels = String(o.domain || `实例${o.id}`).split(".");
     const generic = new Set(["im", "chat", "app", "www", "hub", "api"]);
-    const shortName = generic.has(labels[0]) && labels[1] ? labels[1] : labels[0];
+    const shortName = String(o.company_name || "").trim()
+      || (generic.has(labels[0]) && labels[1] ? labels[1] : labels[0]);
     return {
       id: `nx-${o.id}`,
       name: shortName,
@@ -527,10 +532,19 @@
     const list = Array.isArray(data && data.oems) ? data.oems : [];
     if (!list.length) return false;
     // 单位自适应：让最大节点的读数落在人眼舒服的量级（K/M/B）
-    const peak = Math.max(...list.map((o) => o.tokens_total || 0), 1);
-    if (peak >= 1e9) { TOKEN_UNIT.div = 1e9; TOKEN_UNIT.label = "B"; }
-    else if (peak >= 1e6) { TOKEN_UNIT.div = 1e6; TOKEN_UNIT.label = "M"; }
-    else { TOKEN_UNIT.div = 1e3; TOKEN_UNIT.label = "K"; }
+    const totals = data.totals || {};
+    const peak = Math.max(
+      ...list.map((o) => Number(o.tokens_total) || 0),
+      Number(totals.tokens_total) || 0,
+      Number(totals.tokens_today) || 0,
+      Number(totals.balance_total) || 0,
+      Number(totals.granted_total) || 0,
+      0,
+    );
+    if (peak >= 1e9) { TOKEN_UNIT.div = 1e9; TOKEN_UNIT.label = "B Token"; }
+    else if (peak >= 1e6) { TOKEN_UNIT.div = 1e6; TOKEN_UNIT.label = "M Token"; }
+    else if (peak >= 1e3) { TOKEN_UNIT.div = 1e3; TOKEN_UNIT.label = "K Token"; }
+    else { TOKEN_UNIT.div = 1; TOKEN_UNIT.label = "Token"; }
     const mapped = list.map((o, i) => adaptOem(o, i));
     OEMS.length = 0;
     OEMS.push(...mapped);
@@ -699,12 +713,24 @@
   let REAL_SUMMARY = null;   // 最近一次 summary（refreshTotals/drawTrend 的真实分支用）
   let REAL_TREND = null;     // 近 24 小时逐小时消耗序列
 
-  function fmtTokens(n) {
+  function tokenParts(n) {
     const v = Math.abs(Number(n) || 0);
-    if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
-    if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
-    if (v >= 1e3) return `${(v / 1e3).toFixed(2)}K`;
-    return String(v);
+    if (v >= 1e9) return { value: (v / 1e9).toFixed(2), unit: "B Token" };
+    if (v >= 1e6) return { value: (v / 1e6).toFixed(2), unit: "M Token" };
+    if (v >= 1e3) return { value: (v / 1e3).toFixed(2), unit: "K Token" };
+    return { value: String(v), unit: "Token" };
+  }
+
+  function fmtTokens(n) {
+    const parts = tokenParts(n);
+    return `${parts.value}${parts.unit === "Token" ? " " : ""}${parts.unit}`;
+  }
+
+  function fmtMoney(cents) {
+    return `¥ ${(Math.max(0, Number(cents) || 0) / 100).toLocaleString("zh-CN", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
   }
 
   function relTime(ts) {
@@ -721,13 +747,11 @@
     const legend = $("#model-legend");
     const totalEl = $("#model-total");
     if (!donut || !legend || !totalEl) return;
-    const totalTxt = fmtTokens(todayTotal);
-    totalEl.replaceChildren(document.createTextNode(/[KMB]$/.test(totalTxt) ? totalTxt.slice(0, -1) : totalTxt));
-    if (/[KMB]$/.test(totalTxt)) {
-      const unit = document.createElement("em");
-      unit.textContent = totalTxt.slice(-1);
-      totalEl.appendChild(unit);
-    }
+    const totalParts = tokenParts(todayTotal);
+    totalEl.replaceChildren(document.createTextNode(totalParts.value));
+    const unit = document.createElement("em");
+    unit.textContent = totalParts.unit;
+    totalEl.appendChild(unit);
 
     const safeModels = Array.isArray(models) ? models : [];
     if (!safeModels.length) {
@@ -799,9 +823,9 @@
       const name = rawDomain.split(".")[0] || rawDomain || "?";
       const amount = fmtTokens(record.tokens);
       const what =
-        record.kind === "usage" ? `消耗 ${amount} tokens`
-        : record.kind === "topup" ? `充值 ${amount} tokens`
-        : record.kind === "grant" ? `开通并获赠 ${amount} tokens`
+        record.kind === "usage" ? `消耗 ${amount}`
+        : record.kind === "topup" ? `充值 ${amount}`
+        : record.kind === "grant" ? `开通并获赠 ${amount}`
         : String(record.kind || "未知事件");
       const model =
         record.kind === "usage" && record.note
@@ -895,20 +919,53 @@
       if (em) em.textContent = "次 · 今日";
     }
     const tstat = $("#map-traffic-status"); if (tstat) tstat.textContent = `${tt.online || 0} 实例在线`;
-    // ⑧ 轮播"今日收入"页 → 钱包余额合计（真实）
+    // ⑧ 营收页只展示已确认订单与企业转账；钱包 Token 余额绝不能冒充货币收入。
+    const finance = data.finance || {};
     const rev = $("#total-revenue");
     if (rev) {
-      rev.textContent = fmtTokens(tt.balance_total || 0);
+      rev.textContent = fmtMoney(finance.paid_revenue_cents || 0).replace(/^¥\s*/, "");
       const dollar = rev.parentElement && rev.parentElement.querySelector("span");
-      if (dollar) dollar.textContent = "◎";
+      if (dollar) dollar.textContent = "¥";
     }
-    swapLabelText("今日收入", "钱包余额合计");
-    // ⑨ 健康分：真实=在线率（不再演示 98.7）
+    const revenueCaption = $(".overview-slide--revenue .metric-caption");
+    if (revenueCaption) revenueCaption.textContent = "累计已确认实收";
+    const revenueTodayLabel = $("#revenue-today-label");
+    if (revenueTodayLabel) revenueTodayLabel.textContent = "近 30 天实收";
+    const revenueMonthLabel = $("#revenue-month-label");
+    if (revenueMonthLabel) revenueMonthLabel.textContent = "当前待支付";
+    const revenueToday = $("#revenue-today");
+    if (revenueToday) revenueToday.textContent = fmtMoney(finance.paid_revenue_30d_cents || 0);
+    const revenueMonth = $("#revenue-month");
+    if (revenueMonth) revenueMonth.textContent = fmtMoney(finance.pending_amount_cents || 0);
+    const revenueMonthMeta = $("#revenue-month-meta");
+    if (revenueMonthMeta) revenueMonthMeta.textContent = `${Number(finance.pending_order_count || 0)} 笔待支付`;
+    const revenueTrend = $(".overview-slide--revenue .trend-chart-wrap");
+    if (revenueTrend) revenueTrend.style.display = "none";
+    // ⑨ OEM 企业与节点必须分开计数；待定位也直接显示真实缺口。
+    const oemTotal = Math.max(0, Number(tt.oem_accounts) || 0);
+    const unlocated = Math.max(0, Number(tt.unlocated) || 0);
+    const oemHero = $("#overview-oem-total");
+    if (oemHero) oemHero.textContent = String(oemTotal).padStart(7, "0");
+    const oemTrend = $("#overview-oem-trend");
+    if (oemTrend) oemTrend.textContent = `${instanceCount} 个节点`;
+    const oemCaption = $(".overview-slide--oem .metric-caption");
+    if (oemCaption) oemCaption.textContent = `已绑定 OEM 企业 · ${Number(tt.regions && tt.regions.length || 0)} 个地域`;
+    const onlineLabel = $("#overview-oem-online-label");
+    if (onlineLabel) onlineLabel.textContent = "在线节点";
+    const secondaryLabel = $("#overview-oem-secondary-label");
+    if (secondaryLabel) secondaryLabel.textContent = "待定位节点";
+    const secondaryValue = $("#overview-oem-secondary-value");
+    if (secondaryValue) secondaryValue.textContent = String(unlocated).padStart(2, "0");
+    const secondaryMeta = $("#overview-oem-secondary-meta");
+    if (secondaryMeta) secondaryMeta.textContent = unlocated ? "需补录机房地域" : "全部已定位";
+    const oemChart = $(".overview-slide--oem .trend-chart-wrap");
+    if (oemChart) oemChart.style.display = "none";
+    // ⑩ 健康分：真实=在线率（不再演示 98.7）
     const scoreEl = $("#health-score");
     if (scoreEl) scoreEl.textContent = onlinePct.toFixed(1);
     const gradeEl = $("#health-grade");
     if (gradeEl) gradeEl.textContent = onlinePct >= 99 ? "A+" : onlinePct >= 90 ? "A" : onlinePct >= 75 ? "B" : "C";
-    // ⑪ 还没有数据源的指标:一律落成"诚实的零/占位",绝不留演示数字(负责人 2026-07-26 定)
+    // ⑪ 还没有数据源的指标一律落成诚实占位，绝不留演示数字。
     neutralizeUnsourcedMetrics(tt);
     // ⑩ 无真实数据源的演示件：整体隐藏（调用效率/并发/存储/区域延迟/模拟接入按钮）
     for (const sel of ["#efficiency-panel", "#capacity-row-rps", "#capacity-row-storage", "#health-regions", "#add-oem"]) {
@@ -925,12 +982,9 @@
   function neutralizeUnsourcedMetrics(tt) {
     const setText = (sel, text) => { const el = $(sel); if (el) el.textContent = text; };
 
-    // —— 营收轮播页:平台还没有任何真实收入(支付未接) ——
-    setText("#revenue-today", "¥ 0");
+    // —— 营收环比/小时峰值尚无时间序列数据源，明确显示未采集 ——
     setText("#revenue-today-delta", "—");
-    setText("#revenue-month", "¥ 0");
-    setText("#revenue-month-meta", "支付未接入");
-    setText("#revenue-peak", "峰值 ¥ 0 / h");
+    setText("#revenue-peak", "未采集小时收入");
     setText("#revenue-delta", "—");
 
     // —— 底部状态栏:接真实值 ——
@@ -2189,7 +2243,7 @@
     $("#drawer-region").textContent = node.region;
     $("#drawer-glyph").textContent = node.initials;
     $("#drawer-token-label").textContent = "累计 Token";
-    $("#drawer-token").textContent = `${node.token.toFixed(2)}B`;
+    $("#drawer-token").textContent = `${node.token.toFixed(2)}${TOKEN_UNIT.label}`;
     $("#drawer-requests-label").textContent = "今日请求";
     $("#drawer-requests").textContent = node.requests;
     // 峰值:网关分钟桶里的单分钟最大请求数(真实值;今日无请求则显示「—」)
@@ -2983,7 +3037,9 @@
       : 34.5;
     const percentage = Math.min(100, (total / quota) * 100);
     const formattedNodeCount = String(state.nodes.length).padStart(2, "0");
-    const formattedOverviewOemCount = String(state.nodes.length).padStart(7, "0");
+    const formattedOverviewOemCount = String(
+      realTotals ? Math.max(0, Number(realTotals.oem_accounts) || 0) : state.nodes.length,
+    ).padStart(7, "0");
     const onlineNodeCount = state.nodes.filter((node) => node.status !== "offline").length;
     const overviewOemTotal = $("#overview-oem-total");
     const totalChanged = overviewOemTotal.textContent !== formattedOverviewOemCount;

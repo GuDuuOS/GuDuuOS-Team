@@ -402,6 +402,52 @@
     security: "平台安全",
     guide: "使用教程",
   };
+  var ADMIN_ROLE_LABELS = {
+    superadmin: "超级管理员",
+    operations: "运营管理员",
+    finance: "财务管理员",
+    release: "发布管理员",
+    auditor: "只读审计员",
+  };
+  var ADMIN_ROLE_PAGES = {
+    superadmin: ["overview", "releases", "instances", "licenses", "customers", "billing", "settings", "security", "guide"],
+    operations: ["overview", "instances", "licenses", "customers", "security", "guide"],
+    finance: ["overview", "billing", "security", "guide"],
+    release: ["overview", "releases", "security", "guide"],
+    auditor: ["overview", "security", "guide"],
+  };
+  function adminRole() {
+    var auth = getAuth() || {};
+    return auth.role || "superadmin";
+  }
+  function adminCan(scope) {
+    var role = adminRole();
+    if (role === "superadmin") return true;
+    if (scope === "operations.read" || scope === "audit.read") return true;
+    if (role === "operations") return scope === "operations.write";
+    if (role === "finance") return scope === "finance.read" || scope === "finance.write";
+    if (role === "release") return scope === "release.read" || scope === "release.write";
+    if (role === "auditor") return /\.read$/.test(scope);
+    return false;
+  }
+  function optionalAdminApi(scope, path, fallback) {
+    return adminCan(scope) ? api(path) : Promise.resolve(fallback);
+  }
+  function applyAdminRoleUI() {
+    var role = adminRole();
+    var allowed = ADMIN_ROLE_PAGES[role] || ADMIN_ROLE_PAGES.auditor;
+    $all("button[data-admin-page]").forEach(function (button) {
+      button.hidden = allowed.indexOf(button.dataset.adminPage) < 0;
+    });
+    var sideTitle = document.querySelector(".admin-sidebar-head b");
+    if (sideTitle) sideTitle.textContent = ADMIN_ROLE_LABELS[role] || role;
+    var accountPanel = $("#admin-account-management");
+    if (accountPanel) accountPanel.hidden = !adminCan("security.write");
+    var financeOverview = $("#admin-finance-overview");
+    if (financeOverview) financeOverview.hidden = !adminCan("finance.read");
+    var requested = adminPageFromHash();
+    if (allowed.indexOf(requested) < 0) window.location.hash = "overview";
+  }
 
   // 超管教程只维护这一份结构化数据：页面渲染和“复制 Markdown”都从这里生成，
   // 避免运维规则更新后出现网页与对外文档内容不一致。
@@ -555,6 +601,8 @@
   }
   function selectAdminPage(page, resetScroll) {
     if (!Object.prototype.hasOwnProperty.call(ADMIN_PAGE_TITLES, page)) page = "overview";
+    var allowed = ADMIN_ROLE_PAGES[adminRole()] || ADMIN_ROLE_PAGES.auditor;
+    if (allowed.indexOf(page) < 0) page = "overview";
     $all("[data-admin-view]").forEach(function (view) {
       view.hidden = view.dataset.adminView !== page;
     });
@@ -609,6 +657,7 @@
           setAuth({
             mode: "admin", token: "", admin_id: r.admin.id,
             display_name: r.admin.display_name, auth_kind: r.admin.auth_kind,
+            role: r.admin.role, permissions: r.admin.permissions || [],
           });
           route();
         }).catch(function () { /* 没有有效 Cookie 时正常停留登录页 */ });
@@ -621,7 +670,18 @@
         window.location.replace(ADMIN_ENTRY_PATH + window.location.hash);
         return;
       }
+      if (!auth.role) {
+        api("/nexus/admin/me", { noKick: true }).then(function (r) {
+          auth.role = r.admin.role;
+          auth.permissions = r.admin.permissions || [];
+          auth.display_name = r.admin.display_name;
+          setAuth(auth);
+          route();
+        }).catch(function () { clearAuth(); route(); });
+        return;
+      }
       show("#view-admin");
+      applyAdminRoleUI();
       selectAdminPage(adminPageFromHash(), false);
       loadAdmin();
       loadAdminSecurity();
@@ -919,6 +979,7 @@
       setAuth({
         mode: "admin", token: "", admin_id: r.admin.id,
         display_name: r.admin.display_name, auth_kind: "named_cookie",
+        role: r.admin.role,
       });
       // 登录成功后立刻清空 DOM 中的密码，避免共享屏幕或调试工具留下敏感信息。
       f.password.value = "";
@@ -958,6 +1019,7 @@
       setAuth({
         mode: "admin", token: "", admin_id: result.admin.id,
         display_name: result.admin.display_name, auth_kind: "passkey_cookie",
+        role: result.admin.role,
       });
       form.password.value = "";
       route();
@@ -979,7 +1041,7 @@
       setAuth({
         mode: "admin", token: "", admin_id: 0,
         display_name: r.admin.display_name || "服务器应急恢复",
-        auth_kind: "recovery_cookie",
+        auth_kind: "recovery_cookie", role: "superadmin",
       });
       // 单次码消费成功后立刻从 DOM 移除，浏览器只保留短期 HttpOnly Cookie。
       f.recovery_code.value = "";
@@ -2121,11 +2183,13 @@
     published: ["active", "全量发布"],
     rollback: ["warning", "回撤发布中"],
     paused: ["offline", "已暂停"],
+    archived: ["idle", "历史基线"],
   };
   var PLATFORM_RELEASE_STATUS = {
     draft: ["idle", "未发布"],
     published: ["active", "公告已发布"],
     paused: ["offline", "公告已撤下"],
+    archived: ["idle", "历史基线"],
   };
   var DEPLOY_STATUS = {
     pending: ["idle", "待领取"],
@@ -2232,7 +2296,7 @@
           ' 个节点的安装明细</summary><table class="tbl"><thead><tr><th>#</th><th>节点</th><th>状态</th><th>版本</th><th>更新时间 / 说明</th></tr></thead><tbody>' +
           deployments + "</tbody></table></details>"
         : '<p class="hint">尚未向任何节点发布更新通知。</p>';
-      return '<article class="release-card"><div class="release-card-head"><div>' +
+      var card = '<article class="release-card"><div class="release-card-head"><div>' +
         '<div class="release-card-title"><b>v' + esc(r.version) + "</b>" +
         targetBadge + statusBadge + "<strong>" + esc(r.title) + "</strong></div>" +
         '<div class="release-meta">' + deliveryText + " · Git " + esc(r.git_ref) +
@@ -2240,6 +2304,12 @@
         '<div class="release-actions">' + actions.join("") + "</div></div>" +
         '<div class="release-notes">' + esc(r.notes) + '</div><div class="release-counts">' + countText + "</div>" +
         detailBlock + "</article>";
+      // 历史基线仍保留完整审计内容，但默认折叠，避免版本中心被旧版本淹没。
+      if (r.status === "archived") {
+        return '<details class="release-history"><summary>v' + esc(r.version) +
+          " · " + esc(r.title) + " · 历史基线</summary>" + card + "</details>";
+      }
+      return card;
     }).join("") || '<p class="empty">还没有版本记录。先保存一个未发布版本，再进行灰度监测。</p>';
   }
 
@@ -2461,7 +2531,7 @@
     var objectType = encodeURIComponent($("#admin-audit-type").value);
     Promise.all([
       api("/nexus/admin/me"),
-      api("/nexus/admin/admins"),
+      optionalAdminApi("security.read", "/nexus/admin/admins", { admins: [] }),
       api("/nexus/admin/audit?limit=200&actor=" + actor + "&object_type=" + objectType),
       api("/nexus/admin/passkeys"),
     ]).then(function (rs) {
@@ -2471,6 +2541,13 @@
       var passkeyData = rs[3] || {};
       var myPasskeys = passkeyData.passkeys || [];
       currentAdminIdentity = identity;
+      var auth = getAuth() || {};
+      if (identity.role && auth.role !== identity.role) {
+        auth.role = identity.role;
+        auth.permissions = identity.permissions || [];
+        setAuth(auth);
+        applyAdminRoleUI();
+      }
       var emergency = String(identity.auth_kind || "").indexOf("emergency") >= 0 ||
         identity.auth_kind === "recovery_cookie";
       var passkeySession = identity.auth_kind === "passkey_cookie";
@@ -2479,7 +2556,8 @@
         ? "应急恢复" : (passkeySession ? "Passkey" : "密码会话");
       $("#admin-current-identity").innerHTML = emergency
         ? "<b>SSH 单次恢复</b><span>请创建具名管理员并重新登录；该身份最长 30 分钟，操作仍会写入审计。</span>"
-        : "<b>" + esc(identity.display_name || "—") + "</b><span>管理员 #" +
+        : "<b>" + esc(identity.display_name || "—") + "</b><span>" +
+          esc(identity.role_label || ADMIN_ROLE_LABELS[identity.role] || identity.role || "管理员") + " #" +
           esc(identity.id) + " · " + (passkeySession ? "Passkey 登录" : "密码备用登录") +
           " · 会话最长 12 小时。</span>";
       $("#btn-add-passkey").hidden = emergency || !passkeyData.enabled;
@@ -2496,8 +2574,13 @@
       $("#nav-count-admins").textContent = String(admins.filter(function (a) { return a.status === "active"; }).length);
       $("#admin-admins tbody").innerHTML = admins.map(function (item) {
         var self = Number(identity.id) === Number(item.id);
+        var roleOptions = Object.keys(ADMIN_ROLE_LABELS).map(function (role) {
+          return '<option value="' + role + '"' + (role === item.role ? " selected" : "") + '>' +
+            esc(ADMIN_ROLE_LABELS[role]) + "</option>";
+        }).join("");
         return "<tr><td>" + item.id + "</td><td><b>" + esc(item.username) +
-          "</b></td><td>" + esc(item.display_name) + "</td><td>超级管理员</td><td>" +
+          "</b></td><td>" + esc(item.display_name) + '</td><td><select data-admin-role="' + item.id +
+          '"' + (self ? " disabled" : "") + '>' + roleOptions + "</select></td><td>" +
           badge(item.status) + "</td><td>" + fmtTime(item.last_login_ts) + "</td><td>" +
           fmtTime(item.created_ts) + "</td><td class=\"actions\">" +
           '<button class="ghost small" data-admin-reset="' + item.id + '">重置密码</button>' +
@@ -2528,20 +2611,20 @@
       api("/nexus/admin/keys"),
       api("/nexus/admin/oems"),
       api(requestListPath()),
-      api("/nexus/admin/pricing"),
-      api("/nexus/admin/orders"),
-      api("/nexus/admin/releases"),
-      api("/nexus/admin/finance_summary"),
-      api("/nexus/admin/payment_configs"),
+      optionalAdminApi("finance.read", "/nexus/admin/pricing", { pricing: { topup_packs: [] } }),
+      optionalAdminApi("finance.read", "/nexus/admin/orders", { orders: [] }),
+      optionalAdminApi("release.read", "/nexus/admin/releases", { releases: [] }),
+      optionalAdminApi("finance.read", "/nexus/admin/finance_summary", {}),
+      optionalAdminApi("finance.read", "/nexus/admin/payment_configs", { payment_configs: [] }),
       api("/nexus/admin/features"),
-      api("/nexus/admin/release_policy"),
+      optionalAdminApi("release.read", "/nexus/admin/release_policy", { release_policy: {} }),
       api("/nexus/admin/regions"),
-      api("/nexus/admin/withdrawals"),
-      api("/nexus/admin/oem_commercial_terms"),
+      optionalAdminApi("finance.read", "/nexus/admin/withdrawals", { withdrawals: [] }),
+      optionalAdminApi("finance.read", "/nexus/admin/oem_commercial_terms", { terms: [] }),
     ]).then(function (rs) {
       var insts = rs[0].instances, keys = rs[1].keys, oems = rs[2].oems;
       var reqs = rs[3].requests || [], requestCounts = rs[3].counts || {};
-      var pricing = rs[4].pricing, orders = rs[5].orders || [];
+      var pricing = rs[4].pricing || { topup_packs: [] }, orders = rs[5].orders || [];
       var releases = rs[6].releases || [];
       var finance = rs[7] || {};
       var configs = rs[8].payment_configs || [];
@@ -2909,7 +2992,7 @@
           '<button class="ghost small" data-oemstatus="' + o.id + '" data-tostatus="' + (on ? "disabled" : "active") + '" data-email="' + esc(o.email) + '">' + (on ? "停用" : "启用") + "</button></td></tr>";
       }).join("") || '<tr><td colspan="10" class="zh empty">暂无注册客户</td></tr>';
       // 首次进入后台时自动回填，之后刷新数据不覆盖管理员正在编辑的内容。
-      loadReleaseDraft(false);
+      if (adminCan("release.read")) loadReleaseDraft(false);
     }).catch(function (err) { toast(err.message, true); });
   }
 
@@ -2935,6 +3018,7 @@
       username: form.username.value,
       display_name: form.display_name.value,
       password: form.password.value,
+      role: form.role.value,
     } }).then(function () {
       form.reset();
       toast("具名管理员已创建，请让对方使用自己的账号登录");
@@ -3026,6 +3110,19 @@
             });
         }).catch(function (err) { toast(err.message, true); });
     }
+  });
+  $("#admin-admins tbody").addEventListener("change", function (e) {
+    var select = e.target.closest("select[data-admin-role]");
+    if (!select) return;
+    var adminId = Number(select.dataset.adminRole);
+    var role = select.value;
+    var label = ADMIN_ROLE_LABELS[role] || role;
+    uiConfirm("确认把这个账号调整为“" + label + "”？角色变更后，该账号的旧会话会立即失效。", false, "确认调整")
+      .then(function (ok) {
+        if (!ok) { loadAdminSecurity(); return; }
+        return api("/nexus/admin/admin_role", { body: { admin_id: adminId, role: role } })
+          .then(function () { toast("管理员角色已更新"); loadAdminSecurity(); });
+      }).catch(function (err) { toast(err.message, true); loadAdminSecurity(); });
   });
 
   // 输入版本号时自动补对应 tag；若管理员已经手动改过 tag，就不强行覆盖。
