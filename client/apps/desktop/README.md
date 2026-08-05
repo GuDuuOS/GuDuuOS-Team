@@ -21,6 +21,15 @@
 - `localStorage` 仅保存 userId 和显示名等非敏感界面元数据；发现旧版明文会话时，
   必须在安全写入成功后才删除旧值。系统钥匙串不可用时禁止回退明文。
 
+## 系统通知
+
+- 现有“新私信”业务提醒复用同一份 Vue 逻辑；Web 保留页内 toast，Electron
+  在主窗口不聚焦时由 main 进程补充操作系统通知。
+- preload 只暴露纯文本 `show` 方法；main 进程校验 sender、字段和长度，并限流与
+  限制同时存活数量，不允许 renderer 传图标路径、URL 或任意 Notification 选项。
+- 点击系统通知只恢复并聚焦 GuDuu OS 主窗口，不打开外部协议。本阶段不接入
+  后台推送；App 完全退出后的离线通知属于后续 APNs/FCM/Matrix push gateway 模块。
+
 ## 本地开发
 
 在本目录安装依赖后：

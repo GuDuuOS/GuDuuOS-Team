@@ -12,6 +12,10 @@ const files = {
   main: await readFile(path.join(desktopRoot, 'main.mjs'), 'utf8'),
   preload: await readFile(path.join(desktopRoot, 'preload.cjs'), 'utf8'),
   secureStore: await readFile(path.join(desktopRoot, 'secure-session-store.mjs'), 'utf8'),
+  desktopNotifications: await readFile(
+    path.join(desktopRoot, 'desktop-notifications.mjs'),
+    'utf8'
+  ),
   forge: await readFile(path.join(desktopRoot, 'forge.config.cjs'), 'utf8'),
   vite: await readFile(path.join(webRoot, 'vite.config.ts'), 'utf8'),
   index: await readFile(path.join(webRoot, 'index.html'), 'utf8'),
@@ -42,6 +46,10 @@ const assertions = [
   [files.secureStore.includes('isAsyncEncryptionAvailable'), '异步系统安全存储'],
   [!files.secureStore.includes('setUsePlainTextEncryption'), '禁止降级明文加密'],
   [files.preload.includes('credentials: Object.freeze'), '逐项命名凭据桥'],
+  [files.preload.includes('notifications: Object.freeze'), '逐项命名系统通知桥'],
+  [files.main.includes('installDesktopNotificationIpc()'), '系统通知 IPC 校验入口'],
+  [files.desktopNotifications.includes('MAX_TITLE_LENGTH'), '系统通知文本大小上限'],
+  [files.desktopNotifications.includes('MIN_INTERVAL_MS'), '系统通知 main 进程限流'],
   [!files.preload.includes('ipcRenderer,'), '不直接暴露 ipcRenderer'],
   [!files.matrixClient.includes('localStorage.'), 'Matrix 业务层不直接持久化 token'],
   [files.sessionVault.includes('clearLegacyDesktopSecrets()'), '旧明文会话迁移清理'],

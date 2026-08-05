@@ -7,6 +7,7 @@ import {
   BrowserWindow,
   ipcMain,
   net,
+  Notification,
   protocol,
   safeStorage,
   session,
@@ -15,6 +16,7 @@ import {
 import squirrelStartup from 'electron-squirrel-startup'
 
 import { createSecureSessionStore } from './secure-session-store.mjs'
+import { createDesktopNotificationService } from './desktop-notifications.mjs'
 
 const APP_PROTOCOL = 'guduu-app'
 const APP_HOST = 'app'
@@ -22,8 +24,10 @@ const APP_ID = 'co.guduu.os.desktop'
 const CREDENTIAL_READ_CHANNEL = 'guduu:credentials:read'
 const CREDENTIAL_WRITE_CHANNEL = 'guduu:credentials:write'
 const CREDENTIAL_CLEAR_CHANNEL = 'guduu:credentials:clear'
+const NOTIFICATION_SHOW_CHANNEL = 'guduu:notifications:show'
 const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['https:', 'mailto:'])
-// 当前网页端没有摄像头、麦克风、通知等主动索权功能；对应模块上线时再逐项开放。
+// renderer 当前不主动索取任何 Chromium 权限；系统通知由 main 进程的
+// 最小受控桥实现，不需要把 `notifications` 权限开放给网页。
 const ALLOWED_PERMISSIONS = new Set()
 
 protocol.registerSchemesAsPrivileged([
@@ -46,6 +50,11 @@ if (squirrelStartup) {
 }
 
 let mainWindow = null
+const desktopNotifications = createDesktopNotificationService({
+  isSupported: () => Notification.isSupported(),
+  createNotification: (options) => new Notification(options),
+  getMainWindow: () => mainWindow
+})
 /**
  * 读取桌面开发服务器地址。
  * 生产包永远返回 null，只允许加载签名包内的 renderer；开发期也只接受本机 HTTP，
@@ -110,6 +119,18 @@ function installSecureCredentialIpc() {
   ipcMain.handle(CREDENTIAL_CLEAR_CHANNEL, async (event) => {
     if (!isTrustedIpcSender(event)) throw new Error('拒绝不受信任的桌面凭据清除请求')
     await credentialStore.clear()
+  })
+}
+
+/**
+ * 注册只能展示纯文本的系统通知 IPC。
+ * 参数校验、后台判定和限流都在 main 进程执行，renderer 无法指定图标、
+ * 本地路径或点击后要打开的协议。
+ */
+function installDesktopNotificationIpc() {
+  ipcMain.handle(NOTIFICATION_SHOW_CHANNEL, (event, payload) => {
+    if (!isTrustedIpcSender(event)) throw new Error('拒绝不受信任的桌面通知请求')
+    return desktopNotifications.show(payload)
   })
 }
 
@@ -296,6 +317,7 @@ if (!singleInstanceLock) {
     installContentSecurityPolicy()
     installPermissionPolicy()
     installSecureCredentialIpc()
+    installDesktopNotificationIpc()
     createMainWindow()
   })
 

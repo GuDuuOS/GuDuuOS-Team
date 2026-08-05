@@ -17,5 +17,10 @@ interface Window {
       write: (vault: unknown) => Promise<void>
       clear: () => Promise<void>
     }>
+    notifications: Readonly<{
+      show: (payload: Readonly<{ title: string; body: string }>) => Promise<
+        'shown' | 'suppressed' | 'unsupported'
+      >
+    }>
   }>
 }

@@ -1,5 +1,16 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-08-05 — GuDuu OS 1.25.0 (minor)
+
+- 新增：macOS 与 Windows 桌面端在应用处于后台时，可将现有的新私信提醒
+  补充为操作系统通知；点击通知会恢复并聚焦 GuDuu OS 主窗口。
+- 安全：通知只通过逐项命名的 preload API 传递受限纯文本，main 进程校验
+  sender、顶层 frame、字段和长度，禁止 renderer 指定本地路径、URL 或任意选项。
+- 优化：前台窗口继续只显示页内 toast，系统通知在 main 进程限流并限制
+  同时存活数量，避免重复提醒或被异常消息刷屏。
+- 边界：本次仅完成本地开发、测试和未签名包装验证；应用完全退出后的离线
+  推送仍属于后续 APNs/FCM/Matrix push gateway 模块，本次未启用。
+
 ## 2026-08-05 — GuDuu OS 1.24.2 (patch)
 
 - 修复：macOS 与 Windows 桌面端不再把 Matrix access token、多账号会话和 device ID

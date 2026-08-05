@@ -98,6 +98,7 @@ import {
 import { tenant } from '@/config/tenant'
 import { defaultHsUrl } from '@/config/hs'
 import { instanceBrand } from '@/config/instance'
+import { showDesktopNotification } from '@/platform/desktopNotifications'
 
 // ── 复刻 DEMO 的按键功能：直接复用演示版的弹窗/面板组件 + 它们的 composable ──
 // 这些组件都是"常驻挂载、内部 v-if(visible)"模式；按键只需调对应 composable 的 open()。
@@ -523,6 +524,12 @@ function refreshDms() {
       seenDmIds.add(d.id)
       if (d.fromPeer && currentRoom.value !== d.id) {
         toast('📩 收到新私信', `${d.name} 向你发起了私信，点左侧「私信」分组查看`)
+        // 桌面端处于后台时再由 main 进程展示系统通知；当前窗口已聚焦时
+        // main 会抑制它，只保留上面的页内 toast，避免用户同时看到两次。
+        void showDesktopNotification({
+          title: 'GuDuu OS · 新私信',
+          body: `${d.name} 向你发起了私信`
+        })
       }
     }
   }
