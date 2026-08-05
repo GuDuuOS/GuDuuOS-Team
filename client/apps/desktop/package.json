@@ -2,7 +2,7 @@
   "name": "guduu-os-desktop",
   "productName": "GuDuu OS",
   "private": true,
-  "version": "1.24.0",
+  "version": "1.24.2",
   "description": "GuDuu OS desktop client for macOS and Windows",
   "author": "GuDuu OS",
   "license": "UNLICENSED",
@@ -11,6 +11,8 @@
   "scripts": {
     "dev": "cross-env GUDUU_DESKTOP_DEV_URL=http://127.0.0.1:5173 concurrently --kill-others-on-fail \"npm --prefix ../.. run dev -- --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "check": "node scripts/verify-store-config.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:safe-storage": "electron tests/real-safe-storage-smoke.mjs",
     "sync:renderer": "node scripts/sync-renderer.mjs",
     "build:renderer": "npm --prefix ../.. run build && npm run sync:renderer",
     "package:mac": "npm run build:renderer && electron-forge package --platform=darwin",

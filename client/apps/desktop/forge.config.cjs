@@ -108,6 +108,7 @@ module.exports = {
       /^\/out(?:\/|$)/,
       /^\/scripts(?:\/|$)/,
       /^\/store(?:\/|$)/,
+      /^\/tests(?:\/|$)/,
       /^\/forge\.config\.cjs$/,
       /^\/README\.md$/,
       /^\/package-lock\.json$/

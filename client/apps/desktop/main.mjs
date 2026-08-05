@@ -5,16 +5,23 @@ import { pathToFileURL } from 'node:url'
 import {
   app,
   BrowserWindow,
+  ipcMain,
   net,
   protocol,
+  safeStorage,
   session,
   shell
 } from 'electron'
 import squirrelStartup from 'electron-squirrel-startup'
 
+import { createSecureSessionStore } from './secure-session-store.mjs'
+
 const APP_PROTOCOL = 'guduu-app'
 const APP_HOST = 'app'
 const APP_ID = 'co.guduu.os.desktop'
+const CREDENTIAL_READ_CHANNEL = 'guduu:credentials:read'
+const CREDENTIAL_WRITE_CHANNEL = 'guduu:credentials:write'
+const CREDENTIAL_CLEAR_CHANNEL = 'guduu:credentials:clear'
 const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['https:', 'mailto:'])
 // 当前网页端没有摄像头、麦克风、通知等主动索权功能；对应模块上线时再逐项开放。
 const ALLOWED_PERMISSIONS = new Set()
@@ -65,6 +72,45 @@ function isTrustedRendererUrl(rawUrl) {
   } catch {
     return false
   }
+}
+
+/**
+ * 校验 IPC 是否由当前主窗口的顶层受信任页面发出。
+ * 只看 sender 的历史 URL 不够，必须使用本次消息对应的 senderFrame，拒绝子 frame 和已导航页面。
+ */
+function isTrustedIpcSender(event) {
+  return Boolean(
+    mainWindow &&
+      !mainWindow.isDestroyed() &&
+      event.sender === mainWindow.webContents &&
+      event.senderFrame === mainWindow.webContents.mainFrame &&
+      isTrustedRendererUrl(event.senderFrame?.url)
+  )
+}
+
+/**
+ * 注册桌面凭据仓库的三个最小 IPC 方法。
+ * renderer 只能整仓读取、写入或清除经过主进程校验的会话结构，拿不到文件路径和
+ * safeStorage 本体；清除方法用于钥匙串暂不可用时仍能可靠退出本机账号。
+ */
+function installSecureCredentialIpc() {
+  const credentialStore = createSecureSessionStore({
+    safeStorage,
+    userDataPath: app.getPath('userData')
+  })
+
+  ipcMain.handle(CREDENTIAL_READ_CHANNEL, async (event) => {
+    if (!isTrustedIpcSender(event)) throw new Error('拒绝不受信任的桌面凭据读取请求')
+    return credentialStore.read()
+  })
+  ipcMain.handle(CREDENTIAL_WRITE_CHANNEL, async (event, vault) => {
+    if (!isTrustedIpcSender(event)) throw new Error('拒绝不受信任的桌面凭据写入请求')
+    await credentialStore.write(vault)
+  })
+  ipcMain.handle(CREDENTIAL_CLEAR_CHANNEL, async (event) => {
+    if (!isTrustedIpcSender(event)) throw new Error('拒绝不受信任的桌面凭据清除请求')
+    await credentialStore.clear()
+  })
 }
 
 /**
@@ -249,6 +295,7 @@ if (!singleInstanceLock) {
     await registerLocalRendererProtocol()
     installContentSecurityPolicy()
     installPermissionPolicy()
+    installSecureCredentialIpc()
     createMainWindow()
   })
 

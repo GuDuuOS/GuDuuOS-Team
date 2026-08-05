@@ -5,6 +5,17 @@
 ;(globalThis as any).global ||= globalThis
 
 import { createClient, type MatrixClient } from 'matrix-js-sdk'
+import {
+  cachedAccountSummaries,
+  cachedActiveAccountSession,
+  cachedCurrentUserId,
+  clearAllAccountSessions,
+  getActiveAccountSession,
+  removeAccountSession,
+  saveAccountSession,
+  selectAccountSession,
+  type StoredSession,
+} from '@/platform/sessionVault'
 
 /** 给 UI 用的精简频道结构 */
 export interface LiveRoom {
@@ -54,7 +65,6 @@ export interface ReactionAgg {
   myId?: string // 我那条 reaction 的 eventId（取消时 redact 用）
 }
 
-const SESSION_KEY = 'cosmac.session'
 const SYNC_PREPARED_TIMEOUT_MS = 60000  // 大账号初始同步可能很慢;15s 会误杀有效登录
 
 // 单例：整个前端共用一个登录后的 Matrix client
@@ -64,51 +74,31 @@ export function getClient(): MatrixClient | null {
   return mx
 }
 
-// ── 多账号缓存（"切换账号"用）──────────────────────────────
-// SESSION_KEY 存"当前活动会话"(restoreSession 读它)；ACCOUNTS_KEY 存"所有登录过的账号"，
-// 供免密切换。切账号 = 把目标账号写进 SESSION_KEY 再整页 reload（复用 restoreSession）。
-const ACCOUNTS_KEY = 'guduu.accounts.v1'
-interface StoredAccount { baseUrl: string; accessToken: string; userId: string; deviceId?: string; name?: string }
-
-function readAccounts(): StoredAccount[] {
-  try { const a = JSON.parse(localStorage.getItem(ACCOUNTS_KEY) || '[]'); return Array.isArray(a) ? a : [] }
-  catch { return [] }
-}
-function writeAccounts(list: StoredAccount[]): void {
-  try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(list)) } catch { /* 存储不可用忽略 */ }
-}
-
-/**
- * 把一个账号会话写进多账号缓存（供以后免密切换）。同 userId 覆盖（去重）。
- * name 缺省时**保留原有缓存里的显示名**，避免复活会话时把名字退化成裸 userId。
- */
-function upsertAccount(sess: StoredAccount, name?: string): void {
-  const prev = readAccounts()
-  const keptName = name || prev.find((a) => a.userId === sess.userId)?.name || sess.userId
-  const list = prev.filter((a) => a.userId !== sess.userId)
-  list.push({ ...sess, name: keptName })
-  writeAccounts(list)
-}
-
-function saveSession(baseUrl: string, res: any, name?: string): void {
-  const sess = { baseUrl, accessToken: res.access_token, userId: res.user_id, deviceId: res.device_id }
-  localStorage.setItem(SESSION_KEY, JSON.stringify(sess))
-  upsertAccount(sess, name) // 顺带进多账号缓存
+// ── 多账号会话（"切换账号"用）──────────────────────────────
+// Web 与 Electron 的持久化差异全部收口在 platform/sessionVault；这里不再直接碰存储介质。
+// Electron 只在运行内存里持有 token，落盘由 main 进程 safeStorage 加密。
+async function saveSession(baseUrl: string, res: any, name?: string): Promise<void> {
+  await saveAccountSession({
+    baseUrl,
+    accessToken: res.access_token,
+    userId: res.user_id,
+    deviceId: res.device_id,
+  }, name)
 }
 
 /** 已缓存可切换的账号列表（不暴露 token；name 缺省用 userId）。 */
 export function listCachedAccounts(): { userId: string; name: string }[] {
-  return readAccounts().map((a) => ({ userId: a.userId, name: a.name || a.userId }))
+  return cachedAccountSummaries()
 }
 
-/** 当前活动账号 userId（读 SESSION_KEY）。 */
+/** 当前活动账号 userId；桌面端只读取内存或不含密钥的公开元数据。 */
 export function currentUserId(): string {
-  try { return JSON.parse(localStorage.getItem(SESSION_KEY) || '{}')?.userId || '' } catch { return '' }
+  return mx?.getUserId() || cachedCurrentUserId()
 }
 
-/** 当前活动会话的 access token；只给节点激活等必须证明本人身份的同源请求使用。 */
+/** 当前活动会话的 access token；桌面端只从已解密的运行内存读取。 */
 export function currentAccessToken(): string {
-  try { return JSON.parse(localStorage.getItem(SESSION_KEY) || '{}')?.accessToken || '' } catch { return '' }
+  return cachedActiveAccountSession()?.accessToken || ''
 }
 
 /** 读取 OEM 节点是否仍处于首次激活受限态；响应不含任何授权码。 */
@@ -192,19 +182,14 @@ export async function approvePendingNodeUpdate(releaseId: number): Promise<void>
   if (!response.ok) throw new Error(payload?.error || '批准更新失败')
 }
 
-/** 切换到某个已缓存账号：把它设为活动会话。返回是否找到（调用方随后整页 reload 让其生效）。 */
-export function switchToAccount(userId: string): boolean {
-  const a = readAccounts().find((x) => x.userId === userId)
-  if (!a) return false
-  localStorage.setItem(SESSION_KEY, JSON.stringify({
-    baseUrl: a.baseUrl, accessToken: a.accessToken, userId: a.userId, deviceId: a.deviceId,
-  }))
-  return true
+/** 切换到某个已缓存账号；安全仓库写成功后调用方再 reload。 */
+export async function switchToAccount(userId: string): Promise<boolean> {
+  return Boolean(await selectAccountSession(userId))
 }
 
 /** 从缓存里移除某账号（仅本机缓存，不动服务端会话）。 */
-export function removeCachedAccount(userId: string): void {
-  writeAccounts(readAccounts().filter((a) => a.userId !== userId))
+export async function removeCachedAccount(userId: string): Promise<void> {
+  await removeAccountSession(userId)
 }
 
 /** 当前登录者的真实资料（个人主页展示用）：id / 显示名 / 头像 http 地址。未登录返回空。 */
@@ -361,20 +346,23 @@ function fireSessionExpired(reason: string): void {
   const uid = currentUserId()
   const dev = String((mx as any)?.getDeviceId?.() || '')
   const base = String((mx as any)?.baseUrl || '').replace(/\/$/, '')
-  // 清掉本机记住的死会话:不清的话回登录页后 restoreSession 又拿它自动登录、无限循环。
-  try { removeCachedAccount(uid) } catch { /* ignore */ }
-  localStorage.removeItem(SESSION_KEY)
   try { mx?.stopClient() } catch { /* ignore */ }
-  // token 被吊销可能是「别处登录顶号」(单端在线,后端踢的)——问后端拿明确原因,
-  // 换成专属提示"账号已在别处登录";查询失败/不是被踢 → 按原 reason 走笼统文案。
-  if (reason === 'M_UNKNOWN_TOKEN' && uid && dev && base) {
-    fetch(`${base}/cosmac/session/kicked?user_id=${encodeURIComponent(uid)}&device_id=${encodeURIComponent(dev)}`)
-      .then((r) => r.json())
-      .then((j) => sessionExpiredCb?.(j?.kicked ? 'KICKED_BY_OTHER_LOGIN' : reason))
-      .catch(() => sessionExpiredCb?.(reason))
-    return
-  }
-  sessionExpiredCb?.(reason)
+  // 先从安全仓库删除死会话再通知 UI reload；否则 reload 会再次恢复同一个无效 token，形成循环。
+  void removeCachedAccount(uid)
+    .catch(() => clearAllAccountSessions())
+    .catch(() => undefined)
+    .then(() => {
+      // token 被吊销可能是「别处登录顶号」(单端在线,后端踢的)——问后端拿明确原因,
+      // 换成专属提示"账号已在别处登录";查询失败/不是被踢 → 按原 reason 走笼统文案。
+      if (reason === 'M_UNKNOWN_TOKEN' && uid && dev && base) {
+        fetch(`${base}/cosmac/session/kicked?user_id=${encodeURIComponent(uid)}&device_id=${encodeURIComponent(dev)}`)
+          .then((r) => r.json())
+          .then((j) => sessionExpiredCb?.(j?.kicked ? 'KICKED_BY_OTHER_LOGIN' : reason))
+          .catch(() => sessionExpiredCb?.(reason))
+        return
+      }
+      sessionExpiredCb?.(reason)
+    })
 }
 
 // (旧的「登录+立即启动客户端」函数 login()/loginWithEmail() 已删除:它们直连 Synapse、
@@ -410,7 +398,7 @@ export async function loginNoStart(
   const j = await r.json().catch(() => ({}))
   if (r.ok && j?.step_up) return { stepUp: true, emailHint: j.email_hint || '' }
   if (!r.ok || !j?.access_token) throw new Error(j?.error || '登录失败')
-  saveSession(baseUrl, j)
+  await saveSession(baseUrl, j)
   return { ok: true }
 }
 
@@ -430,11 +418,11 @@ export async function loginWithEmailNoStart(
   const j = await r.json().catch(() => ({}))
   if (r.ok && j?.step_up) return { stepUp: true, emailHint: j.email_hint || '' }
   if (!r.ok || !j?.access_token) throw new Error(j?.error || '登录失败')
-  saveSession(baseUrl, j)
+  await saveSession(baseUrl, j)
   return { ok: true }
 }
 
-// 允许的 homeserver host 白名单：localStorage 可被同源脚本/扩展篡改，若不校验 baseUrl，
+// 允许的 homeserver host 白名单：任何本地持久化都可能损坏或被同权限代码篡改，若不校验 baseUrl，
 // 被改成攻击者主机后，恢复会话时会把 Authorization: Bearer <token> 发往该主机 → token 泄露。
 // 追加 window.location.hostname：OEM 自部实例（发行版）homeserver 与页面同源；
 // 同源天然可信——代码本身就是从该源加载的，伪造同源即已完全控制页面，白名单挡不了也不必挡。
@@ -455,30 +443,32 @@ function isValidBaseUrl(u: unknown): u is string {
 
 /** 尝试用上次记住的会话恢复登录；没有/失效/被篡改返回 null。 */
 export async function restoreSession(): Promise<string | null> {
-  const raw = localStorage.getItem(SESSION_KEY)
-  if (!raw) return null
+  let session: StoredSession | null = null
   try {
-    const s = JSON.parse(raw)
+    session = await getActiveAccountSession()
+    if (!session) return null
     // 校验形状 + baseUrl 白名单：任何不合预期就丢弃会话，绝不拿不可信的 baseUrl 启动客户端。
     if (
-      !isValidBaseUrl(s?.baseUrl) ||
-      typeof s?.accessToken !== 'string' || !s.accessToken ||
-      typeof s?.userId !== 'string' || !s.userId
+      !isValidBaseUrl(session.baseUrl) ||
+      typeof session.accessToken !== 'string' || !session.accessToken ||
+      typeof session.userId !== 'string' || !session.userId
     ) {
-      localStorage.removeItem(SESSION_KEY)
+      await removeAccountSession(session.userId)
       return null
     }
-    const uid = await startFrom(s)
+    const uid = await startFrom(session)
     // 关键：把"通过 restore 复活的当前账号"也补进多账号缓存。否则功能上线前就登录过、
-    // 或只靠 SESSION_KEY 活着的账号永远进不了"切换账号"列表——表现就是：加了新号后
+    // 或只靠旧单会话活着的账号永远进不了"切换账号"列表——表现就是：加了新号后
     // 看不到旧号、无法一键切回。upsert 幂等，同号覆盖、保留原显示名。
-    if (uid) upsertAccount(s)
+    if (uid) await saveAccountSession(session)
     return uid
   } catch (e: any) {
     // 只有**确定的鉴权失效**(token 无效/账号停用)才删会话；网络抖动/初始同步超时等瞬时失败
     // 必须保留会话——否则弱网刷新一次就把有效 token 删了、把人踢回登录页重输密码(审查 bug#1)。
     if (e?.errcode === 'M_UNKNOWN_TOKEN' || e?.errcode === 'M_USER_DEACTIVATED' || e?.errcode === 'M_USER_LOCKED') {
-      localStorage.removeItem(SESSION_KEY)
+      if (session?.userId) {
+        await removeAccountSession(session.userId).catch(() => clearAllAccountSessions())
+      }
     }
     return null
   }
@@ -493,8 +483,9 @@ export async function logout(): Promise<void> {
     /* ignore */
   } finally {
     // 退出登录 = 把当前这个账号从缓存里也移除（其它已缓存账号保留，仍可切换）。
-    removeCachedAccount(currentUserId())
-    localStorage.removeItem(SESSION_KEY)
+    await removeCachedAccount(currentUserId())
+      .catch(() => clearAllAccountSessions())
+      .catch(() => undefined)
     try {
       cur?.stopClient()
     } catch {
@@ -2910,7 +2901,7 @@ export async function registerVerify(
   if (!r.ok) throw new Error(j?.error || '注册失败')
   // L18：注册接口已返回可用会话(access_token/user_id/device_id)——直接用它引导会话，避免调用方
   // 再 loginNoStart 多建一个 device/token。老后端若没回 token，调用方据返回值回退到登录。
-  if (j?.access_token && j?.user_id) saveSession(baseUrl, j)
+  if (j?.access_token && j?.user_id) await saveSession(baseUrl, j)
   return j
 }
 

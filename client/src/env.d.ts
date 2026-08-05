@@ -12,5 +12,10 @@ interface Window {
     platform: 'darwin' | 'win32' | 'linux'
     arch: string
     electronVersion: string
+    credentials: Readonly<{
+      read: () => Promise<unknown | null>
+      write: (vault: unknown) => Promise<void>
+      clear: () => Promise<void>
+    }>
   }>
 }

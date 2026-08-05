@@ -716,16 +716,20 @@ function toggleUserMenu() {
   userMenuOpen.value = !userMenuOpen.value
   if (userMenuOpen.value) refreshCachedAccounts()
 }
-function switchAccount(uid: string) {
+async function switchAccount(uid: string) {
   if (uid === me.value) return
-  if (switchToAccount(uid)) {
-    clearCustomAssetsStorage()   // 清本机用户专属缓存，避免带到另一个账号
-    window.location.reload()      // 整页 reload：restoreSession 会用新账号会话登入
+  try {
+    if (await switchToAccount(uid)) {
+      clearCustomAssetsStorage()   // 清本机用户专属缓存，避免带到另一个账号
+      window.location.reload()      // 整页 reload：restoreSession 会用新账号会话登入
+    }
+  } catch (err: any) {
+    toast('切换账号失败', err?.message || '系统安全存储暂不可用，请稍后重试')
   }
 }
 function startAddAccount() {
   userMenuOpen.value = false
-  // 跳独立登录页(添加账号模式);当前会话仍在 localStorage,可在登录页「返回当前账号」。
+  // 跳独立登录页(添加账号模式);当前会话仍在跨端安全仓库,可在登录页「返回当前账号」。
   router.push('/login?add=1')
 }
 function cancelAddAccount() {

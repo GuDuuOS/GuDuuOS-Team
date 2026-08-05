@@ -7,9 +7,9 @@ import Icon from '@/components/Icon.vue'
  *   - 之前认证是 LiveView 里一段 `v-if="!loggedIn"`，登录页必须等整个 app 加载完才显示，
  *     且已登录用户刷新会「闪一下登录框」。抽成独立路由后：登录页秒开、不闪、有自己的地址。
  * 交接机制（关键）：
- *   - 用「只认证不启动客户端」的 loginNoStart/loginWithEmailNoStart：认证成功只写会话到
- *     localStorage，然后 `router.push('/')` 进主应用，由 LiveView 挂载时 restoreSession
- *     做**唯一一次**同步。既不双同步、也无需整页 reload。
+ *   - 用「只认证不启动客户端」的 loginNoStart/loginWithEmailNoStart：认证成功写入跨端
+ *     会话仓库（Electron 为 safeStorage），然后 `router.push('/')` 进主应用，由 LiveView
+ *     挂载时 restoreSession 做**唯一一次**同步。既不双同步、也无需整页 reload。
  *   - 视觉与原登录块保持一致（同一套 class + 样式），只改架构不改观感。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -176,6 +176,9 @@ async function renderTurnstile() {
 }
 
 onMounted(async () => {
+  if (route.query.storage === 'unavailable') {
+    error.value = '系统安全存储暂不可用，请解锁系统钥匙串后重试'
+  }
   if (route.query.mode === 'register' || referralCode.value) authMode.value = 'register'
   await loadReferral()
   const cfg = await getAuthConfig(HS)

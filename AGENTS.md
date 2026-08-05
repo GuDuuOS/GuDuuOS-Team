@@ -152,6 +152,11 @@ client/
 
 - 不把 Matrix access token 长期留在普通 `localStorage`：Web 使用受控会话策略；桌面用
   Electron `safeStorage`；iOS 用 Keychain；Android 用 Keystore。
+- 桌面凭据必须由 Electron main 进程通过异步 `safeStorage` 加密后写入应用私有
+  `userData`，renderer 只能调用逐项命名的会话仓库 API；IPC 必须校验 sender、参数形状和
+  大小上限。系统加密暂不可用时登录保存要明确失败，禁止回退明文。`localStorage` 只允许
+  保存当前用户 ID、账号显示名等非敏感路由元数据；首次升级应把历史 token/deviceId
+  一次性迁入安全仓库并删除旧明文，迁移失败不得提前删除原会话。
 - Electron 必须开启 sandbox、context isolation，renderer 禁止直接获得 Node 权限；
   preload 只暴露最小白名单桥。
 - 正式聊天客户端必须明确并验证 Matrix E2EE/Rust Crypto、独立 device ID、密钥恢复、
@@ -244,7 +249,7 @@ client/
 | 4 | 交易系统（会员订阅） | 🟡 进行中 | **主线=会员订阅/充值**，多渠道支付(Stripe/PayPal/USDT/支付宝/微信)按 IP 地理路由，范围"较完整"。**P1 地基已落地+单测**(`cosmac/trading/`)：套餐定义(控制室 `cosmac.plans`)+ 订单(DB `cosmac_order`)+ **可插拔支付抽象** `PaymentProvider`(密钥只进 env)+ 订单服务(下单/支付成功**幂等**开通/**续费按原到期日顺延**)+ 会员**到期**(扩 `members.py`：grant 带 expires_ts、查等级自动判过期)+ 手动/mock 支付(HMAC 验签)。**分期**：P2 Stripe 全链路+webhook+前端套餐页；P3 PayPal/USDT+地理路由；P4 支付宝/微信+对账/退款。 |
 | 5 | 个人主页 | ⬜ | 需要客户端 UI 配合 |
 | 6 | **OEM 体系（GuDuu Nexus + 发行版）** | 🟡 进行中 | 当前增量：完善 Nexus 超级管理员工作台。后台采用左侧功能导航，把舰队总览、版本管理、节点实例、授权申请、OEM 客户、支付订单和只读数据大屏分区呈现；舰队总览加入资金经营视角，展示累计实收、近 30 天实收、待支付、授权码/Token 充值收入构成与支付渠道接入状态，金额只以服务端已确认 `paid` 的订单计入收入，支付宝/微信 API 未接入前明确显示“待接 API”，绝不伪造流水；**OEM 归属体系采用无限层级树**：每个 OEM 只有一个直属上级但可有任意深度下级，不设层数、佣金或分账规则；每个 OEM 获得稳定的随机分享码，门户生成“邀请普通用户”与“邀请下级 OEM”链接及二维码。普通用户通过带分享码的 OEM 实例注册链接建号后，实例本地先持久化归属再通过授权 KEY 幂等同步到 Nexus，Nexus 记录 `用户→直属 OEM→完整祖先链`，母舰暂时只做关系与人数统计，不参与用户密码、聊天数据或收益分配；新版本表单根据当前产品版本与 `DEVLOG.md` 自动生成版本号、Git tag、标题和面向 OEM 的更新说明，仍默认“未发布”；节点版本还必须匹配 CI 登记的 bot/web 不可变 Docker 摘要。超级管理员维护永久历史版本列表，发布流程为“未发布→灰度监测→全量发布→暂停”，并可选择已发布过的旧版本发起全节点回撤。节点升级成功后，同一份版本说明由成功投放记录自动呈现在对应 OEM 门户，作为更新公告（不向客户业务群自动发消息）。节点更新仍由宿主代理按 KEY 主动拉取，禁止 Nexus 主动 SSH OEM 服务器，也禁止给 bot 容器宿主机控制权。 |
-| 7 | **多端客户端（Web / Desktop / Mobile）** | 🟡 进行中 | 当前增量：先开发 macOS/Windows 桌面端，采用共享 Vue 3 + TypeScript + Electron；从开发期即按 Mac App Store沙箱和 Microsoft Store MSIX要求设计，同时保留官网直装包装目标。手机端后续走 Capacitor iOS/Android。当前只允许本地开发、测试与未签名构建；安装包公开发布、应用商城、下载入口、自动更新及 Nexus `client` 发布轨道必须等负责人明确启动发布阶段。 |
+| 7 | **多端客户端（Web / Desktop / Mobile）** | 🟡 进行中 | 当前增量：macOS/Windows Electron 安全壳和四类包装目标已建立；Matrix access token、多账号会话和 device ID 已从桌面 `localStorage` 迁入 Electron `safeStorage`，Web 继续走共享适配层，旧桌面明文支持安全迁移。手机端后续走 Capacitor iOS/Android。当前只允许本地开发、测试与未签名构建；安装包公开发布、应用商城、下载入口、自动更新及 Nexus `client` 发布轨道必须等负责人明确启动发布阶段。 |
 | R | **品牌化 Matrix→GuDuu OS Star** | ⬜ 持续 | 贯穿全程的横切任务，按 §7 三层红线分层改，每碰到呈现层字样就顺手改 |
 
 > **Nexus 支付渠道更新（2026-08）**：舰队总览同时覆盖国内支付宝/微信与海外

@@ -12,6 +12,15 @@
 
 四个目标共享同一版本、Git commit 和 Vue renderer，签名、权限、更新通道彼此隔离。
 
+## 会话安全
+
+- Matrix access token、多账号会话和 device ID 只由 Electron main 进程使用异步
+  `safeStorage` 加密后写入应用私有 `userData`。
+- renderer 只通过校验 sender 的最小 IPC 读写完整会话仓库，拿不到文件路径、
+  `safeStorage` 或任意 IPC channel。
+- `localStorage` 仅保存 userId 和显示名等非敏感界面元数据；发现旧版明文会话时，
+  必须在安全写入成功后才删除旧值。系统钥匙串不可用时禁止回退明文。
+
 ## 本地开发
 
 在本目录安装依赖后：
