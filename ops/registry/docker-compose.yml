@@ -1,6 +1,8 @@
 services:
   registry:
-    image: registry:2.8.3
+    # 生产现有数据仓已运行 Distribution Registry 3；保持同一主版本，避免为移除
+    # 全局认证而顺带做一次无关的降级迁移。
+    image: registry:3
     container_name: guduu-registry
     restart: unless-stopped
     ports:

@@ -1,0 +1,27 @@
+[Unit]
+Description=GuDuu Public-Read Docker Registry
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+RequiresMountsFor=/srv/guduu-registry
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f guduu-registry
+ExecStart=/usr/bin/docker run --name guduu-registry \
+  --pull never \
+  --publish 127.0.0.1:5000:5000 \
+  --env REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY=/var/lib/registry \
+  --env REGISTRY_STORAGE_DELETE_ENABLED=true \
+  --mount type=bind,src=/srv/guduu-registry/data,dst=/var/lib/registry \
+  docker.io/library/registry@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33
+ExecStop=/usr/bin/docker stop -t 30 guduu-registry
+ExecStopPost=-/usr/bin/docker rm -f guduu-registry
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=0
+TimeoutStopSec=45
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

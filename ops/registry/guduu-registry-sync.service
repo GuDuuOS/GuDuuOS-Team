@@ -8,7 +8,6 @@ Type=oneshot
 User=root
 WorkingDirectory=/opt/cosmac
 EnvironmentFile=/etc/nexus.env
-Environment=GUDUU_MIRROR_AUTHFILE=/etc/guduu-registry/skopeo-auth.json
 Environment=PYTHONPATH=/opt/cosmac
 ExecStart=/opt/nexus/venv/bin/python /opt/cosmac/scripts/mirror_release_images.py
 NoNewPrivileges=true
