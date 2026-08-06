@@ -16,6 +16,7 @@ const files = {
     path.join(desktopRoot, 'desktop-notifications.mjs'),
     'utf8'
   ),
+  desktopDeepLinks: await readFile(path.join(desktopRoot, 'desktop-deep-links.mjs'), 'utf8'),
   forge: await readFile(path.join(desktopRoot, 'forge.config.cjs'), 'utf8'),
   vite: await readFile(path.join(webRoot, 'vite.config.ts'), 'utf8'),
   index: await readFile(path.join(webRoot, 'index.html'), 'utf8'),
@@ -50,6 +51,10 @@ const assertions = [
   [files.main.includes('installDesktopNotificationIpc()'), '系统通知 IPC 校验入口'],
   [files.desktopNotifications.includes('MAX_TITLE_LENGTH'), '系统通知文本大小上限'],
   [files.desktopNotifications.includes('MIN_INTERVAL_MS'), '系统通知 main 进程限流'],
+  [files.preload.includes('deepLinks: Object.freeze'), '逐项命名深链桥'],
+  [files.main.includes('installDesktopDeepLinkIpc()'), '深链 IPC 校验入口'],
+  [files.desktopDeepLinks.includes("candidate.hostname !== 'join'"), '深链类型白名单'],
+  [files.desktopDeepLinks.includes('markRendererUnavailable'), '深链重载防丢队列'],
   [!files.preload.includes('ipcRenderer,'), '不直接暴露 ipcRenderer'],
   [!files.matrixClient.includes('localStorage.'), 'Matrix 业务层不直接持久化 token'],
   [files.sessionVault.includes('clearLegacyDesktopSecrets()'), '旧明文会话迁移清理'],

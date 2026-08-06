@@ -2,7 +2,7 @@
   "name": "guduu-os-desktop",
   "productName": "GuDuu OS",
   "private": true,
-  "version": "1.25.0",
+  "version": "1.26.0",
   "description": "GuDuu OS desktop client for macOS and Windows",
   "author": "GuDuu OS",
   "license": "UNLICENSED",

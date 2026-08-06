@@ -17,6 +17,10 @@ import squirrelStartup from 'electron-squirrel-startup'
 
 import { createSecureSessionStore } from './secure-session-store.mjs'
 import { createDesktopNotificationService } from './desktop-notifications.mjs'
+import {
+  createDesktopDeepLinkBroker,
+  parseDesktopDeepLink
+} from './desktop-deep-links.mjs'
 
 const APP_PROTOCOL = 'guduu-app'
 const APP_HOST = 'app'
@@ -25,6 +29,8 @@ const CREDENTIAL_READ_CHANNEL = 'guduu:credentials:read'
 const CREDENTIAL_WRITE_CHANNEL = 'guduu:credentials:write'
 const CREDENTIAL_CLEAR_CHANNEL = 'guduu:credentials:clear'
 const NOTIFICATION_SHOW_CHANNEL = 'guduu:notifications:show'
+const DEEP_LINK_CONSUME_CHANNEL = 'guduu:deep-links:consume-pending'
+const DEEP_LINK_NAVIGATE_CHANNEL = 'guduu:deep-links:navigate'
 const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['https:', 'mailto:'])
 // renderer 当前不主动索取任何 Chromium 权限；系统通知由 main 进程的
 // 最小受控桥实现，不需要把 `notifications` 权限开放给网页。
@@ -54,6 +60,19 @@ const desktopNotifications = createDesktopNotificationService({
   isSupported: () => Notification.isSupported(),
   createNotification: (options) => new Notification(options),
   getMainWindow: () => mainWindow
+})
+const desktopDeepLinks = createDesktopDeepLinkBroker({
+  focusMainWindow: () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  },
+  sendRoute: (route) => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return false
+    mainWindow.webContents.send(DEEP_LINK_NAVIGATE_CHANNEL, route)
+    return true
+  }
 })
 /**
  * 读取桌面开发服务器地址。
@@ -131,6 +150,17 @@ function installDesktopNotificationIpc() {
   ipcMain.handle(NOTIFICATION_SHOW_CHANNEL, (event, payload) => {
     if (!isTrustedIpcSender(event)) throw new Error('拒绝不受信任的桌面通知请求')
     return desktopNotifications.show(payload)
+  })
+}
+
+/**
+ * renderer 明确订阅完路由事件后，再通过受信任 IPC 取走冷启动深链。
+ * 这个握手避免 `did-finish-load` 时 Vue 还没安装监听器，导致首次邀请丢失。
+ */
+function installDesktopDeepLinkIpc() {
+  ipcMain.handle(DEEP_LINK_CONSUME_CHANNEL, (event) => {
+    if (!isTrustedIpcSender(event)) throw new Error('拒绝不受信任的桌面深链请求')
+    return desktopDeepLinks.consumePending()
   })
 }
 
@@ -228,20 +258,14 @@ function installPermissionPolicy() {
 }
 
 /**
- * 接受操作系统传入的 GuDuu 深链并唤醒既有窗口。
- * 当前阶段不把未经校验的深链内容送入 renderer；具体业务路由启用时再定义显式契约。
+ * 接受操作系统传入的 GuDuu 深链。
+ * 只有通过 desktop-deep-links 白名单解析的工作区邀请才会进入 Vue Router；
+ * 其他协议、URL、查询参数或畸形 Matrix ID 均静默丢弃。
  */
 function deliverDeepLink(rawUrl) {
-  try {
-    const candidate = new URL(rawUrl)
-    if (candidate.protocol !== 'guduu:') return
-    if (mainWindow) {
-      mainWindow.show()
-      mainWindow.focus()
-    }
-  } catch {
-    // 忽略畸形深链。
-  }
+  if (!parseDesktopDeepLink(rawUrl)) return
+  if (app.isReady() && (!mainWindow || mainWindow.isDestroyed())) createMainWindow()
+  desktopDeepLinks.deliver(rawUrl)
 }
 
 /** 创建唯一主窗口，并把所有导航和新窗口行为收口到白名单。 */
@@ -285,8 +309,14 @@ function createMainWindow() {
     event.preventDefault()
   })
 
+  // SPA 重载和 renderer 崩溃都会清空 preload 监听器；此后深链必须重新排队，
+  // 直到新 renderer 再次调用 consume-pending 完成握手。
+  mainWindow.webContents.on('did-start-loading', () => desktopDeepLinks.markRendererUnavailable())
+  mainWindow.webContents.on('render-process-gone', () => desktopDeepLinks.markRendererUnavailable())
+
   mainWindow.once('ready-to-show', () => mainWindow?.show())
   mainWindow.on('closed', () => {
+    desktopDeepLinks.markRendererUnavailable()
     mainWindow = null
   })
 
@@ -318,7 +348,10 @@ if (!singleInstanceLock) {
     installPermissionPolicy()
     installSecureCredentialIpc()
     installDesktopNotificationIpc()
+    installDesktopDeepLinkIpc()
     createMainWindow()
+    const initialDeepLink = process.argv.find((argument) => argument.startsWith('guduu://'))
+    if (initialDeepLink) deliverDeepLink(initialDeepLink)
   })
 
   app.on('activate', () => {

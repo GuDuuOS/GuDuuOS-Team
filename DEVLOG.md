@@ -1,5 +1,16 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-08-06 — GuDuu OS 1.26.0 (minor)
+
+- 新增：macOS 与 Windows 桌面端支持工作区邀请深链
+  `guduu://join/<Matrix Space ID>`，可在冷启动和 App 已运行时打开共享加入流程。
+- 安全：main 进程只白名单放行工作区邀请，拒绝其他协议、主机、查询参数、
+  hash、路径穿越和畸形 Space ID；preload 不暴露任意导航或 IPC 能力。
+- 优化：深链使用 renderer 就绪握手与 main 内存队列，避免冷启动、页面重载或
+  登录页状态丢失邀请；未登录用户登录后继续原有 `/join/:space` 流程。
+- 边界：本次仅完成本地开发与非生产包装验证，未开放公开下载、自动更新或
+  任何应用商城提交。
+
 ## 2026-08-05 — GuDuu OS 1.25.0 (minor)
 
 - 新增：macOS 与 Windows 桌面端在应用处于后台时，可将现有的新私信提醒

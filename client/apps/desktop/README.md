@@ -30,6 +30,15 @@
 - 点击系统通知只恢复并聚焦 GuDuu OS 主窗口，不打开外部协议。本阶段不接入
   后台推送；App 完全退出后的离线通知属于后续 APNs/FCM/Matrix push gateway 模块。
 
+## 安全深链
+
+- 首期只接受 `guduu://join/<Matrix Space ID>`，映射到共享 Vue 客户端已有的
+  `/join/:space` 路由；登录、邀请验证和真正加入仍由共享业务层执行。
+- main 进程拒绝其他协议、深链类型、查询参数、hash、路径穿越和畸形
+  Space ID；preload 只提供消费待处理路由和订阅导航两个命名能力。
+- 冷启动、已运行的第二实例、macOS `open-url` 和 renderer 重载都经过 main 内存队列；
+  登录页也持续订阅，未登录用户会在登录后继续进入邀请流程。
+
 ## 本地开发
 
 在本目录安装依赖后：

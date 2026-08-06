@@ -22,5 +22,9 @@ interface Window {
         'shown' | 'suppressed' | 'unsupported'
       >
     }>
+    deepLinks: Readonly<{
+      consumePending: () => Promise<unknown | null>
+      onNavigate: (callback: (route: unknown) => void) => void
+    }>
   }>
 }

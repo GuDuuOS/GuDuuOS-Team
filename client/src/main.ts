@@ -7,6 +7,12 @@ import './styles/tokens.css'
 import './styles/reset.css'
 import { router } from './router'
 import { loadInstanceConfig } from './config/instance'
+import { installDesktopDeepLinkNavigation } from './platform/desktopDeepLinks'
 
 // 在挂载登录页前先取一次同域公开品牌，避免页面先闪出默认 Logo/名称再替换。
-loadInstanceConfig().finally(() => createApp(App).use(router).mount('#app'))
+loadInstanceConfig().finally(() => {
+  // 深链监听挂在窗口级而非 LiveView，这样登录页、激活页和工作台之间
+  // 切换时不会丢掉操作系统送来的邀请。Web 端没有 Electron 桥时这是 no-op。
+  void installDesktopDeepLinkNavigation(router)
+  createApp(App).use(router).mount('#app')
+})
