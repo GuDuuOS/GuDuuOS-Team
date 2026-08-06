@@ -48,6 +48,18 @@
 - `npm run check` 会静态拦截业务层新增的相对 `fetch('/cosmac...')`
   调用，避免 Web 端正常、安装包内失效的回归。
 
+## OEM 服务器发现
+
+- 登录页可输入 OEM 域名，main 进程依次读取
+  `/.well-known/matrix/client`、`/_matrix/client/versions` 与
+  `/cosmac/instance/config`，确认该域名同时具备 Matrix 和 GuDuu OS 能力。
+- 发现 IPC 只接收域名、只返回受限的公开品牌数据；生产强制
+  HTTPS，限制超时和响应大小，拒绝带凭据/参数的 URL 与非图片 Logo。
+- 未登录时的选择不写入 `localStorage`；登录成功后 homeserver 才随会话
+  进入 `safeStorage`。桌面冷启动先解密活动会话，再加载对应 OEM 品牌。
+- 兼容旧节点：仅当新品牌端点明确返回 404，并经现有 GuDuu 公开认证
+  配置端点确认后，才使用通用品牌；网络、TLS、大小等错误不会被降级掩盖。
+
 ## 本地开发
 
 在本目录安装依赖后：

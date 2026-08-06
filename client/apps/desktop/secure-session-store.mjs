@@ -1,6 +1,8 @@
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import { normalizeDesktopServerUrl } from './desktop-server-discovery.mjs'
+
 const STORE_FILE_NAME = 'matrix-sessions.v1.bin'
 const MAX_ACCOUNT_COUNT = 20
 const MAX_PLAINTEXT_BYTES = 256 * 1024
@@ -38,7 +40,10 @@ export function validateSessionVault(value) {
     if (seen.has(userId)) throw new Error('桌面安全会话包含重复账号')
     seen.add(userId)
     return {
-      baseUrl: assertString(account.baseUrl, `accounts[${index}].baseUrl`, 2048),
+      baseUrl: normalizeDesktopServerUrl(
+        assertString(account.baseUrl, `accounts[${index}].baseUrl`, 2048),
+        { allowInsecureLoopback: true }
+      ),
       accessToken: assertString(account.accessToken, `accounts[${index}].accessToken`, 16384),
       userId,
       ...(account.deviceId

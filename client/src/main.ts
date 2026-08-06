@@ -8,11 +8,18 @@ import './styles/reset.css'
 import { router } from './router'
 import { loadInstanceConfig } from './config/instance'
 import { installDesktopDeepLinkNavigation } from './platform/desktopDeepLinks'
+import { loadSessionVault } from './platform/sessionVault'
 
-// 在挂载登录页前先取一次同域公开品牌，避免页面先闪出默认 Logo/名称再替换。
-loadInstanceConfig().finally(() => {
+async function bootstrap() {
+  // Electron 先解密当前会话，defaultHsUrl 才能用受 safeStorage 保护的
+  // OEM homeserver 加载品牌；Web 端则仍是原有 localStorage 同步路径。
+  try { await loadSessionVault() } catch { /* 路由守卫会显示安全存储错误 */ }
+  // 在挂载登录页前先取一次公开品牌，避免默认 Logo/名称闪烁。
+  await loadInstanceConfig().catch(() => undefined)
   // 深链监听挂在窗口级而非 LiveView，这样登录页、激活页和工作台之间
   // 切换时不会丢掉操作系统送来的邀请。Web 端没有 Electron 桥时这是 no-op。
   void installDesktopDeepLinkNavigation(router)
   createApp(App).use(router).mount('#app')
-})
+}
+
+void bootstrap()

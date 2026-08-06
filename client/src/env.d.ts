@@ -26,5 +26,8 @@ interface Window {
       consumePending: () => Promise<unknown | null>
       onNavigate: (callback: (route: unknown) => void) => void
     }>
+    servers: Readonly<{
+      discover: (input: string) => Promise<unknown>
+    }>
   }>
 }

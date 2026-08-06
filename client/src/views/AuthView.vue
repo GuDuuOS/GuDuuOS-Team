@@ -14,7 +14,7 @@ import Icon from '@/components/Icon.vue'
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { instanceBrand } from '@/config/instance'
+import { applyInstanceConfig, instanceBrand } from '@/config/instance'
 import {
   loginNoStart, loginWithEmailNoStart,
   registerRequestCode, registerVerify, getReferralInfo,
@@ -22,10 +22,25 @@ import {
   fetchSitePage, getNodeActivation,
 } from '@/matrix/client'
 import { defaultHsUrl } from '@/config/hs'
+import { discoverDesktopHomeserver } from '@/platform/desktopServers'
 
 // homeserver 基址（与 LiveView 保持一致）：当前主站/本地连 dev-hs.guduu.co，
 // OEM 自部实例（发行版）为同源——见 config/hs.ts
-const HS = defaultHsUrl()
+const homeserverUrl = ref(defaultHsUrl())
+const isDesktop = Boolean(window.guduuDesktop?.isDesktop)
+const serverChooserOpen = ref(false)
+const serverInput = ref('')
+const serverLoading = ref(false)
+const serverError = ref('')
+const serverHost = computed(() => {
+  try { return new URL(homeserverUrl.value).host } catch { return homeserverUrl.value }
+})
+
+function openServerChooser() {
+  serverError.value = ''
+  try { serverInput.value = new URL(homeserverUrl.value).host } catch { serverInput.value = '' }
+  serverChooserOpen.value = true
+}
 
 // ── 帮助 / 隐私政策 弹层（内容来自后台「页面内容」,未配置回落内置默认稿）──
 const pageOpen = ref<'' | 'privacy' | 'help'>('')
@@ -37,7 +52,7 @@ async function openSitePage(key: 'privacy' | 'help') {
   pageLoading.value = true
   pageTitle.value = key === 'privacy' ? '隐私政策' : '帮助中心'
   try {
-    const p = await fetchSitePage(key, HS)   // 未登录页:显式传 homeserver 基址
+    const p = await fetchSitePage(key, homeserverUrl.value)   // 未登录页:显式传 homeserver 基址
     pageTitle.value = p.title || pageTitle.value
     pageBody.value = p.md
   } finally {
@@ -113,7 +128,7 @@ async function loadReferral() {
   if (!referralCode.value) return
   referralLoading.value = true
   try {
-    const result = await getReferralInfo(HS, referralCode.value)
+    const result = await getReferralInfo(homeserverUrl.value, referralCode.value)
     referralName.value = result.name
   } catch (err: any) {
     referralInvalid.value = err?.message || '邀请链接已失效'
@@ -175,17 +190,51 @@ async function renderTurnstile() {
   })
 }
 
+async function refreshAuthConfig() {
+  if (tsWidgetId !== null && window.turnstile) {
+    try { window.turnstile.remove(tsWidgetId) } catch { /* ignore */ }
+  }
+  tsWidgetId = null
+  tsToken.value = ''
+  tsEnabled.value = false
+  tsSiteKey.value = ''
+  const cfg = await getAuthConfig(homeserverUrl.value)
+  tsEnabled.value = cfg.turnstile
+  tsSiteKey.value = cfg.siteKey
+  if (tsEnabled.value && authMode.value !== 'login') await renderTurnstile()
+}
+
+/**
+ * 通用桌面 App 切换 OEM：main 进程先读 well-known、验证 Matrix 再返回
+ * 公开品牌。未登录地址只留在当前页内存，成功登录后才随会话进 safeStorage。
+ */
+async function connectDesktopServer() {
+  if (!isDesktop || serverLoading.value) return
+  serverError.value = ''
+  info.value = ''
+  serverLoading.value = true
+  try {
+    const discovered = await discoverDesktopHomeserver(serverInput.value)
+    homeserverUrl.value = discovered.homeserverUrl
+    applyInstanceConfig(discovered)
+    switchAuthMode('login')
+    await Promise.all([loadReferral(), refreshAuthConfig()])
+    info.value = `已连接 ${instanceBrand.productName}（${serverHost.value}）`
+    serverChooserOpen.value = false
+  } catch (err: any) {
+    serverError.value = err?.message || '服务器连接失败'
+  } finally {
+    serverLoading.value = false
+  }
+}
+
 onMounted(async () => {
   if (route.query.storage === 'unavailable') {
     error.value = '系统安全存储暂不可用，请解锁系统钥匙串后重试'
   }
   if (route.query.mode === 'register' || referralCode.value) authMode.value = 'register'
   await loadReferral()
-  const cfg = await getAuthConfig(HS)
-  tsEnabled.value = cfg.turnstile
-  tsSiteKey.value = cfg.siteKey
-  // 若一进来就在需要验证码的模式(注册/找回),渲染挂件
-  if (tsEnabled.value && authMode.value !== 'login') renderTurnstile()
+  await refreshAuthConfig()
 })
 onBeforeUnmount(() => {
   if (tsWidgetId !== null && window.turnstile) { try { window.turnstile.remove(tsWidgetId) } catch { /* ignore */ } }
@@ -224,7 +273,7 @@ async function proceed() {
   // OEM 节点安装阶段兑换失败时，bootstrap 管理员登录后必须先完成激活；不能只靠
   // 前端隐藏注册按钮，真正的注册/登录门禁仍在 bot 服务端。
   try {
-    const activation = await getNodeActivation(HS)
+    const activation = await getNodeActivation(homeserverUrl.value)
     if (activation.required && !activation.activated) {
       router.push('/activate')
       return
@@ -266,8 +315,8 @@ async function sendCode() {
   sendingCode.value = true
   try {
     const cd = authMode.value === 'reset'
-      ? await resetRequestCode(HS, e, tsToken.value)
-      : await registerRequestCode(HS, e, tsToken.value, referralCode.value)
+      ? await resetRequestCode(homeserverUrl.value, e, tsToken.value)
+      : await registerRequestCode(homeserverUrl.value, e, tsToken.value, referralCode.value)
     info.value = `验证码已发送，请查收 ${e}（含垃圾箱）`
     startCodeCooldown(cd || 60)
   } catch (err: any) {
@@ -277,7 +326,7 @@ async function sendCode() {
     // 后端说"人机验证未通过"但本地以为没启用(多半是挂载时拉 /cosmac/auth/config 失败) →
     // 重拉配置并渲染挂件,让用户有验证可做,而不是对着报错干瞪眼。
     if (!tsEnabled.value && /人机验证/.test(String(err?.message || ''))) {
-      const cfg = await getAuthConfig(HS)
+      const cfg = await getAuthConfig(homeserverUrl.value)
       tsEnabled.value = cfg.turnstile
       tsSiteKey.value = cfg.siteKey
       if (tsEnabled.value) renderTurnstile()
@@ -325,8 +374,8 @@ async function doLogin() {
     if (stepUp.value && !code) { error.value = '请输入邮件里的 6 位验证码'; loading.value = false; return }
     const { byEmail, id } = loginIdentity()
     const res = byEmail
-      ? await loginWithEmailNoStart(HS, id, password.value, code)
-      : await loginNoStart(HS, id, password.value, code)
+      ? await loginWithEmailNoStart(homeserverUrl.value, id, password.value, code)
+      : await loginNoStart(homeserverUrl.value, id, password.value, code)
     if (res?.stepUp) {
       // 异地登录:后端已发验证码到绑定邮箱,切到"输码"状态,输完再点登录(带 code 重试)
       stepUp.value = true
@@ -351,8 +400,8 @@ async function resendStepUpCode() {
   try {
     const { byEmail, id } = loginIdentity()
     const res = byEmail
-      ? await loginWithEmailNoStart(HS, id, password.value, '')
-      : await loginNoStart(HS, id, password.value, '')
+      ? await loginWithEmailNoStart(homeserverUrl.value, id, password.value, '')
+      : await loginNoStart(homeserverUrl.value, id, password.value, '')
     if (res?.stepUp) {
       stepUpHint.value = res.emailHint || stepUpHint.value
       info.value = '验证码已重新发送，请查收邮箱。'
@@ -386,14 +435,14 @@ async function doRegister() {
       error.value = referralInvalid.value || '正在确认邀请关系，请稍后再试'
       return
     }
-    const reg = await registerVerify(HS, {
+    const reg = await registerVerify(homeserverUrl.value, {
       email: e,
       code: emailCode.value.trim(),
       username: u,
       password: password.value,
       referral_code: referralCode.value,
     })
-    if (!reg?.access_token) await loginNoStart(HS, u, password.value)
+    if (!reg?.access_token) await loginNoStart(homeserverUrl.value, u, password.value)
     proceed()
   } catch (err: any) {
     error.value = err?.message || String(err)
@@ -414,7 +463,7 @@ async function doResetPassword() {
   if (password.value !== password2.value) { error.value = '两次输入的密码不一致'; return }
   loading.value = true
   try {
-    await resetVerify(HS, { email: e, code: emailCode.value.trim(), password: password.value })
+    await resetVerify(homeserverUrl.value, { email: e, code: emailCode.value.trim(), password: password.value })
     switchAuthMode('login')
     password.value = ''
     info.value = '密码已重置，请用新密码登录'
@@ -449,7 +498,34 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
       <button v-if="isAdd" class="add-acct-back" @click="router.push('/')">← 返回当前账号</button>
       <!-- 顶部：品牌 + tab/标题 -->
       <div class="auth-top">
-        <div class="brand login-brand"><img :src="instanceBrand.logoUrl" class="brand-logo" alt="" />{{ instanceBrand.productName }}</div>
+        <div class="auth-brand-row">
+          <div class="brand login-brand"><img :src="instanceBrand.logoUrl" class="brand-logo" alt="" />{{ instanceBrand.productName }}</div>
+          <button v-if="isDesktop" type="button" class="server-switch" @click="openServerChooser">
+            <Icon name="server" :size="13" /> {{ serverHost }} · 切换
+          </button>
+        </div>
+        <div v-if="isDesktop && serverChooserOpen" class="server-chooser">
+          <div class="server-chooser-title">
+            <b>连接 GuDuu OS 服务器</b>
+            <button type="button" class="server-chooser-close" aria-label="关闭" @click="serverChooserOpen = false">×</button>
+          </div>
+          <div class="server-chooser-row">
+            <input
+              v-model.trim="serverInput"
+              type="text"
+              inputmode="url"
+              autocomplete="url"
+              placeholder="例如 chat.example.com"
+              :disabled="serverLoading"
+              @keyup.enter="connectDesktopServer"
+            />
+            <button type="button" :disabled="serverLoading || !serverInput" @click="connectDesktopServer">
+              {{ serverLoading ? '验证中…' : '连接' }}
+            </button>
+          </div>
+          <p>将先读取 Matrix `.well-known`，再验证 GuDuu OS 品牌配置。不会发送账号、密码或 token。</p>
+          <p v-if="serverError" class="server-error">{{ serverError }}</p>
+        </div>
         <div class="auth-tabs" v-if="authMode !== 'reset'">
           <button class="auth-tab" :class="{ active: authMode === 'login' }" @click="switchAuthMode('login')">登录</button>
           <button class="auth-tab" :class="{ active: authMode === 'register' }" @click="switchAuthMode('register')">注册</button>
@@ -563,11 +639,23 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
 .login { height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(180deg, var(--bg-panel), var(--bg-soft)); font-family: var(--font-body); }
 .login-card { width: 640px; max-width: 92vw; min-height: 502px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; gap: 20px; padding: 40px; background: #fff; border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,.08); }
 .auth-top { display: flex; flex-direction: column; gap: 16px; }
+.auth-brand-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .auth-fields { display: flex; flex-direction: column; gap: 14px; }
 .auth-bottom { display: flex; flex-direction: column; gap: 12px; }
 .login-brand { font-weight: 800; font-size: 22px; color: var(--text); display: inline-flex; align-items: center; gap: 8px; }
 .login-brand span { color: var(--accent); margin-left: 4px; }
 .brand-logo { width: 26px; height: 26px; object-fit: contain; border-radius: 6px; }
+.server-switch { display: inline-flex; align-items: center; gap: 5px; max-width: 260px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg, #f7f5ef); color: var(--text-3); font-size: 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.server-switch:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.server-chooser { display: flex; flex-direction: column; gap: 9px; padding: 13px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 11px; background: color-mix(in srgb, var(--accent) 5%, #fff); }
+.server-chooser-title { display: flex; align-items: center; justify-content: space-between; color: var(--text); font-size: 13px; }
+.server-chooser-close { border: 0; background: transparent; color: var(--text-3); font-size: 20px; line-height: 1; cursor: pointer; }
+.server-chooser-row { display: flex; gap: 8px; }
+.server-chooser-row input { flex: 1; min-width: 0; padding: 10px 12px; }
+.server-chooser-row button { flex: 0 0 auto; padding: 0 14px; border: 0; border-radius: 9px; background: var(--action); color: #fff; font-weight: 600; cursor: pointer; }
+.server-chooser-row button:disabled { opacity: .55; cursor: default; }
+.server-chooser p { margin: 0; color: var(--text-3); font-size: 11px; line-height: 1.55; }
+.server-chooser .server-error { color: var(--danger); }
 .login-card input { padding: 13px 15px; border: 1px solid var(--border); border-radius: 10px; font-size: 15px; }
 .login-btn { padding: 14px; border: 0; border-radius: 10px; background: var(--action); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
 .login-btn:disabled { opacity: .6; cursor: default; }
@@ -624,4 +712,11 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
 .stepup-box { display: flex; flex-direction: column; gap: 10px; padding: 12px; background: var(--bg, #f7f5ef); border: 1px solid var(--border); border-radius: 10px; }
 .stepup-tip { font-size: 13px; color: var(--text-2, #55504a); line-height: 1.6; }
 .add-acct-back { align-self: flex-start; border: none; background: transparent; color: var(--text-3); font-size: 13px; cursor: pointer; padding: 0; }
+@media (max-width: 560px) {
+  .login-card { padding: 28px 22px; }
+  .auth-brand-row { align-items: flex-start; flex-direction: column; }
+  .server-switch { max-width: 100%; }
+  .server-chooser-row { flex-direction: column; }
+  .server-chooser-row button { min-height: 40px; }
+}
 </style>

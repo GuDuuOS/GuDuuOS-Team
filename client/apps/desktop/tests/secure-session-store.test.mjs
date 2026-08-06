@@ -91,3 +91,29 @@ test('会话协议拒绝重复账号与悬空活动账号', () => {
     /重复账号/
   )
 })
+
+test('安全会话拒绝可能泄漏 token 的 homeserver 地址', () => {
+  const base = {
+    version: 1,
+    activeUserId: '@alice:example.test',
+    accounts: [{
+      baseUrl: 'https://matrix.example.test',
+      accessToken: 'secret',
+      userId: '@alice:example.test'
+    }]
+  }
+  assert.throws(
+    () => validateSessionVault({
+      ...base,
+      accounts: [{ ...base.accounts[0], baseUrl: 'http://attacker.example' }]
+    }),
+    /HTTPS/
+  )
+  assert.throws(
+    () => validateSessionVault({
+      ...base,
+      accounts: [{ ...base.accounts[0], baseUrl: 'https://matrix.example.test?next=attacker' }]
+    }),
+    /参数/
+  )
+})

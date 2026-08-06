@@ -5,6 +5,7 @@
 ;(globalThis as any).global ||= globalThis
 
 import { createClient, type MatrixClient } from 'matrix-js-sdk'
+import { isSafeHomeserverUrl } from '@/config/hs'
 import {
   cachedAccountSummaries,
   cachedActiveAccountSession,
@@ -429,12 +430,12 @@ export async function loginWithEmailNoStart(
 const ALLOWED_HS_HOSTS = ['dev-hs.guduu.co', 'localhost', '127.0.0.1', window.location.hostname]
 
 function isValidBaseUrl(u: unknown): u is string {
-  if (typeof u !== 'string' || !u) return false
+  if (!isSafeHomeserverUrl(u)) return false
   try {
     const url = new URL(u)
-    // 生产强制 https；仅本地开发允许 http（localhost/127.0.0.1）。
-    const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1'
-    if (url.protocol !== 'https:' && !isLocal) return false
+    // Electron 中的任意 OEM 基址已在 main 进程写入 safeStorage 前校验；
+    // Web localStorage 仍必须限制为当前部署或主站，避免被篡改后泄漏 token。
+    if (window.guduuDesktop?.isDesktop) return true
     return ALLOWED_HS_HOSTS.includes(url.hostname)
   } catch {
     return false

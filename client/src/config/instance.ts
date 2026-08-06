@@ -17,6 +17,34 @@ export interface PublicInstanceConfig {
   brand?: { product_name?: string; company_name?: string; logo_data_url?: string }
 }
 
+/** 把服务器公开品牌数据收口后应用到界面，不接受远程脚本或 CSS。 */
+export function applyInstanceConfig(payload: PublicInstanceConfig): PublicInstanceConfig {
+  const productName = typeof payload?.brand?.product_name === 'string'
+    ? payload.brand.product_name.slice(0, 80)
+    : ''
+  const companyName = typeof payload?.brand?.company_name === 'string'
+    ? payload.brand.company_name.slice(0, 160)
+    : ''
+  const logo = typeof payload?.brand?.logo_data_url === 'string' ? payload.brand.logo_data_url : ''
+  const safeLogo = logo.length <= 1536 * 1024 && /^data:image\/(?:png|jpe?g|webp);base64,/i.test(logo)
+    ? logo
+    : ''
+  instanceBrand.productName = productName || 'GuDuu OS'
+  instanceBrand.companyName = companyName
+  instanceBrand.logoUrl = safeLogo || defaultLogo
+  instanceBrand.setupCompleted = Boolean(payload?.setup_completed)
+  instanceBrand.loaded = true
+  document.title = instanceBrand.productName
+  return {
+    setup_completed: instanceBrand.setupCompleted,
+    brand: {
+      product_name: instanceBrand.productName,
+      company_name: instanceBrand.companyName,
+      logo_data_url: safeLogo,
+    },
+  }
+}
+
 export async function loadInstanceConfig(
   force = false,
   baseUrl = defaultHsUrl(),
@@ -38,12 +66,7 @@ export async function loadInstanceConfig(
     const response = await fetch(`${base}/cosmac/instance/config`, { cache: 'no-store' })
     const payload = await response.json()
     if (!response.ok) throw new Error(payload?.error || '实例配置不可用')
-    instanceBrand.productName = payload?.brand?.product_name || 'GuDuu OS'
-    instanceBrand.companyName = payload?.brand?.company_name || ''
-    instanceBrand.logoUrl = payload?.brand?.logo_data_url || defaultLogo
-    instanceBrand.setupCompleted = !!payload?.setup_completed
-    document.title = instanceBrand.productName
-    return payload
+    return applyInstanceConfig(payload)
   } catch {
     // 本地开发或旧后端没有端点时保持历史品牌，并且不强制跳向导。
     instanceBrand.setupCompleted = true

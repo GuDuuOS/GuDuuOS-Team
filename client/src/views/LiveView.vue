@@ -97,7 +97,7 @@ import {
 } from '@/matrix/client'
 import { tenant } from '@/config/tenant'
 import { defaultHsUrl } from '@/config/hs'
-import { instanceBrand } from '@/config/instance'
+import { instanceBrand, loadInstanceConfig } from '@/config/instance'
 import { showDesktopNotification } from '@/platform/desktopNotifications'
 
 // ── 复刻 DEMO 的按键功能：直接复用演示版的弹窗/面板组件 + 它们的 composable ──
@@ -2261,7 +2261,12 @@ onMounted(async () => {
   if (jm) pendingJoinSpace = decodeURIComponent(jm[1])
   try {
     const uid = await restoreSession()
-    if (uid) await afterLogin(uid)
+    if (uid) {
+      // 添加/切换账号可能跨 OEM；会话恢复后必须以当前 safeStorage
+      // 会话的 homeserver 重载品牌，不沿用登录页上一个临时选择。
+      await loadInstanceConfig(true)
+      await afterLogin(uid)
+    }
     // 无有效会话 → 回登录页,带上当前地址;登录成功后 proceed() 送回原深链(审查 bug#12)
     else router.push({ path: '/login', query: { redirect: route.fullPath } })
   } finally {

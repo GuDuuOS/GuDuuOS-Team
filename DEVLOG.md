@@ -1,5 +1,22 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-08-06 — GuDuu OS 1.27.0 (minor)
+
+- 新增：macOS/Windows 通用桌面 App 可在登录页输入 OEM 域名，
+  按标准 `/.well-known/matrix/client` 发现 homeserver，验证 Matrix 版本
+  端点后加载 GuDuu OS 品牌配置。
+- 安全：发现过程在 Electron main 进程执行，只允许 HTTPS（本机开发
+  例外），拒绝 URL 账号/参数/锚点、明文重定向、过大配置和非图片 Logo；
+  全程不传账号、密码或 token。
+- 安全：未登录的 OEM 地址只留在当前页内存，登录成功后才随
+  Matrix 会话进入 Electron `safeStorage`；桌面会话写入时再校验
+  homeserver URL，防止恢复会话时向异常主机泄漏 token。
+- 兼容：旧节点尚未提供 `/cosmac/instance/config` 且明确返回 404 时，
+  仅经现有 GuDuu 认证公开端点确认后回退通用品牌；其他错误不降级。
+- 验证：已用 `dev-app.guduu.co` 完成无凭据真实发现链路，标准
+  well-known 正确指向 `dev-os.guduu.co`。本次仍未开放公开下载、
+  自动更新或任何应用商城提交。
+
 ## 2026-08-06 — GuDuu OS 1.26.3 (patch)
 
 - 修复：Docker Hub 发布目标改为当前已验证可用的个人命名空间 `guduu/`，不再引用

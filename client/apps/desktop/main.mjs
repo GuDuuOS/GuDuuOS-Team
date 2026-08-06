@@ -21,6 +21,7 @@ import {
   createDesktopDeepLinkBroker,
   parseDesktopDeepLink
 } from './desktop-deep-links.mjs'
+import { discoverDesktopServer } from './desktop-server-discovery.mjs'
 
 const APP_PROTOCOL = 'guduu-app'
 const APP_HOST = 'app'
@@ -31,6 +32,7 @@ const CREDENTIAL_CLEAR_CHANNEL = 'guduu:credentials:clear'
 const NOTIFICATION_SHOW_CHANNEL = 'guduu:notifications:show'
 const DEEP_LINK_CONSUME_CHANNEL = 'guduu:deep-links:consume-pending'
 const DEEP_LINK_NAVIGATE_CHANNEL = 'guduu:deep-links:navigate'
+const SERVER_DISCOVER_CHANNEL = 'guduu:servers:discover'
 const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['https:', 'mailto:'])
 // renderer 当前不主动索取任何 Chromium 权限；系统通知由 main 进程的
 // 最小受控桥实现，不需要把 `notifications` 权限开放给网页。
@@ -161,6 +163,20 @@ function installDesktopDeepLinkIpc() {
   ipcMain.handle(DEEP_LINK_CONSUME_CHANNEL, (event) => {
     if (!isTrustedIpcSender(event)) throw new Error('拒绝不受信任的桌面深链请求')
     return desktopDeepLinks.consumePending()
+  })
+}
+
+/**
+ * 服务器发现不携带任何会话或登录数据。main 进程负责校验 HTTPS、
+ * 限制响应大小/超时并只返回结构化的公开品牌配置。
+ */
+function installDesktopServerDiscoveryIpc() {
+  ipcMain.handle(SERVER_DISCOVER_CHANNEL, async (event, input) => {
+    if (!isTrustedIpcSender(event)) throw new Error('拒绝不受信任的服务器发现请求')
+    return discoverDesktopServer(input, {
+      fetchImpl: net.fetch,
+      allowInsecureLoopback: !app.isPackaged
+    })
   })
 }
 
@@ -349,6 +365,7 @@ if (!singleInstanceLock) {
     installSecureCredentialIpc()
     installDesktopNotificationIpc()
     installDesktopDeepLinkIpc()
+    installDesktopServerDiscoveryIpc()
     createMainWindow()
     const initialDeepLink = process.argv.find((argument) => argument.startsWith('guduu://'))
     if (initialDeepLink) deliverDeepLink(initialDeepLink)

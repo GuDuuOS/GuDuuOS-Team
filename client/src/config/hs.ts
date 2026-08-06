@@ -9,8 +9,23 @@
  * OEM 换任何域名都零配置生效，客户端产物无需按租户重新构建。
  */
 
+import { cachedActiveAccountSession } from '@/platform/sessionVault'
+
 /** 走「主站 homeserver」的宿主名单：主站域名 + 本地开发 */
 const MAIN_SITE_HOSTS = ['dev-app.guduu.co', 'localhost', '127.0.0.1']
+
+/** 会话恢复前校验 homeserver URL，禁止凭据被发往非 HTTPS 或带参数的地址。 */
+export function isSafeHomeserverUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || !value || value.length > 2048) return false
+  try {
+    const candidate = new URL(value)
+    const isLocal = candidate.hostname === 'localhost' || candidate.hostname === '127.0.0.1'
+    if (candidate.protocol !== 'https:' && !isLocal) return false
+    return !candidate.username && !candidate.password && !candidate.search && !candidate.hash
+  } catch {
+    return false
+  }
+}
 
 /** 当前部署环境的默认 homeserver 基址（不带尾斜杠） */
 export function defaultHsUrl(): string {
@@ -19,7 +34,13 @@ export function defaultHsUrl(): string {
   // 生产构建不设该变量，走下面的正常解析，线上零影响。
   const override = (import.meta as any).env?.VITE_HS_URL
   if ((import.meta as any).env?.DEV && override) return String(override).replace(/\/$/, '')
-  if (window.guduuDesktop?.isDesktop) return 'https://dev-hs.guduu.co'
+  if (window.guduuDesktop?.isDesktop) {
+    // 桌面 OEM 地址只从本次运行内存中已解密的 safeStorage 会话恢复，
+    // 不从可篡改 localStorage 读取；首次切换在登录页当前内存内生效。
+    const sessionBaseUrl = cachedActiveAccountSession()?.baseUrl
+    if (isSafeHomeserverUrl(sessionBaseUrl)) return sessionBaseUrl.replace(/\/$/, '')
+    return 'https://dev-hs.guduu.co'
+  }
   if (MAIN_SITE_HOSTS.includes(window.location.hostname)) {
     return 'https://dev-hs.guduu.co'
   }
