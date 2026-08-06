@@ -3,7 +3,8 @@
 # 仅从严格发行 Tag 下载迁移工具；不携带 OEM KEY，不切换应用镜像。
 set -euo pipefail
 
-RELEASE_TAG="v1.24.1"
+# v1.26.3 的宿主更新器支持 Docker Hub → 自建仓 → GHCR 三仓同摘要回退。
+RELEASE_TAG="v1.26.3"
 ARCHIVE_URL="https://github.com/GuDuuOS/GuDuuOS-Team/archive/refs/tags/${RELEASE_TAG}.tar.gz"
 
 say() { printf '\033[1;36m[GuDuu OS]\033[0m %s\n' "$*"; }

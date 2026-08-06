@@ -157,7 +157,8 @@ class DashboardSecurityTests(unittest.TestCase):
                 response.headers["Content-Type"],
                 "text/x-shellscript; charset=utf-8",
             )
-        self.assertIn('RELEASE_TAG="v1.24.1"', script)
+        self.assertIn('RELEASE_TAG="v1.26.3"', script)
+        self.assertIn("优先拉 Docker Hub", script)
         self.assertIn('exec ./install.sh "$@"', script)
         self.assertNotIn("CMK-", script)
         self.assertNotIn("--key", script)
