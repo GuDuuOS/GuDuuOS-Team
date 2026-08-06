@@ -107,13 +107,30 @@ class UpdateAgentTest(unittest.TestCase):
                 "web_mirror_image": (
                     "registry.guduu.co/guduuos/guduu-os-web@sha256:" + "b" * 64
                 ),
+                "bot_dockerhub_image": (
+                    "docker.io/guduuos/guduu-os-bot@sha256:" + "a" * 64
+                ),
+                "web_dockerhub_image": (
+                    "docker.io/guduuos/guduu-os-web@sha256:" + "b" * 64
+                ),
             }
         }
         command = update_agent._artifact_command(update, "1.9.0", "v1.9.0")
         self.assertIn("apply_images.py", command[1])
+        self.assertIn("--bot-dockerhub-image", command)
         update["artifact"]["bot_image"] = "evil.example/bot@sha256:" + "a" * 64
         with self.assertRaises(RuntimeError):
             update_agent._artifact_command(update, "1.9.0", "v1.9.0")
+
+    def test_installer_prefers_dockerhub_before_other_registries(self):
+        """新节点先用可配置加速器的 Docker Hub，再按固定顺序回退。"""
+        installer = (_APPLY_PATH.parent / "install.sh").read_text(encoding="utf-8")
+        dockerhub_pull = installer.index('docker pull "$BOT_DOCKERHUB_IMAGE"')
+        mirror_pull = installer.index('docker pull "$BOT_MIRROR_IMAGE"')
+        ghcr_pull = installer.index('docker pull "$BOT_GHCR_IMAGE"')
+        self.assertLess(dockerhub_pull, mirror_pull)
+        self.assertLess(mirror_pull, ghcr_pull)
+        self.assertIn('artifact["bot_dockerhub_image"]', installer)
 
     def test_mirror_digest_must_equal_ghcr_digest(self):
         """两个仓的名称即使合法，内容摘要不同也必须拒绝。"""
@@ -128,24 +145,38 @@ class UpdateAgentTest(unittest.TestCase):
                 "web_mirror_image": (
                     "registry.guduu.co/guduuos/guduu-os-web@sha256:" + "b" * 64
                 ),
+                "bot_dockerhub_image": (
+                    "docker.io/guduuos/guduu-os-bot@sha256:" + "a" * 64
+                ),
+                "web_dockerhub_image": (
+                    "docker.io/guduuos/guduu-os-web@sha256:" + "b" * 64
+                ),
             }
         }
-        with self.assertRaisesRegex(RuntimeError, "bot 双仓"):
+        with self.assertRaisesRegex(RuntimeError, "bot 自建仓"):
             update_agent._artifact_command(update, "1.9.0", "v1.9.0")
 
-    def test_mirror_pull_falls_back_as_one_pair(self):
-        """自建仓任一镜像失败时，bot/web 应整组改用 GHCR。"""
+    def test_three_registry_pull_falls_back_as_one_pair(self):
+        """Docker Hub、自建仓失败时，bot/web 应整组改用 GHCR。"""
         with mock.patch.object(
-            apply_images, "_run", side_effect=[RuntimeError("镜像仓离线"), ""]
+            apply_images,
+            "_run",
+            side_effect=[
+                RuntimeError("Docker Hub 离线"),
+                RuntimeError("平台镜像仓离线"),
+                "",
+            ],
         ) as run_mock:
             selected = apply_images._pull_with_fallback(
+                "docker.io/guduuos/guduu-os-bot@sha256:" + "a" * 64,
+                "docker.io/guduuos/guduu-os-web@sha256:" + "b" * 64,
                 "registry.guduu.co/guduuos/guduu-os-bot@sha256:" + "a" * 64,
                 "registry.guduu.co/guduuos/guduu-os-web@sha256:" + "b" * 64,
                 "ghcr.io/guduuos/guduu-os-bot@sha256:" + "a" * 64,
                 "ghcr.io/guduuos/guduu-os-web@sha256:" + "b" * 64,
             )
         self.assertTrue(selected[0].startswith("ghcr.io/"))
-        self.assertEqual(run_mock.call_count, 2)
+        self.assertEqual(run_mock.call_count, 3)
 
     def test_mirror_login_failure_does_not_block_ghcr_fallback(self):
         """自建仓登录失败时不能在拉取前终止整个更新。"""
@@ -171,6 +202,14 @@ class UpdateAgentTest(unittest.TestCase):
         bot = "ghcr.io/guduuos/guduu-os-bot@sha256:" + "a" * 64
         web = "ghcr.io/guduuos/guduu-os-web@sha256:" + "b" * 64
         self.assertEqual(apply_images._validate_image(bot, "bot"), bot)
+        self.assertEqual(
+            apply_images._validate_dockerhub(
+                "docker.io/guduuos/guduu-os-bot@sha256:" + "a" * 64,
+                "bot",
+                bot,
+            ),
+            "docker.io/guduuos/guduu-os-bot@sha256:" + "a" * 64,
+        )
         with self.assertRaises(RuntimeError):
             apply_images._validate_image(web, "bot")
         with tempfile.TemporaryDirectory() as temp_dir:

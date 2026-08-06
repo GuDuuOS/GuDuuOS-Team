@@ -25,6 +25,7 @@ _IMAGE_RE = re.compile(
     r"^ghcr\.io/guduuos/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
 )
 _MIRROR_PREFIX = "registry.guduu.co/guduuos/"
+_DOCKERHUB_PREFIX = "docker.io/guduuos/"
 _MAX_CLOCK_SKEW_SECONDS = 5 * 60
 
 
@@ -148,6 +149,8 @@ def manifest_dict(row: NexusImageManifest) -> Dict[str, Any]:
         # 无需给现有生产表加列，也不会破坏历史发布。
         "bot_mirror_image": _mirror_image(row.bot_image),
         "web_mirror_image": _mirror_image(row.web_image),
+        "bot_dockerhub_image": _dockerhub_image(row.bot_image),
+        "web_dockerhub_image": _dockerhub_image(row.web_image),
         "platforms": row.platforms,
         "created_ts": row.created_ts,
     }
@@ -192,6 +195,8 @@ def artifact_dict(row: Optional[NexusReleaseArtifact]) -> Dict[str, Any]:
         "web_image": row.web_image,
         "bot_mirror_image": _mirror_image(row.bot_image),
         "web_mirror_image": _mirror_image(row.web_image),
+        "bot_dockerhub_image": _dockerhub_image(row.bot_image),
+        "web_dockerhub_image": _dockerhub_image(row.web_image),
         "platforms": row.platforms,
     }
 
@@ -205,3 +210,15 @@ def _mirror_image(ghcr_image: str) -> str:
     if not _IMAGE_RE.fullmatch(ghcr_image):
         raise FleetError("NEXUS_BAD_MANIFEST", "无法生成自建仓镜像引用")
     return _MIRROR_PREFIX + ghcr_image.split("/", 2)[-1]
+
+
+def _dockerhub_image(ghcr_image: str) -> str:
+    """把受信 GHCR 摘要转为 Docker Hub 的同摘要公开引用。
+
+    GitHub Actions 在同一次 Buildx 构建中把同一 manifest 推到两处仓库，并在登记
+    Nexus 前按 ``@sha256`` 验证 Docker Hub 已存在该内容；因此这里只替换仓库前缀，
+    不保存额外可变状态，也不允许 tag 参与自动安装。
+    """
+    if not _IMAGE_RE.fullmatch(ghcr_image):
+        raise FleetError("NEXUS_BAD_MANIFEST", "无法生成 Docker Hub 镜像引用")
+    return _DOCKERHUB_PREFIX + ghcr_image.split("/", 2)[-1]

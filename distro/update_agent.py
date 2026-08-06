@@ -29,6 +29,9 @@ _IMAGE_RE = re.compile(
 _MIRROR_RE = re.compile(
     r"^registry\.guduu\.co/guduuos/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
 )
+_DOCKERHUB_RE = re.compile(
+    r"^docker\.io/guduuos/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
+)
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _SCRIPT_DIR.parent
 _ENV_FILE = _SCRIPT_DIR / ".env"
@@ -163,6 +166,12 @@ def _artifact_command(update: Dict[str, Any], target: str, git_ref: str) -> list
     web_image = str(artifact.get("web_image") or "").strip().lower()
     bot_mirror = str(artifact.get("bot_mirror_image") or "").strip().lower()
     web_mirror = str(artifact.get("web_mirror_image") or "").strip().lower()
+    bot_dockerhub = str(
+        artifact.get("bot_dockerhub_image") or ""
+    ).strip().lower()
+    web_dockerhub = str(
+        artifact.get("web_dockerhub_image") or ""
+    ).strip().lower()
     if (
         not _IMAGE_RE.fullmatch(bot_image)
         or not bot_image.startswith("ghcr.io/guduuos/guduu-os-bot@sha256:")
@@ -175,12 +184,20 @@ def _artifact_command(update: Dict[str, Any], target: str, git_ref: str) -> list
         raise RuntimeError("Nexus 返回了不合法的 web 镜像摘要")
     if not _MIRROR_RE.fullmatch(bot_mirror) or not _MIRROR_RE.fullmatch(web_mirror):
         raise RuntimeError("Nexus 返回了不合法的自建仓镜像摘要")
-    # 两个仓必须指向同一 manifest list；仅比较名字不够，
+    if not _DOCKERHUB_RE.fullmatch(bot_dockerhub) or not _DOCKERHUB_RE.fullmatch(
+        web_dockerhub
+    ):
+        raise RuntimeError("Nexus 返回了不合法的 Docker Hub 镜像摘要")
+    # 三个仓必须指向同一 manifest list；仅比较名字不够，
     # 直接比较 @sha256 后的内容地址才能阻止镜像被调包。
     if bot_mirror.rsplit("@", 1)[-1] != bot_image.rsplit("@", 1)[-1]:
-        raise RuntimeError("bot 双仓镜像摘要不一致")
+        raise RuntimeError("bot 自建仓与 GHCR 镜像摘要不一致")
     if web_mirror.rsplit("@", 1)[-1] != web_image.rsplit("@", 1)[-1]:
-        raise RuntimeError("web 双仓镜像摘要不一致")
+        raise RuntimeError("web 自建仓与 GHCR 镜像摘要不一致")
+    if bot_dockerhub.rsplit("@", 1)[-1] != bot_image.rsplit("@", 1)[-1]:
+        raise RuntimeError("bot Docker Hub 与 GHCR 镜像摘要不一致")
+    if web_dockerhub.rsplit("@", 1)[-1] != web_image.rsplit("@", 1)[-1]:
+        raise RuntimeError("web Docker Hub 与 GHCR 镜像摘要不一致")
     return [
         sys.executable,
         str(_SCRIPT_DIR / "apply_images.py"),
@@ -194,6 +211,10 @@ def _artifact_command(update: Dict[str, Any], target: str, git_ref: str) -> list
         bot_mirror,
         "--web-mirror-image",
         web_mirror,
+        "--bot-dockerhub-image",
+        bot_dockerhub,
+        "--web-dockerhub-image",
+        web_dockerhub,
     ]
 
 

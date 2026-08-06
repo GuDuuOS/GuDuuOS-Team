@@ -1,5 +1,15 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-08-06 — GuDuu OS 1.26.1 (patch)
+
+- 优化：OEM bot/web 多架构镜像同步发布到公开 Docker Hub，并继续保留平台自建仓
+  与 GHCR；三个仓库提供相同不可变摘要及 `vX.Y.Z`、`X.Y.Z` 双版本 Tag。
+- 变更：一键安装与宿主更新器默认优先从 Docker Hub 按摘要拉取，方便国内服务器使用
+  标准 Docker 加速器；失败后整组回退平台自建仓，最后回退 GHCR。
+- 安全：Nexus 仍只接受 CI 签名的 GHCR 摘要作为事实源，Docker Hub 与自建仓必须匹配
+  同一 digest；OEM 节点不保存仓库账号、Token，也不依赖可移动 `latest`。
+- 边界：无需数据库迁移；新镜像只自动进入节点 #2 灰度候选，节点 #1 与 #3 不自动更新。
+
 ## 2026-08-06 — GuDuu OS 1.26.0 (minor)
 
 - 新增：macOS 与 Windows 桌面端支持工作区邀请深链

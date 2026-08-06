@@ -143,7 +143,12 @@ import json, sys
 try:
     value = json.load(sys.stdin)
     artifact = value["artifact"]
-    fields = [value["version"], artifact["bot_mirror_image"], artifact["web_mirror_image"], artifact["bot_image"], artifact["web_image"]]
+    fields = [
+        value["version"],
+        artifact["bot_dockerhub_image"], artifact["web_dockerhub_image"],
+        artifact["bot_mirror_image"], artifact["web_mirror_image"],
+        artifact["bot_image"], artifact["web_image"],
+    ]
     if artifact.get("mode") != "container" or any("@sha256:" not in str(item) for item in fields[1:]):
         raise ValueError("invalid artifact")
     print("\n".join(str(item) for item in fields))
@@ -151,20 +156,28 @@ except Exception:
     raise SystemExit(1)
 ') || die "无法取得可安装镜像：$(printf '%s' "$INSTALL_RESP" | head -c 300)"
 INSTALL_VERSION="${INSTALL_FIELDS[0]}"
-BOT_MIRROR_IMAGE="${INSTALL_FIELDS[1]}"
-WEB_MIRROR_IMAGE="${INSTALL_FIELDS[2]}"
-BOT_GHCR_IMAGE="${INSTALL_FIELDS[3]}"
-WEB_GHCR_IMAGE="${INSTALL_FIELDS[4]}"
+BOT_DOCKERHUB_IMAGE="${INSTALL_FIELDS[1]}"
+WEB_DOCKERHUB_IMAGE="${INSTALL_FIELDS[2]}"
+BOT_MIRROR_IMAGE="${INSTALL_FIELDS[3]}"
+WEB_MIRROR_IMAGE="${INSTALL_FIELDS[4]}"
+BOT_GHCR_IMAGE="${INSTALL_FIELDS[5]}"
+WEB_GHCR_IMAGE="${INSTALL_FIELDS[6]}"
 
-# 自建仓优先；任一镜像失败就整组回退 GHCR，避免 bot/web 来自两套不一致来源。
-say "拉取 GuDuu OS $INSTALL_VERSION 镜像（优先平台镜像仓）……"
-if docker pull "$BOT_MIRROR_IMAGE" && docker pull "$WEB_MIRROR_IMAGE"; then
-  BOT_IMAGE="$BOT_MIRROR_IMAGE"; WEB_IMAGE="$WEB_MIRROR_IMAGE"
+# Docker Hub 优先，方便国内服务器使用标准 Docker 镜像加速器；任一镜像失败就
+# 整组回退自建仓，最后回退 GHCR，避免 bot/web 来自两套不一致来源。
+say "拉取 GuDuu OS $INSTALL_VERSION 镜像（优先 Docker Hub）……"
+if docker pull "$BOT_DOCKERHUB_IMAGE" && docker pull "$WEB_DOCKERHUB_IMAGE"; then
+  BOT_IMAGE="$BOT_DOCKERHUB_IMAGE"; WEB_IMAGE="$WEB_DOCKERHUB_IMAGE"
 else
-  warn "平台镜像仓拉取失败，回退 GHCR 同摘要镜像……"
-  docker pull "$BOT_GHCR_IMAGE" && docker pull "$WEB_GHCR_IMAGE" \
-    || die "两个官方镜像仓均拉取失败；请检查网络或只读仓库凭据。"
-  BOT_IMAGE="$BOT_GHCR_IMAGE"; WEB_IMAGE="$WEB_GHCR_IMAGE"
+  warn "Docker Hub 拉取失败，回退平台镜像仓同摘要镜像……"
+  if docker pull "$BOT_MIRROR_IMAGE" && docker pull "$WEB_MIRROR_IMAGE"; then
+    BOT_IMAGE="$BOT_MIRROR_IMAGE"; WEB_IMAGE="$WEB_MIRROR_IMAGE"
+  else
+    warn "平台镜像仓拉取失败，回退 GHCR 同摘要镜像……"
+    docker pull "$BOT_GHCR_IMAGE" && docker pull "$WEB_GHCR_IMAGE" \
+      || die "Docker Hub、平台镜像仓和 GHCR 均拉取失败；请检查网络或镜像仓公开状态。"
+    BOT_IMAGE="$BOT_GHCR_IMAGE"; WEB_IMAGE="$WEB_GHCR_IMAGE"
+  fi
 fi
 
 # SMTP、主 AI、支付与品牌统一移到安装后的网页首次配置向导。安装器只负责把 OS

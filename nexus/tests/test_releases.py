@@ -94,6 +94,11 @@ class ReleaseTest(unittest.TestCase):
                 "registry.guduu.co/guduuos/"
             )
         )
+        self.assertTrue(
+            release["artifact"]["bot_dockerhub_image"].startswith(
+                "docker.io/guduuos/"
+            )
+        )
         releases.publish(self.s, release["id"])
         update = releases.check_update(self.s, self.key_a, "1.6.32")
         self.assertIsNotNone(update)
@@ -101,6 +106,10 @@ class ReleaseTest(unittest.TestCase):
         self.assertTrue(update["artifact"]["web_image"].endswith("c" * 64))
         self.assertEqual(
             update["artifact"]["web_mirror_image"].rsplit("@", 1)[-1],
+            update["artifact"]["web_image"].rsplit("@", 1)[-1],
+        )
+        self.assertEqual(
+            update["artifact"]["web_dockerhub_image"].rsplit("@", 1)[-1],
             update["artifact"]["web_image"].rsplit("@", 1)[-1],
         )
 

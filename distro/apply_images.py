@@ -27,6 +27,9 @@ _IMAGE_RE = re.compile(
 _MIRROR_RE = re.compile(
     r"^registry\.guduu\.co/guduuos/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
 )
+_DOCKERHUB_RE = re.compile(
+    r"^docker\.io/guduuos/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
+)
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _ENV_FILE = _SCRIPT_DIR / ".env"
 _REGISTRY_FILE = Path("/etc/guduu-registry.env")
@@ -150,41 +153,58 @@ def _validate_mirror(value: str, service: str, fallback: str) -> str:
     if not _MIRROR_RE.fullmatch(image) or not image.startswith(expected):
         raise RuntimeError(service + " 镜像不是受信自建仓精确摘要")
     if image.rsplit("@", 1)[-1] != fallback.rsplit("@", 1)[-1]:
-        raise RuntimeError(service + " 双仓镜像摘要不一致")
+        raise RuntimeError(service + " 自建仓与 GHCR 镜像摘要不一致")
+    return image
+
+
+def _validate_dockerhub(value: str, service: str, fallback: str) -> str:
+    """校验 Docker Hub 公开引用的服务名与摘要都和 GHCR 事实源一致。"""
+    image = (value or "").strip().lower()
+    expected = "docker.io/guduuos/guduu-os-" + service + "@sha256:"
+    if not _DOCKERHUB_RE.fullmatch(image) or not image.startswith(expected):
+        raise RuntimeError(service + " 镜像不是受信 Docker Hub 精确摘要")
+    if image.rsplit("@", 1)[-1] != fallback.rsplit("@", 1)[-1]:
+        raise RuntimeError(service + " Docker Hub 与 GHCR 镜像摘要不一致")
     return image
 
 
 def _pull_with_fallback(
-    primary_bot: str,
-    primary_web: str,
-    fallback_bot: str,
-    fallback_web: str,
+    dockerhub_bot: str,
+    dockerhub_web: str,
+    mirror_bot: str,
+    mirror_web: str,
+    ghcr_bot: str,
+    ghcr_web: str,
 ) -> tuple[str, str]:
-    """优先拉自建仓，任一镜像失败则整组回退 GHCR。
+    """依次拉 Docker Hub、自建仓、GHCR，任一来源都保持 bot/web 整组。
 
     Docker 在拉取 ``@sha256`` 引用时会校验 manifest 内容；因此
     拉取成功本身就是摘要校验，不信任 tag 或 Registry 返回的名称。
     """
-    primary_env = _compose_env(primary_bot, primary_web)
-    try:
-        _run(
-            ["docker", "compose", "pull", "bot", "web"],
-            env=primary_env,
-            timeout=45 * 60,
-        )
-        return primary_bot, primary_web
-    except RuntimeError as exc:
-        print(
-            "[镜像更新] 自建仓拉取失败，回退 GHCR：" + str(exc),
-            file=sys.stderr,
-        )
-        fallback_env = _compose_env(fallback_bot, fallback_web)
-        _run(
-            ["docker", "compose", "pull", "bot", "web"],
-            env=fallback_env,
-            timeout=45 * 60,
-        )
-        return fallback_bot, fallback_web
+    sources = [
+        ("Docker Hub", dockerhub_bot, dockerhub_web),
+        ("平台镜像仓", mirror_bot, mirror_web),
+        ("GHCR", ghcr_bot, ghcr_web),
+    ]
+    last_error: Optional[RuntimeError] = None
+    for index, (name, bot_image, web_image) in enumerate(sources):
+        try:
+            _run(
+                ["docker", "compose", "pull", "bot", "web"],
+                env=_compose_env(bot_image, web_image),
+                timeout=45 * 60,
+            )
+            return bot_image, web_image
+        except RuntimeError as exc:
+            last_error = exc
+            if index + 1 < len(sources):
+                print(
+                    "[镜像更新] %s 拉取失败，回退 %s：%s"
+                    % (name, sources[index + 1][0], exc),
+                    file=sys.stderr,
+                )
+    assert last_error is not None
+    raise RuntimeError("三个公开镜像仓均拉取失败：" + str(last_error))
 
 
 def _backup_database() -> Path:
@@ -302,6 +322,8 @@ def apply(
     web_image: str,
     bot_mirror_image: str,
     web_mirror_image: str,
+    bot_dockerhub_image: str,
+    web_dockerhub_image: str,
 ) -> None:
     """执行一次受保护的镜像切换，失败自动回撤并向调用方返回非零。"""
     if not _VERSION_RE.fullmatch(version):
@@ -310,6 +332,12 @@ def apply(
     web_image = _validate_image(web_image, "web")
     bot_mirror_image = _validate_mirror(bot_mirror_image, "bot", bot_image)
     web_mirror_image = _validate_mirror(web_mirror_image, "web", web_image)
+    bot_dockerhub_image = _validate_dockerhub(
+        bot_dockerhub_image, "bot", bot_image
+    )
+    web_dockerhub_image = _validate_dockerhub(
+        web_dockerhub_image, "web", web_image
+    )
     if not _ENV_FILE.is_file():
         raise RuntimeError("未找到 distro/.env，本机尚未安装")
 
@@ -322,7 +350,12 @@ def apply(
     _run(["docker", "tag", _running_image_id("web"), rollback_web], timeout=30)
 
     selected_bot, selected_web = _pull_with_fallback(
-        bot_mirror_image, web_mirror_image, bot_image, web_image
+        bot_dockerhub_image,
+        web_dockerhub_image,
+        bot_mirror_image,
+        web_mirror_image,
+        bot_image,
+        web_image,
     )
     new_env = _compose_env(selected_bot, selected_web)
     old_env = _compose_env(rollback_bot, rollback_web)
@@ -402,6 +435,8 @@ def main() -> int:
     parser.add_argument("--web-image", required=True)
     parser.add_argument("--bot-mirror-image", required=True)
     parser.add_argument("--web-mirror-image", required=True)
+    parser.add_argument("--bot-dockerhub-image", required=True)
+    parser.add_argument("--web-dockerhub-image", required=True)
     args = parser.parse_args()
     try:
         apply(
@@ -410,6 +445,8 @@ def main() -> int:
             args.web_image,
             args.bot_mirror_image,
             args.web_mirror_image,
+            args.bot_dockerhub_image,
+            args.web_dockerhub_image,
         )
         return 0
     except Exception as exc:
