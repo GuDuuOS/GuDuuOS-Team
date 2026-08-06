@@ -1,5 +1,16 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-08-06 — GuDuu OS 1.26.2 (patch)
+
+- 修复：Electron 打包后实例品牌配置改从已解析的 homeserver
+  绝对地址读取，不再把 `/cosmac/instance/config` 误发给 `guduu-app://` 本地协议。
+- 修复：节点设置与待审批更新接口统一使用当前 Matrix homeserver，
+  保证 macOS/Windows 安装包内管理功能与 Web 端一致。
+- 安全：未建立 Matrix 连接时，鉴权业务请求直接失败，禁止降级为
+  可能误中本地 App origin 的相对地址。
+- 门禁：桌面合规检查新增“业务层禁止相对 `/cosmac` 请求”断言；
+  本次仅本地构建与未签名包装验证，未开放公开下载或提交商城。
+
 ## 2026-08-06 — GuDuu OS 1.26.1 (patch)
 
 - 优化：OEM bot/web 多架构镜像同步发布到公开 Docker Hub，并继续保留平台自建仓

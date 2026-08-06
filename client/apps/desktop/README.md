@@ -39,6 +39,15 @@
 - 冷启动、已运行的第二实例、macOS `open-url` 和 renderer 重载都经过 main 内存队列；
   登录页也持续订阅，未登录用户会在登录后继续进入邀请流程。
 
+## 服务器请求路由
+
+- Electron renderer 从 `guduu-app://` 本地协议加载，所有 Matrix 与
+  `/cosmac` 业务请求必须使用已解析的 homeserver 绝对地址。
+- 实例品牌、节点设置和节点更新应与当前登录的 Matrix 服务器同源；
+  未登录时的鉴权请求禁止降级为相对 URL。
+- `npm run check` 会静态拦截业务层新增的相对 `fetch('/cosmac...')`
+  调用，避免 Web 端正常、安装包内失效的回归。
+
 ## 本地开发
 
 在本目录安装依赖后：

@@ -21,6 +21,7 @@ const files = {
   vite: await readFile(path.join(webRoot, 'vite.config.ts'), 'utf8'),
   index: await readFile(path.join(webRoot, 'index.html'), 'utf8'),
   homeserver: await readFile(path.join(webRoot, 'src/config/hs.ts'), 'utf8'),
+  instanceConfig: await readFile(path.join(webRoot, 'src/config/instance.ts'), 'utf8'),
   matrixClient: await readFile(path.join(webRoot, 'src/matrix/client.ts'), 'utf8'),
   sessionVault: await readFile(path.join(webRoot, 'src/platform/sessionVault.ts'), 'utf8'),
   masEntitlements: await readFile(
@@ -70,6 +71,8 @@ const assertions = [
   [!files.masEntitlements.includes('device.audio-input'), '未提前索取麦克风权限'],
   [!files.index.includes('fonts.googleapis.com'), '不加载远程字体 CSS'],
   [files.homeserver.includes('env?.DEV && override'), '生产构建不读取本地 homeserver 覆盖'],
+  [!files.instanceConfig.includes("fetch('/cosmac"), '实例配置不使用打包后失效的相对 API'],
+  [!files.matrixClient.includes("fetch('/cosmac"), 'Matrix 业务不使用打包后失效的相对 API'],
   [desktopPackage.version === webPackage.version, 'Web/Desktop 版本一致'],
   [!files.package.includes('publish'), '开发期没有发布脚本']
 ]

@@ -131,7 +131,7 @@ export interface NodeAdminSettings {
 
 /** 管理员读取节点设置；服务端只返回密钥“已配置”标记，不返回原文。 */
 export async function getNodeAdminSettings(): Promise<NodeAdminSettings> {
-  const response = await fetch('/cosmac/admin/node-settings', {
+  const response = await fetch(`${payBase()}/cosmac/admin/node-settings`, {
     cache: 'no-store',
     headers: { Authorization: `Bearer ${currentAccessToken()}` },
   })
@@ -142,7 +142,7 @@ export async function getNodeAdminSettings(): Promise<NodeAdminSettings> {
 
 /** 保存首次部署向导或系统设置；空白密钥表示保留服务器中的旧值。 */
 export async function saveNodeAdminSettings(body: Record<string, any>): Promise<NodeAdminSettings> {
-  const response = await fetch('/cosmac/admin/node-settings', {
+  const response = await fetch(`${payBase()}/cosmac/admin/node-settings`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -164,7 +164,7 @@ export interface PendingNodeUpdate {
 }
 
 export async function getPendingNodeUpdate(): Promise<PendingNodeUpdate | null> {
-  const response = await fetch('/cosmac/admin/node-update', {
+  const response = await fetch(`${payBase()}/cosmac/admin/node-update`, {
     cache: 'no-store', headers: { Authorization: `Bearer ${currentAccessToken()}` },
   })
   const payload = await response.json().catch(() => ({}))
@@ -173,7 +173,7 @@ export async function getPendingNodeUpdate(): Promise<PendingNodeUpdate | null> 
 }
 
 export async function approvePendingNodeUpdate(releaseId: number): Promise<void> {
-  const response = await fetch('/cosmac/admin/node-update/approve', {
+  const response = await fetch(`${payBase()}/cosmac/admin/node-update/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${currentAccessToken()}` },
     body: JSON.stringify({ release_id: releaseId }),
@@ -2833,7 +2833,11 @@ export async function getPlans(): Promise<PlanDef[]> {
  *  base = 当前 homeserver，反向代理已把 /cosmac/ 转给 bot。 */
 
 function payBase(): string {
-  return String((mx as any)?.baseUrl || '').replace(/\/$/, '')
+  const base = String((mx as any)?.baseUrl || '').replace(/\/$/, '')
+  // 打包后的 Electron 页面以 guduu-app:// 为 origin；未登录时绝不能把
+  // 鉴权请求降级为相对地址，否则会落到本地协议而不是 homeserver。
+  if (!base) throw new Error('尚未连接服务器')
+  return base
 }
 
 /* —— 自建邮箱验证码注册：调 bot 的 /cosmac/register/* 端点 ——
