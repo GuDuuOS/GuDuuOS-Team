@@ -1,5 +1,14 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-08-06 — GuDuu OS 1.26.3 (patch)
+
+- 修复：Docker Hub 发布目标改为当前已验证可用的个人命名空间 `guduu/`，不再引用
+  未创建且需要额外组织订阅的 `guduuos/` 路径。
+- 优化：继续提供公开的 bot/web 双版本 Tag，并保持 Docker Hub、自建仓与 GHCR
+  三处 manifest digest 一致；安装器仍按 Docker Hub、自建仓、GHCR 顺序回退。
+- 边界：本版作为实际 Docker Hub 镜像候选，只自动登记到节点 #2 灰度；节点 #1
+  与尚未部署的节点 #3 不自动接收任务。
+
 ## 2026-08-06 — GuDuu OS 1.26.2 (patch)
 
 - 修复：Electron 打包后实例品牌配置改从已解析的 homeserver

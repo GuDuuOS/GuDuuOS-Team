@@ -345,7 +345,7 @@ client/
 
 > **Nexus 三镜像仓（2026-08）**：GHCR 继续作为 CI 构建和公开灾备主仓；
 > 同一次 GitHub Actions 构建必须把完全相同的 bot/web 多架构 manifest 同时推送到
-> 官方 Docker Hub `docker.io/guduuos/`，并按不可变 digest 同步到平台自建的
+> 官方 Docker Hub 个人命名空间 `docker.io/guduu/`，并按不可变 digest 同步到平台自建的
 > `registry.guduu.co`，禁止为任一副仓重新构建或只镜像可移动 tag。自建仓运行在
 > Nexus 宿主机的独立容器中，数据只写入单独挂载的 Google Cloud Persistent
 > Disk，不得占用 Nexus 系统盘或进入 Nexus PostgreSQL 备份。镜像同步与清理

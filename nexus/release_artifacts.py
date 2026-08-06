@@ -25,7 +25,7 @@ _IMAGE_RE = re.compile(
     r"^ghcr\.io/guduuos/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
 )
 _MIRROR_PREFIX = "registry.guduu.co/guduuos/"
-_DOCKERHUB_PREFIX = "docker.io/guduuos/"
+_DOCKERHUB_PREFIX = "docker.io/guduu/"
 _MAX_CLOCK_SKEW_SECONDS = 5 * 60
 
 

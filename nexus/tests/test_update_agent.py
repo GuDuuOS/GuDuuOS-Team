@@ -108,10 +108,10 @@ class UpdateAgentTest(unittest.TestCase):
                     "registry.guduu.co/guduuos/guduu-os-web@sha256:" + "b" * 64
                 ),
                 "bot_dockerhub_image": (
-                    "docker.io/guduuos/guduu-os-bot@sha256:" + "a" * 64
+                    "docker.io/guduu/guduu-os-bot@sha256:" + "a" * 64
                 ),
                 "web_dockerhub_image": (
-                    "docker.io/guduuos/guduu-os-web@sha256:" + "b" * 64
+                    "docker.io/guduu/guduu-os-web@sha256:" + "b" * 64
                 ),
             }
         }
@@ -146,10 +146,10 @@ class UpdateAgentTest(unittest.TestCase):
                     "registry.guduu.co/guduuos/guduu-os-web@sha256:" + "b" * 64
                 ),
                 "bot_dockerhub_image": (
-                    "docker.io/guduuos/guduu-os-bot@sha256:" + "a" * 64
+                    "docker.io/guduu/guduu-os-bot@sha256:" + "a" * 64
                 ),
                 "web_dockerhub_image": (
-                    "docker.io/guduuos/guduu-os-web@sha256:" + "b" * 64
+                    "docker.io/guduu/guduu-os-web@sha256:" + "b" * 64
                 ),
             }
         }
@@ -168,8 +168,8 @@ class UpdateAgentTest(unittest.TestCase):
             ],
         ) as run_mock:
             selected = apply_images._pull_with_fallback(
-                "docker.io/guduuos/guduu-os-bot@sha256:" + "a" * 64,
-                "docker.io/guduuos/guduu-os-web@sha256:" + "b" * 64,
+                "docker.io/guduu/guduu-os-bot@sha256:" + "a" * 64,
+                "docker.io/guduu/guduu-os-web@sha256:" + "b" * 64,
                 "registry.guduu.co/guduuos/guduu-os-bot@sha256:" + "a" * 64,
                 "registry.guduu.co/guduuos/guduu-os-web@sha256:" + "b" * 64,
                 "ghcr.io/guduuos/guduu-os-bot@sha256:" + "a" * 64,
@@ -204,11 +204,11 @@ class UpdateAgentTest(unittest.TestCase):
         self.assertEqual(apply_images._validate_image(bot, "bot"), bot)
         self.assertEqual(
             apply_images._validate_dockerhub(
-                "docker.io/guduuos/guduu-os-bot@sha256:" + "a" * 64,
+                "docker.io/guduu/guduu-os-bot@sha256:" + "a" * 64,
                 "bot",
                 bot,
             ),
-            "docker.io/guduuos/guduu-os-bot@sha256:" + "a" * 64,
+            "docker.io/guduu/guduu-os-bot@sha256:" + "a" * 64,
         )
         with self.assertRaises(RuntimeError):
             apply_images._validate_image(web, "bot")

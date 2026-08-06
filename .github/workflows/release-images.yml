@@ -67,8 +67,8 @@ jobs:
           tags: |
             ghcr.io/guduuos/guduu-os-bot:${{ github.ref_name }}
             ghcr.io/guduuos/guduu-os-bot:${{ steps.release.outputs.version }}
-            docker.io/guduuos/guduu-os-bot:${{ github.ref_name }}
-            docker.io/guduuos/guduu-os-bot:${{ steps.release.outputs.version }}
+            docker.io/guduu/guduu-os-bot:${{ github.ref_name }}
+            docker.io/guduu/guduu-os-bot:${{ steps.release.outputs.version }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -87,8 +87,8 @@ jobs:
           tags: |
             ghcr.io/guduuos/guduu-os-web:${{ github.ref_name }}
             ghcr.io/guduuos/guduu-os-web:${{ steps.release.outputs.version }}
-            docker.io/guduuos/guduu-os-web:${{ github.ref_name }}
-            docker.io/guduuos/guduu-os-web:${{ steps.release.outputs.version }}
+            docker.io/guduu/guduu-os-web:${{ github.ref_name }}
+            docker.io/guduu/guduu-os-web:${{ steps.release.outputs.version }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -100,8 +100,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker buildx imagetools inspect "docker.io/guduuos/guduu-os-bot@${{ steps.bot.outputs.digest }}"
-          docker buildx imagetools inspect "docker.io/guduuos/guduu-os-web@${{ steps.web.outputs.digest }}"
+          docker buildx imagetools inspect "docker.io/guduu/guduu-os-bot@${{ steps.bot.outputs.digest }}"
+          docker buildx imagetools inspect "docker.io/guduu/guduu-os-web@${{ steps.web.outputs.digest }}"
           docker buildx imagetools inspect "ghcr.io/guduuos/guduu-os-bot@${{ steps.bot.outputs.digest }}"
           docker buildx imagetools inspect "ghcr.io/guduuos/guduu-os-web@${{ steps.web.outputs.digest }}"
 

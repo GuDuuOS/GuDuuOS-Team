@@ -28,7 +28,7 @@ _MIRROR_RE = re.compile(
     r"^registry\.guduu\.co/guduuos/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
 )
 _DOCKERHUB_RE = re.compile(
-    r"^docker\.io/guduuos/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
+    r"^docker\.io/guduu/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
 )
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _ENV_FILE = _SCRIPT_DIR / ".env"
@@ -160,7 +160,7 @@ def _validate_mirror(value: str, service: str, fallback: str) -> str:
 def _validate_dockerhub(value: str, service: str, fallback: str) -> str:
     """校验 Docker Hub 公开引用的服务名与摘要都和 GHCR 事实源一致。"""
     image = (value or "").strip().lower()
-    expected = "docker.io/guduuos/guduu-os-" + service + "@sha256:"
+    expected = "docker.io/guduu/guduu-os-" + service + "@sha256:"
     if not _DOCKERHUB_RE.fullmatch(image) or not image.startswith(expected):
         raise RuntimeError(service + " 镜像不是受信 Docker Hub 精确摘要")
     if image.rsplit("@", 1)[-1] != fallback.rsplit("@", 1)[-1]:

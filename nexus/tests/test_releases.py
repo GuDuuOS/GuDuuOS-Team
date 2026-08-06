@@ -96,7 +96,7 @@ class ReleaseTest(unittest.TestCase):
         )
         self.assertTrue(
             release["artifact"]["bot_dockerhub_image"].startswith(
-                "docker.io/guduuos/"
+                "docker.io/guduu/"
             )
         )
         releases.publish(self.s, release["id"])

@@ -25,7 +25,7 @@ curl -fsSL https://dev-nexus.guduu.co/portal/install.sh | sudo bash -s -- --doma
 
 干净 Ubuntu 22.04+ / Debian 12+ 上不需要预装 Docker：安装器会自动准备
 基础工具、Docker Engine 和 Compose 插件。节点镜像默认从
-Docker Hub `guduuos/` 按不可变 digest 匿名拉取，便于使用标准镜像加速器；失败时
+Docker Hub `guduu/` 按不可变 digest 匿名拉取，便于使用标准镜像加速器；失败时
 依次回退 `registry.guduu.co` 和同摘要 GHCR；
 客户不需要 GitHub 账号或镜像仓 Token。
 

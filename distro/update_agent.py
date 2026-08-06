@@ -30,7 +30,7 @@ _MIRROR_RE = re.compile(
     r"^registry\.guduu\.co/guduuos/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
 )
 _DOCKERHUB_RE = re.compile(
-    r"^docker\.io/guduuos/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
+    r"^docker\.io/guduu/guduu-os-(?:bot|web)@sha256:[0-9a-f]{64}$"
 )
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _SCRIPT_DIR.parent
