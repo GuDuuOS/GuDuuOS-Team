@@ -7,6 +7,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 TARGET_ROOT=""
+SYSTEMD_DIR="${GUDUU_SYSTEMD_DIR:-/etc/systemd/system}"
 
 say()  { printf '\033[1;36m[GuDuu OS]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[警告]\033[0m %s\n' "$*"; }
@@ -23,6 +24,10 @@ done
 command -v flock >/dev/null 2>&1 || die "服务器缺少 flock（util-linux）。"
 command -v install >/dev/null 2>&1 || die "服务器缺少 install 命令。"
 command -v python3 >/dev/null 2>&1 || die "服务器缺少 python3。"
+case "$SYSTEMD_DIR" in
+  /*) ;;
+  *) die "GUDUU_SYSTEMD_DIR 必须是绝对路径。" ;;
+esac
 
 if [ -z "$TARGET_ROOT" ]; then
   candidates=()
@@ -70,7 +75,7 @@ for name in update_agent.py apply_images.py doctor.sh; do
   [ -f "$TARGET_DISTRO/$name" ] && install -m 0600 "$TARGET_DISTRO/$name" "$BACKUP_DIR/$name"
 done
 for unit in guduu-update-agent.service guduu-update-agent.timer; do
-  [ -f "/etc/systemd/system/$unit" ] && install -m 0600 "/etc/systemd/system/$unit" "$BACKUP_DIR/$unit"
+  [ -f "$SYSTEMD_DIR/$unit" ] && install -m 0600 "$SYSTEMD_DIR/$unit" "$BACKUP_DIR/$unit"
 done
 service_existed=0; timer_existed=0
 [ -f "$BACKUP_DIR/guduu-update-agent.service" ] && service_existed=1
@@ -90,10 +95,10 @@ restore_backup() {
     [ -f "$BACKUP_DIR/$name" ] && install -m 0755 "$BACKUP_DIR/$name" "$TARGET_DISTRO/$name"
   done
   for unit in guduu-update-agent.service guduu-update-agent.timer; do
-    [ -f "$BACKUP_DIR/$unit" ] && install -m 0644 "$BACKUP_DIR/$unit" "/etc/systemd/system/$unit"
+    [ -f "$BACKUP_DIR/$unit" ] && install -m 0644 "$BACKUP_DIR/$unit" "$SYSTEMD_DIR/$unit"
   done
-  [ "$service_existed" -eq 1 ] || rm -f /etc/systemd/system/guduu-update-agent.service
-  [ "$timer_existed" -eq 1 ] || rm -f /etc/systemd/system/guduu-update-agent.timer
+  [ "$service_existed" -eq 1 ] || rm -f "$SYSTEMD_DIR/guduu-update-agent.service"
+  [ "$timer_existed" -eq 1 ] || rm -f "$SYSTEMD_DIR/guduu-update-agent.timer"
   if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload >/dev/null 2>&1 || true
     [ "$timer_was_active" -eq 1 ] && systemctl start guduu-update-agent.timer >/dev/null 2>&1 || true
@@ -118,11 +123,12 @@ chmod 0600 "$TARGET_DISTRO/.env"
 install -d -m 0770 "$TARGET_DISTRO/data/cosmac"
 
 if command -v systemctl >/dev/null 2>&1; then
+  install -d -m 0755 "$SYSTEMD_DIR"
   sed "s|{{DISTRO_DIR}}|$TARGET_DISTRO|g" \
     "$SCRIPT_DIR/templates/guduu-update-agent.service.tpl" \
-    > /etc/systemd/system/guduu-update-agent.service
+    > "$SYSTEMD_DIR/guduu-update-agent.service"
   install -m 0644 "$SCRIPT_DIR/templates/guduu-update-agent.timer.tpl" \
-    /etc/systemd/system/guduu-update-agent.timer
+    "$SYSTEMD_DIR/guduu-update-agent.timer"
   systemctl daemon-reload
   systemctl enable --now guduu-update-agent.timer >/dev/null
   if ! systemctl start guduu-update-agent.service; then

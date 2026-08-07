@@ -27,6 +27,7 @@ class InstallerHostTests(unittest.TestCase):
             encoding="utf-8",
         )
         (fake / "flock").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (fake / "systemctl").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         for path in fake.iterdir():
             path.chmod(path.stat().st_mode | stat.S_IXUSR)
         return fake
@@ -90,6 +91,7 @@ class InstallerHostTests(unittest.TestCase):
                     "PATH": f"{fake}:/usr/bin:/bin",
                     "GUDUU_UPDATE_LOCK": str(base / "guduu-update.lock"),
                     "GUDUU_HOST_TOOLS_VERSION": "1.24.1",
+                    "GUDUU_SYSTEMD_DIR": str(base / "systemd"),
                 }
             )
             completed = subprocess.run(
@@ -169,6 +171,7 @@ class InstallerHostTests(unittest.TestCase):
                     "PATH": f"{fake}:/usr/bin:/bin",
                     "GUDUU_UPDATE_LOCK": str(base / "update.lock"),
                     "GUDUU_HOST_TOOLS_VERSION": "1.29.2",
+                    "GUDUU_SYSTEMD_DIR": str(base / "systemd"),
                 }
             )
             completed = subprocess.run(
