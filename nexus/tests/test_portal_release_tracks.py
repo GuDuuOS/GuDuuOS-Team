@@ -30,6 +30,14 @@ class PortalReleaseTrackTests(unittest.TestCase):
         self.assertIn(".release-target-node:has(input:checked)", css)
         self.assertIn(".release-target-nexus:has(input:checked)", css)
 
+    def test_title_and_canary_fields_use_a_wide_two_column_row(self) -> None:
+        html = (ROOT / "console" / "portal" / "index.html").read_text()
+        css = (ROOT / "console" / "portal" / "portal.css").read_text()
+
+        self.assertIn('class="release-routing-fields"', html)
+        self.assertIn("grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr)", css)
+        self.assertIn(".release-routing-fields { grid-template-columns: 1fr; }", css)
+
 
 if __name__ == "__main__":
     unittest.main()

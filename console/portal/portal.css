@@ -418,6 +418,12 @@ label input { margin-top: 5px; }
 .release-target-nexus:has(input:checked) .release-target-state { border-color: var(--manual); color: var(--manual); }
 .release-image-field { grid-column: 1 / -1; }
 .release-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.release-routing-fields {
+  grid-column: 1 / -1; display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); gap: 10px;
+}
+.release-routing-fields input,
+.release-routing-fields select { width: 100%; }
 .release-notes-field { grid-column: 1 / -2; }
 /* 自动生成的版本说明通常有多条内容，默认展开可以直接完成审阅；
  * 仍保留竖向拖拽，方便超管编辑更长的 OEM 公告。 */
@@ -489,6 +495,7 @@ label input { margin-top: 5px; }
   .announcement-meta { margin-top: 4px; white-space: normal; }
   .release-form { grid-template-columns: 1fr 1fr; }
   .release-target-options { grid-template-columns: 1fr; }
+  .release-routing-fields { grid-template-columns: 1fr; }
   .release-title-field, .release-canary-field, .release-notes-field { grid-column: 1 / -1; }
   .release-notes-field textarea { min-height: 150px; }
   .release-submit { grid-column: 1 / -1; }

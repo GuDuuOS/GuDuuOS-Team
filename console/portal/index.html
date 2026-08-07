@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置使用同源外部脚本，既防刷新闪色，也允许 Portal 开启严格脚本 CSP。 -->
 <script src="/portal/theme-init.js?v=1"></script>
-<link rel="stylesheet" href="/portal/portal.css?v=43" />
+<link rel="stylesheet" href="/portal/portal.css?v=44" />
 </head>
 <body>
 <!--
@@ -620,10 +620,12 @@
           <label class="release-image-field" id="release-image-field">节点镜像
             <input id="release-image-status" value="等待 CI 镜像清单" readonly />
           </label>
-          <label class="release-title-field"><span id="release-title-label">节点版本标题</span><input name="title" required placeholder="例：OEM 节点自动更新" /></label>
-          <label class="release-canary-field" id="release-canary-field">灰度节点
-            <select id="release-canary" name="canary_instance_id"></select>
-          </label>
+          <div class="release-routing-fields">
+            <label class="release-title-field"><span id="release-title-label">节点版本标题</span><input name="title" required placeholder="例：OEM 节点自动更新" /></label>
+            <label class="release-canary-field" id="release-canary-field">灰度节点
+              <select id="release-canary" name="canary_instance_id"></select>
+            </label>
+          </div>
           <label class="release-notes-field">更新说明
             <textarea name="notes" rows="8" required placeholder="面向 OEM 写清新增、修复和注意事项"></textarea>
           </label>
