@@ -15,10 +15,16 @@ const loadFailed = ref(false)
 const updateBusy = ref(false)
 const pendingUpdate = ref<PendingNodeUpdate | null>(null)
 const editing = computed(() => instanceBrand.setupCompleted)
+const brandPolicy = reactive({
+  instance_id: null as number | null,
+  reserved_brand_allowed: false,
+  reserved_brand: 'GuDuu OS',
+  requires_custom_brand: true,
+})
 
 const form = reactive({
-  brand: { product_name: 'GuDuu OS', company_name: '', logo_data_url: '' },
-  email: { host: '', port: 465, user: '', password: '', from_address: '', from_name: 'GuDuu OS', security: 'ssl', password_configured: false },
+  brand: { product_name: '', company_name: '', logo_data_url: '' },
+  email: { host: '', port: 465, user: '', password: '', from_address: '', from_name: '', security: 'ssl', password_configured: false },
   ai: { connection_mode: 'nexus', provider: 'deepseek', model: '', base_url: '', api_key: '', api_key_configured: false },
   payment: {
     alipay: { enabled: false, mode: 'sandbox', app_id: '', notify_url: '', private_key: '', alipay_public_key: '', private_key_configured: false, alipay_public_key_configured: false, adapter_ready: false },
@@ -26,7 +32,15 @@ const form = reactive({
   },
 })
 
-const steps = ['品牌', '发信邮箱', '主 AI', '确认']
+const steps = ['品牌', '发信邮箱', '主 AI', '支付', '确认']
+const paymentConfigured = computed(() => ({
+  alipay: Boolean(form.payment.alipay.app_id && (form.payment.alipay.private_key_configured || form.payment.alipay.private_key)),
+  wechat: Boolean(form.payment.wechat.mch_id && (form.payment.wechat.api_v3_key_configured || form.payment.wechat.api_v3_key)),
+}))
+
+function containsReservedBrand(value: string) {
+  return value.normalize('NFKC').toLowerCase().replace(/[^a-z0-9]+/g, '').includes('guduuos')
+}
 
 watch(() => form.ai.connection_mode, (mode) => {
   // Nexus 网关尚未开放 Echo/Gemini 路由；切换模式时立即收敛为
@@ -47,6 +61,7 @@ onMounted(async () => {
       return
     }
     const value = await getNodeAdminSettings()
+    Object.assign(brandPolicy, value.brand_policy || {})
     Object.assign(form.brand, value.brand || {})
     Object.assign(form.email, value.email || {})
     Object.assign(form.ai, value.ai || {})
@@ -80,6 +95,13 @@ function next() {
   error.value = ''
   if (step.value === 0 && !form.brand.product_name.trim()) {
     error.value = '请先填写产品名称'
+    return
+  }
+  if (step.value === 0 && brandPolicy.requires_custom_brand && [
+    form.brand.product_name,
+    form.brand.company_name,
+  ].some(containsReservedBrand)) {
+    error.value = '当前 OEM 节点必须使用自有品牌，不得使用 GuDuu OS 保留字样。'
     return
   }
   step.value = Math.min(steps.length - 1, step.value + 1)
@@ -118,8 +140,8 @@ async function approveUpdate() {
   <main class="setup-shell">
     <section class="setup-card">
       <header class="setup-head">
-        <img :src="form.brand.logo_data_url || instanceBrand.logoUrl" alt="" />
-        <div><small>GuDuu OS · OEM 节点</small><h1>{{ editing ? '系统设置' : '完成首次部署' }}</h1></div>
+        <img v-if="form.brand.logo_data_url || (brandPolicy.reserved_brand_allowed && instanceBrand.logoUrl)" :src="form.brand.logo_data_url || instanceBrand.logoUrl" alt="" />
+        <div><small>{{ brandPolicy.reserved_brand_allowed ? 'GuDuu OS · 官方节点' : 'OEM 节点配置' }}</small><h1>{{ editing ? '系统设置' : '完成首次部署' }}</h1></div>
       </header>
       <div v-if="!loadFailed" class="steps"><span v-for="(item, i) in steps" :key="item" :class="{ active: i === step, done: i < step }">{{ i + 1 }}. {{ item }}</span></div>
       <div v-if="loading" class="state">正在读取节点设置…</div>
@@ -130,7 +152,7 @@ async function approveUpdate() {
       </div>
       <div v-else class="body">
         <p v-if="error" class="error">{{ error }}</p>
-        <p v-if="route.query.activated === '1'" class="success">授权激活已完成。下面继续配置品牌、邮箱与主 AI。</p>
+        <p v-if="route.query.activated === '1'" class="success">授权激活已完成。下面继续配置品牌、邮箱、主 AI 与支付渠道。</p>
         <div v-if="pendingUpdate" class="update-notice">
           <div><b>发现可选更新 {{ pendingUpdate.current_version }} → {{ pendingUpdate.version }}</b><small>{{ pendingUpdate.title }}</small></div>
           <button :disabled="updateBusy" @click="approveUpdate">{{ updateBusy ? '确认中…' : '确认安装' }}</button>
@@ -138,6 +160,7 @@ async function approveUpdate() {
 
         <template v-if="step === 0">
           <h2>品牌名称与 Logo</h2><p class="hint">登录页、工作台和管理后台会使用这里的品牌。</p>
+          <p v-if="brandPolicy.requires_custom_brand" class="warn">当前为外部 OEM 节点，必须填写您自己的产品名称。“GuDuu OS”及空格、连字符等变体为保留品牌，仅节点 #1、#2、#3 可使用。</p>
           <label>产品名称<input v-model.trim="form.brand.product_name" placeholder="例如：星海协作 OS" /></label>
           <label>企业/组织名称<input v-model.trim="form.brand.company_name" placeholder="例如：星海科技有限公司" /></label>
           <label>Logo（最大 512KB）<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" @change="chooseLogo" /></label>
@@ -153,8 +176,17 @@ async function approveUpdate() {
         </template>
 
         <template v-else-if="step === 2">
-          <h2>主 AI 与 API</h2><p class="hint">先选择使用平台网关还是自有 API。两种模式都可以以后在“系统设置”中切换。</p>
-          <label>接入方式<select v-model="form.ai.connection_mode"><option value="nexus">GuDuu Nexus AI 网关（使用 OEM 授权）</option><option value="direct">自有 API（费用由本企业承担）</option></select></label>
+          <h2>主 AI 与 API</h2><p class="hint">可直接使用我们提供的官方 AI，也可接入您自己购买的模型 API；以后可随时切换。</p>
+          <div class="ai-mode-grid">
+            <label class="ai-mode-card" :class="{ selected: form.ai.connection_mode === 'nexus' }">
+              <input v-model="form.ai.connection_mode" type="radio" value="nexus" />
+              <span><b>使用{{ brandPolicy.reserved_brand_allowed ? ' GuDuu Nexus' : '平台' }}官方 AI</b><small>无需填写 API Key，使用 OEM 授权与平台 Token 结算。</small></span>
+            </label>
+            <label class="ai-mode-card" :class="{ selected: form.ai.connection_mode === 'direct' }">
+              <input v-model="form.ai.connection_mode" type="radio" value="direct" />
+              <span><b>使用企业自有 API</b><small>自选 OpenAI、Claude、DeepSeek 或 Gemini，费用由企业直接承担。</small></span>
+            </label>
+          </div>
           <p v-if="form.ai.connection_mode === 'nexus'" class="mode-note">无需在浏览器输入 API Key；节点使用服务器内的 OEM 授权连接 Nexus，用量按平台 Token 结算。</p>
           <p v-else class="mode-note">您的 API Key 仅加密保存在本节点数据库，不写入聊天配置或返回浏览器。</p>
           <label>提供方<select v-model="form.ai.provider"><option v-if="form.ai.connection_mode === 'direct'" value="echo">暂不接入（Echo）</option><option value="claude">Anthropic Claude</option><option value="openai">OpenAI</option><option value="deepseek">DeepSeek / 方舟</option><option v-if="form.ai.connection_mode === 'direct'" value="gemini">Google Gemini</option></select></label>
@@ -163,9 +195,42 @@ async function approveUpdate() {
           <label v-if="form.ai.connection_mode === 'direct'">API Key<input v-model="form.ai.api_key" type="password" :placeholder="form.ai.api_key_configured ? '已配置；留空保持不变' : 'sk-…'" /></label>
         </template>
 
+        <template v-else-if="step === 3">
+          <h2>支付 API 对接</h2>
+          <p class="hint">填写 OEM 企业自己的支付宝与微信支付凭据。密钥只加密保存在当前节点，页面不会回显原文。</p>
+          <p class="warn">当前页面用于提前完成凭据配置。各渠道在适配器完成、回调验签与沙箱交易验收前，不会被标记为正式收款上线。</p>
+
+          <section class="payment-card">
+            <div class="payment-title">
+              <div><b>支付宝开放平台</b><small>RSA2 应用私钥 + 支付宝公钥</small></div>
+              <label class="switch-row"><input v-model="form.payment.alipay.enabled" type="checkbox" /> 凭据齐全后计划启用</label>
+            </div>
+            <div class="grid"><label>环境<select v-model="form.payment.alipay.mode"><option value="sandbox">沙箱</option><option value="live">生产</option></select></label><label>APPID<input v-model.trim="form.payment.alipay.app_id" placeholder="2021…" /></label></div>
+            <label>异步通知地址<input v-model.trim="form.payment.alipay.notify_url" placeholder="https://pay.example.com/cosmac/pay/callback/alipay" /></label>
+            <label>应用私钥<textarea v-model="form.payment.alipay.private_key" rows="4" :placeholder="form.payment.alipay.private_key_configured ? '已加密配置；留空保持不变' : '粘贴 PEM 私钥'" /></label>
+            <label>支付宝公钥<textarea v-model="form.payment.alipay.alipay_public_key" rows="4" :placeholder="form.payment.alipay.alipay_public_key_configured ? '已加密配置；留空保持不变' : '粘贴支付宝公钥'" /></label>
+            <p class="credential-state">{{ form.payment.alipay.adapter_ready ? '适配器已就绪' : '待适配器与沙箱交易验收' }} · {{ paymentConfigured.alipay ? '凭据已配置' : '凭据未配齐' }}</p>
+          </section>
+
+          <section class="payment-card">
+            <div class="payment-title">
+              <div><b>微信支付 API v3</b><small>商户 APIv3 密钥 + 商户私钥 + 平台公钥</small></div>
+              <label class="switch-row"><input v-model="form.payment.wechat.enabled" type="checkbox" /> 凭据齐全后计划启用</label>
+            </div>
+            <div class="grid"><label>环境<select v-model="form.payment.wechat.mode"><option value="sandbox">沙箱/联调</option><option value="live">生产</option></select></label><label>商户号 mchid<input v-model.trim="form.payment.wechat.mch_id" /></label></div>
+            <div class="grid"><label>AppID<input v-model.trim="form.payment.wechat.app_id" /></label><label>商户证书序列号<input v-model.trim="form.payment.wechat.merchant_serial_no" /></label></div>
+            <label>微信支付公钥 ID<input v-model.trim="form.payment.wechat.platform_public_key_id" placeholder="PUB_KEY_ID_…" /></label>
+            <label>异步通知地址<input v-model.trim="form.payment.wechat.notify_url" placeholder="https://pay.example.com/cosmac/pay/callback/wechat" /></label>
+            <label>APIv3 密钥（正好 32 字节）<input v-model="form.payment.wechat.api_v3_key" type="password" :placeholder="form.payment.wechat.api_v3_key_configured ? '已加密配置；留空保持不变' : '输入 32 字节 APIv3 密钥'" /></label>
+            <label>商户私钥<textarea v-model="form.payment.wechat.merchant_private_key" rows="4" :placeholder="form.payment.wechat.merchant_private_key_configured ? '已加密配置；留空保持不变' : '粘贴 PEM 私钥'" /></label>
+            <label>微信支付平台公钥<textarea v-model="form.payment.wechat.platform_public_key" rows="4" :placeholder="form.payment.wechat.platform_public_key_configured ? '已加密配置；留空保持不变' : '粘贴平台公钥'" /></label>
+            <p class="credential-state">{{ form.payment.wechat.adapter_ready ? '适配器已就绪' : '待适配器与沙箱交易验收' }} · {{ paymentConfigured.wechat ? '凭据已配置' : '凭据未配齐' }}</p>
+          </section>
+        </template>
+
         <template v-else>
           <h2>确认配置</h2>
-          <div class="summary"><b>{{ form.brand.product_name }}</b><span>邮箱：{{ form.email.host ? '已填写' : '稍后配置' }}</span><span>主 AI：{{ form.ai.connection_mode === 'nexus' ? 'Nexus 网关' : '自有 API' }} · {{ form.ai.provider }}</span></div>
+          <div class="summary"><b>{{ form.brand.product_name }}</b><span>邮箱：{{ form.email.host ? '已填写' : '稍后配置' }}</span><span>主 AI：{{ form.ai.connection_mode === 'nexus' ? '平台官方 AI' : '企业自有 API' }} · {{ form.ai.provider }}</span><span>支付 API：支付宝 {{ paymentConfigured.alipay ? '已配置' : '稍后配置' }} · 微信支付 {{ paymentConfigured.wechat ? '已配置' : '稍后配置' }}</span></div>
           <p class="hint">保存后进入工作台。以后可从管理后台“系统设置”再次修改。</p>
         </template>
 
@@ -178,4 +243,5 @@ async function approveUpdate() {
 <style scoped>
 .setup-shell{min-height:100vh;padding:28px;background:linear-gradient(145deg,#fffaf2,#f6eadc);color:#2d2925;display:grid;place-items:center}.setup-card{width:min(820px,100%);min-height:620px;background:#fffdf9;border:1px solid #e7d9c9;border-radius:20px;box-shadow:0 20px 60px #68401b1c;overflow:hidden}.setup-head{display:flex;align-items:center;gap:14px;padding:24px 30px 18px}.setup-head img{width:48px;height:48px;object-fit:contain;border-radius:12px}.setup-head small{color:#a06b3d}.setup-head h1{font-size:24px;margin:3px 0 0}.steps{display:flex;gap:8px;padding:0 30px 18px;border-bottom:1px solid #eee1d3;overflow:auto}.steps span{white-space:nowrap;font-size:13px;color:#9b8e82;padding:7px 10px;border-radius:999px}.steps .active{background:#ef7d25;color:#fff}.steps .done{color:#c3611b}.body{padding:28px 30px}.body h2{font-size:20px;margin:0 0 6px}.hint{color:#8b7d70;font-size:14px;margin:0 0 22px}.body label{display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:650;margin:0 0 16px}.body input,.body select,.body textarea{width:100%;box-sizing:border-box;border:1px solid #d9cabb;border-radius:9px;background:#fff;padding:11px 12px;font:inherit;color:inherit}.body textarea{resize:vertical;line-height:1.45}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.preview{width:72px;height:72px;object-fit:contain;border:1px solid #e3d5c7;border-radius:14px;padding:6px}.warn,.error,.success{border-radius:10px;padding:11px 13px;font-size:13px;line-height:1.55}.warn{background:#fff3df;color:#9a551c}.error{background:#fff0ed;color:#b63f2e}.success{background:#edf9f1;color:#237444}.load-failed{max-width:620px}.update-notice{display:flex;align-items:center;gap:16px;margin:0 0 20px;padding:13px;border:1px solid #e8c69f;background:#fff7eb;border-radius:11px}.update-notice div{display:grid;gap:3px;flex:1}.update-notice small{color:#8b6b4d}.payment-card{margin:16px 0;padding:18px;border:1px solid #e7d8c9;border-radius:13px;background:#fffaf4}.payment-title{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:15px}.payment-title>div{display:grid;gap:4px}.payment-title small,.credential-state{color:#8b7d70;font-size:12px}.switch-row{flex-direction:row!important;align-items:center;white-space:nowrap;margin:0!important}.switch-row input{width:auto}.credential-state{margin:2px 0 0}.summary{display:grid;gap:12px;padding:20px;border:1px solid #e7d8c9;border-radius:12px}.summary span{color:#75695e}footer{display:flex;gap:10px;align-items:center;margin-top:26px}footer span{flex:1}button{border:0;border-radius:9px;background:#e97822;color:#fff;padding:10px 17px;font-weight:700;cursor:pointer}button.ghost{background:#f2e8de;color:#6f6257}button:disabled{opacity:.55}.state{padding:40px 30px;color:#8b7d70}@media(max-width:640px){.setup-shell{padding:0}.setup-card{min-height:100vh;border-radius:0;border:0}.setup-head,.steps,.body{padding-left:18px;padding-right:18px}.grid{grid-template-columns:1fr}.steps{gap:2px}.steps span{font-size:12px;padding:6px}.update-notice,.payment-title{align-items:flex-start;flex-direction:column}}
 .mode-note{margin:-8px 0 18px;padding:10px 12px;border-left:3px solid #dc8a3c;background:#fff8ef;color:#765332;font-size:13px;line-height:1.55}
+.ai-mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:0 0 18px}.body .ai-mode-card{display:flex;flex-direction:row;align-items:flex-start;gap:11px;margin:0;padding:15px;border:1px solid #decdbc;border-radius:12px;background:#fff;cursor:pointer}.body .ai-mode-card.selected{border-color:#e97822;background:#fff7ed;box-shadow:0 0 0 2px #e978221c}.body .ai-mode-card input{width:auto;margin:3px 0 0}.ai-mode-card span{display:grid;gap:5px}.ai-mode-card small{color:#7f7165;font-weight:400;line-height:1.45}@media(max-width:640px){.ai-mode-grid{grid-template-columns:1fr}.payment-card{padding:14px}}
 </style>

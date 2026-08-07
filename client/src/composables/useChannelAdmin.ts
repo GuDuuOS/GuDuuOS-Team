@@ -33,7 +33,7 @@ export interface ChannelPersona { aiName: string; tone: string; prompt: string; 
 export interface ChannelModel { model: string; tokenBudget: number; rateLimit: number }
 export interface ChannelMemory { longTerm: boolean; scope: '仅本群' | '本工作室' | '全平台'; retentionDays: number; audit: boolean }
 
-export const MODEL_OPTIONS = ['GuDuu OS-Pro', 'GuDuu OS-Lite', 'GuDuu OS-文案微调', 'GuDuu OS-Vision(封面识别)']
+export const MODEL_OPTIONS = ['AI-Pro', 'AI-Lite', '文案微调', 'Vision（封面识别）']
 
 /** 成员可被本群调取的数据项 */
 export interface MemberDatum { label: string; value: string; selected: boolean }
@@ -56,7 +56,7 @@ export interface GroupConfig {
 /* ===== 成员数据池（带领域标签，按群所属领域决定默认可调取项）===== */
 interface PoolItem { label: string; value: string; dom: string[] } // dom 含 '*' 表示所有群
 const MEMBER_POOL: Record<string, PoolItem[]> = {
-  'GuDuu OS': [
+  '主 AI': [
     { label: 'AI 今日处理', value: '1,056 项', dom: ['*'] },
     { label: '自动起草', value: '38 篇', dom: ['*'] },
     { label: '节省工时', value: '6 小时', dom: ['*'] }
@@ -125,12 +125,12 @@ const BASE_DATASCOPES: DataScope[] = [
   { label: '私域用户数据',   level: '机密', access: '禁用' }
 ]
 const BASE_PERSONA: ChannelPersona = {
-  aiName: 'GuDuu OS',
+  aiName: '主 AI',
   tone: '懂内容 · 数据优先',
   prompt: `你是${tenant.aiOwner}的${tenant.productName}助手，基于接入的各平台数据与创作素材作答；给出建议须标注数据依据，发布、商单报价等对外动作必须经${tenant.shortName}确认后执行。`,
   agentSlug: '', // 本群绑定的全局智能体 slug（空 = 不绑定，用上面的自定义人设）
 }
-const BASE_MODEL: ChannelModel = { model: 'GuDuu OS-Pro', tokenBudget: 500, rateLimit: 60 }
+const BASE_MODEL: ChannelModel = { model: 'AI-Pro', tokenBudget: 500, rateLimit: 60 }
 const BASE_MEMORY: ChannelMemory = { longTerm: true, scope: '仅本群', retentionDays: 90, audit: true }
 
 /** 为某个群生成一份独立配置（成员数据按群领域预选）*/

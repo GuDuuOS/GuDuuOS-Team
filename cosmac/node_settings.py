@@ -11,6 +11,8 @@ import base64
 import hashlib
 import json
 import os
+import re
+import unicodedata
 from typing import Any, Dict
 from urllib.parse import urlparse
 
@@ -18,6 +20,10 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from cosmac.db import session_scope
 from cosmac.db.models import NodeSetting
+from cosmac.node_activation import instance_id as activated_instance_id
+
+
+OFFICIAL_BRAND_INSTANCE_IDS = frozenset({1, 2, 3})
 
 DEFAULT_PUBLIC: Dict[str, Any] = {
     "brand": {"product_name": "GuDuu OS", "company_name": "", "logo_data_url": ""},
@@ -46,6 +52,34 @@ DEFAULT_PUBLIC: Dict[str, Any] = {
 def _is_oem_node() -> bool:
     """官方 OEM 发行版只把授权/基础设施信息放在环境变量。"""
     return bool(os.environ.get("COSMAC_OEM_KEY", "").strip())
+
+
+def _contains_protected_brand(value: Any) -> bool:
+    """识别品牌的常见空格、连字符和大小写变体。"""
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    compact = re.sub(r"[^a-z0-9]+", "", normalized)
+    return "guduuos" in compact
+
+
+def _brand_policy() -> Dict[str, Any]:
+    """只有内部 #1/#2/#3 节点可把 GuDuu OS 作为客户产品品牌。"""
+    node_id = activated_instance_id() if _is_oem_node() else None
+    allowed = not _is_oem_node() or node_id in OFFICIAL_BRAND_INSTANCE_IDS
+    return {
+        "instance_id": node_id,
+        "reserved_brand_allowed": allowed,
+        "reserved_brand": "GuDuu OS",
+        "requires_custom_brand": not allowed,
+    }
+
+
+def _validate_customer_brand(value: Any, label: str) -> None:
+    policy = _brand_policy()
+    if not policy["reserved_brand_allowed"] and _contains_protected_brand(value):
+        raise NodeSettingsError(
+            f"{label}不得使用 GuDuu OS 保留品牌；"
+            "仅内部节点 #1、#2、#3 可使用"
+        )
 
 
 def _nexus_ai_base_url(provider: str) -> str:
@@ -137,9 +171,25 @@ def public_config() -> Dict[str, Any]:
     with session_scope() as session:
         row = session.get(NodeSetting, 1)
         public = _merge_public(row.public_config if row else {})
+        policy = _brand_policy()
+        protected = any(
+            _contains_protected_brand(public["brand"].get(field))
+            for field in ("product_name", "company_name")
+        )
+        if not policy["reserved_brand_allowed"] and protected:
+            # 存量外部 OEM 即使数据库里留有旧默认值，也不能再对外
+            # 呈现官方品牌；同时重新打开向导要求客户填写自有品牌。
+            public["brand"] = {
+                "product_name": "OEM 协作平台",
+                "company_name": "",
+                "logo_data_url": "",
+            }
         return {
-            "setup_completed": bool(row and row.setup_completed),
+            "setup_completed": bool(row and row.setup_completed and not (
+                not policy["reserved_brand_allowed"] and protected
+            )),
             "brand": public["brand"],
+            "brand_policy": policy,
         }
 
 
@@ -181,8 +231,20 @@ def admin_config() -> Dict[str, Any]:
                 "model": "",
                 "base_url": "",
             })
+        policy = _brand_policy()
+        if not policy["reserved_brand_allowed"]:
+            for section, field in (
+                ("brand", "product_name"),
+                ("brand", "company_name"),
+                ("email", "from_name"),
+            ):
+                if _contains_protected_brand(public[section].get(field)):
+                    public[section][field] = ""
         secrets = _decrypt(row.encrypted_secrets) if row else {}
-        public["setup_completed"] = bool(row and row.setup_completed)
+        public["setup_completed"] = bool(
+            row and row.setup_completed and public["brand"].get("product_name")
+        )
+        public["brand_policy"] = policy
         allow_env = not _is_oem_node()
         public["email"]["password_configured"] = bool(
             secrets.get("smtp_password")
@@ -226,6 +288,14 @@ def save_admin_config(body: Dict[str, Any]) -> Dict[str, Any]:
     product_name = str(brand.get("product_name") or "").strip()
     if not product_name or len(product_name) > 80:
         raise NodeSettingsError("产品名称必填，且不能超过 80 个字符")
+    company_name = _bounded(brand.get("company_name"), 120, "企业/组织名称")
+    from_name = _bounded(email.get("from_name") or product_name, 120, "发件人名称")
+    for value, label in (
+        (product_name, "产品名称"),
+        (company_name, "企业/组织名称"),
+        (from_name, "发件人名称"),
+    ):
+        _validate_customer_brand(value, label)
     logo = str(brand.get("logo_data_url") or "").strip()
     if logo and (not logo.startswith("data:image/") or len(logo) > 700_000):
         raise NodeSettingsError("Logo 必须是 512KB 以内的图片")
@@ -327,7 +397,7 @@ def save_admin_config(body: Dict[str, Any]) -> Dict[str, Any]:
         public = {
             "brand": {
                 "product_name": product_name,
-                "company_name": str(brand.get("company_name") or "").strip()[:120],
+                "company_name": company_name,
                 "logo_data_url": logo,
             },
             "email": {
@@ -335,7 +405,7 @@ def save_admin_config(body: Dict[str, Any]) -> Dict[str, Any]:
                 "port": smtp_port,
                 "user": str(email.get("user") or "").strip()[:320],
                 "from_address": str(email.get("from_address") or "").strip()[:320],
-                "from_name": str(email.get("from_name") or product_name).strip()[:120],
+                "from_name": from_name,
                 "security": "starttls" if email.get("security") == "starttls" else "ssl",
             },
             "ai": {

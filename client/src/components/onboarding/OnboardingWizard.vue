@@ -4,7 +4,7 @@
   <div v-if="visible" class="onb-mask">
     <div class="onb">
       <header class="onb-head">
-        <span class="onb-logo"><Icon name="sparkle" :size="15" /> GuDuu OS</span>
+        <span class="onb-logo"><Icon name="sparkle" :size="15" /> {{ instanceBrand.productName }}</span>
         <span class="onb-sub">初次设置</span>
         <button v-if="step !== 'creating'" class="onb-skip" @click="onSkip">跳过，直接进入</button>
       </header>
@@ -98,6 +98,7 @@
 
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue'
+import { instanceBrand } from '@/config/instance'
 import { ref, nextTick, watch, onBeforeUnmount } from 'vue'
 import { useOnboarding } from '@/composables/useOnboarding'
 

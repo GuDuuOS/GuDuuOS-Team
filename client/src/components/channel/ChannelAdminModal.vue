@@ -60,7 +60,7 @@
           </div>
           <div class="cam-field">
             <label class="cam-field-label">AI 名称</label>
-            <input v-model="state.persona.aiName" class="cam-input" placeholder="如 GuDuu OS" />
+            <input v-model="state.persona.aiName" class="cam-input" :placeholder="`如 ${instanceBrand.productName}`" />
           </div>
           <div class="cam-field">
             <label class="cam-field-label">语气 / 风格</label>
@@ -329,6 +329,7 @@
 
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue'
+import { instanceBrand } from '@/config/instance'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 // 弹窗样式（.cam-*）来自全局 admin-modal.css。真实客户端（main.ts）只加载 tokens/reset、
 // 不加载整包 styles/index.css，所以组件自带这份样式，保证在任何宿主里（DEMO / 真实端）都成型。

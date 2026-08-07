@@ -70,7 +70,7 @@
             </div>
             <div class="mkt-meta">
               <template v-if="it.kind === 'cagent' || it.kind === 'cskill'">创作者 {{ shortUser(it.creator || '') }}<template v-if="it.uses">· 已售 {{ it.uses }} 次</template></template>
-              <template v-else>{{ it.official ? 'GuDuu OS 官方' : '平台运营' }}</template>
+              <template v-else>{{ it.official ? `${instanceBrand.productName} 官方` : '平台运营' }}</template>
               <template v-if="it.kind === 'agent' && it.skill_count">· 内置 {{ it.skill_count }} 项技能</template>
               <template v-if="it.kind === 'skill' && it.agents?.length">· 随【{{ it.agents.join('/') }}】激活</template>
             </div>
@@ -84,6 +84,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { instanceBrand } from '@/config/instance'
 import { useMarketplace } from '@/composables/useMarketplace'
 import { CAT_META, accessBadge, type MarketCat } from '@/data/marketplace'
 import {

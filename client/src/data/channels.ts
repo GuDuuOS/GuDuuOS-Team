@@ -71,7 +71,7 @@ export const workspaceDataMap: Record<string, WorkspaceData> = reactive({
       { id: 'process-handover', label: '成片-审核交付',      routeName: 'ops', routeParams: { id: 'process-handover' }, visibility: 'public' }
     ],
     dms: [
-      { id: 'duu',    label: 'GuDuu OS',     routeName: 'duu',    avatar: 'G', bot: true, online: true },
+      { id: 'duu',    label: '主 AI',        routeName: 'duu',    avatar: 'AI', bot: true, online: true },
       { id: 'a-safe', label: '选题 Agent', routeName: 'safety', avatar: '题', bot: true, online: true },
       { id: 'a-en',   label: '数据 Agent', routeName: 'energy', avatar: '数', bot: true, online: true },
       { id: 'a-doc',  label: '文案 Agent', routeName: 'office', avatar: '文', bot: true, online: true },
@@ -98,7 +98,7 @@ export const currentUser: Member = {
 }
 
 export const channelMembers: Member[] = [
-  { name: 'GuDuu OS',     role: '主控',     avatar: 'G', bot: true, online: true },
+  { name: '主 AI',        role: '主控',     avatar: 'AI', bot: true, online: true },
   { name: '选题 Agent', role: 'bot',     avatar: '题', bot: true, online: true },
   { name: '数据 Agent', role: 'bot',     avatar: '数', bot: true, online: true },
   { name: '文案 Agent', role: 'bot',     avatar: '文', bot: true, online: true },

@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import requests
 
@@ -25,6 +25,28 @@ def required() -> bool:
 def _path() -> str:
     """返回持久化状态文件；发行版挂载到 bot 容器的独立数据目录。"""
     return _env("NODE_ACTIVATION_STATE_PATH", "/var/lib/cosmac/node-activation.json")
+
+
+def instance_id() -> Optional[int]:
+    """读取已兑换的节点编号。
+
+    品牌权限与是否启用首次激活门禁是两件事：存量节点可能已有激活
+    文件，但暂时没有开启 ``NODE_ACTIVATION_REQUIRED``。因此这里始终读持久化
+    状态，不依赖 ``required()``。损坏或缺失时返回 ``None``，上层品牌校验
+    必须按未授权处理。
+    """
+    try:
+        with open(_path(), "r", encoding="utf-8") as handle:
+            value = json.load(handle)
+        if not isinstance(value, dict):
+            return None
+        raw = value.get("instance_id")
+        parsed = int(raw)
+        if value.get("activated") is True and parsed > 0:
+            return parsed
+    except (OSError, ValueError, TypeError):
+        pass
+    return None
 
 
 def status() -> Dict[str, Any]:

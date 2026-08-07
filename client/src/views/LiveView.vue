@@ -526,7 +526,7 @@ function refreshDms() {
         // 桌面端处于后台时再由 main 进程展示系统通知；当前窗口已聚焦时
         // main 会抑制它，只保留上面的页内 toast，避免用户同时看到两次。
         void showDesktopNotification({
-          title: 'GuDuu OS · 新私信',
+          title: `${instanceBrand.productName} · 新私信`,
           body: `${d.name} 向你发起了私信`
         })
       }
@@ -1384,17 +1384,18 @@ function renderMd(raw: string): string {
     const suffix = tail ? tail[0] : ''
     return keep(`<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`) + suffix
   })
-  // 带空格的品牌名「@GuDuu OS」先整体成 pill 并 stash——通用 @ 正则不认空格,
-  // 只会把「@GuDuu OS」包住、" Star" 掉在外面(负责人报的"@ 时 Star 没高亮")。
-  s = s.replace(/(^|[\s(])@GuDuu OS(?=$|[^A-Za-z0-9])/g,
-    (_m, pre) => pre + keep('<span class="mention">@GuDuu OS</span>'))
+  // 带空格的 OEM 品牌名先整体成 pill 并 stash，避免通用 @ 正则只截取第一段。
+  const escapedBrand = instanceBrand.productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const brandMention = new RegExp(`(^|[\\s(])@${escapedBrand}(?=$|[^A-Za-z0-9])`, 'g')
+  s = s.replace(brandMention,
+    (_m, pre) => pre + keep(`<span class="mention">@${instanceBrand.productName}</span>`))
   // @提及高亮（@用户 或 @用户:服务器）。主 AI 的原始账号(@guduu / @guduu:域)按品牌名
-  // 显示为 @GuDuu OS——与后台成员弹窗同口径(负责人要求,任务到期提醒里 @ 出原始账号很难看);
+  // 显示为当前节点品牌名，真实账号仍放在 title 便于排查。
   // 悬浮 title 保留真实账号便于排查。傀儡(@guduu-ai-*) localpart 不同,不受影响。
   s = s.replace(/(^|[\s(])@([a-zA-Z0-9_.\-]+(?::[a-zA-Z0-9_.\-]+)?)/g, (_m, pre, id) => {
     const [lp, domain = ''] = String(id).split(':')
     if (lp === 'guduu') {
-      const shown = domain ? `@GuDuu OS:${domain}` : '@GuDuu OS'
+      const shown = domain ? `@${instanceBrand.productName}:${domain}` : `@${instanceBrand.productName}`
       return `${pre}<span class="mention" title="@${id}">${shown}</span>`
     }
     return `${pre}<span class="mention">@${id}</span>`
@@ -1524,7 +1525,7 @@ async function onOnboardingDone(spaceId: string) {
   }
   if (spaceId) { activeSpace.value = spaceId; spaceChildIds.value = roomIdsInSpace(spaceId) }
   openBoard()
-  toast('工作台已就绪', '欢迎使用 GuDuu OS')
+  toast('工作台已就绪', `欢迎使用 ${instanceBrand.productName}`)
 }
 function onOnboardingSkip() { /* 跳过即可，已标记 onboarded */ }
 
@@ -2294,7 +2295,7 @@ onBeforeUnmount(() => {
             <circle cx="3" cy="9" r="1.6" /><circle cx="9" cy="9" r="1.6" /><circle cx="15" cy="9" r="1.6" />
             <circle cx="3" cy="15" r="1.6" /><circle cx="9" cy="15" r="1.6" /><circle cx="15" cy="15" r="1.6" />
           </svg>
-          <img :src="instanceBrand.logoUrl" alt="" class="logo" />
+          <img v-if="instanceBrand.logoUrl" :src="instanceBrand.logoUrl" alt="" class="logo" />
           <span class="product-name">{{ instanceBrand.productName }}<span class="product-x">X</span>{{ activeSpaceName }}</span>
         </button>
         <div v-if="appMenuOpen" class="tas-pop" @click.stop>
@@ -2565,7 +2566,7 @@ onBeforeUnmount(() => {
           <div class="board-scroll">
             <div class="canvas">
               <div class="ctitle">{{ activeSpaceName }}</div>
-              <div class="csub">// 实时运营画布 · 由 GuDuu OS 自动维护</div>
+              <div class="csub">// 实时运营画布 · 由 {{ instanceBrand.productName }} 自动维护</div>
               <!-- 一句话下达目标：真的发给中枢 AI（复用 aiSend），不再是 mock 卡片 -->
               <div class="board-ask">
                 <div class="board-ask-h"><Icon name="zap" :size="14" /> 一句话下达目标</div>
@@ -2908,7 +2909,7 @@ onBeforeUnmount(() => {
             <textarea
               ref="taRef"
               v-model="draft"
-              :placeholder="currentIsDm ? `发消息给 ${currentName}` : `发送到 #${currentName}；叫主 AI 试：GuDuu OS 建专班 测试专班`"
+              :placeholder="currentIsDm ? `发消息给 ${currentName}` : `发送到 #${currentName}；叫主 AI 试：${instanceBrand.productName} 建专班 测试专班`"
               @keydown="onComposerKeydown"
               @input="detectMention"
               @click="detectMention"
@@ -2966,7 +2967,7 @@ onBeforeUnmount(() => {
         <!-- 顶栏（放大态作为弹窗标题栏，横跨三栏）-->
         <div class="ai-head">
           <span class="ai-dot" />
-          <span class="ai-title">中枢 AI · GuDuu OS</span><span class="ai-dm-badge" title="这是你与中枢 AI 的一对一私人会话，内容仅你们可见；邀请成员请到目标频道里 @AI 操作">私人会话</span>
+          <span class="ai-title">中枢 AI · {{ instanceBrand.productName }}</span><span class="ai-dm-badge" title="这是你与中枢 AI 的一对一私人会话，内容仅你们可见；邀请成员请到目标频道里 @AI 操作">私人会话</span>
           <div class="ai-head-actions">
             <!-- 放大 / 还原 -->
             <button class="ai-ic-btn" :title="aiMax ? '还原' : '放大'" @click="aiMax = !aiMax">

@@ -28,7 +28,8 @@ function normalizeDiscovery(value: unknown): DesktopServerDiscovery {
   }
   const productName = typeof payload.brand.product_name === 'string'
     ? payload.brand.product_name.slice(0, 80)
-    : 'GuDuu OS'
+    : ''
+  const reservedBrandAllowed = payload?.brand_policy?.reserved_brand_allowed !== false
   const companyName = typeof payload.brand.company_name === 'string'
     ? payload.brand.company_name.slice(0, 160)
     : ''
@@ -41,10 +42,11 @@ function normalizeDiscovery(value: unknown): DesktopServerDiscovery {
     homeserverUrl,
     setup_completed: Boolean(payload.setup_completed),
     brand: {
-      product_name: productName || 'GuDuu OS',
+      product_name: productName || (reservedBrandAllowed ? 'GuDuu OS' : 'OEM 协作平台'),
       company_name: companyName,
       logo_data_url: logo,
     },
+    brand_policy: { reserved_brand_allowed: reservedBrandAllowed },
   }
 }
 

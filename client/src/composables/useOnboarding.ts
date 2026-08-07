@@ -1,4 +1,5 @@
 import { ref, reactive } from 'vue'
+import { instanceBrand } from '@/config/instance'
 import {
   isOnboarded, setOnboarded, reportOnboardingTemplate,
   createSpace, createChannelInSpace, setChannelConfig, onboardIngestKb,
@@ -161,7 +162,7 @@ function reset() {
   answers.skillSlugs = []
   answers.kbDocs = []
   answers.workflowSlugs = []
-  ai('👋 欢迎来到 GuDuu OS！我是你的中枢 AI。')
+  ai(`👋 欢迎来到 ${instanceBrand.productName}！我是你的中枢 AI。`)
   ai('先花一分钟把你的工作台搭起来——你主要做哪个方向？')
 }
 

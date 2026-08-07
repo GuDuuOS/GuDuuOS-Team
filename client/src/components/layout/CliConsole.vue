@@ -3,7 +3,7 @@
     <div class="cli-modal" role="dialog" aria-modal="true">
       <div class="cli-head">
         <span class="cli-dot r" /><span class="cli-dot y" /><span class="cli-dot g" />
-        <span class="cli-title">GuDuu OS CLI</span>
+        <span class="cli-title">{{ instanceBrand.productName }} CLI</span>
         <div class="cli-tabs">
           <button class="cli-tab" :class="{ active: tab === 'cloud' }" @click="tab = 'cloud'">云端应用</button>
           <button class="cli-tab" :class="{ active: tab === 'local' }" @click="tab = 'local'">本地连接</button>
@@ -63,6 +63,7 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { instanceBrand } from '@/config/instance'
 import { useCli, localShortcuts } from '@/composables/useCli'
 
 const { visible, tab, cloudApps, lines, localConnected, installCloud, run, close } = useCli()

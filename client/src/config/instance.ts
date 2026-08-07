@@ -8,6 +8,7 @@ export const instanceBrand = reactive({
   productName: 'GuDuu OS',
   companyName: '',
   logoUrl: defaultLogo,
+  reservedBrandAllowed: true,
   setupCompleted: true,
   loaded: false,
 })
@@ -15,6 +16,7 @@ export const instanceBrand = reactive({
 export interface PublicInstanceConfig {
   setup_completed: boolean
   brand?: { product_name?: string; company_name?: string; logo_data_url?: string }
+  brand_policy?: { reserved_brand_allowed?: boolean }
 }
 
 /**
@@ -54,9 +56,11 @@ export function applyInstanceConfig(payload: PublicInstanceConfig): PublicInstan
   const safeLogo = logo.length <= 1536 * 1024 && /^data:image\/(?:png|jpe?g|webp);base64,/i.test(logo)
     ? logo
     : ''
-  instanceBrand.productName = productName || 'GuDuu OS'
+  const reservedBrandAllowed = payload?.brand_policy?.reserved_brand_allowed !== false
+  instanceBrand.productName = productName || (reservedBrandAllowed ? 'GuDuu OS' : 'OEM 协作平台')
   instanceBrand.companyName = companyName
-  instanceBrand.logoUrl = safeLogo || defaultLogo
+  instanceBrand.logoUrl = safeLogo || (reservedBrandAllowed ? defaultLogo : '')
+  instanceBrand.reservedBrandAllowed = reservedBrandAllowed
   instanceBrand.setupCompleted = Boolean(payload?.setup_completed)
   instanceBrand.loaded = true
   document.title = instanceBrand.productName
@@ -67,6 +71,7 @@ export function applyInstanceConfig(payload: PublicInstanceConfig): PublicInstan
       company_name: instanceBrand.companyName,
       logo_data_url: safeLogo,
     },
+    brand_policy: { reserved_brand_allowed: reservedBrandAllowed },
   }
 }
 

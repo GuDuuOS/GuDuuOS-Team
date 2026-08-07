@@ -22,7 +22,7 @@
       <!-- 封面 -->
       <div class="ph-banner">
         <div class="ph-banner-brand-wrap">
-          <span class="ph-banner-brand">GuDuu OS</span>
+          <span class="ph-banner-brand">{{ instanceBrand.productName }}</span>
           <button class="ph-banner-edit" title="编辑封面" @click="toast('🖼 编辑封面', '上传 / 更换主页封面图（演示）')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
           </button>
@@ -129,6 +129,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { instanceBrand } from '@/config/instance'
 import { useProfileHome } from '@/composables/useProfileHome'
 import { useUserProfile } from '@/composables/useUserProfile'
 import { useMyPeople } from '@/composables/useMyPeople'

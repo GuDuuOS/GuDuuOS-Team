@@ -49,6 +49,11 @@ class NodeActivationTests(unittest.TestCase):
             stored = handle.read()
         self.assertNotIn(os.environ["COSMAC_OEM_KEY"], stored)
         self.assertTrue(node_activation.allows_public_access())
+        self.assertEqual(node_activation.instance_id(), 42)
+
+        # 品牌权限仍需读节点号，即使存量节点暂时关闭首次激活门禁。
+        os.environ["COSMAC_NODE_ACTIVATION_REQUIRED"] = "0"
+        self.assertEqual(node_activation.instance_id(), 42)
 
     @patch("cosmac.node_activation.requests.post")
     def test_activation_without_region_stays_restricted(self, post) -> None:

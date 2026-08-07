@@ -2,6 +2,7 @@ import { reactive, ref } from 'vue'
 import { workspaceDataMap } from '@/data/channels'
 import { useActiveWorkspace } from '@/composables/useActiveWorkspace'
 import { tenant } from '@/config/tenant'
+import { instanceBrand } from '@/config/instance'
 import type { ChannelItem } from '@/types/channel'
 
 export type CliTab = 'cloud' | 'local'
@@ -93,8 +94,8 @@ export const localShortcuts: LocalShortcut[] = [
 function out(type: CliLineType, text: string) { lines.push({ type, text }) }
 function welcome() {
   if (lines.length) return
-  out('sys', 'GuDuu OS CLI — 本地连接')
-  out('sys', '安装本地 Agent 后，GuDuu OS 可访问本地电脑的文件 / 应用 / 终端')
+  out('sys', `${instanceBrand.productName} CLI — 本地连接`)
+  out('sys', `安装本地 Agent 后，${instanceBrand.productName} 可访问本地电脑的文件 / 应用 / 终端`)
   out('sys', '输入 connect 连接本地电脑，help 查看命令')
 }
 
@@ -142,7 +143,7 @@ function run(raw: string) {
       break
     case 'screenshot':
       if (!localConnected.value) { out('err', '请先 connect 连接本地电脑'); break }
-      out('ok', '✓ 已截取当前屏幕并回传 GuDuu OS')
+      out('ok', `✓ 已截取当前屏幕并回传 ${instanceBrand.productName}`)
       out('out', '  screen_2026-05-24_1530.png')
       break
     case 'status':

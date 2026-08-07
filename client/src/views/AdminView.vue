@@ -1807,7 +1807,7 @@
               <span class="adm-mid">
                 <!-- 主 AI 按品牌名整体展示为 @GuDuu OS:域(负责人要求);真实账号
                      @guduu:… 是协议层标识改不了,收进 hover 提示供管理员核对 -->
-                <template v-if="isBotMember(m)"><b :title="`真实账号:${m}`">@GuDuu OS:{{ m.split(':')[1] || '' }}</b></template>
+                <template v-if="isBotMember(m)"><b :title="`真实账号:${m}`">@{{ instanceBrand.productName }}:{{ m.split(':')[1] || '' }}</b></template>
                 <!-- AI 同事傀儡账号(方案B):标注它是哪个智能体 -->
                 <template v-else-if="isAiWorkerId(m)"><b>AI 同事·{{ m.replace(/^@guduu-ai-/, '').split(':')[0] }}</b> <span class="adm-dim">{{ m }}</span></template>
                 <template v-else>{{ m }}</template>
@@ -2480,7 +2480,7 @@ function isCtrlRoom(r: AdminRoom): boolean {
 async function doDeleteRoom(r: AdminRoom) {
   // 防呆(#11)：控制室删掉=平台全部配置(AI配置/技能/智能体/会员/门控/配额/套餐/模板等)一次性灭失。
   if (isCtrlRoom(r)) {
-    warn('不可删除', '这是 GuDuu OS 控制室，删除会清空全部平台配置，已阻止。')
+    warn('不可删除', `这是 ${instanceBrand.productName} 控制室，删除会清空全部平台配置，已阻止。`)
     return
   }
   // 删除不可逆，二次确认；并询问是否一并封禁（禁止重建/重新加入）
@@ -3704,7 +3704,7 @@ const chOpenOwners = reactive<Record<string, boolean>>({})
 function toggleOwnerGroup(k: string) { chOpenOwners[k] = !chOpenOwners[k] }
 /** 组标题显示(真人账号直接显示;兜底态原样)。 */
 function displayCreator(uid: string): string {
-  if (uid.startsWith('@guduu:')) return '@GuDuu OS:' + uid.split(':')[1]
+  if (uid.startsWith('@guduu:')) return `@${instanceBrand.productName}:` + uid.split(':')[1]
   return uid
 }
 // 技能 / 智能体 / 模板 / 工作流 / 套餐：按 启用/停用 筛

@@ -6,6 +6,7 @@
 
 import { createClient, type MatrixClient } from 'matrix-js-sdk'
 import { isSafeHomeserverUrl } from '@/config/hs'
+import { instanceBrand } from '@/config/instance'
 import {
   cachedAccountSummaries,
   cachedActiveAccountSession,
@@ -125,6 +126,12 @@ export async function activateNode(baseUrl: string): Promise<void> {
 export interface NodeAdminSettings {
   setup_completed: boolean
   brand: { product_name: string; company_name: string; logo_data_url: string }
+  brand_policy?: {
+    instance_id: number | null
+    reserved_brand_allowed: boolean
+    reserved_brand: string
+    requires_custom_brand: boolean
+  }
   email: Record<string, any>
   ai: Record<string, any>
   payment: Record<string, any>
@@ -1664,7 +1671,7 @@ export async function deleteRoom(roomId: string, block = false): Promise<void> {
   // 入驻模板/工作流/页面内容都只存在这一个房间的 state event 里。删掉不可恢复、整个平台瘫痪。
   // 这里是删除的**唯一收口**，任何入口(含误点)都在此被挡住。
   if (await isControlRoom(roomId)) {
-    throw new Error('这是 GuDuu OS 控制室，删除会清空全部平台配置，已阻止此操作。')
+    throw new Error(`这是 ${instanceBrand.productName} 控制室，删除会清空全部平台配置，已阻止此操作。`)
   }
   await adminFetch(`/_synapse/admin/v1/rooms/${encodeURIComponent(roomId)}`, {
     method: 'DELETE',
@@ -1807,11 +1814,11 @@ export async function ensureControlRoom(): Promise<string> {
 
   try {
     const res: any = await (mx as any).createRoom({
-      name: 'GuDuu OS 控制室',
+      name: `${instanceBrand.productName} 控制室`,
       room_alias_name: CONTROL_ROOM_LOCALPART,
       preset: 'private_chat',
       invite: [botId(), ...others], // 主 AI + 其他管理员
-      topic: 'GuDuu OS 管理后台 · 主 AI 运行时配置（请勿删除/退出）',
+      topic: `${instanceBrand.productName} 管理后台 · 主 AI 运行时配置（请勿删除/退出）`,
       power_level_content_override: { users },
     })
     return res.room_id

@@ -95,6 +95,70 @@ class NodeSettingsTest(unittest.TestCase):
             self.assertEqual(runtime["base_url"], "https://nexus.invalid/gw/ark")
             self.assertNotIn("CMK-server-only", str(saved))
 
+    def test_only_instances_one_two_three_may_use_reserved_brand(self) -> None:
+        """官方三个节点可使用保留品牌，其他 OEM 必须改用自有品牌。"""
+        for node_id in (1, 2, 3):
+            with self.subTest(node_id=node_id), mock.patch.dict(
+                os.environ, {"COSMAC_OEM_KEY": "CMK-official"}, clear=False
+            ), mock.patch(
+                "cosmac.node_settings.activated_instance_id", return_value=node_id
+            ):
+                saved = save_admin_config({
+                    "brand": {
+                        "product_name": "GuDuu OS",
+                        "company_name": "GuDuu OS 官方",
+                    },
+                    "email": {"from_name": "GuDuu OS"},
+                    "ai": {}, "payment": {},
+                })
+                self.assertTrue(saved["brand_policy"]["reserved_brand_allowed"])
+
+        with mock.patch.dict(
+            os.environ, {"COSMAC_OEM_KEY": "CMK-external"}, clear=False
+        ), mock.patch(
+            "cosmac.node_settings.activated_instance_id", return_value=4
+        ):
+            for field, value in (
+                ("product_name", "GuDuu-OS"),
+                ("company_name", "GUDUU_OS 联合实验室"),
+                ("from_name", "guduu os 通知"),
+            ):
+                body = {
+                    "brand": {"product_name": "星海协作", "company_name": "星海科技"},
+                    "email": {"from_name": "星海协作"},
+                    "ai": {}, "payment": {},
+                }
+                if field == "from_name":
+                    body["email"][field] = value
+                else:
+                    body["brand"][field] = value
+                with self.subTest(field=field), self.assertRaisesRegex(
+                    Exception, "GuDuu OS 保留品牌"
+                ):
+                    save_admin_config(body)
+
+            saved = save_admin_config({
+                "brand": {"product_name": "星海协作 OS", "company_name": "星海科技"},
+                "email": {"from_name": "星海协作"},
+                "ai": {}, "payment": {},
+            })
+            self.assertFalse(saved["brand_policy"]["reserved_brand_allowed"])
+            self.assertEqual(saved["brand"]["product_name"], "星海协作 OS")
+
+    def test_external_oem_legacy_default_brand_is_neutralized(self) -> None:
+        """外部 OEM 未配置或留有历史默认值时，不得对外显示官方品牌。"""
+        with mock.patch.dict(
+            os.environ, {"COSMAC_OEM_KEY": "CMK-external"}, clear=False
+        ), mock.patch(
+            "cosmac.node_settings.activated_instance_id", return_value=9
+        ):
+            admin = admin_config()
+            public = public_config()
+            self.assertEqual(admin["brand"]["product_name"], "")
+            self.assertTrue(admin["brand_policy"]["requires_custom_brand"])
+            self.assertEqual(public["brand"]["product_name"], "OEM 协作平台")
+            self.assertFalse(public["setup_completed"])
+
     def test_oem_without_saved_settings_ignores_legacy_business_env(self) -> None:
         """官方节点首次进向导前，旧 SMTP/模型 env 不得成为隐形第二真值源。"""
         from cosmac.registration import _smtp_conf

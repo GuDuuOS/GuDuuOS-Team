@@ -11,7 +11,7 @@
           <b>{{ groupName }}</b> · 频道成员、技能、知识库与规则的总览。配置在「频道管理」里维护，本面板实时同步。
         </div>
         <div v-else class="pc">
-          本频道由 <b>GuDuu OS</b> 7×24 实时维护。所有数据、账号状态、Agent 消息均来自接入的
+          本频道由 <b>{{ instanceBrand.productName }}</b> 7×24 实时维护。所有数据、账号状态、Agent 消息均来自接入的
           抖音 / 小红书 / 视频号 / 公众号 等平台。
         </div>
       </div>
@@ -74,6 +74,7 @@
 
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue'
+import { instanceBrand } from '@/config/instance'
 import { computed, ref } from 'vue'
 import { useRightPanel } from '@/composables/useRightPanel'
 import { fetchRoomKbDoc } from '@/matrix/client'

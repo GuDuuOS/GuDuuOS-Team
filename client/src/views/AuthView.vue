@@ -499,14 +499,14 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
       <!-- 顶部：品牌 + tab/标题 -->
       <div class="auth-top">
         <div class="auth-brand-row">
-          <div class="brand login-brand"><img :src="instanceBrand.logoUrl" class="brand-logo" alt="" />{{ instanceBrand.productName }}</div>
+          <div class="brand login-brand"><img v-if="instanceBrand.logoUrl" :src="instanceBrand.logoUrl" class="brand-logo" alt="" />{{ instanceBrand.productName }}</div>
           <button v-if="isDesktop" type="button" class="server-switch" @click="openServerChooser">
             <Icon name="server" :size="13" /> {{ serverHost }} · 切换
           </button>
         </div>
         <div v-if="isDesktop && serverChooserOpen" class="server-chooser">
           <div class="server-chooser-title">
-            <b>连接 GuDuu OS 服务器</b>
+            <b>连接 {{ instanceBrand.productName }} 服务器</b>
             <button type="button" class="server-chooser-close" aria-label="关闭" @click="serverChooserOpen = false">×</button>
           </div>
           <div class="server-chooser-row">
@@ -523,7 +523,7 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
               {{ serverLoading ? '验证中…' : '连接' }}
             </button>
           </div>
-          <p>将先读取 Matrix `.well-known`，再验证 GuDuu OS 品牌配置。不会发送账号、密码或 token。</p>
+          <p>将先读取 Matrix `.well-known`，再验证该服务器的品牌配置。不会发送账号、密码或 token。</p>
           <p v-if="serverError" class="server-error">{{ serverError }}</p>
         </div>
         <div class="auth-tabs" v-if="authMode !== 'reset'">
