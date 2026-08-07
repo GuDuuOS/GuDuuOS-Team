@@ -1040,6 +1040,31 @@ def dash_summary(s) -> Dict[str, Any]:
         [int(count or 0) for _, count in fleet_minute_rows] or [0]
     )
 
+    # 节点的业务身份来自发布环境策略：#1/#2/#3 不能只靠 OEM 公司名或域名前缀
+    # 猜，否则同一家公司的开发、灰度、正式机器在大屏上会全部显示成同一个名字。
+    # 普通客户实例不属于平台三条内部环境，统一标为 OEM 客户节点。
+    from nexus import release_policy as release_policy_service
+
+    policy = release_policy_service.get_policy(s)
+    development_ids = {
+        int(value) for value in policy.get("development_instance_ids", [])
+    }
+    canary_id = int(policy.get("canary_instance_id") or 0)
+    production_ids = {
+        int(value) for value in policy.get("production_instance_ids", [])
+    }
+
+    def _node_identity(instance_id: int) -> tuple[str, str, str]:
+        if instance_id in development_ids:
+            role, label = "development", "开发节点"
+        elif canary_id and instance_id == canary_id:
+            role, label = "canary", "灰度节点"
+        elif instance_id in production_ids:
+            role, label = "production", "正式节点"
+        else:
+            role, label = "customer", "OEM 客户节点"
+        return role, label, f"{label} #{instance_id}"
+
     # 大屏里的“OEM 数”必须按企业去重，不能再把一家公司部署的多台实例误算成
     # 多个 OEM。归属仍沿 KEY 认领表读取，不在实例表复制企业字段。
     instance_rows = list(
@@ -1071,6 +1096,7 @@ def dash_summary(s) -> Dict[str, Any]:
     for inst in instance_rows:
         wallet = s.get(NexusWallet, inst.id)
         owner = owners.get(int(inst.key_id), {})
+        node_role, node_role_label, node_name = _node_identity(int(inst.id))
         try:
             stats = json.loads(inst.stats_json or "{}")
         except Exception:
@@ -1095,6 +1121,9 @@ def dash_summary(s) -> Dict[str, Any]:
         oems.append(
             {
                 "id": inst.id,
+                "node_name": node_name,
+                "node_role": node_role,
+                "node_role_label": node_role_label,
                 "domain": inst.domain,
                 "created_ts": inst.created_ts,
                 "oem_id": owner.get("oem_id"),

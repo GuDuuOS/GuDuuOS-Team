@@ -481,19 +481,30 @@
 
   // 把 Nexus 返回的一个实例映射成大屏节点（字段形态与演示 OEMS 完全一致）
   function adaptOem(o, index) {
-    const seed = hashSeed(o.domain || String(o.id));
+    const domain = String(o.domain || `instance-${o.id}`);
+    const seed = hashSeed(domain || String(o.id));
     const rand = mulberry32(seed);
     const [color, accent] = REAL_PALETTE[seed % REAL_PALETTE.length];
-    // 展示名取域名里最有辨识度的一段：首段是 im/chat 这类通用词时用第二段
-    const labels = String(o.domain || `实例${o.id}`).split(".");
-    const generic = new Set(["im", "chat", "app", "www", "hub", "api"]);
-    const shortName = String(o.company_name || "").trim()
-      || (generic.has(labels[0]) && labels[1] ? labels[1] : labels[0]);
+    const companyName = String(o.company_name || "").trim();
+    const nodeRole = String(o.node_role || "customer");
+    const nodeRoleLabel = String(o.node_role_label || "OEM 客户节点");
+    const nodeName = String(o.node_name || `${nodeRoleLabel} #${o.id}`);
+    const roleInitials = {
+      development: "DEV",
+      canary: "UAT",
+      production: "PROD",
+      customer: "OEM",
+    };
     return {
       id: `nx-${o.id}`,
-      name: shortName,
+      instanceId: Number(o.id) || 0,
+      name: nodeName,
+      nodeRole,
+      nodeRoleLabel,
+      domain,
+      companyName,
       code: `NX-${String(o.id).padStart(2, "0")}`,
-      initials: shortName.slice(0, 2).toUpperCase(),
+      initials: roleInitials[nodeRole] || "OEM",
       color,
       accent,
       // 地图点位：有真实地域(母舰按 OEM 兑码时选的机房算出经纬度)就按经纬度投影；
@@ -528,6 +539,15 @@
       orbit: (index % 3) + 1,
       balance: o.balance_tokens || 0,
       users: o.users || 0,
+      accountsTotal: Number(o.accounts_total || 0),
+      adminUsers: Number(o.admin_users || 0),
+      aiUsers: Number(o.ai_users || 0),
+      oemId: o.oem_id === null || o.oem_id === undefined ? null : Number(o.oem_id),
+      version: String(o.version || ""),
+      lastSeenTs: o.last_seen_ts === null || o.last_seen_ts === undefined
+        ? null
+        : Number(o.last_seen_ts),
+      createdTs: Number(o.created_ts || 0),
     };
   }
 
@@ -699,9 +719,13 @@
         const node = state.nodes.find((n) => n.id === fresh.id);
         if (!node) return;
         Object.assign(node, {
+          name: fresh.name, nodeRole: fresh.nodeRole, nodeRoleLabel: fresh.nodeRoleLabel,
+          domain: fresh.domain, companyName: fresh.companyName, initials: fresh.initials,
           token: fresh.token, today: fresh.today, requests: fresh.requests,
           delta: fresh.delta, status: fresh.status, models: fresh.models,
           balance: fresh.balance, users: fresh.users, latency: fresh.latency,
+          accountsTotal: fresh.accountsTotal, adminUsers: fresh.adminUsers,
+          aiUsers: fresh.aiUsers, version: fresh.version, lastSeenTs: fresh.lastSeenTs,
           successPct: fresh.successPct, avgLatencyMs: fresh.avgLatencyMs,
           p95LatencyMs: fresh.p95LatencyMs,
           p95LatencyOverflow: fresh.p95LatencyOverflow,
@@ -754,6 +778,19 @@
     if (d < 3600e3) return `${Math.floor(d / 60e3)} 分钟前`;
     if (d < 86400e3) return `${Math.floor(d / 3600e3)} 小时前`;
     return `${Math.floor(d / 86400e3)} 天前`;
+  }
+
+  function fmtDateTime(ts) {
+    const value = Number(ts);
+    if (!Number.isFinite(value) || value <= 0) return "尚未上报";
+    return new Date(value).toLocaleString("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
   }
 
   // 模型用量分布：环图 + 图例（数据=网关流水按模型聚合；空数据给诚实占位）
@@ -1027,6 +1064,9 @@
       const el = $(sel);
       if (el) el.style.display = "none";
     }
+    // 详情抽屉原先的“近 7 日用量”和“模型实例”是设计稿演示件，目前没有逐节点
+    // 真实数据源。生产真实模式直接隐藏，避免管理员把装饰数字当成节点事实。
+    $$(".drawer-oem-section").forEach((el) => { el.hidden = true; });
   }
   /** 把"还没有数据源"的指标落成诚实值,别让编出来的数字看着像真的。
    *
@@ -1738,20 +1778,24 @@
     for (const group of geoGroups) {
       const node = group.nodes[0];
       const count = group.nodes.length;
-      // 同地域多台：主名后缀「+N」,一眼看出这个点代表几台,而不是画成重影
-      const displayName = count > 1 ? `${node.name} +${count - 1}` : node.name;
+      // 同地域多台使用“地区节点组”，避免拿组内第一台机器的身份代表整组。
+      const displayName = count > 1 ? `${group.regionLabel}节点组` : node.name;
       // 节点数**始终**显示（原先只有 >1 台才显示，导致看到「浙江」时不知道是几台）。
       // 多台时再补一个在线数，好一眼看出这片区域有没有机器掉线。
       const onlineCount = group.nodes.filter((n) => n.status === "active").length;
       const metaText =
         count > 1
           ? `${group.regionLabel} · ${count} 个节点 · ${onlineCount}/${count} 在线`
-          : `${group.regionLabel} · 1 个节点`;
+          : `${node.code} · ${group.regionLabel} · ${node.domain}`;
       const sumToken = group.nodes.reduce((acc, n) => acc + (Number(n.token) || 0), 0);
       const btn = document.createElement("button");
       btn.className = "geo-node";
       btn.type = "button";
       btn.dataset.nodeId = group.id;
+      btn.title = count > 1
+        ? `${group.regionLabel}：${group.nodes.map((item) => `${item.name}（${item.domain}）`).join("、")}`
+        : `${node.name}｜${node.domain}｜${node.companyName || "未绑定 OEM 企业"}`;
+      btn.setAttribute("aria-label", `${btn.title}，点击查看详情`);
       const geoColor = safeHexColor(node.color);
       btn.style.setProperty("--geo-color", geoColor);            // 色块用:图标渐变/阴影/边框/描边
       btn.style.setProperty("--geo-color-text", textSafeColor(geoColor));  // 文字用:压到浅底上可读
@@ -2140,7 +2184,10 @@
       deltaValue.textContent = `${delta >= 0 ? "+" : ""}${delta.toFixed(1)}%`;
       value.append(tokenValue, deltaValue);
       item.append(order, planet, info, value);
-      item.addEventListener("click", () => selectNode(item.dataset.nodeId));
+      item.addEventListener("click", () => {
+        selectNode(item.dataset.nodeId);
+        openDrawer(item);
+      });
       fragment.appendChild(item);
     });
     list.replaceChildren(fragment);
@@ -2176,13 +2223,13 @@
     const update = () => {
       $("#selected-avatar").textContent = node.initials;
       $("#selected-avatar").style.setProperty("--avatar", safeHexColor(node.color));
-      $("#selected-code").textContent = `OEM · ${node.code}`;
+      $("#selected-code").textContent = `${node.code} · ${node.nodeRoleLabel || "OEM 节点"}`;
       $("#selected-name").textContent = node.name;
       // 单位跟全局自适应单位走;此前写死 "B" 会把 100M 显示成 100.00B(差 1000 倍)
       $("#selected-token").textContent = `${node.token.toFixed(2)}${TOKEN_UNIT.label}`;
       $("#selected-requests").textContent = node.requests;
       $("#selected-latency").textContent = node.latency;
-      $("#selected-models").textContent = `${node.models} 个模型在线`;
+      $("#selected-models").textContent = node.domain || `${node.models} 个模型在线`;
       const stateBadge = $("#selected-state");
       stateBadge.textContent = statusText(node.status);
       stateBadge.className = `node-state${node.status === "warning" ? " is-warning" : node.status === "offline" ? " is-offline" : ""}`;
@@ -2293,10 +2340,20 @@
     drawer.classList.remove("is-grid-cell");
     $("#drawer-eyebrow").textContent = "NODE PROFILE";
     $("#drawer-name").textContent = node.name;
-    $("#drawer-code").textContent = `OEM · ${node.code}`;
+    $("#drawer-code").textContent = `${node.code} · ${node.nodeRoleLabel || "OEM 节点"}`;
     $("#drawer-status").textContent = statusText(node.status);
     $("#drawer-region").textContent = node.region;
     $("#drawer-glyph").textContent = node.initials;
+    $("#drawer-domain").textContent = node.domain || "—";
+    $("#drawer-domain").title = node.domain || "";
+    $("#drawer-company").textContent = node.companyName || "未绑定 OEM 企业";
+    $("#drawer-company").title = node.companyName || "";
+    $("#drawer-version").textContent = node.version || "未上报";
+    $("#drawer-heartbeat").textContent = node.lastSeenTs ? relTime(node.lastSeenTs) : "尚未上报";
+    $("#drawer-heartbeat").title = fmtDateTime(node.lastSeenTs);
+    $("#drawer-accounts").textContent = `${node.users || 0} 业务 / ${node.accountsTotal || 0} 总账号`;
+    $("#drawer-account-meta").textContent = `${node.adminUsers || 0} 管理员 · ${node.aiUsers || 0} AI`;
+    $("#drawer-created").textContent = fmtDateTime(node.createdTs);
     $("#drawer-token-label").textContent = "累计 Token";
     $("#drawer-token").textContent = `${node.token.toFixed(2)}${TOKEN_UNIT.label}`;
     $("#drawer-requests-label").textContent = "今日请求";
@@ -2321,7 +2378,7 @@
       node.p95LatencyOverflow,
     );
     const total = state.nodes.reduce((sum, item) => sum + item.token, 0);
-    $("#drawer-share").textContent = `全局占比 ${((node.token / total) * 100).toFixed(1)}%`;
+    $("#drawer-share").textContent = `全局占比 ${total > 0 ? ((node.token / total) * 100).toFixed(1) : "0.0"}%`;
     $("#drawer-planet").style.setProperty("--drawer-color", safeHexColor(node.color));
     showDrawer(trigger);
   }

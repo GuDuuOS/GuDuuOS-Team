@@ -331,6 +331,9 @@ class FleetTest(unittest.TestCase):
 
         by_domain = {o["domain"]: o for o in out["oems"]}
         a = by_domain["im.dash-a.test"]
+        self.assertEqual(a["node_role"], "development")
+        self.assertEqual(a["node_role_label"], "开发节点")
+        self.assertEqual(a["node_name"], f"开发节点 #{inst}")
         self.assertEqual(a["status"], "active")
         self.assertEqual(a["tokens_total"], 180)
         self.assertEqual(a["requests_today"], 3)
@@ -345,7 +348,11 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(out["totals"]["admin_users"], 1)
         self.assertEqual(out["totals"]["ai_users"], 2)
         self.assertEqual(a["balance_tokens"], 820)
-        self.assertEqual(by_domain["im.dash-b.test"]["status"], "offline")
+        second = by_domain["im.dash-b.test"]
+        self.assertEqual(second["status"], "offline")
+        self.assertEqual(second["node_role"], "canary")
+        self.assertEqual(second["node_role_label"], "灰度节点")
+        self.assertEqual(second["node_name"], f"灰度节点 #{second['id']}")
         # 实时动态：A 的 grant + 2 笔 usage + B 的 grant = 4 条流水
         self.assertEqual(len(out["recent"]), 4)
         # 模型分布环图：按用量降序（gpt-4o 150 > claude-x 30）
