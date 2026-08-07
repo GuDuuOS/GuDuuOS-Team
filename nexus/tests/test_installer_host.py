@@ -170,7 +170,7 @@ class InstallerHostTests(unittest.TestCase):
                 {
                     "PATH": f"{fake}:/usr/bin:/bin",
                     "GUDUU_UPDATE_LOCK": str(base / "update.lock"),
-                    "GUDUU_HOST_TOOLS_VERSION": "1.29.2",
+                    "GUDUU_HOST_TOOLS_VERSION": "1.30.1",
                     "GUDUU_SYSTEMD_DIR": str(base / "systemd"),
                 }
             )
@@ -188,8 +188,53 @@ class InstallerHostTests(unittest.TestCase):
                 (target / "data" / "update" / "host-tools-version")
                 .read_text(encoding="utf-8")
                 .strip(),
-                "1.29.2",
+                "1.30.1",
             )
+
+    def test_migrator_can_explicitly_approve_cached_release(self) -> None:
+        """旧 bot 卡住时，root 只能批准代理已缓存的当前 release_id。"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            fake = self._fake_bin(base)
+            target = base / "node"
+            target.mkdir()
+            (target / ".env").write_text("DOMAIN=oem.example.com\n", encoding="utf-8")
+            (target / "docker-compose.yml").write_text("# flat layout\n", encoding="utf-8")
+            for name in ("update_agent.py", "apply_images.py", "doctor.sh"):
+                (target / name).write_text(f"old-{name}\n", encoding="utf-8")
+            state = target / "data" / "cosmac"
+            state.mkdir(parents=True)
+            (state / "pending-update.json").write_text(
+                '{"release_id":33,"version":"1.30.0"}', encoding="utf-8"
+            )
+            env = dict(os.environ)
+            env.update(
+                {
+                    "PATH": f"{fake}:/usr/bin:/bin",
+                    "GUDUU_UPDATE_LOCK": str(base / "update.lock"),
+                    "GUDUU_HOST_TOOLS_VERSION": "1.30.1",
+                    "GUDUU_SYSTEMD_DIR": str(base / "systemd"),
+                }
+            )
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(MIGRATE_HOST),
+                    "--install-root",
+                    str(target),
+                    "--approve-current",
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout)
+            approval = (state / "approved-update.json").read_text(encoding="utf-8")
+            self.assertIn('"release_id": 33', approval)
+            self.assertNotIn("version", approval)
+            self.assertIn("明确批准当前 release #33", completed.stdout)
 
 
 if __name__ == "__main__":

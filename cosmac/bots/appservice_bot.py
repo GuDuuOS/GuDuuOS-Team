@@ -3844,17 +3844,10 @@ class CosmacBot:
         path = os.environ.get(
             "COSMAC_APPROVED_UPDATE_PATH", "/var/lib/cosmac/approved-update.json"
         )
-        temp = path + ".tmp"
         try:
-            parent = os.path.dirname(path) or "."
-            os.makedirs(parent, mode=0o770, exist_ok=True)
-            os.chmod(parent, 0o770)
-            with open(temp, "w", encoding="utf-8") as handle:
-                json.dump({"release_id": expected, "approved_by": user_id}, handle)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chmod(temp, 0o660)
-            os.replace(temp, path)
+            from cosmac.node_updates import write_update_approval
+
+            write_update_approval(path, expected, user_id)
             return 200, {"approved": True, "release_id": expected}
         except Exception:
             logger.exception("写入节点更新批准文件失败")

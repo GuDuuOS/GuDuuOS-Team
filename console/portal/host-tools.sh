@@ -3,8 +3,8 @@
 # 仅从严格发行 Tag 下载迁移工具；不携带 OEM KEY，不切换应用镜像。
 set -euo pipefail
 
-# v1.29.2 修复 timer 首次不执行及网页批准目录权限问题。
-RELEASE_TAG="v1.29.2"
+# v1.30.1 修复容器只有组写权限时，网页批准误改宿主目录权限而失败的问题。
+RELEASE_TAG="v1.30.1"
 ARCHIVE_URL="https://github.com/GuDuuOS/GuDuuOS-Team/archive/refs/tags/${RELEASE_TAG}.tar.gz"
 
 say() { printf '\033[1;36m[GuDuu OS]\033[0m %s\n' "$*"; }

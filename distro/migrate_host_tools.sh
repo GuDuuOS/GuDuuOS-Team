@@ -7,6 +7,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 TARGET_ROOT=""
+APPROVE_CURRENT=0
 SYSTEMD_DIR="${GUDUU_SYSTEMD_DIR:-/etc/systemd/system}"
 
 say()  { printf '\033[1;36m[GuDuu OS]\033[0m %s\n' "$*"; }
@@ -16,7 +17,8 @@ die()  { printf '\033[1;31m[失败]\033[0m %s\n' "$*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --install-root) TARGET_ROOT="${2:-}"; shift 2 ;;
-    *) die "未知参数：$1（仅支持 --install-root /opt/…）" ;;
+    --approve-current) APPROVE_CURRENT=1; shift ;;
+    *) die "未知参数：$1（仅支持 --install-root /opt/…、--approve-current）" ;;
   esac
 done
 
@@ -135,7 +137,21 @@ if command -v systemctl >/dev/null 2>&1; then
     warn "代理首次检查未成功；timer 已保留，会在 5 分钟内自动重试。"
     warn "排障：journalctl -u guduu-update-agent.service -n 50 --no-pager"
   fi
+  if [ "$APPROVE_CURRENT" -eq 1 ]; then
+    PENDING_PATH="$TARGET_DISTRO/data/cosmac/pending-update.json"
+    APPROVAL_PATH="$TARGET_DISTRO/data/cosmac/approved-update.json"
+    [ -f "$PENDING_PATH" ] \
+      || die "尚未取得待安装版本；请检查更新代理日志后重试 --approve-current。"
+    RELEASE_ID="$(python3 -c 'import json,sys; value=json.load(open(sys.argv[1], encoding="utf-8")); print(int(value.get("release_id") or 0))' "$PENDING_PATH")"
+    [ "$RELEASE_ID" -gt 0 ] || die "待安装版本文件缺少合法 release_id。"
+    python3 -c 'import json,os,sys,tempfile; target=sys.argv[1]; release_id=int(sys.argv[2]); parent=os.path.dirname(target); fd,temp=tempfile.mkstemp(prefix=".approved-update-",dir=parent); f=os.fdopen(fd,"w",encoding="utf-8"); json.dump({"release_id":release_id,"approved_by":"宿主 root 显式批准"},f,ensure_ascii=False); f.flush(); os.fsync(f.fileno()); os.fchmod(f.fileno(),0o660); f.close(); os.replace(temp,target)' \
+      "$APPROVAL_PATH" "$RELEASE_ID"
+    say "已由宿主 root 明确批准当前 release #${RELEASE_ID}，开始执行一次更新。"
+    systemctl start guduu-update-agent.service
+  fi
 else
+  [ "$APPROVE_CURRENT" -eq 0 ] \
+    || die "--approve-current 需要 systemd 更新代理，当前宿主不支持。"
   warn "当前系统没有 systemd；宿主脚本已更新，但需要管理员自行安排定时执行 update_agent.py。"
 fi
 
