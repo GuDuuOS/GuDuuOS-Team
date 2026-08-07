@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置使用同源外部脚本，既防刷新闪色，也允许 Portal 开启严格脚本 CSP。 -->
 <script src="/portal/theme-init.js?v=1"></script>
-<link rel="stylesheet" href="/portal/portal.css?v=42" />
+<link rel="stylesheet" href="/portal/portal.css?v=43" />
 </head>
 <body>
 <!--
@@ -592,12 +592,29 @@
           </div>
         </div>
         <form id="form-release" class="release-form">
-          <label class="release-target-field">更新对象
-            <select name="target" required>
-              <option value="node" selected>GuDuu OS 节点版本（客户服务器）</option>
-              <option value="nexus">Nexus 后台公告（集中后台）</option>
-            </select>
-          </label>
+          <fieldset class="release-target-field">
+            <legend>先选择发布类型</legend>
+            <div class="release-target-options">
+              <label class="release-target-option release-target-node">
+                <input type="radio" name="target" value="node" checked required />
+                <span class="release-target-mark">OS</span>
+                <span class="release-target-copy">
+                  <b>GuDuu OS 节点镜像</b>
+                  <small>客户服务器 · Docker 镜像 · 开发 → 灰度 → 正式</small>
+                </span>
+                <span class="release-target-state">节点发布</span>
+              </label>
+              <label class="release-target-option release-target-nexus">
+                <input type="radio" name="target" value="nexus" />
+                <span class="release-target-mark">NX</span>
+                <span class="release-target-copy">
+                  <b>Nexus 后台公告</b>
+                  <small>集中后台 · 只发布公告 · 不创建节点安装任务</small>
+                </span>
+                <span class="release-target-state">平台公告</span>
+              </label>
+            </div>
+          </fieldset>
           <label><span id="release-version-label">OS 版本号</span><input name="version" required placeholder="1.7.0" /></label>
           <label><span id="release-git-label">镜像 Git tag</span><input name="git_ref" required placeholder="v1.7.0" /></label>
           <label class="release-image-field" id="release-image-field">节点镜像
@@ -992,6 +1009,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=49"></script>
+<script src="/portal/portal.js?v=50"></script>
 </body>
 </html>

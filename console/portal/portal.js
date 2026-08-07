@@ -2562,15 +2562,18 @@
     syncReleaseSubmitState();
   }
 
-  $("#form-release").elements.target.addEventListener("change", function () {
-    captureReleaseTrackDraft(currentReleaseTarget);
-    currentReleaseTarget = this.value;
-    restoreReleaseTrackDraft(currentReleaseTarget);
-    syncReleaseTargetUi();
-    if (currentReleaseTarget === "node" && !releaseTrackDrafts.node) {
-      releaseDraftChecked = false;
-      loadReleaseDraft(false);
-    }
+  $all('#form-release input[name="target"]').forEach(function (targetInput) {
+    targetInput.addEventListener("change", function () {
+      if (!this.checked) return;
+      captureReleaseTrackDraft(currentReleaseTarget);
+      currentReleaseTarget = this.value;
+      restoreReleaseTrackDraft(currentReleaseTarget);
+      syncReleaseTargetUi();
+      if (currentReleaseTarget === "node" && !releaseTrackDrafts.node) {
+        releaseDraftChecked = false;
+        loadReleaseDraft(false);
+      }
+    });
   });
   syncReleaseTargetUi();
 
