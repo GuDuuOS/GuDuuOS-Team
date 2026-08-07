@@ -170,7 +170,7 @@ class InstallerHostTests(unittest.TestCase):
                 {
                     "PATH": f"{fake}:/usr/bin:/bin",
                     "GUDUU_UPDATE_LOCK": str(base / "update.lock"),
-                    "GUDUU_HOST_TOOLS_VERSION": "1.30.2",
+                    "GUDUU_HOST_TOOLS_VERSION": "1.30.3",
                     "GUDUU_SYSTEMD_DIR": str(base / "systemd"),
                 }
             )
@@ -188,7 +188,7 @@ class InstallerHostTests(unittest.TestCase):
                 (target / "data" / "update" / "host-tools-version")
                 .read_text(encoding="utf-8")
                 .strip(),
-                "1.30.2",
+                "1.30.3",
             )
 
     def test_migrator_can_explicitly_approve_cached_release(self) -> None:
@@ -212,7 +212,7 @@ class InstallerHostTests(unittest.TestCase):
                 {
                     "PATH": f"{fake}:/usr/bin:/bin",
                     "GUDUU_UPDATE_LOCK": str(base / "update.lock"),
-                    "GUDUU_HOST_TOOLS_VERSION": "1.30.2",
+                    "GUDUU_HOST_TOOLS_VERSION": "1.30.3",
                     "GUDUU_SYSTEMD_DIR": str(base / "systemd"),
                 }
             )

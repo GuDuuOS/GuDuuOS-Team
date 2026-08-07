@@ -3801,10 +3801,12 @@ class CosmacBot:
             return 500, {"error": "保存失败，请检查数据库与设置主密钥"}
 
     def handle_node_update_status(
-        self, access_token: str
+        self, access_token: str, *, user_id: str = ""
     ) -> Tuple[int, Dict[str, Any]]:
         """读取宿主代理缓存的新版本通知；仅管理员可见，不包含镜像凭据或安装命令。"""
-        user_id = self.client.whoami(access_token)
+        # 批准接口已经完成过一次 whoami 时把结果传进来，既避免重复请求 Synapse，也让
+        # “鉴权通过的管理员”与最终写进批准文件的 approved_by 始终是同一个身份。
+        user_id = user_id or self.client.whoami(access_token)
         if not user_id:
             return 401, {"error": "登录已失效，请重新登录"}
         if not self._is_platform_admin(user_id):
@@ -3828,7 +3830,16 @@ class CosmacBot:
         self, access_token: str, body: Dict[str, Any]
     ) -> Tuple[int, Dict[str, Any]]:
         """批准代理下一轮安装指定版本；浏览器只能批准当前待处理 release_id。"""
-        code, current = self.handle_node_update_status(access_token)
+        # approved_by 必须来自当前 access token，绝不能信任浏览器 body。旧实现虽然在
+        # 状态接口里做过鉴权，却没有把 user_id 带回本函数，随后写文件时触发 NameError。
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        if not self._is_platform_admin(user_id):
+            return 403, {"error": "仅平台管理员可批准节点更新"}
+        code, current = self.handle_node_update_status(
+            access_token, user_id=user_id
+        )
         if code != 200:
             return code, current
         update = current.get("update")
@@ -3849,9 +3860,29 @@ class CosmacBot:
 
             write_update_approval(path, expected, user_id)
             return 200, {"approved": True, "release_id": expected}
-        except Exception:
-            logger.exception("写入节点更新批准文件失败")
+        except PermissionError:
+            logger.exception(
+                "写入节点更新批准文件被拒绝 user=%s release=%s", user_id, expected
+            )
             return 500, {"error": "无法通知宿主更新代理，请检查数据目录权限"}
+        except OSError:
+            logger.exception(
+                "写入节点更新批准文件发生系统错误 user=%s release=%s",
+                user_id,
+                expected,
+            )
+            return 500, {
+                "error": "无法写入宿主更新批准文件，请检查磁盘与共享目录状态"
+            }
+        except Exception:
+            # NameError、TypeError 等代码错误绝不能再伪装成“客户服务器权限问题”；保留
+            # 完整 traceback 给技术人员，同时给页面明确的程序异常提示。
+            logger.exception(
+                "节点更新批准发生程序异常 user=%s release=%s", user_id, expected
+            )
+            return 500, {
+                "error": "节点更新批准失败，服务端程序异常，请联系技术人员并查看 Bot 日志"
+            }
 
     def handle_hr_employees(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
         """人事花名册（给前端「组织/人事」页用）：公司概览 + 部门分组 + 员工列表。

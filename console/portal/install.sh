@@ -6,9 +6,9 @@
 # 仍由客户在服务器终端交互输入，避免泄露到 Shell history 或反向代理日志。
 set -euo pipefail
 
-# v1.30.2 安装器按不可变 digest 优先拉 Docker Hub，失败后再整组
+# v1.30.3 安装器按不可变 digest 优先拉 Docker Hub，失败后再整组
 # 回退平台自建仓与 GHCR，方便国内服务器使用标准 Docker 加速器。
-RELEASE_TAG="v1.30.2"
+RELEASE_TAG="v1.30.3"
 ARCHIVE_URL="https://github.com/GuDuuOS/GuDuuOS-Team/archive/refs/tags/${RELEASE_TAG}.tar.gz"
 INSTALL_ROOT="${GUDUU_INSTALL_ROOT:-/opt/guduu-os}"
 REINSTALL=0
