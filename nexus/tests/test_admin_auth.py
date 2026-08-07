@@ -325,6 +325,9 @@ class AdminAuthHttpTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as finance_denied:
             self._request("/nexus/admin/finance_summary", cookie=cookie)
         self.assertEqual(finance_denied.exception.code, 403)
+        with self.assertRaises(HTTPError) as ledger_denied:
+            self._request("/nexus/admin/finance_ledger", cookie=cookie)
+        self.assertEqual(ledger_denied.exception.code, 403)
         with self.assertRaises(HTTPError) as release_denied:
             self._request(
                 "/nexus/admin/release_action",

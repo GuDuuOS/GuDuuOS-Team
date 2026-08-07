@@ -64,6 +64,10 @@
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   }
+  function fmtInteger(n) {
+    n = Number(n) || 0;
+    return Math.trunc(n).toLocaleString("zh-CN");
+  }
   // token 数字人性化：1.2亿 这种中文单位比 K/M/B 对商务更友观
   function fmtTokens(n) {
     n = Number(n) || 0;
@@ -398,7 +402,7 @@
     instances: "节点实例",
     licenses: "授权与申请",
     customers: "OEM 客户",
-    billing: "支付与订单",
+    billing: "财务与订单",
     settings: "平台设置",
     security: "平台安全",
     guide: "使用教程",
@@ -1096,7 +1100,10 @@
   var licenseChannels = {};
   function fmtYuan(cents) {
     var y = (Number(cents) || 0) / 100;
-    return "¥" + (y % 1 ? y.toFixed(2) : String(y));
+    return "¥" + y.toLocaleString("zh-CN", {
+      minimumFractionDigits: y % 1 ? 2 : 0,
+      maximumFractionDigits: 2,
+    });
   }
 
   function loadShareQr(img, path) {
@@ -2216,6 +2223,7 @@
   // 节点详情使用最近一次管理列表快照，打开弹窗时无需再发请求。
   var adminInstances = [];
   var adminRegions = [];
+  var adminFinanceEntries = [];
   // OEM 实例列表只用于点击前快速确认卡片仍属于当前页面；
   // 真正的归属校验仍在服务端做，不信任这个前端数组。
   var oemInstances = [];
@@ -2228,6 +2236,126 @@
   var editingRequestId = 0;
   var adminRequestStatus = "pending";
   var requestSearchTimer = null;
+
+  function renderFinanceLedger() {
+    var sourceSelect = $("#finance-ledger-source");
+    if (!sourceSelect) return;
+    var source = sourceSelect.value || "all";
+    var rows = adminFinanceEntries.filter(function (item) {
+      return source === "all" || item.source === source;
+    });
+    var manualCount = adminFinanceEntries.filter(function (item) {
+      return item.source === "manual";
+    }).length;
+    var paymentRows = adminFinanceEntries.filter(function (item) {
+      return item.source === "payment";
+    });
+    var paidCents = paymentRows.reduce(function (sum, item) {
+      return sum + Number(item.amount_cents || 0);
+    }, 0);
+    $("#finance-ledger-summary").innerHTML =
+      '<span>当前显示 <b>' + fmtInteger(rows.length) + '</b> 笔</span>' +
+      '<span>人工入账 <b>' + fmtInteger(manualCount) + '</b> 笔</span>' +
+      '<span>支付入账 <b>' + fmtInteger(paymentRows.length) + '</b> 笔</span>' +
+      '<span>支付实收 <b>' + fmtYuan(paidCents) + '</b></span>';
+    $("#admin-finance-ledger tbody").innerHTML = rows.map(function (item) {
+      var payment = item.source === "payment";
+      var sourceBadge = payment
+        ? '<span class="badge active">支付入账</span>'
+        : '<span class="badge manual">人工入账</span>';
+      var company = item.company_name || item.oem_email || "未绑定企业";
+      var node = '<b>#' + item.instance_id + ' · ' + esc(item.domain || "未知域名") +
+        '</b><div class="hint">' + esc(company) + '</div>';
+      var amount = payment
+        ? fmtYuan(item.amount_cents)
+        : '<span class="finance-no-payment">无支付单</span>';
+      var operator = payment
+        ? esc(CH_ZH[item.channel] || item.channel || "支付渠道")
+        : esc(item.actor_label || "历史人工记录");
+      var reference = payment
+        ? '<code>' + esc(item.order_no) + '</code>' +
+          (item.provider_txn ? '<div class="hint">渠道流水 ' + esc(item.provider_txn) + '</div>' : "")
+        : '<span class="hint">' + esc(item.note || "人工充值") + '</span>';
+      return '<tr><td>' + fmtTime(item.created_ts) + '</td><td class="zh">' + sourceBadge +
+        '</td><td class="zh">' + node + '</td><td class="finance-token">+' +
+        fmtInteger(item.tokens) + '</td><td>' + amount + '</td><td class="zh">' +
+        operator + '</td><td class="zh">' + reference + '</td></tr>';
+    }).join("") || '<tr><td colspan="7" class="empty">暂无符合条件的节点充值记录</td></tr>';
+  }
+
+  $("#finance-ledger-source").addEventListener("change", renderFinanceLedger);
+
+  function parseTopupAmount(value) {
+    var digits = String(value || "").replace(/[^0-9]/g, "").replace(/^0+(?=\d)/, "");
+    if (!digits) return 0;
+    var amount = Number(digits);
+    return Number.isSafeInteger(amount) && amount > 0 ? amount : 0;
+  }
+
+  function setTopupAmount(amount) {
+    var clean = Number(amount) || 0;
+    $("#topup-amount").value = clean > 0 ? fmtInteger(clean) : "";
+    $all("[data-topup-preset]").forEach(function (button) {
+      button.classList.toggle("on", Number(button.dataset.topupPreset) === clean);
+    });
+    var current = Number($("#form-admin-topup").dataset.currentBalance || 0);
+    $("#topup-amount-preview").textContent = fmtInteger(clean) + " Token";
+    $("#topup-after").textContent = fmtInteger(current + clean) + " Token";
+  }
+
+  function openTopupModal(instanceId) {
+    var instance = adminInstances.find(function (item) {
+      return Number(item.id) === Number(instanceId);
+    });
+    if (!instance) return toast("节点数据已变化，请刷新后重试", true);
+    var form = $("#form-admin-topup");
+    form.reset();
+    form.instance_id.value = String(instance.id);
+    form.dataset.currentBalance = String(Number(instance.balance_tokens || 0));
+    $("#topup-domain").textContent = "#" + instance.id + " · " + instance.domain;
+    $("#topup-current").textContent = fmtInteger(instance.balance_tokens) + " Token";
+    setTopupAmount(10_000_000);
+    $("#topup-mask").hidden = false;
+  }
+
+  function closeTopupModal() {
+    $("#topup-mask").hidden = true;
+  }
+
+  $("#topup-close").addEventListener("click", closeTopupModal);
+  $("#topup-mask").addEventListener("click", function (event) {
+    if (event.target === this) closeTopupModal();
+    var preset = event.target.closest ? event.target.closest("[data-topup-preset]") : null;
+    if (preset) setTopupAmount(Number(preset.dataset.topupPreset));
+  });
+  $("#topup-amount").addEventListener("input", function () {
+    setTopupAmount(parseTopupAmount(this.value));
+  });
+  $("#form-admin-topup").addEventListener("submit", function (event) {
+    event.preventDefault();
+    var form = event.target;
+    var amount = parseTopupAmount(form.tokens.value);
+    if (!amount) return toast("请输入有效的正整数 Token 数", true);
+    var submit = $("#topup-submit");
+    submit.disabled = true;
+    submit.textContent = "充值中…";
+    api("/nexus/admin/topup", {
+      body: {
+        instance_id: Number(form.instance_id.value),
+        tokens: amount,
+        note: String(form.note.value || "").trim(),
+      },
+    }).then(function (result) {
+      closeTopupModal();
+      toast("充值成功，新余额 " + fmtInteger(result.balance_tokens) + " Token");
+      loadAdmin();
+    }).catch(function (error) {
+      toast(error.message, true);
+    }).finally(function () {
+      submit.disabled = false;
+      submit.textContent = "确认充值";
+    });
+  });
 
   function releaseBadge(status, mapping) {
     var item = mapping[status] || ["idle", status];
@@ -2640,6 +2768,7 @@
       optionalAdminApi("finance.read", "/nexus/admin/orders", { orders: [] }),
       optionalAdminApi("release.read", "/nexus/admin/releases", { releases: [] }),
       optionalAdminApi("finance.read", "/nexus/admin/finance_summary", {}),
+      optionalAdminApi("finance.read", "/nexus/admin/finance_ledger", { entries: [] }),
       optionalAdminApi("finance.read", "/nexus/admin/payment_configs", { payment_configs: [] }),
       api("/nexus/admin/features"),
       optionalAdminApi("release.read", "/nexus/admin/release_policy", { release_policy: {} }),
@@ -2652,16 +2781,19 @@
       var pricing = rs[4].pricing || { topup_packs: [] }, orders = rs[5].orders || [];
       var releases = rs[6].releases || [];
       var finance = rs[7] || {};
-      var configs = rs[8].payment_configs || [];
-      var featureFlags = rs[9].features || {};
-      var releasePolicy = rs[10].release_policy || {};
-      var regions = rs[11].regions || [];
-      var withdrawals = rs[12].withdrawals || [];
-      var commercialTerms = rs[13].terms || [];
+      var financeEntries = rs[8].entries || [];
+      var configs = rs[9].payment_configs || [];
+      var featureFlags = rs[10].features || {};
+      var releasePolicy = rs[11].release_policy || {};
+      var regions = rs[12].regions || [];
+      var withdrawals = rs[13].withdrawals || [];
+      var commercialTerms = rs[14].terms || [];
       adminInstances = insts.slice();
       adminRegions = regions.slice();
+      adminFinanceEntries = financeEntries.slice();
       manualTransferOems = oems.slice();
       renderFinanceOverview(finance, configs);
+      renderFinanceLedger();
       renderPlatformFeatures(featureFlags);
       renderReleasePolicy(releasePolicy);
 
@@ -2977,7 +3109,7 @@
         return "<tr><td>#" + i.id + "</td><td>" + esc(i.domain) + "</td><td class=\"zh\">" + company + "</td><td class=\"zh\">" + badge(hbStatus(i)) + "</td>" +
           "<td>" + esc(i.version || "—") + "</td><td class=\"zh instance-region-cell\">" + regionEditor +
           "</td><td class=\"zh\">" + people + "</td><td>" + fmtTime(i.last_seen_ts) + "</td>" +
-          "<td>" + fmtTokens(i.balance_tokens) + "</td>" +
+          '<td class="finance-token">' + fmtInteger(i.balance_tokens) + ' Token</td>' +
           '<td class="zh"><button class="ghost small" data-instance-detail="' + i.id + '">详情</button> ' +
           '<button class="ghost small" data-topup="' + i.id + '" data-domain="' + esc(i.domain) + '">充值</button></td></tr>';
       }).join("") || '<tr><td colspan="10" class="zh empty">暂无实例</td></tr>';
@@ -3732,15 +3864,8 @@
       return;
     }
     if (t.dataset && t.dataset.topup) {
-      var topupId = Number(t.dataset.topup);
-      uiPrompt("给 " + t.dataset.domain + " 充值多少 token？", "如 100000000 = 1亿").then(function (v) {
-        if (v === null || v === "") return;
-        var n = Number(v);
-        if (!(n > 0)) return toast("请输入正整数", true);
-        api("/nexus/admin/topup", { body: { instance_id: topupId, tokens: n, note: "控制台手动充值" } })
-          .then(function (r) { toast("充值成功，新余额 " + fmtTokens(r.balance_tokens)); loadAdmin(); })
-          .catch(function (err) { toast(err.message, true); });
-      });
+      openTopupModal(Number(t.dataset.topup));
+      return;
     }
     if (t.dataset && t.dataset.buykey) {
       var licenseForm = $("#form-request");

@@ -24,6 +24,7 @@
         GET  /nexus/admin/instances                            实例列表（含余额）
         POST /nexus/admin/topup      {instance_id,tokens,note} 手动充值
         GET  /nexus/admin/finance_summary                      资金经营汇总
+        GET  /nexus/admin/finance_ledger                       节点充值财务清单
         GET  /nexus/admin/payment_configs                      支付配置字段与验证状态
         POST /nexus/admin/payment_config {provider,config|action} 加密保存/重新验证
         GET/POST /nexus/admin/features                         OEM 功能可见性开关
@@ -253,6 +254,7 @@ class NexusHandler(BaseHTTPRequestHandler):
             "/nexus/admin/orders",
             "/nexus/admin/withdrawals",
             "/nexus/admin/finance_summary",
+            "/nexus/admin/finance_ledger",
             "/nexus/admin/payment_configs",
             "/nexus/admin/pricing",
             "/nexus/admin/oem_commercial_terms",
@@ -834,6 +836,14 @@ class NexusHandler(BaseHTTPRequestHandler):
                             "channels": pay.channels(s),
                             "manual_transfer_ai": manual_transfer.ai_status(),
                         },
+                    )
+                )
+            return
+        if path == "/nexus/admin/finance_ledger":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200, {"entries": pay.finance_ledger(s)}
                     )
                 )
             return
@@ -2349,6 +2359,11 @@ class NexusHandler(BaseHTTPRequestHandler):
 
         if path == "/nexus/admin/topup":
             if self._check_admin():
+                clean_note = str(body.get("note", "")).strip().replace("｜", "|")[:300]
+                actor = self._admin_actor().replace("｜", "|")[:120]
+                audit_note = "人工充值｜操作人：" + actor
+                if clean_note:
+                    audit_note += "｜备注：" + clean_note
                 self._with_session(
                     lambda s: self._json(
                         200,
@@ -2357,7 +2372,7 @@ class NexusHandler(BaseHTTPRequestHandler):
                                 s,
                                 int(body.get("instance_id") or 0),
                                 int(body.get("tokens") or 0),
-                                str(body.get("note", "")),
+                                audit_note,
                             )
                         },
                     )

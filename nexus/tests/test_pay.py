@@ -308,6 +308,28 @@ class PayTest(unittest.TestCase):
         insts = oem.my_instances(self.s, self.buyer)
         self.assertEqual(insts[0]["balance_tokens"], 1000 + 50_000_000)
 
+        paid_entries = pay.finance_ledger(self.s)
+        self.assertEqual(len(paid_entries), 1)
+        self.assertEqual(paid_entries[0]["source"], "payment")
+        self.assertEqual(paid_entries[0]["tokens"], 50_000_000)
+        self.assertEqual(paid_entries[0]["amount_cents"], 9900)
+        self.assertEqual(paid_entries[0]["channel"], "mock")
+        self.assertEqual(paid_entries[0]["order_no"], out["order"]["order_no"])
+        self.assertEqual(paid_entries[0]["provider_txn"], "TXN2")
+        self.assertEqual(paid_entries[0]["company_name"], "测试公司")
+
+        fleet.topup(
+            self.s,
+            inst,
+            10_000_000,
+            note="人工充值｜操作人：财务测试员｜备注：售后补充额度",
+        )
+        entries = pay.finance_ledger(self.s)
+        self.assertEqual(entries[0]["source"], "manual")
+        self.assertIsNone(entries[0]["amount_cents"])
+        self.assertEqual(entries[0]["actor_label"], "财务测试员")
+        self.assertEqual(entries[1]["source"], "payment")
+
     def test_finance_summary_only_counts_paid_orders(self):
         """资金总览只把已支付订单算收入，并正确拆分授权码与充值。"""
         empty = pay.finance_summary(self.s)

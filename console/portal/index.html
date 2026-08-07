@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置使用同源外部脚本，既防刷新闪色，也允许 Portal 开启严格脚本 CSP。 -->
 <script src="/portal/theme-init.js?v=1"></script>
-<link rel="stylesheet" href="/portal/portal.css?v=40" />
+<link rel="stylesheet" href="/portal/portal.css?v=41" />
 </head>
 <body>
 <!--
@@ -458,7 +458,7 @@
         <span class="admin-menu-icon">◎</span><span>OEM 客户</span><em id="nav-count-customers">0</em>
       </button>
       <button class="admin-menu-item" data-admin-page="billing">
-        <span class="admin-menu-icon">¥</span><span>支付与订单</span><em id="nav-count-orders">0</em>
+        <span class="admin-menu-icon">¥</span><span>财务与订单</span><em id="nav-count-orders">0</em>
       </button>
       <button class="admin-menu-item" data-admin-page="settings">
         <span class="admin-menu-icon">⚙</span><span>平台设置</span>
@@ -679,6 +679,23 @@
     </div>
 
     <div class="admin-page" data-admin-view="billing" hidden>
+      <section class="panel finance-ledger-panel">
+        <div class="panel-head finance-ledger-head">
+          <div><h2>节点充值财务清单</h2><p class="hint">人工充值与支付成功入账统一展示；人工充值没有支付单，不计作实收金额。</p></div>
+          <label class="finance-ledger-filter">入账来源
+            <select id="finance-ledger-source">
+              <option value="all">全部</option>
+              <option value="manual">人工入账</option>
+              <option value="payment">支付入账</option>
+            </select>
+          </label>
+        </div>
+        <div id="finance-ledger-summary" class="finance-ledger-summary"></div>
+        <div class="table-scroll"><table class="tbl" id="admin-finance-ledger">
+          <thead><tr><th>时间</th><th>来源</th><th>节点 / 企业</th><th>Token</th><th>实收金额</th><th>渠道 / 操作人</th><th>订单 / 备注</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </section>
       <section class="panel">
         <div class="panel-head"><h2>定价设置（在线购买）</h2></div>
         <form id="form-pricing" class="inline-form">
@@ -782,6 +799,41 @@
     </div>
   </div>
 </main>
+
+<!-- 节点人工充值：常用额度 + 千分位精确输入，提交前展示充值后余额 -->
+<div id="topup-mask" class="mask" hidden>
+  <div class="modal topup-modal" role="dialog" aria-modal="true" aria-labelledby="topup-title">
+    <div class="modal-head">
+      <div><b id="topup-title">节点余额充值</b><p id="topup-domain" class="hint"></p></div>
+      <button id="topup-close" class="ghost small" type="button">关闭</button>
+    </div>
+    <form id="form-admin-topup">
+      <input name="instance_id" type="hidden" />
+      <div class="topup-balance-card">
+        <span>当前余额<b id="topup-current">0 Token</b></span>
+        <span>充值额度<b id="topup-amount-preview">0 Token</b></span>
+        <span>充值后余额<b id="topup-after">0 Token</b></span>
+      </div>
+      <p class="pick-label">常用额度</p>
+      <div class="pick-group topup-presets" role="group" aria-label="选择充值额度">
+        <button class="pick" type="button" data-topup-preset="10000000"><b>1,000 万</b><small>10,000,000 Token</small></button>
+        <button class="pick" type="button" data-topup-preset="50000000"><b>5,000 万</b><small>50,000,000 Token</small></button>
+        <button class="pick" type="button" data-topup-preset="100000000"><b>1 亿</b><small>100,000,000 Token</small></button>
+        <button class="pick" type="button" data-topup-preset="500000000"><b>5 亿</b><small>500,000,000 Token</small></button>
+      </div>
+      <label class="topup-exact-label">精确 Token 数
+        <input id="topup-amount" name="tokens" inputmode="numeric" autocomplete="off" required placeholder="例如 100,000,000" />
+      </label>
+      <label>充值备注（可选）
+        <input name="note" maxlength="300" placeholder="例如：合同补充额度 / 售后赠送" />
+      </label>
+      <div class="topup-submit-row">
+        <span class="hint">本操作会写入具名管理员审计与财务清单，但不会生成支付收入。</span>
+        <button id="topup-submit" class="primary" type="submit">确认充值</button>
+      </div>
+    </form>
+  </div>
+</div>
 
 <!-- 授权申请详情：结构化资料、交付状态与完整审计时间线 -->
 <div id="request-detail-mask" class="mask" hidden>
@@ -939,6 +991,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=47"></script>
+<script src="/portal/portal.js?v=48"></script>
 </body>
 </html>

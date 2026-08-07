@@ -1040,6 +1040,35 @@ select:focus { outline: none; border-color: var(--orange); }
 .modal-head b { font-size: 16px; }
 .modal-sec { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .modal-sec h3 { font-size: 13.5px; margin-bottom: 8px; color: var(--muted); font-weight: 600; }
+.topup-modal { width: min(700px, 94vw); }
+.topup-balance-card {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px;
+  margin-bottom: 16px;
+}
+.topup-balance-card span {
+  min-width: 0; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px;
+  color: var(--muted); background: var(--card); font-size: 11.5px;
+}
+.topup-balance-card b { display: block; margin-top: 3px; color: var(--ink); font: 600 14px var(--mono); overflow-wrap: anywhere; }
+.topup-balance-card span:last-child { border-color: var(--orange); background: var(--badge-orange-bg); }
+.topup-presets { margin-bottom: 14px; }
+.topup-presets .pick { flex: 1 1 130px; }
+.topup-exact-label input { font: 600 16px var(--mono); }
+.topup-submit-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; }
+.topup-submit-row .hint { max-width: 430px; }
+.finance-ledger-head { align-items: flex-end; }
+.finance-ledger-filter { width: 160px; margin: 0; }
+.finance-ledger-filter select { width: 100%; margin-top: 5px; }
+.finance-ledger-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.finance-ledger-summary span { padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 12px; }
+.finance-ledger-summary b { color: var(--ink); font-family: var(--mono); }
+.finance-token { white-space: nowrap; font-family: var(--mono); font-weight: 600; }
+.finance-no-payment { color: var(--muted); font-size: 12px; }
+@media (max-width: 620px) {
+  .topup-balance-card { grid-template-columns: minmax(0, 1fr); }
+  .topup-submit-row, .finance-ledger-head { align-items: stretch; flex-direction: column; }
+  .topup-submit-row .primary, .finance-ledger-filter { width: 100%; }
+}
 .kv { display: grid; grid-template-columns: 96px 1fr 96px 1fr; gap: 6px 10px; font-size: 13px; }
 .kv small { color: var(--muted); }
 .kv b { font-weight: 500; word-break: break-all; }

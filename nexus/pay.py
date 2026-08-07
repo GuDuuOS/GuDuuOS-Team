@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import time
 from typing import Any, Dict, List, Optional
@@ -34,6 +35,7 @@ from sqlalchemy import case, func, select
 from nexus.db import (
     NexusKeyRequest,
     NexusLicensePayment,
+    NexusLedger,
     NexusManualTransfer,
     NexusOrder,
     NexusOrderCommercial,
@@ -1059,6 +1061,88 @@ def list_orders(s) -> List[Dict[str, Any]]:
     )
     combined.sort(key=lambda item: int(item.get("created_ts") or 0), reverse=True)
     return combined[:200]
+
+
+def finance_ledger(s, limit: int = 200) -> List[Dict[str, Any]]:
+    """节点 Token 入账清单：人工充值与已支付订单共用同一份钱包流水。
+
+    ``NexusLedger`` 是余额真相，不能为了财务页面再复制一份充值记录。支付成功流水
+    已在备注中冻结订单号；这里关联已支付充值订单后补齐实收金额与渠道。找不到支付单
+    的正向 topup 明确解释为人工入账，金额返回 ``None``，前端必须显示“无支付单”。
+    """
+    clean_limit = max(1, min(int(limit or 200), 500))
+    ledgers = (
+        s.execute(
+            select(NexusLedger)
+            .where(NexusLedger.kind == "topup", NexusLedger.delta_tokens > 0)
+            .order_by(NexusLedger.id.desc())
+            .limit(clean_limit)
+        )
+        .scalars()
+        .all()
+    )
+    if not ledgers:
+        return []
+
+    # 订单号格式稳定且全局唯一；只从账本备注中的“订单...”标记取值，避免用金额、
+    # Token 和时间做模糊匹配而把两笔相同充值错误合并。
+    referenced_order_nos = {
+        match.group(1)
+        for row in ledgers
+        for match in [re.search(r"订单\s*([A-Za-z0-9_-]{6,40})", row.note or "")]
+        if match is not None
+    }
+    orders = {}
+    if referenced_order_nos:
+        orders = {
+            row.order_no: row
+            for row in s.execute(
+                select(NexusOrder).where(
+                    NexusOrder.order_no.in_(referenced_order_nos),
+                    NexusOrder.kind == "topup",
+                    NexusOrder.status == "paid",
+                )
+            )
+            .scalars()
+            .all()
+        }
+
+    from nexus import fleet  # 延迟导入，避免 pay ↔ fleet 模块初始化环
+
+    instances = {int(item["id"]): item for item in fleet.list_instances(s)}
+    out: List[Dict[str, Any]] = []
+    for row in ledgers:
+        note = str(row.note or "")
+        match = re.search(r"订单\s*([A-Za-z0-9_-]{6,40})", note)
+        order = orders.get(match.group(1)) if match is not None else None
+        instance = instances.get(int(row.instance_id), {})
+        actor_match = re.search(r"操作人：([^｜]+)", note)
+        source = "payment" if order is not None else "manual"
+        out.append(
+            {
+                "ledger_id": int(row.id),
+                "created_ts": int(row.ts),
+                "instance_id": int(row.instance_id),
+                "domain": str(instance.get("domain") or ""),
+                "oem_id": instance.get("oem_id"),
+                "company_name": str(instance.get("company_name") or ""),
+                "oem_email": str(instance.get("oem_email") or ""),
+                "tokens": int(row.delta_tokens),
+                "current_balance_tokens": int(instance.get("balance_tokens") or 0),
+                "source": source,
+                "order_no": str(order.order_no) if order is not None else "",
+                "amount_cents": int(order.amount_cents) if order is not None else None,
+                "channel": str(order.channel) if order is not None else "",
+                "provider_txn": str(order.provider_txn) if order is not None else "",
+                "actor_label": (
+                    actor_match.group(1).strip()
+                    if actor_match is not None
+                    else ("支付系统" if order is not None else "历史人工记录")
+                ),
+                "note": note,
+            }
+        )
+    return out
 
 
 def finance_summary(s) -> Dict[str, Any]:
