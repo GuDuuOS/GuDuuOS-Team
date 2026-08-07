@@ -299,6 +299,23 @@ class AdminAuthHttpTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.code, 403)
 
+    def test_manual_key_issue_endpoint_is_disabled(self) -> None:
+        """超管不能绕过授权申请与支付履约规则直接生成 KEY。"""
+        cookie = self._recovery_cookie()
+        with self.assertRaises(HTTPError) as raised:
+            self._request(
+                "/nexus/admin/keys",
+                body={"count": 1, "token_grant": 100_000_000},
+                cookie=cookie,
+                csrf=True,
+            )
+        self.assertEqual(raised.exception.code, 410)
+        payload = json.loads(raised.exception.read().decode("utf-8"))
+        self.assertEqual(payload["errcode"], "NEXUS_MANUAL_KEY_ISSUE_DISABLED")
+        self.assertEqual(
+            self._request("/nexus/admin/keys", cookie=cookie)["keys"], []
+        )
+
     def test_http_role_permissions_are_enforced_by_server(self) -> None:
         """隐藏按钮不是权限边界：直接请求无权 API 也必须返回 403。"""
         recovery_cookie = self._recovery_cookie()

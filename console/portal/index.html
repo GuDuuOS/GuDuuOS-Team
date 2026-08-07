@@ -673,20 +673,19 @@
         <p class="hint">批准会原子签发一把 KEY 并自动归属申请企业；明文只在 OEM 主动领取时短暂显示，超管不可查看。</p>
       </section>
       <section class="panel">
-        <div class="panel-head"><h2>授权码（KEY）</h2></div>
-        <form id="form-issue" class="inline-form">
-          <input name="count" type="number" min="1" max="100" value="1" title="数量" style="width:70px" />
-          <input name="token_grant" type="number" min="0" value="100000000" title="附赠 token" style="width:150px" />
-          <input name="note" placeholder="备注（卖给谁/订单号）" style="flex:1" />
-          <button class="primary">签发</button>
-        </form>
-        <div id="issued-box" class="issued" hidden>
-          <b>⚠️ 明文仅此一次显示，请立即复制发给客户：</b><pre id="issued-keys"></pre>
+        <div class="panel-head key-list-head license-admin-head">
+          <div>
+            <h2>授权码查询</h2>
+            <p class="hint">KEY 仅通过授权申请审批或支付履约签发；可在这里查询已有记录。</p>
+          </div>
+          <input id="key-search" class="request-search" type="search" placeholder="搜索尾号、企业、邮箱、备注或实例" />
         </div>
-        <table class="tbl" id="admin-keys">
-          <thead><tr><th>#</th><th>尾号</th><th>归属企业</th><th>状态</th><th>附赠</th><th>备注</th><th>实例</th><th>操作</th></tr></thead>
-          <tbody></tbody>
-        </table>
+        <div class="table-scroll">
+          <table class="tbl" id="admin-keys">
+            <thead><tr><th>#</th><th>尾号</th><th>归属企业</th><th>状态</th><th>附赠</th><th>备注</th><th>实例</th><th>操作</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </section>
     </div>
 
@@ -1013,6 +1012,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=53"></script>
+<script src="/portal/portal.js?v=54"></script>
 </body>
 </html>

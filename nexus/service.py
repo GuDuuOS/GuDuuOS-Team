@@ -2234,30 +2234,13 @@ class NexusHandler(BaseHTTPRequestHandler):
 
         if path == "/nexus/admin/keys":
             if self._check_admin():
-
-                def _issue(s):
-                    issued = fleet.issue_keys(
-                        s,
-                        count=int(body.get("count") or 1),
-                        note=str(body.get("note", "")),
-                        token_grant=int(body.get("token_grant") or 0),
-                    )
-                    for item in issued:
-                        audit.record(
-                            s,
-                            object_type="key",
-                            object_id=item["id"],
-                            action="issue",
-                            actor_type="admin",
-                            actor_label=self._admin_actor(),
-                            source_ip=self._client_ip(),
-                            to_state="active",
-                            note=str(body.get("note", "")),
-                            metadata={"token_grant": int(body.get("token_grant") or 0)},
-                        )
-                    self._json(200, {"keys": issued})
-
-                self._with_session(_issue)
+                # KEY 必须来自授权申请审批或经支付验签的履约事务，禁止再由
+                # 超管绕过申请归属、域名绑定和“一份申请一把 KEY”的规则直接生成。
+                self._err(
+                    410,
+                    "NEXUS_MANUAL_KEY_ISSUE_DISABLED",
+                    "手动签发已停用，请通过授权申请审批或支付履约签发 KEY",
+                )
             return
 
         if path == "/nexus/admin/revoke":

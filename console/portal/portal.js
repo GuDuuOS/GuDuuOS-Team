@@ -2200,6 +2200,7 @@
     clearTimeout(requestSearchTimer);
     requestSearchTimer = setTimeout(loadAdmin, 280);
   });
+  $("#key-search").addEventListener("input", renderAdminKeys);
 
   $("#form-claim").addEventListener("submit", function (e) {
     e.preventDefault();
@@ -2251,6 +2252,9 @@
   var adminInstances = [];
   var adminRegions = [];
   var adminFinanceEntries = [];
+  // KEY 列表只保存服务端已经脱敏的记录，用于当前页面即时搜索。
+  // 搜索不重新请求接口，也不接触任何 KEY 明文。
+  var adminKeys = [];
   // OEM 实例列表只用于点击前快速确认卡片仍属于当前页面；
   // 真正的归属校验仍在服务端做，不信任这个前端数组。
   var oemInstances = [];
@@ -2263,6 +2267,49 @@
   var editingRequestId = 0;
   var adminRequestStatus = "pending";
   var requestSearchTimer = null;
+
+  function renderAdminKeys() {
+    var search = $("#key-search");
+    var query = search ? search.value.trim().toLowerCase() : "";
+    var rows = adminKeys.filter(function (key) {
+      if (!query) return true;
+      // 只拼接列表接口已经返回的脱敏字段；既支持按 KEY 尾号查找，也方便
+      // 运营人员用企业、邮箱、备注或实例编号交叉核对归属。
+      var searchable = [
+        key.id,
+        key.tail,
+        key.company_name,
+        key.oem_email,
+        key.note,
+        key.instance_id,
+        key.status,
+      ].map(function (value) {
+        return value === null || value === undefined ? "" : String(value);
+      }).join(" ").toLowerCase();
+      return searchable.indexOf(query) >= 0;
+    });
+    $("#admin-keys tbody").innerHTML = rows.map(function (key) {
+      var state = key.status === "suspended"
+        ? "suspended"
+        : (key.status !== "active" ? "revoked" : (key.instance_id ? "active" : "idle"));
+      var owner = key.company_name || key.oem_email || "未归属";
+      var statusAction = key.status === "active"
+        ? '<button class="ghost small" data-key-status="suspended" data-key-id="' + key.id + '">暂停</button> '
+        : key.status === "suspended"
+          ? '<button class="ghost small" data-key-status="active" data-key-id="' + key.id + '">恢复</button> '
+          : "";
+      var revokeAction = key.status !== "revoked"
+        ? '<button class="ghost small" data-revoke="' + key.id + '">吊销</button>'
+        : "";
+      return "<tr><td>#" + key.id + "</td><td>···" + esc(key.tail) +
+        '</td><td class="zh">' + esc(owner) + '</td><td class="zh">' + badge(state) +
+        "</td><td>" + fmtTokens(key.token_grant) + '</td><td class="zh">' +
+        esc(key.note || "—") + '</td><td class="zh">' +
+        (key.instance_id ? "#" + key.instance_id : "—") + '</td><td class="zh">' +
+        (statusAction + revokeAction || "—") + "</td></tr>";
+    }).join("") || '<tr><td colspan="8" class="zh empty">' +
+      (query ? "没有符合搜索条件的授权码" : "尚未签发授权码") + "</td></tr>";
+  }
 
   function renderFinanceLedger() {
     var sourceSelect = $("#finance-ledger-source");
@@ -2911,6 +2958,7 @@
       adminInstances = insts.slice();
       adminRegions = regions.slice();
       adminFinanceEntries = financeEntries.slice();
+      adminKeys = keys.slice();
       manualTransferOems = oems.slice();
       renderFinanceOverview(finance, configs);
       renderFinanceLedger();
@@ -3234,23 +3282,7 @@
           '<button class="ghost small" data-topup="' + i.id + '" data-domain="' + esc(i.domain) + '">充值</button></td></tr>';
       }).join("") || '<tr><td colspan="10" class="zh empty">暂无实例</td></tr>';
 
-      // KEY 表（吊销）
-      $("#admin-keys tbody").innerHTML = keys.map(function (k) {
-        var st = k.status === "suspended" ? "suspended" : (k.status !== "active" ? "revoked" : (k.instance_id ? "active" : "idle"));
-        // 超管要能够直接核对 KEY 的企业归属；历史手工签发但未认领的 KEY 明确标记为未归属。
-        var owner = k.company_name || k.oem_email || "未归属";
-        var statusAction = k.status === "active"
-          ? '<button class="ghost small" data-key-status="suspended" data-key-id="' + k.id + '">暂停</button> '
-          : k.status === "suspended"
-            ? '<button class="ghost small" data-key-status="active" data-key-id="' + k.id + '">恢复</button> ' : "";
-        var revokeAction = k.status !== "revoked"
-          ? '<button class="ghost small" data-revoke="' + k.id + '">吊销</button>' : "";
-        return "<tr><td>#" + k.id + "</td><td>···" + esc(k.tail) + '</td><td class="zh">' + esc(owner) +
-          "</td><td class=\"zh\">" + badge(st) + "</td>" +
-          "<td>" + fmtTokens(k.token_grant) + "</td><td class=\"zh\">" + esc(k.note || "—") + "</td>" +
-          "<td class=\"zh\">" + (k.instance_id ? "#" + k.instance_id : "—") + "</td>" +
-          '<td class="zh">' + (statusAction + revokeAction || "—") + "</td></tr>";
-      }).join("") || '<tr><td colspan="8" class="zh empty">尚未签发</td></tr>';
+      renderAdminKeys();
 
       // OEM 客户表（自助注册模式：超管唯一管控 = 停用/启用；账号状态用"正常/停用"措辞）
       $("#admin-oems tbody").innerHTML = oems.map(function (o) {
@@ -3766,23 +3798,6 @@
       },
     }).then(function () { toast("定价已保存，即刻生效"); loadAdmin(); })
       .catch(function (err) { toast(err.message, true); });
-  });
-
-  // 签发 KEY：明文只回显一次
-  $("#form-issue").addEventListener("submit", function (e) {
-    e.preventDefault();
-    var f = e.target;
-    api("/nexus/admin/keys", {
-      body: {
-        count: Number(f.count.value) || 1,
-        token_grant: Number(f.token_grant.value) || 0,
-        note: f.note.value,
-      },
-    }).then(function (r) {
-      $("#issued-keys").textContent = r.keys.map(function (k) { return k.key; }).join("\n");
-      $("#issued-box").hidden = false;
-      f.note.value = ""; loadAdmin();
-    }).catch(function (err) { toast(err.message, true); });
   });
 
   // 表格行内操作（事件代理：详情 / 吊销 / 充值）
