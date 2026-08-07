@@ -1,5 +1,15 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-08-07 — GuDuu OS 1.30.2 (patch)
+
+- 修复：完整承接 1.30.1 的 OEM 网页更新批准权限修复与旧节点
+  `--approve-current` 一次性迁移能力。
+- 构建：前端锁文件恢复使用 GitHub Runner 可稳定访问的 npm 官方源，避免
+  `npmmirror.com` 网络超时导致 Web 镜像在 `npm ci` 阶段失败；1.30.1 保留为
+  构建失败记录，不移动或覆盖既有 Git tag。
+- 发布：安装器与官网宿主工具引导器锁定严格 Tag `v1.30.2`；CI 成功冻结
+  bot/web 双仓 digest 后才登记 Nexus 灰度任务。
+
 ## 2026-08-07 — GuDuu OS 1.30.1 (patch)
 
 - 修复：OS 后台确认安装时不再对宿主更新代理拥有的共享目录执行 `chmod`。容器只要按
