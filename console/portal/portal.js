@@ -78,13 +78,14 @@
     function p(x) { return (x < 10 ? "0" : "") + x; }
     return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
   }
-  function installCommand(domain) {
+  function installCommand(domain, reinstall) {
     // 安装命令只带已审批域名，绝不把长期 OEM KEY 放进 URL、
     // DOM 属性或 Shell history。KEY 由客户在服务器终端的交互提示中输入。
     var clean = String(domain || "").trim().toLowerCase().replace(/\.$/, "");
     if (!/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(clean)) return "";
     return "curl -fsSL " + window.location.origin +
-      "/portal/install.sh | sudo bash -s -- --domain " + clean;
+      "/portal/install.sh | sudo bash -s -- --domain " + clean +
+      (reinstall ? " --reinstall" : "");
   }
   function activeDays(createdTs) {
     // 节点兑换开通当天记为第 1 天；未有真实开通时间时不猜测。
@@ -1894,7 +1895,7 @@
       }
       $("#oem-keys").innerHTML = keys.map(function (key) {
         var instance = key.instance_id ? instancesById[Number(key.instance_id)] : null;
-        var approvedDomain = String(key.approved_domain || "").trim().toLowerCase().replace(/\.$/, "");
+        var approvedDomain = String(key.approved_domain || (instance && instance.domain) || "").trim().toLowerCase().replace(/\.$/, "");
         var command = installCommand(approvedDomain);
         var bindingBadge = key.instance_id
           ? '<span class="badge active">已绑定</span>'
@@ -1908,6 +1909,9 @@
         var nodeVersion = instance ? esc(instance.version || "—") : "—";
         var actions = instance
           ? '<button type="button" class="ghost small" data-key-view-instance="' + instance.id + '">查看节点</button>' +
+            (key.status === "active" && command
+              ? '<button type="button" class="ghost small" data-copy-reinstall-domain="' + esc(approvedDomain) + '">复制安全重装命令</button>'
+              : "") +
             (key.status === "active"
               ? '<button type="button" class="primary small" data-key-topup-instance="' + instance.id + '">Token 充值</button>'
               : "")
@@ -3578,6 +3582,17 @@
       }
       copyText(command)
         .then(function () { toast("安装命令已复制，请到新服务器 SSH 终端执行"); })
+        .catch(function () { toast("复制失败，请重试", true); });
+      return;
+    }
+    if (t.dataset && t.dataset.copyReinstallDomain) {
+      var reinstallCommand = installCommand(t.dataset.copyReinstallDomain, true);
+      if (!reinstallCommand) {
+        toast("审批域名无效，请联系平台核对授权", true);
+        return;
+      }
+      copyText(reinstallCommand)
+        .then(function () { toast("安全重装命令已复制；执行后须输入原域名再次确认"); })
         .catch(function () { toast("复制失败，请重试", true); });
       return;
     }

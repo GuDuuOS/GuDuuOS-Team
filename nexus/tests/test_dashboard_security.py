@@ -168,9 +168,11 @@ class DashboardSecurityTests(unittest.TestCase):
         # 门户只用审批域名组装命令；KEY 继续走 SSH 交互输入。
         with urlopen(f"{self.base_url}/portal/portal.js", timeout=3) as response:
             portal_script = response.read().decode("utf-8")
-        self.assertIn("function installCommand(domain)", portal_script)
+        self.assertIn("function installCommand(domain, reinstall)", portal_script)
         self.assertIn("data-copy-install-domain", portal_script)
+        self.assertIn("data-copy-reinstall-domain", portal_script)
         self.assertIn("/portal/install.sh | sudo bash -s -- --domain ", portal_script)
+        self.assertIn('(reinstall ? " --reinstall" : "")', portal_script)
 
     def test_admin_has_independent_noindex_entry(self) -> None:
         """独立超管深链必须可刷新直达，同时明确禁止搜索引擎收录。"""
