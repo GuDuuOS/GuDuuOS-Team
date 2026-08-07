@@ -2207,6 +2207,7 @@
     production_instance_ids: [3],
     auto_canary: true,
     require_canary_success: true,
+    install_baseline_release_id: 0,
   };
   // 节点详情使用最近一次管理列表快照，打开弹窗时无需再发请求。
   var adminInstances = [];
@@ -2251,6 +2252,15 @@
         r.status,
         platform ? PLATFORM_RELEASE_STATUS : RELEASE_STATUS
       );
+      var isInstallBaseline = !platform &&
+        Number(adminReleasePolicy.install_baseline_release_id || 0) === Number(r.id);
+      var canaryPassed = !platform && (r.deployments || []).some(function (deployment) {
+        return Number(deployment.instance_id) === Number(adminReleasePolicy.canary_instance_id) &&
+          deployment.status === "success";
+      });
+      var baselineBadge = isInstallBaseline
+        ? '<span class="badge active">当前新装基线</span>'
+        : "";
       var countText = platform
         ? (r.status === "published" ? "已向全部 OEM 后台展示公告；不创建节点安装任务。" : "平台公告尚未展示给 OEM 客户。")
         : "待领取 " + (c.pending || 0) + " · 安装中 " +
@@ -2283,6 +2293,12 @@
       if (!platform && (c.failed || 0) > 0) {
         actions.push('<button class="ghost small" data-release-action="retry" data-release-id="' + r.id + '">重试失败节点</button>');
       }
+      // 新装基线是独立的人工门禁：灰度成功后可先让新服务器
+      // 使用候选版，不必为了解决“新装仍是旧版”而给正式节点发任务。
+      if (!platform && canaryPassed && !isInstallBaseline && artifact.mode === "container" &&
+          ["canary", "published", "rollback"].indexOf(r.status) >= 0) {
+        actions.push('<button class="ghost small" data-release-action="baseline" data-release-id="' + r.id + '">设为新装基线</button>');
+      }
       var deployments = (r.deployments || []).map(function (d) {
         var detail = d.detail ? '<div class="hint">' + esc(d.detail) + "</div>" : "";
         return "<tr><td>#" + d.instance_id + "</td><td>" + esc(d.domain) + '</td><td class="zh">' +
@@ -2298,7 +2314,7 @@
         : '<p class="hint">尚未向任何节点发布更新通知。</p>';
       var card = '<article class="release-card"><div class="release-card-head"><div>' +
         '<div class="release-card-title"><b>v' + esc(r.version) + "</b>" +
-        targetBadge + statusBadge + "<strong>" + esc(r.title) + "</strong></div>" +
+        targetBadge + statusBadge + baselineBadge + "<strong>" + esc(r.title) + "</strong></div>" +
         '<div class="release-meta">' + deliveryText + " · Git " + esc(r.git_ref) +
         " · 创建 " + fmtTime(r.created_ts) + "</div></div>" +
         '<div class="release-actions">' + actions.join("") + "</div></div>" +
@@ -2462,6 +2478,7 @@
       production_instance_ids: (policy.production_instance_ids || []).slice(),
       auto_canary: !!policy.auto_canary,
       require_canary_success: !!policy.require_canary_success,
+      install_baseline_release_id: Number(policy.install_baseline_release_id || 0),
     };
     var form = $("#form-release-policy");
     if (!form.contains(document.activeElement)) {
@@ -2481,7 +2498,11 @@
       "开发 " + developmentText + "（不自动更新） · 灰度 #" +
       (adminReleasePolicy.canary_instance_id || "未配置") +
       (adminReleasePolicy.auto_canary ? "（镜像完成后自动）" : "（手工）") +
-      " · 正式 " + productionText;
+      " · 正式 " + productionText +
+      " · 新装基线 " +
+      (adminReleasePolicy.install_baseline_release_id
+        ? "版本记录 #" + adminReleasePolicy.install_baseline_release_id
+        : "兼容使用已发布版");
     syncReleaseTargetUi();
   }
 
@@ -3649,6 +3670,8 @@
           ? "确认从全部 OEM 后台撤下这条 Nexus 平台公告？历史记录仍会保留。"
         : action === "pause"
           ? "确认暂停该版本？已经开始安装的节点不会被中断。"
+          : action === "baseline"
+            ? "确认将该灰度验收版设为新服务器安装基线？这不会给正式节点创建升级任务。"
           : action === "retry"
             ? "确认让该版本所有失败节点重新尝试一次？"
             : "确认把该版本重新通知固定灰度节点 #" +
@@ -3656,7 +3679,8 @@
       var dangerousReleaseAction = (action === "publish" && !platformRelease) || action === "rollback";
       var releaseOkText = action === "publish"
         ? (platformRelease ? "发布公告" : "通知正式节点")
-        : (action === "rollback" ? "确认回撤" : "确认");
+        : (action === "rollback" ? "确认回撤" :
+          action === "baseline" ? "设为新装基线" : "确认");
       uiConfirm(promptText, dangerousReleaseAction, releaseOkText).then(function (ok) {
         if (!ok) return;
         api("/nexus/admin/release_action", { body: body })

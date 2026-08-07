@@ -145,38 +145,48 @@ try:
     artifact = value["artifact"]
     fields = [
         value["version"],
+        value.get("source", "unknown"),
         artifact["bot_dockerhub_image"], artifact["web_dockerhub_image"],
         artifact["bot_mirror_image"], artifact["web_mirror_image"],
         artifact["bot_image"], artifact["web_image"],
     ]
-    if artifact.get("mode") != "container" or any("@sha256:" not in str(item) for item in fields[1:]):
+    if artifact.get("mode") != "container" or any("@sha256:" not in str(item) for item in fields[2:]):
         raise ValueError("invalid artifact")
     print("\n".join(str(item) for item in fields))
 except Exception:
     raise SystemExit(1)
 ') || die "无法取得可安装镜像：$(printf '%s' "$INSTALL_RESP" | head -c 300)"
 INSTALL_VERSION="${INSTALL_FIELDS[0]}"
-BOT_DOCKERHUB_IMAGE="${INSTALL_FIELDS[1]}"
-WEB_DOCKERHUB_IMAGE="${INSTALL_FIELDS[2]}"
-BOT_MIRROR_IMAGE="${INSTALL_FIELDS[3]}"
-WEB_MIRROR_IMAGE="${INSTALL_FIELDS[4]}"
-BOT_GHCR_IMAGE="${INSTALL_FIELDS[5]}"
-WEB_GHCR_IMAGE="${INSTALL_FIELDS[6]}"
+INSTALL_MANIFEST_SOURCE="${INSTALL_FIELDS[1]}"
+BOT_DOCKERHUB_IMAGE="${INSTALL_FIELDS[2]}"
+WEB_DOCKERHUB_IMAGE="${INSTALL_FIELDS[3]}"
+BOT_MIRROR_IMAGE="${INSTALL_FIELDS[4]}"
+WEB_MIRROR_IMAGE="${INSTALL_FIELDS[5]}"
+BOT_GHCR_IMAGE="${INSTALL_FIELDS[6]}"
+WEB_GHCR_IMAGE="${INSTALL_FIELDS[7]}"
+
+INSTALLER_VERSION="${GUDUU_INSTALLER_VERSION:-未知}"
+if [ "$INSTALLER_VERSION" != "未知" ] && [ "$INSTALLER_VERSION" != "$INSTALL_VERSION" ]; then
+  warn "安装工具为 $INSTALLER_VERSION，Nexus 新装基线为 $INSTALL_VERSION；将按平台已验收基线安装。"
+fi
 
 # Docker Hub 优先，方便国内服务器使用标准 Docker 镜像加速器；任一镜像失败就
 # 整组回退自建仓，最后回退 GHCR，避免 bot/web 来自两套不一致来源。
 say "拉取 GuDuu OS $INSTALL_VERSION 镜像（优先 Docker Hub）……"
 if docker pull "$BOT_DOCKERHUB_IMAGE" && docker pull "$WEB_DOCKERHUB_IMAGE"; then
   BOT_IMAGE="$BOT_DOCKERHUB_IMAGE"; WEB_IMAGE="$WEB_DOCKERHUB_IMAGE"
+  INSTALL_IMAGE_SOURCE="Docker Hub（首选）"; INSTALL_IMAGE_FALLBACK="否"
 else
   warn "Docker Hub 拉取失败，回退平台镜像仓同摘要镜像……"
   if docker pull "$BOT_MIRROR_IMAGE" && docker pull "$WEB_MIRROR_IMAGE"; then
     BOT_IMAGE="$BOT_MIRROR_IMAGE"; WEB_IMAGE="$WEB_MIRROR_IMAGE"
+    INSTALL_IMAGE_SOURCE="平台自建镜像仓"; INSTALL_IMAGE_FALLBACK="是：Docker Hub 失败"
   else
     warn "平台镜像仓拉取失败，回退 GHCR 同摘要镜像……"
     docker pull "$BOT_GHCR_IMAGE" && docker pull "$WEB_GHCR_IMAGE" \
       || die "Docker Hub、平台镜像仓和 GHCR 均拉取失败；请检查网络或镜像仓公开状态。"
     BOT_IMAGE="$BOT_GHCR_IMAGE"; WEB_IMAGE="$WEB_GHCR_IMAGE"
+    INSTALL_IMAGE_SOURCE="GHCR"; INSTALL_IMAGE_FALLBACK="是：Docker Hub 与平台镜像仓失败"
   fi
 fi
 
@@ -202,6 +212,22 @@ if [ "$BEHIND_PROXY" -eq 0 ]; then
       warn "端口 $p 已被占用 —— Caddy 需要独占 80/443，请先停掉占用进程（如宿主机 nginx）。"
     fi
   done
+else
+  case "$PROXY_HTTP_PORT" in
+    ''|*[!0-9]*) die "--proxy-port 必须是 1024-65535 之间的数字。" ;;
+  esac
+  [ "$PROXY_HTTP_PORT" -ge 1024 ] && [ "$PROXY_HTTP_PORT" -le 65535 ] \
+    || die "--proxy-port 必须在 1024-65535 之间。"
+  REQUESTED_PROXY_PORT="$PROXY_HTTP_PORT"
+  # 面板/nginx 经常已占用默认 8080。只在 loopback TCP 端口真实被监听时
+  # 逐一向后选择，并在安装结果中明确告知宿主反代应该转发到哪里。
+  while ss -tln 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$PROXY_HTTP_PORT\$"; do
+    [ "$PROXY_HTTP_PORT" -lt 65535 ] || die "1024-65535 中没有可用的反代端口。"
+    PROXY_HTTP_PORT=$((PROXY_HTTP_PORT + 1))
+  done
+  if [ "$PROXY_HTTP_PORT" != "$REQUESTED_PROXY_PORT" ]; then
+    warn "反代端口 $REQUESTED_PROXY_PORT 已被占用，已自动改用 127.0.0.1:$PROXY_HTTP_PORT。"
+  fi
 fi
 
 # ---------- 3. 生成密钥 + 渲染配置 ----------
@@ -255,8 +281,10 @@ if [ "$BEHIND_PROXY" -eq 1 ]; then
 
 # —— 共存模式（--behind-proxy）端口绑定：宿主反代 → 127.0.0.1:$PROXY_HTTP_PORT ——
 COSMAC_WEB_HTTP=127.0.0.1:$PROXY_HTTP_PORT:80
-COSMAC_WEB_HTTPS=127.0.0.1:1$PROXY_HTTP_PORT:443
-COSMAC_WEB_HTTPS_UDP=127.0.0.1:1$PROXY_HTTP_PORT:443/udp
+# 共存模式下容器 Caddy 只监听 :80；Compose 仍有 443 容器端口声明，
+# 让 Docker 给它分配随机 loopback 端口，避免构造 18080 一类可冲突固定端口。
+COSMAC_WEB_HTTPS=127.0.0.1::443
+COSMAC_WEB_HTTPS_UDP=127.0.0.1::443/udp
 EOF
 else
   render templates/Caddyfile.tpl data/caddy/Caddyfile \
@@ -334,6 +362,8 @@ fi
 
 say "=============================================="
 say "安装完成 ✅"
+say "  安装工具： $INSTALLER_VERSION    实际应用： $INSTALL_VERSION（清单来源：$INSTALL_MANIFEST_SOURCE）"
+say "  镜像来源： $INSTALL_IMAGE_SOURCE    发生回退：$INSTALL_IMAGE_FALLBACK"
 if [ "$BEHIND_PROXY" -eq 1 ]; then
   say "  共存模式：请在宿主反代加一条  $DOMAIN → 127.0.0.1:$PROXY_HTTP_PORT"
   say "  若宿主 nginx/面板拦截 /.well-known/，请按 templates/nginx-matrix-well-known.conf.tpl 配精确路由"

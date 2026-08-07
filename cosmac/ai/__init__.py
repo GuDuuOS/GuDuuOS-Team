@@ -62,6 +62,7 @@ def build_provider(
     model: str = "",
     system_prompt: str = "",
     base_url: str = "",
+    allow_env_fallback: bool = True,
 ) -> LLMProvider:
     """按「provider 名 + 显式 key + 模型」构造后端（多模型抽象的总入口）。
 
@@ -80,7 +81,9 @@ def build_provider(
         )
 
     # key：优先运行时下发，其次环境变量
-    key = api_key or os.environ.get(ENV_KEYS[name], "")
+    key = api_key or (
+        os.environ.get(ENV_KEYS[name], "") if allow_env_fallback else ""
+    )
     if not key:
         logger.warning("provider=%s 缺少 API key，主 AI 暂时降级为 echo 占位。", name)
         return EchoProvider()
@@ -103,7 +106,10 @@ def build_provider(
 
     resolved_base_url: Optional[str] = base_url or None
     if not resolved_base_url and name in ("deepseek", "ark"):
-        resolved_base_url = os.environ.get("ARK_BASE_URL", ARK_BASE_URL)
+        resolved_base_url = (
+            os.environ.get("ARK_BASE_URL", ARK_BASE_URL)
+            if allow_env_fallback else ARK_BASE_URL
+        )
     elif not resolved_base_url and name == "gemini":
         resolved_base_url = GEMINI_BASE_URL
     # openai：base_url=None → 用 OpenAI 官方端点

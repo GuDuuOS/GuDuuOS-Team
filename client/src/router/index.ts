@@ -5,7 +5,7 @@
 // 详见 memory `client-root-is-liveview`（已随本次「独立 AuthView」重构更新）。
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { storedCurrentUserId } from '@/platform/sessionVault'
-import { loadInstanceConfig } from '@/config/instance'
+import { loadRequiredInstanceConfig } from '@/config/instance'
 
 const LiveView = () => import('@/views/LiveView.vue')
 const AuthView = () => import('@/views/AuthView.vue')
@@ -53,11 +53,19 @@ router.beforeEach(async (to) => {
   }
   if (!userId) return { path: '/login', query: { redirect: to.fullPath } }
   if (to.path !== '/setup') {
-    const config = await loadInstanceConfig()
     // 新安装只有 bootstrap 的 @admin 账号；仅把它强制送入向导。这样旧 OEM 节点
     // 升级到 1.24.0 时，普通成员不会在管理员尚未补配置前被一并挡在向导外。
     const localpart = userId.replace(/^@/, '').split(':')[0]
-    if (!config.setup_completed && localpart === 'admin') return { path: '/setup' }
+    if (localpart === 'admin') {
+      try {
+        const config = await loadRequiredInstanceConfig()
+        if (!config.setup_completed) return { path: '/setup' }
+      } catch {
+        // 对初始管理员必须 fail closed：配置端点失败时停在向导里显示
+        // 可理解错误，不允许因“读取不到”而绕过首次配置。
+        return { path: '/setup', query: { config: 'unavailable' } }
+      }
+    }
   }
   return true
 })

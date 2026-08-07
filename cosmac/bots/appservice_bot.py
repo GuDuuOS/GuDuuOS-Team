@@ -1696,6 +1696,7 @@ class CosmacBot:
             llm = build_provider(
                 provider, api_key=str(secure.get("api_key") or ""), model=model,
                 system_prompt=applied_sys, base_url=str(secure.get("base_url") or ""),
+                allow_env_fallback=not bool(secure),
             )
             ag = Agent(llm=llm, toolbox=self.toolbox, system_prompt=applied_sys)
             self._model_agents[model] = ag
@@ -3028,6 +3029,7 @@ class CosmacBot:
                 self.llm = build_provider(
                     provider, api_key=api_key, model=model,
                     system_prompt=system_prompt, base_url=base_url,
+                    allow_env_fallback=not bool(secure),
                 )
                 self.agent = Agent(
                     llm=self.llm, toolbox=self.toolbox, system_prompt=system_prompt

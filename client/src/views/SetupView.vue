@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import { instanceBrand, loadInstanceConfig } from '@/config/instance'
-import { approvePendingNodeUpdate, getNodeAdminSettings, getPendingNodeUpdate, saveNodeAdminSettings, type PendingNodeUpdate } from '@/matrix/client'
+import { approvePendingNodeUpdate, currentUserId, getClient, getNodeAdminSettings, getPendingNodeUpdate, restoreSession, saveNodeAdminSettings, type PendingNodeUpdate } from '@/matrix/client'
 
 const router = useRouter()
+const route = useRoute()
 const step = ref(0)
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
+const loadFailed = ref(false)
 const updateBusy = ref(false)
 const pendingUpdate = ref<PendingNodeUpdate | null>(null)
 const editing = computed(() => instanceBrand.setupCompleted)
@@ -17,14 +19,30 @@ const editing = computed(() => instanceBrand.setupCompleted)
 const form = reactive({
   brand: { product_name: 'GuDuu OS', company_name: '', logo_data_url: '' },
   email: { host: '', port: 465, user: '', password: '', from_address: '', from_name: 'GuDuu OS', security: 'ssl', password_configured: false },
-  ai: { provider: 'echo', model: '', base_url: '', api_key: '', api_key_configured: false },
+  ai: { connection_mode: 'nexus', provider: 'deepseek', model: '', base_url: '', api_key: '', api_key_configured: false },
   payment: { provider: 'none', mode: 'sandbox', merchant_id: '', secret_key: '', webhook_secret: '', secret_configured: false, webhook_configured: false, adapter_ready: false },
 })
 
 const steps = ['品牌', '发信邮箱', '主 AI', '支付', '确认']
 
+watch(() => form.ai.connection_mode, (mode) => {
+  // Nexus 网关尚未开放 Echo/Gemini 路由；切换模式时立即收敛为
+  // 已支持的默认提供方，避免下拉框隐藏了当前值却在保存时才报错。
+  if (mode === 'nexus' && !['claude', 'openai', 'deepseek', 'ark'].includes(form.ai.provider)) {
+    form.ai.provider = 'deepseek'
+  }
+})
+
 onMounted(async () => {
   try {
+    // SetupView 不经过 LiveView，刷新 /setup 时 Matrix client 仍是空。
+    // 必须先从 Web 会话或 Electron safeStorage 恢复真实会话，
+    // 再调用管理员 API，不能只相信可篡改的用户 ID 元数据。
+    const uid = getClient() ? currentUserId() : await restoreSession()
+    if (!uid) {
+      await router.replace({ path: '/login', query: { redirect: route.fullPath } })
+      return
+    }
     const value = await getNodeAdminSettings()
     Object.assign(form.brand, value.brand || {})
     Object.assign(form.email, value.email || {})
@@ -32,7 +50,11 @@ onMounted(async () => {
     Object.assign(form.payment, value.payment || {})
     pendingUpdate.value = await getPendingNodeUpdate()
   } catch (e: any) {
-    error.value = e?.message || '只有服务器管理员可以完成首次配置'
+    loadFailed.value = true
+    const message = String(e?.message || '')
+    error.value = message === '尚未连接服务器'
+      ? '登录状态尚未恢复，请重新登录管理员账号后再完成配置。'
+      : message || '无法读取节点设置，请确认使用的是服务器管理员账号。'
   } finally {
     loading.value = false
   }
@@ -95,10 +117,16 @@ async function approveUpdate() {
         <img :src="form.brand.logo_data_url || instanceBrand.logoUrl" alt="" />
         <div><small>GuDuu OS · OEM 节点</small><h1>{{ editing ? '系统设置' : '完成首次部署' }}</h1></div>
       </header>
-      <div class="steps"><span v-for="(item, i) in steps" :key="item" :class="{ active: i === step, done: i < step }">{{ i + 1 }}. {{ item }}</span></div>
+      <div v-if="!loadFailed" class="steps"><span v-for="(item, i) in steps" :key="item" :class="{ active: i === step, done: i < step }">{{ i + 1 }}. {{ item }}</span></div>
       <div v-if="loading" class="state">正在读取节点设置…</div>
+      <div v-else-if="loadFailed" class="body load-failed">
+        <p class="error">{{ error }}</p>
+        <p class="hint">当前未保存任何新配置，也不会默认跳过首次设置。</p>
+        <div><button @click="router.replace({ path: '/login', query: { redirect: '/setup' } })">重新登录管理员</button></div>
+      </div>
       <div v-else class="body">
         <p v-if="error" class="error">{{ error }}</p>
+        <p v-if="route.query.activated === '1'" class="success">授权激活已完成。下面继续配置品牌、邮箱、主 AI 与支付信息。</p>
         <div v-if="pendingUpdate" class="update-notice">
           <div><b>发现可选更新 {{ pendingUpdate.current_version }} → {{ pendingUpdate.version }}</b><small>{{ pendingUpdate.title }}</small></div>
           <button :disabled="updateBusy" @click="approveUpdate">{{ updateBusy ? '确认中…' : '确认安装' }}</button>
@@ -121,11 +149,14 @@ async function approveUpdate() {
         </template>
 
         <template v-else-if="step === 2">
-          <h2>主 AI 与 API</h2><p class="hint">API Key 加密保存在本节点数据库，不会写入聊天配置或返回浏览器。</p>
-          <label>提供方<select v-model="form.ai.provider"><option value="echo">暂不接入（Echo）</option><option value="claude">Anthropic Claude</option><option value="openai">OpenAI</option><option value="deepseek">DeepSeek / 方舟</option><option value="gemini">Google Gemini</option></select></label>
+          <h2>主 AI 与 API</h2><p class="hint">先选择使用平台网关还是自有 API。两种模式都可以以后在“系统设置”中切换。</p>
+          <label>接入方式<select v-model="form.ai.connection_mode"><option value="nexus">GuDuu Nexus AI 网关（使用 OEM 授权）</option><option value="direct">自有 API（费用由本企业承担）</option></select></label>
+          <p v-if="form.ai.connection_mode === 'nexus'" class="mode-note">无需在浏览器输入 API Key；节点使用服务器内的 OEM 授权连接 Nexus，用量按平台 Token 结算。</p>
+          <p v-else class="mode-note">您的 API Key 仅加密保存在本节点数据库，不写入聊天配置或返回浏览器。</p>
+          <label>提供方<select v-model="form.ai.provider"><option v-if="form.ai.connection_mode === 'direct'" value="echo">暂不接入（Echo）</option><option value="claude">Anthropic Claude</option><option value="openai">OpenAI</option><option value="deepseek">DeepSeek / 方舟</option><option v-if="form.ai.connection_mode === 'direct'" value="gemini">Google Gemini</option></select></label>
           <label>模型 ID<input v-model.trim="form.ai.model" placeholder="例如 deepseek-v3.2" /></label>
-          <label>API Base URL（官方接口可留空）<input v-model.trim="form.ai.base_url" placeholder="https://api.example.com/v1" /></label>
-          <label>API Key<input v-model="form.ai.api_key" type="password" :placeholder="form.ai.api_key_configured ? '已配置；留空保持不变' : 'sk-…'" /></label>
+          <label v-if="form.ai.connection_mode === 'direct'">API Base URL（官方接口可留空）<input v-model.trim="form.ai.base_url" placeholder="https://api.example.com/v1" /></label>
+          <label v-if="form.ai.connection_mode === 'direct'">API Key<input v-model="form.ai.api_key" type="password" :placeholder="form.ai.api_key_configured ? '已配置；留空保持不变' : 'sk-…'" /></label>
         </template>
 
         <template v-else-if="step === 3">
@@ -138,7 +169,7 @@ async function approveUpdate() {
 
         <template v-else>
           <h2>确认配置</h2>
-          <div class="summary"><b>{{ form.brand.product_name }}</b><span>邮箱：{{ form.email.host ? '已填写' : '稍后配置' }}</span><span>主 AI：{{ form.ai.provider }}</span><span>支付：{{ form.payment.provider === 'none' ? '暂不接入' : `${form.payment.provider}（待接入）` }}</span></div>
+          <div class="summary"><b>{{ form.brand.product_name }}</b><span>邮箱：{{ form.email.host ? '已填写' : '稍后配置' }}</span><span>主 AI：{{ form.ai.connection_mode === 'nexus' ? 'Nexus 网关' : '自有 API' }} · {{ form.ai.provider }}</span><span>支付：{{ form.payment.provider === 'none' ? '暂不接入' : `${form.payment.provider}（待接入）` }}</span></div>
           <p class="hint">保存后进入工作台。以后可从管理后台“系统设置”再次修改。</p>
         </template>
 
@@ -149,5 +180,6 @@ async function approveUpdate() {
 </template>
 
 <style scoped>
-.setup-shell{min-height:100vh;padding:28px;background:linear-gradient(145deg,#fffaf2,#f6eadc);color:#2d2925;display:grid;place-items:center}.setup-card{width:min(820px,100%);min-height:620px;background:#fffdf9;border:1px solid #e7d9c9;border-radius:20px;box-shadow:0 20px 60px #68401b1c;overflow:hidden}.setup-head{display:flex;align-items:center;gap:14px;padding:24px 30px 18px}.setup-head img{width:48px;height:48px;object-fit:contain;border-radius:12px}.setup-head small{color:#a06b3d}.setup-head h1{font-size:24px;margin:3px 0 0}.steps{display:flex;gap:8px;padding:0 30px 18px;border-bottom:1px solid #eee1d3;overflow:auto}.steps span{white-space:nowrap;font-size:13px;color:#9b8e82;padding:7px 10px;border-radius:999px}.steps .active{background:#ef7d25;color:#fff}.steps .done{color:#c3611b}.body{padding:28px 30px}.body h2{font-size:20px;margin:0 0 6px}.hint{color:#8b7d70;font-size:14px;margin:0 0 22px}.body label{display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:650;margin:0 0 16px}.body input,.body select{width:100%;box-sizing:border-box;border:1px solid #d9cabb;border-radius:9px;background:#fff;padding:11px 12px;font:inherit;color:inherit}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.preview{width:72px;height:72px;object-fit:contain;border:1px solid #e3d5c7;border-radius:14px;padding:6px}.warn,.error{border-radius:10px;padding:11px 13px;font-size:13px;line-height:1.55}.warn{background:#fff3df;color:#9a551c}.error{background:#fff0ed;color:#b63f2e}.update-notice{display:flex;align-items:center;gap:16px;margin:0 0 20px;padding:13px;border:1px solid #e8c69f;background:#fff7eb;border-radius:11px}.update-notice div{display:grid;gap:3px;flex:1}.update-notice small{color:#8b6b4d}.summary{display:grid;gap:12px;padding:20px;border:1px solid #e7d8c9;border-radius:12px}.summary span{color:#75695e}footer{display:flex;gap:10px;align-items:center;margin-top:26px}footer span{flex:1}button{border:0;border-radius:9px;background:#e97822;color:#fff;padding:10px 17px;font-weight:700;cursor:pointer}button.ghost{background:#f2e8de;color:#6f6257}button:disabled{opacity:.55}.state{padding:40px 30px;color:#8b7d70}@media(max-width:640px){.setup-shell{padding:0}.setup-card{min-height:100vh;border-radius:0;border:0}.setup-head,.steps,.body{padding-left:18px;padding-right:18px}.grid{grid-template-columns:1fr}.steps{gap:2px}.steps span{font-size:12px;padding:6px}.update-notice{align-items:flex-start;flex-direction:column}}
+.setup-shell{min-height:100vh;padding:28px;background:linear-gradient(145deg,#fffaf2,#f6eadc);color:#2d2925;display:grid;place-items:center}.setup-card{width:min(820px,100%);min-height:620px;background:#fffdf9;border:1px solid #e7d9c9;border-radius:20px;box-shadow:0 20px 60px #68401b1c;overflow:hidden}.setup-head{display:flex;align-items:center;gap:14px;padding:24px 30px 18px}.setup-head img{width:48px;height:48px;object-fit:contain;border-radius:12px}.setup-head small{color:#a06b3d}.setup-head h1{font-size:24px;margin:3px 0 0}.steps{display:flex;gap:8px;padding:0 30px 18px;border-bottom:1px solid #eee1d3;overflow:auto}.steps span{white-space:nowrap;font-size:13px;color:#9b8e82;padding:7px 10px;border-radius:999px}.steps .active{background:#ef7d25;color:#fff}.steps .done{color:#c3611b}.body{padding:28px 30px}.body h2{font-size:20px;margin:0 0 6px}.hint{color:#8b7d70;font-size:14px;margin:0 0 22px}.body label{display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:650;margin:0 0 16px}.body input,.body select{width:100%;box-sizing:border-box;border:1px solid #d9cabb;border-radius:9px;background:#fff;padding:11px 12px;font:inherit;color:inherit}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.preview{width:72px;height:72px;object-fit:contain;border:1px solid #e3d5c7;border-radius:14px;padding:6px}.warn,.error,.success{border-radius:10px;padding:11px 13px;font-size:13px;line-height:1.55}.warn{background:#fff3df;color:#9a551c}.error{background:#fff0ed;color:#b63f2e}.success{background:#edf9f1;color:#237444}.load-failed{max-width:620px}.update-notice{display:flex;align-items:center;gap:16px;margin:0 0 20px;padding:13px;border:1px solid #e8c69f;background:#fff7eb;border-radius:11px}.update-notice div{display:grid;gap:3px;flex:1}.update-notice small{color:#8b6b4d}.summary{display:grid;gap:12px;padding:20px;border:1px solid #e7d8c9;border-radius:12px}.summary span{color:#75695e}footer{display:flex;gap:10px;align-items:center;margin-top:26px}footer span{flex:1}button{border:0;border-radius:9px;background:#e97822;color:#fff;padding:10px 17px;font-weight:700;cursor:pointer}button.ghost{background:#f2e8de;color:#6f6257}button:disabled{opacity:.55}.state{padding:40px 30px;color:#8b7d70}@media(max-width:640px){.setup-shell{padding:0}.setup-card{min-height:100vh;border-radius:0;border:0}.setup-head,.steps,.body{padding-left:18px;padding-right:18px}.grid{grid-template-columns:1fr}.steps{gap:2px}.steps span{font-size:12px;padding:6px}.update-notice{align-items:flex-start;flex-direction:column}}
+.mode-note{margin:-8px 0 18px;padding:10px 12px;border-left:3px solid #dc8a3c;background:#fff8ef;color:#765332;font-size:13px;line-height:1.55}
 </style>

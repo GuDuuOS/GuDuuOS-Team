@@ -157,9 +157,11 @@ class DashboardSecurityTests(unittest.TestCase):
                 response.headers["Content-Type"],
                 "text/x-shellscript; charset=utf-8",
             )
-        self.assertIn('RELEASE_TAG="v1.26.3"', script)
+        self.assertIn('RELEASE_TAG="v1.28.0"', script)
         self.assertIn("优先拉 Docker Hub", script)
-        self.assertIn('exec ./install.sh "$@"', script)
+        self.assertIn('exec ./install.sh "${FORWARD_ARGS[@]}"', script)
+        self.assertIn('--reinstall', script)
+        self.assertIn('mv -- "$INSTALL_ROOT" "$REINSTALL_BACKUP"', script)
         self.assertNotIn("CMK-", script)
         self.assertNotIn("--key", script)
 

@@ -465,6 +465,49 @@ def publish(s, release_id: int) -> Dict[str, Any]:
     return get_release(s, release.id)
 
 
+def set_install_baseline(s, release_id: int) -> Dict[str, Any]:
+    """将已通过技术灰度的容器版本设为新服务器安装基线。
+
+    这个动作只改变安装器为“新 KEY”选择的不可变摘要，不会给
+    生产节点创建投放任务。候选版必须由策略中固定的灰度节点
+    明确上报 success，避免用“当前已是该版本”的人工描述绕过验收。
+    """
+    release = _release(s, release_id)
+    _require_node_target(s, release, "设置新装基线")
+    if release.status not in _ACTIVE_RELEASE_STATES:
+        raise FleetError(
+            "NEXUS_INSTALL_BASELINE_STATE",
+            "只有正在灰度、已发布或正在回撤的版本才能设为新装基线",
+        )
+    artifact = s.get(NexusReleaseArtifact, int(release.id))
+    if release_artifacts.artifact_dict(artifact).get("mode") != "container":
+        raise FleetError(
+            "NEXUS_INSTALL_BASELINE_ARTIFACT",
+            "只有已登记不可变 Docker 摘要的版本才能设为新装基线",
+        )
+    policy = release_policy.get_policy(s)
+    canary_id = int(policy["canary_instance_id"] or 0)
+    deployment = (
+        s.get(
+            NexusReleaseDeployment,
+            {"release_id": release.id, "instance_id": canary_id},
+        )
+        if canary_id
+        else None
+    )
+    if deployment is None or deployment.status != "success":
+        raise FleetError(
+            "NEXUS_INSTALL_BASELINE_NOT_VERIFIED",
+            f"灰度节点 #{canary_id or '未配置'} 尚未安装成功，不能作为新装基线",
+            409,
+        )
+    release_policy.set_policy(
+        s, {"install_baseline_release_id": int(release.id)}
+    )
+    s.flush()
+    return get_release(s, release.id)
+
+
 def rollback(s, release_id: int) -> Dict[str, Any]:
     """把全部活动 OEM 节点回撤到一个曾经全量发布过的历史版本。
 
@@ -536,6 +579,10 @@ def pause(s, release_id: int) -> Dict[str, Any]:
         raise FleetError("NEXUS_RELEASE_STATE", "只有灰度或全量发布中的版本可以暂停")
     release.status = "paused"
     release.updated_ts = _now_ms()
+    policy = release_policy.get_policy(s)
+    if int(policy.get("install_baseline_release_id") or 0) == int(release.id):
+        # 既然管理员已暂停该版本，新服务器也不能继续安装它。
+        release_policy.set_policy(s, {"install_baseline_release_id": 0})
     s.flush()
     return get_release(s, release.id)
 
@@ -877,6 +924,25 @@ def install_artifact(s, raw_key: str, domain: str) -> Dict[str, Any]:
                 "artifact": payload,
                 "source": "assigned",
             }
+
+    policy = release_policy.get_policy(s)
+    baseline_id = int(policy.get("install_baseline_release_id") or 0)
+    if baseline_id:
+        baseline = s.get(NexusRelease, baseline_id)
+        if (
+            baseline is not None
+            and baseline.status in _ACTIVE_RELEASE_STATES
+            and _release_target(s, baseline) == "node"
+        ):
+            artifact = s.get(NexusReleaseArtifact, int(baseline.id))
+            payload = release_artifacts.artifact_dict(artifact)
+            if payload.get("mode") == "container":
+                return {
+                    "version": baseline.version,
+                    "git_ref": baseline.git_ref,
+                    "artifact": payload,
+                    "source": "baseline",
+                }
 
     candidates = s.execute(
         select(NexusRelease)

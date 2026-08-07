@@ -236,6 +236,82 @@ class ReleaseTest(unittest.TestCase):
         )
         self.assertEqual(retry_blocked["version"], "1.7.0")
 
+    def test_verified_canary_can_become_new_install_baseline(self):
+        """新装基线必须灰度成功，且不会向正式节点创建任务。"""
+        self._register_manifest("1.7.0")
+        stable = releases.create_release(
+            self.s,
+            version="1.7.0",
+            title="已发布稳定版",
+            notes="新装回退基线。",
+            git_ref="v1.7.0",
+            target="node",
+            delivery_mode="container",
+        )
+        releases.publish(self.s, stable["id"])
+
+        self._register_manifest("1.8.0")
+        candidate = releases.create_release(
+            self.s,
+            version="1.8.0",
+            title="已验收候选版",
+            notes="不给正式节点创建任务。",
+            git_ref="v1.8.0",
+            target="node",
+            delivery_mode="container",
+        )
+        release_policy.set_policy(
+            self.s,
+            {
+                "development_instance_ids": [self.inst_a],
+                "canary_instance_id": self.inst_b,
+                "production_instance_ids": [],
+                "auto_canary": False,
+                "require_canary_success": True,
+            },
+        )
+        releases.start_canary(self.s, candidate["id"], self.inst_b)
+        with self.assertRaises(FleetError) as not_verified:
+            releases.set_install_baseline(self.s, candidate["id"])
+        self.assertEqual(
+            not_verified.exception.code, "NEXUS_INSTALL_BASELINE_NOT_VERIFIED"
+        )
+
+        deployment = self.s.get(
+            db.NexusReleaseDeployment,
+            {"release_id": candidate["id"], "instance_id": self.inst_b},
+        )
+        deployment.status = "success"
+        releases.set_install_baseline(self.s, candidate["id"])
+        self.assertEqual(
+            release_policy.get_policy(self.s)["install_baseline_release_id"],
+            candidate["id"],
+        )
+
+        new_key = fleet.issue_keys(self.s)[0]["key"]
+        key_row = fleet._key_by_plain(self.s, new_key)
+        self.s.add(
+            db.NexusKeyBinding(
+                key_id=key_row.id,
+                approved_domain="fresh.example.com",
+            )
+        )
+        artifact = releases.install_artifact(
+            self.s, new_key, "fresh.example.com"
+        )
+        self.assertEqual(artifact["version"], "1.8.0")
+        self.assertEqual(artifact["source"], "baseline")
+
+        releases.pause(self.s, candidate["id"])
+        self.assertEqual(
+            release_policy.get_policy(self.s)["install_baseline_release_id"], 0
+        )
+        fallback = releases.install_artifact(
+            self.s, new_key, "fresh.example.com"
+        )
+        self.assertEqual(fallback["version"], "1.7.0")
+        self.assertEqual(fallback["source"], "published")
+
     def test_ci_manifest_creates_one_unpublished_container_draft(self):
         """CI 登记镜像后必须自动出现一条未发布节点草稿。"""
         self._register_manifest()

@@ -34,6 +34,7 @@ class ReleasePolicyTests(unittest.TestCase):
                 "production_instance_ids": [3],
                 "auto_canary": True,
                 "require_canary_success": True,
+                "install_baseline_release_id": 0,
             },
         )
 

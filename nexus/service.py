@@ -2152,6 +2152,8 @@ class NexusHandler(BaseHTTPRequestHandler):
                         result = releases.rollback(s, release_id)
                     elif action == "retry":
                         result = releases.retry_failed(s, release_id)
+                    elif action == "baseline":
+                        result = releases.set_install_baseline(s, release_id)
                     else:
                         raise FleetError("NEXUS_BAD_RELEASE_ACTION", "版本操作不合法")
                     self._json(200, {"release": result})

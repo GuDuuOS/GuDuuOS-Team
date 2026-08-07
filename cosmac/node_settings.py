@@ -24,7 +24,10 @@ DEFAULT_PUBLIC: Dict[str, Any] = {
         "host": "", "port": 465, "user": "", "from_address": "",
         "from_name": "GuDuu OS", "security": "ssl",
     },
-    "ai": {"provider": "echo", "model": "", "base_url": ""},
+    "ai": {
+        "connection_mode": "direct", "provider": "echo", "model": "",
+        "base_url": "",
+    },
     "payment": {"provider": "none", "mode": "sandbox", "merchant_id": ""},
 }
 
@@ -110,6 +113,12 @@ def admin_config() -> Dict[str, Any]:
                 "deepseek": "ARK_BASE_URL", "ark": "ARK_BASE_URL",
             }.get(provider, "")
             public["ai"].update({
+                # 官方安装器把 OEM KEY 作为 Nexus 网关凭据；存量节点
+                # 首次打开向导时必须如实显示这一模式，不能误写成自有 API。
+                "connection_mode": (
+                    "nexus" if os.environ.get("COSMAC_OEM_KEY", "").strip()
+                    else "direct"
+                ),
                 "provider": provider,
                 "model": os.environ.get("COSMAC_LLM_MODEL", ""),
                 "base_url": os.environ.get(base_var, "") if base_var else "",
@@ -149,6 +158,13 @@ def save_admin_config(body: Dict[str, Any]) -> Dict[str, Any]:
     provider = str(ai.get("provider") or "echo").strip().lower()
     if provider not in {"echo", "claude", "openai", "deepseek", "ark", "gemini"}:
         raise NodeSettingsError("不支持的主 AI 提供方")
+    connection_mode = str(ai.get("connection_mode") or "direct").strip().lower()
+    if connection_mode not in {"nexus", "direct"}:
+        raise NodeSettingsError("主 AI 接入方式不正确")
+    if connection_mode == "nexus" and provider not in {
+        "claude", "openai", "deepseek", "ark",
+    }:
+        raise NodeSettingsError("Nexus 网关当前只支持 Claude、OpenAI 和 DeepSeek")
     try:
         smtp_port = int(email.get("port") or 465)
     except (TypeError, ValueError) as exc:
@@ -177,6 +193,7 @@ def save_admin_config(body: Dict[str, Any]) -> Dict[str, Any]:
                 "security": "starttls" if email.get("security") == "starttls" else "ssl",
             },
             "ai": {
+                "connection_mode": connection_mode,
                 "provider": provider,
                 "model": str(ai.get("model") or "").strip()[:160],
                 "base_url": str(ai.get("base_url") or "").strip()[:500],
@@ -197,6 +214,14 @@ def save_admin_config(body: Dict[str, Any]) -> Dict[str, Any]:
                 old_secrets.pop(target, None)
             elif str(source or "").strip():
                 old_secrets[target] = str(source).strip()
+        if connection_mode == "direct" and provider != "echo" and not old_secrets.get(
+            "ai_api_key"
+        ):
+            raise NodeSettingsError("使用自有 AI API 时必须填写 API Key")
+        if connection_mode == "nexus" and not os.environ.get(
+            "COSMAC_OEM_KEY", ""
+        ).strip():
+            raise NodeSettingsError("Nexus AI 网关需要节点先完成 OEM 授权")
         row.public_config = public
         row.encrypted_secrets = _encrypt(old_secrets)
         row.setup_completed = bool(body.get("setup_completed", True))
@@ -211,6 +236,9 @@ def runtime_email() -> Dict[str, Any]:
             return {}
         public = _merge_public(row.public_config)["email"]
         public["password"] = _decrypt(row.encrypted_secrets).get("smtp_password", "")
+        # 设置行存在后，网页就是唯一真值源。即使管理员留空，
+        # 也表示明确停用，调用方不得再按字段回退到旧 .env。
+        public["_source"] = "node_settings"
         return public
 
 
@@ -221,5 +249,18 @@ def runtime_ai() -> Dict[str, Any]:
         if not row:
             return {}
         public = _merge_public(row.public_config)["ai"]
-        public["api_key"] = _decrypt(row.encrypted_secrets).get("ai_api_key", "")
+        mode = str(public.get("connection_mode") or "direct")
+        provider = str(public.get("provider") or "echo")
+        if mode == "nexus":
+            base_var = {
+                "claude": "ANTHROPIC_BASE_URL",
+                "openai": "OPENAI_BASE_URL",
+                "deepseek": "ARK_BASE_URL",
+                "ark": "ARK_BASE_URL",
+            }.get(provider, "")
+            public["base_url"] = os.environ.get(base_var, "") if base_var else ""
+            public["api_key"] = os.environ.get("COSMAC_OEM_KEY", "")
+        else:
+            public["api_key"] = _decrypt(row.encrypted_secrets).get("ai_api_key", "")
+        public["_source"] = "node_settings"
         return public

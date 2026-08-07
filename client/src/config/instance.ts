@@ -17,6 +17,31 @@ export interface PublicInstanceConfig {
   brand?: { product_name?: string; company_name?: string; logo_data_url?: string }
 }
 
+/**
+ * 从节点读取真实公开配置。
+ *
+ * 这一层不做“旧后端兼容”降级，便于路由门禁在网络或服务异常时
+ * 明确失败，不把“读取不到”误当成“配置已完成”。
+ */
+async function fetchInstanceConfig(baseUrl: string): Promise<PublicInstanceConfig> {
+  const base = baseUrl.replace(/\/$/, '')
+  const response = await fetch(`${base}/cosmac/instance/config`, { cache: 'no-store' })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error || '无法读取节点配置')
+  return applyInstanceConfig(payload)
+}
+
+/** 严格读取实例配置，专供首次配置路由门禁使用。 */
+export async function loadRequiredInstanceConfig(
+  baseUrl = defaultHsUrl(),
+): Promise<PublicInstanceConfig> {
+  try {
+    return await fetchInstanceConfig(baseUrl)
+  } finally {
+    instanceBrand.loaded = true
+  }
+}
+
 /** 把服务器公开品牌数据收口后应用到界面，不接受远程脚本或 CSS。 */
 export function applyInstanceConfig(payload: PublicInstanceConfig): PublicInstanceConfig {
   const productName = typeof payload?.brand?.product_name === 'string'
@@ -62,11 +87,7 @@ export async function loadInstanceConfig(
   try {
     // Electron 的 renderer 由 guduu-app:// 本地协议加载，相对 /cosmac 会错误地
     // 请求本地 App 协议。统一使用已解析的 homeserver 绝对地址，Web/OEM 同样适用。
-    const base = baseUrl.replace(/\/$/, '')
-    const response = await fetch(`${base}/cosmac/instance/config`, { cache: 'no-store' })
-    const payload = await response.json()
-    if (!response.ok) throw new Error(payload?.error || '实例配置不可用')
-    return applyInstanceConfig(payload)
+    return await fetchInstanceConfig(baseUrl)
   } catch {
     // 本地开发或旧后端没有端点时保持历史品牌，并且不强制跳向导。
     instanceBrand.setupCompleted = true

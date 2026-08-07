@@ -206,14 +206,17 @@ def _smtp_conf() -> Optional[Dict[str, Any]]:
     except Exception:
         # 首次建表前、旧节点还没生成设置主密钥时继续走既有 env，不能让注册服务崩掉。
         logger.debug("节点 SMTP 设置暂不可读，回退环境变量", exc_info=True)
-    host = str(runtime.get("host") or _env("SMTP_HOST"))
-    user = str(runtime.get("user") or _env("SMTP_USER"))
-    password = str(runtime.get("password") or _env("SMTP_PASSWORD"))
-    sender = str(runtime.get("from_address") or _env("SMTP_FROM") or user)
+    configured = runtime.get("_source") == "node_settings"
+    host = str(runtime.get("host") if configured else _env("SMTP_HOST"))
+    user = str(runtime.get("user") if configured else _env("SMTP_USER"))
+    password = str(runtime.get("password") if configured else _env("SMTP_PASSWORD"))
+    sender = str(
+        runtime.get("from_address") if configured else _env("SMTP_FROM") or user
+    )
     if not (host and user and password and sender):
         return None
     try:
-        port = int(runtime.get("port") or _env("SMTP_PORT", "465"))
+        port = int(runtime.get("port") if configured else _env("SMTP_PORT", "465"))
     except ValueError:
         port = 465
     return {
@@ -222,7 +225,10 @@ def _smtp_conf() -> Optional[Dict[str, Any]]:
         "user": user,
         "password": password,
         "from": sender,
-        "from_name": str(runtime.get("from_name") or _env("SMTP_FROM_NAME", "GuDuu OS")),
+        "from_name": str(
+            runtime.get("from_name")
+            if configured else _env("SMTP_FROM_NAME", "GuDuu OS")
+        ),
         "security": str(runtime.get("security") or "ssl"),
     }
 

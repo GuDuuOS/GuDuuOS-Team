@@ -34,6 +34,20 @@ class TestBuildProvider(unittest.TestCase):
             if saved is not None:
                 os.environ["ARK_API_KEY"] = saved
 
+    def test_saved_direct_mode_can_disable_environment_fallback(self) -> None:
+        """网页配置已接管后，空 key 表示禁用，不再重新拾取旧 env。"""
+        saved = os.environ.get("ARK_API_KEY")
+        os.environ["ARK_API_KEY"] = "legacy-environment-key"
+        try:
+            self.assertIsInstance(
+                build_provider("deepseek", allow_env_fallback=False), EchoProvider
+            )
+        finally:
+            if saved is None:
+                os.environ.pop("ARK_API_KEY", None)
+            else:
+                os.environ["ARK_API_KEY"] = saved
+
     def test_claude_with_explicit_key(self) -> None:
         p = build_provider("claude", api_key="test-key", model="claude-x")
         self.assertIsInstance(p, ClaudeProvider)

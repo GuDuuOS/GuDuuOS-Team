@@ -24,6 +24,9 @@ _DEFAULTS: Dict[str, Any] = {
     "production_instance_ids": [3],
     "auto_canary": True,
     "require_canary_success": True,
+    # 新装基线不等于向生产节点发布。0 表示尚未显式指定，
+    # 安装器会兼容回退到既有 published/rollback 版本。
+    "install_baseline_release_id": 0,
 }
 
 
@@ -77,6 +80,19 @@ def _normalize(data: Dict[str, Any]) -> Dict[str, Any]:
         raise FleetError(
             "NEXUS_RELEASE_POLICY_INVALID", "灰度节点编号不能为负数"
         )
+    raw_baseline = data.get("install_baseline_release_id")
+    if isinstance(raw_baseline, bool):
+        raise FleetError("NEXUS_RELEASE_POLICY_INVALID", "新装基线版本编号无效")
+    try:
+        install_baseline = int(raw_baseline or 0)
+    except (TypeError, ValueError) as exc:
+        raise FleetError(
+            "NEXUS_RELEASE_POLICY_INVALID", "新装基线版本编号无效"
+        ) from exc
+    if install_baseline < 0:
+        raise FleetError(
+            "NEXUS_RELEASE_POLICY_INVALID", "新装基线版本编号不能为负数"
+        )
     for field in ("auto_canary", "require_canary_success"):
         if not isinstance(data.get(field), bool):
             raise FleetError(
@@ -105,6 +121,7 @@ def _normalize(data: Dict[str, Any]) -> Dict[str, Any]:
         "production_instance_ids": production,
         "auto_canary": data["auto_canary"],
         "require_canary_success": data["require_canary_success"],
+        "install_baseline_release_id": install_baseline,
     }
 
 
