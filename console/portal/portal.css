@@ -384,7 +384,19 @@ label input { margin-top: 5px; }
 .release-notes-field textarea { min-height: 190px; resize: vertical; }
 .release-submit { display: flex; align-items: flex-end; }
 .release-submit .primary { width: 100%; }
+.release-track-callout {
+  margin-top: 12px; padding: 11px 13px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--input-bg); color: var(--muted); font-size: 12px;
+}
+.release-track-callout.node { border-color: var(--orange); }
+.release-track-callout.nexus { border-color: var(--manual); background: var(--manual-bg); }
 .release-list { display: grid; gap: 12px; margin-top: 16px; }
+.release-track-group { display: grid; gap: 10px; }
+.release-track-group + .release-track-group { margin-top: 8px; padding-top: 18px; border-top: 1px solid var(--line); }
+.release-track-group-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.release-track-group-head h3 { margin: 0; font-size: 15px; }
+.release-track-group-head p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+.release-track-count { flex: 0 0 auto; color: var(--muted); font: 11px var(--mono); }
 .release-card {
   padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px;
   background: var(--card);

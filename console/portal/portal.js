@@ -2365,9 +2365,8 @@
 
   // 版本列表同时展示流程状态和逐节点结果。说明、域名、错误摘要全部先转义，
   // 防止某个被入侵的 OEM 节点借上报错误内容攻击超管浏览器。
-  function renderReleases(releases) {
-    var box = $("#admin-releases");
-    box.innerHTML = releases.map(function (r) {
+  function renderReleaseCards(releases) {
+    return releases.map(function (r) {
       var c = r.counts || {};
       var target = r.target || "node";
       var platform = target === "nexus";
@@ -2445,8 +2444,9 @@
           ' 个节点的安装明细</summary><table class="tbl"><thead><tr><th>#</th><th>节点</th><th>状态</th><th>版本</th><th>更新时间 / 说明</th></tr></thead><tbody>' +
           deployments + "</tbody></table></details>"
         : '<p class="hint">尚未向任何节点发布更新通知。</p>';
+      var versionPrefix = platform ? "后台公告 v" : "OS v";
       var card = '<article class="release-card"><div class="release-card-head"><div>' +
-        '<div class="release-card-title"><b>v' + esc(r.version) + "</b>" +
+        '<div class="release-card-title"><b>' + versionPrefix + esc(r.version) + "</b>" +
         targetBadge + statusBadge + baselineBadge + "<strong>" + esc(r.title) + "</strong></div>" +
         '<div class="release-meta">' + deliveryText + " · Git " + esc(r.git_ref) +
         " · 创建 " + fmtTime(r.created_ts) + "</div></div>" +
@@ -2459,7 +2459,35 @@
           " · " + esc(r.title) + " · 历史基线</summary>" + card + "</details>";
       }
       return card;
-    }).join("") || '<p class="empty">还没有版本记录。先保存一个未发布版本，再进行灰度监测。</p>';
+    }).join("");
+  }
+
+  function releaseTrackGroup(kind, title, hint, releases) {
+    var cards = renderReleaseCards(releases);
+    return '<section class="release-track-group ' + kind + '">' +
+      '<header class="release-track-group-head"><div><h3>' + title + '</h3><p>' + hint +
+      '</p></div><span class="release-track-count">' + releases.length + ' 条记录</span></header>' +
+      (cards || '<p class="empty">当前轨道还没有记录。</p>') + '</section>';
+  }
+
+  function renderReleases(releases) {
+    var platformReleases = releases.filter(function (release) {
+      return (release.target || "node") === "nexus";
+    });
+    var nodeReleases = releases.filter(function (release) {
+      return (release.target || "node") !== "nexus";
+    });
+    $("#admin-releases").innerHTML =
+      releaseTrackGroup(
+        "nexus", "Nexus 集中后台公告",
+        "只更新平台集中托管的后台和公告，不会给客户服务器创建安装任务。",
+        platformReleases
+      ) +
+      releaseTrackGroup(
+        "node", "GuDuu OS 节点镜像版本",
+        "包含不可变 Docker 镜像，按开发、内部测试、正式节点顺序交付。",
+        nodeReleases
+      );
   }
 
   function syncReleaseSubmitState() {
@@ -2469,8 +2497,40 @@
     var submit = form.querySelector('button[type="submit"]');
     var alreadySaved = form.dataset.alreadyExists === "true" &&
       form.version.value.trim() === form.dataset.generatedVersion;
+    var platform = form.elements.target.value === "nexus";
     submit.disabled = alreadySaved;
-    submit.textContent = alreadySaved ? "当前版本已保存" : "保存为未发布";
+    submit.textContent = alreadySaved
+      ? "当前版本已保存"
+      : (platform ? "保存后台公告草稿" : "保存 OS 版本草稿");
+  }
+
+  var releaseTrackDrafts = { node: null, nexus: null };
+  var currentReleaseTarget = $("#form-release").elements.target.value;
+
+  function captureReleaseTrackDraft(target) {
+    var form = $("#form-release");
+    releaseTrackDrafts[target] = {
+      version: form.version.value,
+      git_ref: form.git_ref.value,
+      title: form.title.value,
+      notes: form.notes.value,
+      generatedVersion: form.dataset.generatedVersion || "",
+      alreadyExists: form.dataset.alreadyExists || "false",
+      imageReady: form.dataset.imageReady || "false",
+    };
+  }
+
+  function restoreReleaseTrackDraft(target) {
+    var form = $("#form-release");
+    var draft = releaseTrackDrafts[target];
+    form.version.value = draft ? draft.version : "";
+    form.git_ref.value = draft ? draft.git_ref : "";
+    form.title.value = draft ? draft.title : "";
+    form.notes.value = draft ? draft.notes : "";
+    form.dataset.generatedVersion = draft ? draft.generatedVersion : "";
+    form.dataset.alreadyExists = draft ? draft.alreadyExists : "false";
+    form.dataset.imageReady = draft ? draft.imageReady : "false";
+    form.version.dataset.previousTag = form.git_ref.value;
   }
 
   function syncReleaseTargetUi() {
@@ -2478,23 +2538,51 @@
     // 看到同一个“发布”按钮时误以为会连接或重启 OEM 客户服务器。
     var form = $("#form-release");
     var platform = form.elements.target.value === "nexus";
+    $("#release-version-label").textContent = platform ? "后台公告版本" : "OS 版本号";
+    $("#release-git-label").textContent = platform ? "后台部署 Git tag" : "镜像 Git tag";
+    $("#release-title-label").textContent = platform ? "后台公告标题" : "节点版本标题";
     $("#release-canary-field").hidden = platform;
     $("#release-image-field").hidden = platform;
+    $("#btn-release-generate").hidden = platform;
+    var callout = $("#release-track-callout");
+    callout.className = "release-track-callout " + (platform ? "nexus" : "node");
+    callout.textContent = platform
+      ? "当前是 Nexus 集中后台轨道：只记录后台部署公告，不读取 GuDuu OS 镜像版本，也不会通知任何客户服务器安装。"
+      : "当前是 GuDuu OS 节点轨道：版本必须有 CI 登记的 Docker 镜像，发布后才会按开发→内部测试→正式节点流转。";
     $("#release-flow-hint").textContent = platform
       ? "Nexus 平台由我们集中部署；发布这里只向全部 OEM 后台展示公告，不更新客户服务器。"
       : "OEM 节点版本流程：镜像登记 → 开发节点 #" +
         (adminReleasePolicy.development_instance_ids.join("、#") || "未配置") +
         " 自动安装 → 成功后通知灰度 #" + adminReleasePolicy.canary_instance_id +
         " → 技术验证成功 → 超管人工发布正式节点。";
+    if (platform && !form.version.value && !form.title.value && !form.notes.value) {
+      $("#release-draft-status").textContent =
+        "后台公告独立填写，不会自动套用 GuDuu OS 的版本号、镜像说明或 DEVLOG 节点公告。";
+    }
+    syncReleaseSubmitState();
   }
 
-  $("#form-release").elements.target.addEventListener("change", syncReleaseTargetUi);
+  $("#form-release").elements.target.addEventListener("change", function () {
+    captureReleaseTrackDraft(currentReleaseTarget);
+    currentReleaseTarget = this.value;
+    restoreReleaseTrackDraft(currentReleaseTarget);
+    syncReleaseTargetUi();
+    if (currentReleaseTarget === "node" && !releaseTrackDrafts.node) {
+      releaseDraftChecked = false;
+      loadReleaseDraft(false);
+    }
+  });
   syncReleaseTargetUi();
 
   function loadReleaseDraft(force) {
+    var form = $("#form-release");
+    if (form.elements.target.value !== "node") {
+      $("#release-draft-status").textContent =
+        "Nexus 后台公告不自动读取 GuDuu OS 版本；请填写本次后台部署对应的公告信息。";
+      return Promise.resolve();
+    }
     if (!force && releaseDraftChecked) return Promise.resolve();
     releaseDraftChecked = true;
-    var form = $("#form-release");
     var status = $("#release-draft-status");
     var button = $("#btn-release-generate");
     button.disabled = true;
@@ -2517,6 +2605,7 @@
         ? "已登记不可变摘要 · " + (draft.image_manifest.platforms || "")
         : "尚未登记，请等待 GitHub Actions 构建";
       syncReleaseSubmitState();
+      captureReleaseTrackDraft("node");
       if (draft.already_exists) {
         status.textContent = "已显示 v" + draft.version + " 的完整生成内容；该版本已存在于历史列表，无需重复保存。";
         if (force) toast("已显示当前版本的完整内容");
@@ -3312,7 +3401,11 @@
       toast(releaseTarget === "nexus"
         ? "Nexus 更新已保存为未发布，审阅后可发布公告"
         : "节点版本已保存为未发布，可先通知灰度节点测试");
+      releaseTrackDrafts[releaseTarget] = null;
       form.reset();
+      form.elements.target.value = releaseTarget;
+      currentReleaseTarget = releaseTarget;
+      restoreReleaseTrackDraft(releaseTarget);
       syncReleaseTargetUi();
       releaseDraftChecked = false;
       loadAdmin();

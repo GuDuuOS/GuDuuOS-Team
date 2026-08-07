@@ -585,7 +585,7 @@
     <div class="admin-page" data-admin-view="releases" hidden>
       <section class="panel" id="panel-releases">
         <div class="panel-head">
-          <div><h2>版本发布与镜像交付</h2><p class="hint">版本负责审批、灰度、全量与回撤；Docker 镜像只作为 OEM 节点的不可变交付物。</p></div>
+          <div><h2>双轨发布中心</h2><p class="hint">GuDuu OS 节点版本负责镜像安装；Nexus 集中后台只发布平台公告，两者互不触发。</p></div>
           <div class="release-head-actions">
             <button id="btn-release-generate" class="primary small" type="button">自动生成最新版本</button>
             <button id="btn-release-refresh" class="ghost small" type="button">刷新状态</button>
@@ -594,16 +594,16 @@
         <form id="form-release" class="release-form">
           <label class="release-target-field">更新对象
             <select name="target" required>
-              <option value="nexus" selected>Nexus 平台（集中后台）</option>
-              <option value="node">OEM 节点（客户服务器）</option>
+              <option value="node" selected>GuDuu OS 节点版本（客户服务器）</option>
+              <option value="nexus">Nexus 后台公告（集中后台）</option>
             </select>
           </label>
-          <label>版本号<input name="version" required placeholder="1.7.0" /></label>
-          <label>Git tag<input name="git_ref" required placeholder="v1.7.0" /></label>
+          <label><span id="release-version-label">OS 版本号</span><input name="version" required placeholder="1.7.0" /></label>
+          <label><span id="release-git-label">镜像 Git tag</span><input name="git_ref" required placeholder="v1.7.0" /></label>
           <label class="release-image-field" id="release-image-field">节点镜像
             <input id="release-image-status" value="等待 CI 镜像清单" readonly />
           </label>
-          <label class="release-title-field">版本标题<input name="title" required placeholder="例：OEM 节点自动更新" /></label>
+          <label class="release-title-field"><span id="release-title-label">节点版本标题</span><input name="title" required placeholder="例：OEM 节点自动更新" /></label>
           <label class="release-canary-field" id="release-canary-field">灰度节点
             <select id="release-canary" name="canary_instance_id"></select>
           </label>
@@ -612,6 +612,7 @@
           </label>
           <div class="release-submit"><button class="primary" type="submit">保存为未发布</button></div>
         </form>
+        <div id="release-track-callout" class="release-track-callout"></div>
         <p id="release-draft-status" class="hint">版本信息会根据当前产品版本与 DEVLOG.md 自动生成，你可以审阅和修改后再保存。</p>
         <p id="release-flow-hint" class="hint">Nexus 平台由我们集中部署；发布这里只向全部 OEM 后台展示公告，不更新客户服务器。</p>
         <div id="admin-releases" class="release-list"></div>
