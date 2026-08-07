@@ -3200,11 +3200,11 @@
         var regionEditor = '<select class="instance-region-select" data-instance-region="' + i.id + '">' +
           regionOptions + '</select><button class="ghost small" data-save-instance-region="' +
           i.id + '">保存</button>';
-        return "<tr><td>#" + i.id + "</td><td>" + esc(i.domain) + "</td><td class=\"zh\">" + company + "</td><td class=\"zh\">" + badge(hbStatus(i)) + "</td>" +
-          "<td>" + esc(i.version || "—") + "</td><td class=\"zh instance-region-cell\">" + regionEditor +
-          "</td><td class=\"zh\">" + people + "</td><td>" + fmtTime(i.last_seen_ts) + "</td>" +
+        return "<tr><td>#" + i.id + "</td><td class=\"instance-domain\">" + esc(i.domain) + "</td><td class=\"zh instance-company\">" + company + "</td><td class=\"zh instance-status\">" + badge(hbStatus(i)) + "</td>" +
+          "<td class=\"instance-version\">" + esc(i.version || "—") + "</td><td class=\"zh instance-region-cell\">" + regionEditor +
+          "</td><td class=\"zh instance-people\">" + people + "</td><td class=\"instance-seen\">" + fmtTime(i.last_seen_ts) + "</td>" +
           '<td class="finance-token">' + fmtInteger(i.balance_tokens) + ' Token</td>' +
-          '<td class="zh"><button class="ghost small" data-instance-detail="' + i.id + '">详情</button> ' +
+          '<td class="zh instance-actions"><button class="ghost small" data-instance-detail="' + i.id + '">详情</button>' +
           '<button class="ghost small" data-topup="' + i.id + '" data-domain="' + esc(i.domain) + '">充值</button></td></tr>';
       }).join("") || '<tr><td colspan="10" class="zh empty">暂无实例</td></tr>';
 
