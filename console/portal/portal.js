@@ -216,14 +216,15 @@
   // ---------- 自家对话框（替代浏览器原生 confirm/prompt，风格统一） ----------
   var dlgResolve = null;
   function uiDialog(opts) {
-    // opts: {text, input(布尔), placeholder, danger, okText}；返回 Promise：
+    // opts: {text, input(布尔), placeholder, defaultValue, danger, okText}；返回 Promise：
     // 确定 → input 模式给输入串、否则 true；取消/点遮罩 → null
     return new Promise(function (resolve) {
       dlgResolve = resolve;
       $("#dlg-text").textContent = opts.text || "";
       var inp = $("#dlg-input");
       inp.hidden = !opts.input;
-      inp.value = ""; inp.placeholder = opts.placeholder || "";
+      inp.value = opts.defaultValue == null ? "" : String(opts.defaultValue);
+      inp.placeholder = opts.placeholder || "";
       var ok = $("#dlg-ok");
       ok.textContent = opts.okText || "确定";
       ok.classList.toggle("danger", !!opts.danger);
@@ -239,8 +240,10 @@
   function uiConfirm(text, danger, okText) {
     return uiDialog({ text: text, danger: danger, okText: okText }).then(function (v) { return v !== null; });
   }
-  function uiPrompt(text, placeholder) {
-    return uiDialog({ text: text, input: true, placeholder: placeholder });
+  function uiPrompt(text, placeholder, defaultValue) {
+    return uiDialog({
+      text: text, input: true, placeholder: placeholder, defaultValue: defaultValue,
+    });
   }
 
   // ---------- 会话 ----------
@@ -4132,7 +4135,11 @@
     }
     if (t.dataset && t.dataset.reject) {
       var rejectId = Number(t.dataset.reject);
-      uiPrompt("拒绝理由（会展示给申请人，必填）", "如：请先联系商务").then(function (reason) {
+      uiPrompt(
+        "拒绝理由（会展示给申请人，必填）",
+        "请输入拒绝理由",
+        "请联系商务或者推荐人"
+      ).then(function (reason) {
         if (reason === null) return; // 点了取消 = 中止，不是"空理由拒绝"
         if (!reason.trim()) return toast("拒绝申请必须填写原因", true);
         api("/nexus/admin/request_decide", { body: { request_id: rejectId, action: "reject", approve: false, decide_note: reason } })
