@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 from typing import Any, Dict
+from urllib.parse import urlparse
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -28,12 +29,41 @@ DEFAULT_PUBLIC: Dict[str, Any] = {
         "connection_mode": "direct", "provider": "echo", "model": "",
         "base_url": "",
     },
-    "payment": {"provider": "none", "mode": "sandbox", "merchant_id": ""},
+    "payment": {
+        "alipay": {
+            "enabled": False, "mode": "sandbox", "app_id": "",
+            "notify_url": "", "sign_type": "RSA2",
+        },
+        "wechat": {
+            "enabled": False, "mode": "sandbox", "mch_id": "", "app_id": "",
+            "merchant_serial_no": "", "platform_public_key_id": "",
+            "notify_url": "",
+        },
+    },
 }
 
 
 class NodeSettingsError(ValueError):
     """节点设置缺失、格式不合法或主密钥错误。"""
+
+
+def _bounded(value: Any, limit: int, label: str) -> str:
+    """清理普通配置文本并拒绝静默截断关键支付标识。"""
+    clean = str(value or "").strip()
+    if len(clean) > limit:
+        raise NodeSettingsError(f"{label}不能超过 {limit} 个字符")
+    return clean
+
+
+def _notify_url(value: Any, label: str) -> str:
+    """支付平台回调只能使用公开 HTTPS 地址，禁止凭据混入 URL。"""
+    clean = _bounded(value, 500, label)
+    if not clean:
+        return ""
+    parsed = urlparse(clean)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+        raise NodeSettingsError(f"{label}必须是无账号密码的 HTTPS 地址")
+    return clean
 
 
 def _fernet() -> Fernet:
@@ -57,7 +87,16 @@ def _merge_public(raw: Any) -> Dict[str, Any]:
     for section in out:
         value = raw.get(section)
         if isinstance(value, dict):
-            out[section].update(value)
+            if section == "payment":
+                # 支付配置含支付宝/微信两层结构；逐渠道合并，避免旧记录或
+                # 增量字段把同渠道的默认键整体覆盖掉。
+                for key, item in value.items():
+                    if isinstance(item, dict) and isinstance(out[section].get(key), dict):
+                        out[section][key].update(item)
+                    else:
+                        out[section][key] = item
+            else:
+                out[section].update(value)
     return out
 
 
@@ -135,9 +174,22 @@ def admin_config() -> Dict[str, Any]:
         public["ai"]["api_key_configured"] = bool(
             secrets.get("ai_api_key") or (provider_key and os.environ.get(provider_key))
         )
-        public["payment"]["secret_configured"] = bool(secrets.get("payment_secret"))
-        public["payment"]["webhook_configured"] = bool(secrets.get("payment_webhook"))
-        # 节点支付真实适配器尚未联调完成，必须如实告知前端，禁止保存凭据后伪装上线。
+        alipay = public["payment"]["alipay"]
+        alipay["private_key_configured"] = bool(secrets.get("alipay_private_key"))
+        alipay["alipay_public_key_configured"] = bool(
+            secrets.get("alipay_public_key")
+        )
+        wechat = public["payment"]["wechat"]
+        wechat["api_v3_key_configured"] = bool(secrets.get("wechat_api_v3_key"))
+        wechat["merchant_private_key_configured"] = bool(
+            secrets.get("wechat_merchant_private_key")
+        )
+        wechat["platform_public_key_configured"] = bool(
+            secrets.get("wechat_platform_public_key")
+        )
+        # 节点支付真实适配器尚未联调完成，必须逐渠道如实告知前端，禁止保存凭据后伪装上线。
+        alipay["adapter_ready"] = False
+        wechat["adapter_ready"] = False
         public["payment"]["adapter_ready"] = False
         return public
 
@@ -177,7 +229,79 @@ def save_admin_config(body: Dict[str, Any]) -> Dict[str, Any]:
         if row is None:
             row = NodeSetting(id=1)
             session.add(row)
+        current_public = _merge_public(row.public_config if row else {})
+        alipay_input = (
+            payment.get("alipay")
+            if isinstance(payment.get("alipay"), dict)
+            else current_public["payment"]["alipay"]
+        )
+        wechat_input = (
+            payment.get("wechat")
+            if isinstance(payment.get("wechat"), dict)
+            else current_public["payment"]["wechat"]
+        )
         old_secrets = _decrypt(row.encrypted_secrets)
+        for target, source, clear in (
+            ("alipay_private_key", alipay_input.get("private_key"), alipay_input.get("clear_private_key")),
+            ("alipay_public_key", alipay_input.get("alipay_public_key"), alipay_input.get("clear_alipay_public_key")),
+            ("wechat_api_v3_key", wechat_input.get("api_v3_key"), wechat_input.get("clear_api_v3_key")),
+            ("wechat_merchant_private_key", wechat_input.get("merchant_private_key"), wechat_input.get("clear_merchant_private_key")),
+            ("wechat_platform_public_key", wechat_input.get("platform_public_key"), wechat_input.get("clear_platform_public_key")),
+        ):
+            if bool(clear):
+                old_secrets.pop(target, None)
+            elif str(source or "").strip():
+                clean_secret = str(source).strip()
+                if len(clean_secret) > 20_000:
+                    raise NodeSettingsError("支付密钥或证书内容过长")
+                old_secrets[target] = clean_secret
+
+        alipay_enabled = bool(alipay_input.get("enabled"))
+        wechat_enabled = bool(wechat_input.get("enabled"))
+        alipay_public = {
+            "enabled": alipay_enabled,
+            "mode": "live" if alipay_input.get("mode") == "live" else "sandbox",
+            "app_id": _bounded(alipay_input.get("app_id"), 64, "支付宝 APPID"),
+            "notify_url": _notify_url(alipay_input.get("notify_url"), "支付宝通知地址"),
+            "sign_type": "RSA2",
+        }
+        wechat_public = {
+            "enabled": wechat_enabled,
+            "mode": "live" if wechat_input.get("mode") == "live" else "sandbox",
+            "mch_id": _bounded(wechat_input.get("mch_id"), 64, "微信支付商户号"),
+            "app_id": _bounded(wechat_input.get("app_id"), 64, "微信支付 AppID"),
+            "merchant_serial_no": _bounded(
+                wechat_input.get("merchant_serial_no"), 128, "商户证书序列号"
+            ),
+            "platform_public_key_id": _bounded(
+                wechat_input.get("platform_public_key_id"), 128, "微信支付公钥 ID"
+            ),
+            "notify_url": _notify_url(wechat_input.get("notify_url"), "微信支付通知地址"),
+        }
+        if alipay_enabled:
+            if not alipay_public["app_id"] or not alipay_public["notify_url"]:
+                raise NodeSettingsError("启用支付宝前必须填写 APPID 和通知地址")
+            if not old_secrets.get("alipay_private_key") or not old_secrets.get(
+                "alipay_public_key"
+            ):
+                raise NodeSettingsError("启用支付宝前必须填写应用私钥和支付宝公钥")
+        if wechat_enabled:
+            required = (
+                wechat_public["mch_id"], wechat_public["app_id"],
+                wechat_public["merchant_serial_no"],
+                wechat_public["platform_public_key_id"], wechat_public["notify_url"],
+            )
+            if not all(required):
+                raise NodeSettingsError(
+                    "启用微信支付前必须填写商户号、AppID、证书序列号、公钥 ID 和通知地址"
+                )
+            api_v3_key = str(old_secrets.get("wechat_api_v3_key") or "")
+            if len(api_v3_key.encode("utf-8")) != 32:
+                raise NodeSettingsError("微信支付 APIv3 密钥必须正好是 32 字节")
+            if not old_secrets.get("wechat_merchant_private_key") or not old_secrets.get(
+                "wechat_platform_public_key"
+            ):
+                raise NodeSettingsError("启用微信支付前必须填写商户私钥和微信支付平台公钥")
         public = {
             "brand": {
                 "product_name": product_name,
@@ -198,19 +322,13 @@ def save_admin_config(body: Dict[str, Any]) -> Dict[str, Any]:
                 "model": str(ai.get("model") or "").strip()[:160],
                 "base_url": str(ai.get("base_url") or "").strip()[:500],
             },
-            "payment": {
-                "provider": str(payment.get("provider") or "none").strip()[:40],
-                "mode": "live" if payment.get("mode") == "live" else "sandbox",
-                "merchant_id": str(payment.get("merchant_id") or "").strip()[:255],
-            },
+            "payment": {"alipay": alipay_public, "wechat": wechat_public},
         }
         for target, source, clear_name in (
             ("smtp_password", email.get("password"), "clear_password"),
             ("ai_api_key", ai.get("api_key"), "clear_api_key"),
-            ("payment_secret", payment.get("secret_key"), "clear_secret"),
-            ("payment_webhook", payment.get("webhook_secret"), "clear_webhook"),
         ):
-            if bool((email if target == "smtp_password" else ai if target == "ai_api_key" else payment).get(clear_name)):
+            if bool((email if target == "smtp_password" else ai).get(clear_name)):
                 old_secrets.pop(target, None)
             elif str(source or "").strip():
                 old_secrets[target] = str(source).strip()
@@ -264,3 +382,25 @@ def runtime_ai() -> Dict[str, Any]:
             public["api_key"] = _decrypt(row.encrypted_secrets).get("ai_api_key", "")
         public["_source"] = "node_settings"
         return public
+
+
+def runtime_payments() -> Dict[str, Any]:
+    """供节点支付 adapter 读取支付宝/微信配置；只允许服务端调用。"""
+    with session_scope() as session:
+        row = session.get(NodeSetting, 1)
+        if not row:
+            return {}
+        payment = _merge_public(row.public_config)["payment"]
+        secrets = _decrypt(row.encrypted_secrets)
+        alipay = dict(payment["alipay"])
+        alipay.update({
+            "private_key": secrets.get("alipay_private_key", ""),
+            "alipay_public_key": secrets.get("alipay_public_key", ""),
+        })
+        wechat = dict(payment["wechat"])
+        wechat.update({
+            "api_v3_key": secrets.get("wechat_api_v3_key", ""),
+            "merchant_private_key": secrets.get("wechat_merchant_private_key", ""),
+            "platform_public_key": secrets.get("wechat_platform_public_key", ""),
+        })
+        return {"alipay": alipay, "wechat": wechat, "_source": "node_settings"}

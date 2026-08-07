@@ -10,6 +10,7 @@ from cosmac.node_settings import (
     public_config,
     runtime_ai,
     runtime_email,
+    runtime_payments,
     save_admin_config,
 )
 
@@ -112,6 +113,84 @@ class NodeSettingsTest(unittest.TestCase):
                 "email": {}, "ai": {}, "payment": {},
             })
             self.assertIsNone(_smtp_conf())
+
+    def test_alipay_and_wechat_can_be_configured_together_without_secret_echo(self) -> None:
+        saved = save_admin_config({
+            "brand": {"product_name": "测试 OS"},
+            "email": {},
+            "ai": {},
+            "payment": {
+                "alipay": {
+                    "enabled": True,
+                    "mode": "sandbox",
+                    "app_id": "2021000000000000",
+                    "notify_url": "https://pay.test.invalid/cosmac/pay/callback/alipay",
+                    "private_key": "alipay-private-secret",
+                    "alipay_public_key": "alipay-public-secret",
+                },
+                "wechat": {
+                    "enabled": True,
+                    "mode": "live",
+                    "mch_id": "1900000001",
+                    "app_id": "wx-test-app",
+                    "merchant_serial_no": "SERIAL-1",
+                    "platform_public_key_id": "PUB_KEY_ID_TEST",
+                    "notify_url": "https://pay.test.invalid/cosmac/pay/callback/wechat",
+                    "api_v3_key": "12345678901234567890123456789012",
+                    "merchant_private_key": "wechat-merchant-private",
+                    "platform_public_key": "wechat-platform-public",
+                },
+            },
+        })
+        self.assertTrue(saved["payment"]["alipay"]["enabled"])
+        self.assertTrue(saved["payment"]["wechat"]["enabled"])
+        self.assertTrue(saved["payment"]["alipay"]["private_key_configured"])
+        self.assertTrue(saved["payment"]["wechat"]["api_v3_key_configured"])
+        self.assertNotIn("alipay-private-secret", str(saved))
+        self.assertNotIn("wechat-merchant-private", str(saved))
+        runtime = runtime_payments()
+        self.assertEqual(runtime["alipay"]["private_key"], "alipay-private-secret")
+        self.assertEqual(runtime["wechat"]["api_v3_key"], "12345678901234567890123456789012")
+        self.assertEqual(runtime["wechat"]["platform_public_key"], "wechat-platform-public")
+
+        # 系统设置再次保存时留空密钥必须保持原值，不能要求客户重复粘贴。
+        payment = saved["payment"]
+        payment["alipay"]["private_key"] = ""
+        payment["alipay"]["alipay_public_key"] = ""
+        payment["wechat"]["api_v3_key"] = ""
+        payment["wechat"]["merchant_private_key"] = ""
+        payment["wechat"]["platform_public_key"] = ""
+        save_admin_config({
+            "brand": {"product_name": "测试 OS"},
+            "email": {}, "ai": {}, "payment": payment,
+        })
+        self.assertEqual(
+            runtime_payments()["wechat"]["merchant_private_key"],
+            "wechat-merchant-private",
+        )
+
+    def test_enabled_payment_channels_require_complete_credentials(self) -> None:
+        with self.assertRaisesRegex(Exception, "支付宝"):
+            save_admin_config({
+                "brand": {"product_name": "测试 OS"},
+                "email": {}, "ai": {},
+                "payment": {"alipay": {"enabled": True}},
+            })
+        with self.assertRaisesRegex(Exception, "32 字节"):
+            save_admin_config({
+                "brand": {"product_name": "测试 OS"},
+                "email": {}, "ai": {},
+                "payment": {
+                    "wechat": {
+                        "enabled": True, "mch_id": "m", "app_id": "a",
+                        "merchant_serial_no": "s", "platform_public_key_id": "p",
+                        "notify_url": "https://pay.test.invalid/cosmac/pay/callback/wechat",
+                        "api_v3_key": "too-short",
+                        "merchant_private_key": "private",
+                        "platform_public_key": "public",
+                    },
+                },
+            })
 
 
 if __name__ == "__main__":

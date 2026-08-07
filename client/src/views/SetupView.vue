@@ -20,10 +20,21 @@ const form = reactive({
   brand: { product_name: 'GuDuu OS', company_name: '', logo_data_url: '' },
   email: { host: '', port: 465, user: '', password: '', from_address: '', from_name: 'GuDuu OS', security: 'ssl', password_configured: false },
   ai: { connection_mode: 'nexus', provider: 'deepseek', model: '', base_url: '', api_key: '', api_key_configured: false },
-  payment: { provider: 'none', mode: 'sandbox', merchant_id: '', secret_key: '', webhook_secret: '', secret_configured: false, webhook_configured: false, adapter_ready: false },
+  payment: {
+    alipay: { enabled: false, mode: 'sandbox', app_id: '', notify_url: '', private_key: '', alipay_public_key: '', private_key_configured: false, alipay_public_key_configured: false, adapter_ready: false },
+    wechat: { enabled: false, mode: 'sandbox', mch_id: '', app_id: '', merchant_serial_no: '', platform_public_key_id: '', notify_url: '', api_v3_key: '', merchant_private_key: '', platform_public_key: '', api_v3_key_configured: false, merchant_private_key_configured: false, platform_public_key_configured: false, adapter_ready: false },
+  },
 })
 
 const steps = ['品牌', '发信邮箱', '主 AI', '支付', '确认']
+
+function paymentCallback(provider: 'alipay' | 'wechat') {
+  // Electron/Capacitor 的页面 origin 不是 OEM 公网域名；回调必须取当前
+  // Matrix homeserver，才能让支付平台真正访问到该节点。
+  const client = getClient() as any
+  const base = String(client?.getHomeserverUrl?.() || client?.baseUrl || window.location.origin)
+  return `${base.replace(/\/$/, '')}/cosmac/pay/callback/${provider}`
+}
 
 watch(() => form.ai.connection_mode, (mode) => {
   // Nexus 网关尚未开放 Echo/Gemini 路由；切换模式时立即收敛为
@@ -47,7 +58,10 @@ onMounted(async () => {
     Object.assign(form.brand, value.brand || {})
     Object.assign(form.email, value.email || {})
     Object.assign(form.ai, value.ai || {})
-    Object.assign(form.payment, value.payment || {})
+    Object.assign(form.payment.alipay, value.payment?.alipay || {})
+    Object.assign(form.payment.wechat, value.payment?.wechat || {})
+    if (!form.payment.alipay.notify_url) form.payment.alipay.notify_url = paymentCallback('alipay')
+    if (!form.payment.wechat.notify_url) form.payment.wechat.notify_url = paymentCallback('wechat')
     pendingUpdate.value = await getPendingNodeUpdate()
   } catch (e: any) {
     loadFailed.value = true
@@ -160,16 +174,38 @@ async function approveUpdate() {
         </template>
 
         <template v-else-if="step === 3">
-          <h2>支付方式</h2><p class="warn">当前节点支付适配器尚未完成真实下单与回调联调。这里可以预存配置，但系统会保持“待接入”，不会对客户开放收款。</p>
-          <label>渠道<select v-model="form.payment.provider"><option value="none">暂不接入</option><option value="stripe">Stripe（待接入）</option><option value="paypal">PayPal（待接入）</option><option value="alipay">支付宝（待接入）</option><option value="wechat">微信支付（待接入）</option><option value="nowpayments">USDT / NOWPayments（待接入）</option></select></label>
-          <div class="grid"><label>环境<select v-model="form.payment.mode"><option value="sandbox">沙箱/测试</option><option value="live">正式</option></select></label><label>商户号 / Client ID<input v-model.trim="form.payment.merchant_id" /></label></div>
-          <label>渠道密钥<input v-model="form.payment.secret_key" type="password" :placeholder="form.payment.secret_configured ? '已配置；留空保持不变' : '请输入渠道密钥'" /></label>
-          <label>Webhook 密钥<input v-model="form.payment.webhook_secret" type="password" :placeholder="form.payment.webhook_configured ? '已配置；留空保持不变' : '请输入回调验签密钥'" /></label>
+          <h2>支付宝与微信支付 API</h2>
+          <p class="warn">凭据会加密保存在本节点数据库，保存后不再回显。当前先完成配置入口；只有真实下单、回调验签和沙箱交易全部验收后，渠道才会显示“可收款”。</p>
+
+          <section class="payment-card">
+            <div class="payment-title"><div><b>支付宝开放平台</b><small>RSA2 · 可与微信支付同时启用</small></div><label class="switch-row"><input v-model="form.payment.alipay.enabled" type="checkbox" /> 启用配置</label></div>
+            <template v-if="form.payment.alipay.enabled">
+              <div class="grid"><label>运行环境<select v-model="form.payment.alipay.mode"><option value="sandbox">沙箱/测试</option><option value="live">正式</option></select></label><label>支付宝 APPID<input v-model.trim="form.payment.alipay.app_id" placeholder="例如 202100xxxxxxxxxx" /></label></div>
+              <label>异步通知地址<input v-model.trim="form.payment.alipay.notify_url" /></label>
+              <label>RSA2 应用私钥<textarea v-model="form.payment.alipay.private_key" rows="4" :placeholder="form.payment.alipay.private_key_configured ? '已配置；留空保持不变' : '粘贴应用私钥（支持 PEM 或单行内容）'" /></label>
+              <label>支付宝公钥<textarea v-model="form.payment.alipay.alipay_public_key" rows="4" :placeholder="form.payment.alipay.alipay_public_key_configured ? '已配置；留空保持不变' : '粘贴支付宝公钥，用于回调验签'" /></label>
+              <p class="credential-state">应用私钥：{{ form.payment.alipay.private_key_configured ? '已保存' : '未保存' }} · 支付宝公钥：{{ form.payment.alipay.alipay_public_key_configured ? '已保存' : '未保存' }}</p>
+            </template>
+          </section>
+
+          <section class="payment-card">
+            <div class="payment-title"><div><b>微信支付 API v3</b><small>商户证书 + APIv3 回调验签</small></div><label class="switch-row"><input v-model="form.payment.wechat.enabled" type="checkbox" /> 启用配置</label></div>
+            <template v-if="form.payment.wechat.enabled">
+              <div class="grid"><label>运行环境<select v-model="form.payment.wechat.mode"><option value="sandbox">测试配置</option><option value="live">正式</option></select></label><label>商户号 mchid<input v-model.trim="form.payment.wechat.mch_id" /></label></div>
+              <div class="grid"><label>应用 AppID<input v-model.trim="form.payment.wechat.app_id" /></label><label>商户证书序列号<input v-model.trim="form.payment.wechat.merchant_serial_no" /></label></div>
+              <label>微信支付公钥 ID<input v-model.trim="form.payment.wechat.platform_public_key_id" placeholder="PUB_KEY_ID_…" /></label>
+              <label>异步通知地址<input v-model.trim="form.payment.wechat.notify_url" /></label>
+              <label>APIv3 密钥<input v-model="form.payment.wechat.api_v3_key" type="password" maxlength="32" :placeholder="form.payment.wechat.api_v3_key_configured ? '已配置；留空保持不变' : '必须为 32 字节'" /></label>
+              <label>商户 API 私钥<textarea v-model="form.payment.wechat.merchant_private_key" rows="4" :placeholder="form.payment.wechat.merchant_private_key_configured ? '已配置；留空保持不变' : '粘贴 apiclient_key.pem 内容'" /></label>
+              <label>微信支付平台公钥<textarea v-model="form.payment.wechat.platform_public_key" rows="4" :placeholder="form.payment.wechat.platform_public_key_configured ? '已配置；留空保持不变' : '粘贴与公钥 ID 对应的平台公钥'" /></label>
+              <p class="credential-state">APIv3：{{ form.payment.wechat.api_v3_key_configured ? '已保存' : '未保存' }} · 商户私钥：{{ form.payment.wechat.merchant_private_key_configured ? '已保存' : '未保存' }} · 平台公钥：{{ form.payment.wechat.platform_public_key_configured ? '已保存' : '未保存' }}</p>
+            </template>
+          </section>
         </template>
 
         <template v-else>
           <h2>确认配置</h2>
-          <div class="summary"><b>{{ form.brand.product_name }}</b><span>邮箱：{{ form.email.host ? '已填写' : '稍后配置' }}</span><span>主 AI：{{ form.ai.connection_mode === 'nexus' ? 'Nexus 网关' : '自有 API' }} · {{ form.ai.provider }}</span><span>支付：{{ form.payment.provider === 'none' ? '暂不接入' : `${form.payment.provider}（待接入）` }}</span></div>
+          <div class="summary"><b>{{ form.brand.product_name }}</b><span>邮箱：{{ form.email.host ? '已填写' : '稍后配置' }}</span><span>主 AI：{{ form.ai.connection_mode === 'nexus' ? 'Nexus 网关' : '自有 API' }} · {{ form.ai.provider }}</span><span>支付：{{ [form.payment.alipay.enabled ? '支付宝' : '', form.payment.wechat.enabled ? '微信支付' : ''].filter(Boolean).join('、') || '暂不接入' }}{{ form.payment.alipay.enabled || form.payment.wechat.enabled ? '（待联调）' : '' }}</span></div>
           <p class="hint">保存后进入工作台。以后可从管理后台“系统设置”再次修改。</p>
         </template>
 
@@ -180,6 +216,6 @@ async function approveUpdate() {
 </template>
 
 <style scoped>
-.setup-shell{min-height:100vh;padding:28px;background:linear-gradient(145deg,#fffaf2,#f6eadc);color:#2d2925;display:grid;place-items:center}.setup-card{width:min(820px,100%);min-height:620px;background:#fffdf9;border:1px solid #e7d9c9;border-radius:20px;box-shadow:0 20px 60px #68401b1c;overflow:hidden}.setup-head{display:flex;align-items:center;gap:14px;padding:24px 30px 18px}.setup-head img{width:48px;height:48px;object-fit:contain;border-radius:12px}.setup-head small{color:#a06b3d}.setup-head h1{font-size:24px;margin:3px 0 0}.steps{display:flex;gap:8px;padding:0 30px 18px;border-bottom:1px solid #eee1d3;overflow:auto}.steps span{white-space:nowrap;font-size:13px;color:#9b8e82;padding:7px 10px;border-radius:999px}.steps .active{background:#ef7d25;color:#fff}.steps .done{color:#c3611b}.body{padding:28px 30px}.body h2{font-size:20px;margin:0 0 6px}.hint{color:#8b7d70;font-size:14px;margin:0 0 22px}.body label{display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:650;margin:0 0 16px}.body input,.body select{width:100%;box-sizing:border-box;border:1px solid #d9cabb;border-radius:9px;background:#fff;padding:11px 12px;font:inherit;color:inherit}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.preview{width:72px;height:72px;object-fit:contain;border:1px solid #e3d5c7;border-radius:14px;padding:6px}.warn,.error,.success{border-radius:10px;padding:11px 13px;font-size:13px;line-height:1.55}.warn{background:#fff3df;color:#9a551c}.error{background:#fff0ed;color:#b63f2e}.success{background:#edf9f1;color:#237444}.load-failed{max-width:620px}.update-notice{display:flex;align-items:center;gap:16px;margin:0 0 20px;padding:13px;border:1px solid #e8c69f;background:#fff7eb;border-radius:11px}.update-notice div{display:grid;gap:3px;flex:1}.update-notice small{color:#8b6b4d}.summary{display:grid;gap:12px;padding:20px;border:1px solid #e7d8c9;border-radius:12px}.summary span{color:#75695e}footer{display:flex;gap:10px;align-items:center;margin-top:26px}footer span{flex:1}button{border:0;border-radius:9px;background:#e97822;color:#fff;padding:10px 17px;font-weight:700;cursor:pointer}button.ghost{background:#f2e8de;color:#6f6257}button:disabled{opacity:.55}.state{padding:40px 30px;color:#8b7d70}@media(max-width:640px){.setup-shell{padding:0}.setup-card{min-height:100vh;border-radius:0;border:0}.setup-head,.steps,.body{padding-left:18px;padding-right:18px}.grid{grid-template-columns:1fr}.steps{gap:2px}.steps span{font-size:12px;padding:6px}.update-notice{align-items:flex-start;flex-direction:column}}
+.setup-shell{min-height:100vh;padding:28px;background:linear-gradient(145deg,#fffaf2,#f6eadc);color:#2d2925;display:grid;place-items:center}.setup-card{width:min(820px,100%);min-height:620px;background:#fffdf9;border:1px solid #e7d9c9;border-radius:20px;box-shadow:0 20px 60px #68401b1c;overflow:hidden}.setup-head{display:flex;align-items:center;gap:14px;padding:24px 30px 18px}.setup-head img{width:48px;height:48px;object-fit:contain;border-radius:12px}.setup-head small{color:#a06b3d}.setup-head h1{font-size:24px;margin:3px 0 0}.steps{display:flex;gap:8px;padding:0 30px 18px;border-bottom:1px solid #eee1d3;overflow:auto}.steps span{white-space:nowrap;font-size:13px;color:#9b8e82;padding:7px 10px;border-radius:999px}.steps .active{background:#ef7d25;color:#fff}.steps .done{color:#c3611b}.body{padding:28px 30px}.body h2{font-size:20px;margin:0 0 6px}.hint{color:#8b7d70;font-size:14px;margin:0 0 22px}.body label{display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:650;margin:0 0 16px}.body input,.body select,.body textarea{width:100%;box-sizing:border-box;border:1px solid #d9cabb;border-radius:9px;background:#fff;padding:11px 12px;font:inherit;color:inherit}.body textarea{resize:vertical;line-height:1.45}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.preview{width:72px;height:72px;object-fit:contain;border:1px solid #e3d5c7;border-radius:14px;padding:6px}.warn,.error,.success{border-radius:10px;padding:11px 13px;font-size:13px;line-height:1.55}.warn{background:#fff3df;color:#9a551c}.error{background:#fff0ed;color:#b63f2e}.success{background:#edf9f1;color:#237444}.load-failed{max-width:620px}.update-notice{display:flex;align-items:center;gap:16px;margin:0 0 20px;padding:13px;border:1px solid #e8c69f;background:#fff7eb;border-radius:11px}.update-notice div{display:grid;gap:3px;flex:1}.update-notice small{color:#8b6b4d}.payment-card{margin:16px 0;padding:18px;border:1px solid #e7d8c9;border-radius:13px;background:#fffaf4}.payment-title{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:15px}.payment-title>div{display:grid;gap:4px}.payment-title small,.credential-state{color:#8b7d70;font-size:12px}.switch-row{flex-direction:row!important;align-items:center;white-space:nowrap;margin:0!important}.switch-row input{width:auto}.credential-state{margin:2px 0 0}.summary{display:grid;gap:12px;padding:20px;border:1px solid #e7d8c9;border-radius:12px}.summary span{color:#75695e}footer{display:flex;gap:10px;align-items:center;margin-top:26px}footer span{flex:1}button{border:0;border-radius:9px;background:#e97822;color:#fff;padding:10px 17px;font-weight:700;cursor:pointer}button.ghost{background:#f2e8de;color:#6f6257}button:disabled{opacity:.55}.state{padding:40px 30px;color:#8b7d70}@media(max-width:640px){.setup-shell{padding:0}.setup-card{min-height:100vh;border-radius:0;border:0}.setup-head,.steps,.body{padding-left:18px;padding-right:18px}.grid{grid-template-columns:1fr}.steps{gap:2px}.steps span{font-size:12px;padding:6px}.update-notice,.payment-title{align-items:flex-start;flex-direction:column}}
 .mode-note{margin:-8px 0 18px;padding:10px 12px;border-left:3px solid #dc8a3c;background:#fff8ef;color:#765332;font-size:13px;line-height:1.55}
 </style>
