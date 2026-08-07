@@ -28,6 +28,29 @@
   // ---------- 小工具 ----------
   function $(sel) { return document.querySelector(sel); }
   function $all(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
+  function instanceDomainHtml(value) {
+    // 三段及以上域名固定分成最均衡的两行；每行自身不拆开，既避免 test- 被截断，
+    // 也避免把 .com 单独甩到第二行。短域名继续保持一行。
+    var labels = String(value || "").split(".");
+    if (labels.length < 3) {
+      return '<span class="instance-domain-line">' + esc(labels.join(".")) + "</span>";
+    }
+    var bestCut = 1;
+    var bestGap = Infinity;
+    for (var cut = 1; cut < labels.length; cut += 1) {
+      var left = labels.slice(0, cut).join(".") + ".";
+      var right = labels.slice(cut).join(".");
+      var gap = Math.abs(left.length - right.length);
+      if (gap < bestGap) {
+        bestCut = cut;
+        bestGap = gap;
+      }
+    }
+    return '<span class="instance-domain-line">' +
+      esc(labels.slice(0, bestCut).join(".") + ".") + "</span><br>" +
+      '<span class="instance-domain-line">' +
+      esc(labels.slice(bestCut).join(".")) + "</span>";
+  }
   function isAdminEntry() {
     // 同时兼容有无末尾斜杠；服务端会把两种地址都稳定映射到 Portal 首页。
     return window.location.pathname === "/portal/admin" ||
@@ -3200,7 +3223,7 @@
         var regionEditor = '<select class="instance-region-select" data-instance-region="' + i.id + '">' +
           regionOptions + '</select><button class="ghost small" data-save-instance-region="' +
           i.id + '">保存</button>';
-        return "<tr><td>#" + i.id + "</td><td class=\"instance-domain\">" + esc(i.domain) + "</td><td class=\"zh instance-company\">" + company + "</td><td class=\"zh instance-status\">" + badge(hbStatus(i)) + "</td>" +
+        return "<tr><td>#" + i.id + "</td><td class=\"instance-domain\" title=\"" + esc(i.domain) + "\">" + instanceDomainHtml(i.domain) + "</td><td class=\"zh instance-company\">" + company + "</td><td class=\"zh instance-status\">" + badge(hbStatus(i)) + "</td>" +
           "<td class=\"instance-version\">" + esc(i.version || "—") + "</td><td class=\"zh instance-region-cell\">" + regionEditor +
           "</td><td class=\"zh instance-people\">" + people + "</td><td class=\"instance-seen\">" + fmtTime(i.last_seen_ts) + "</td>" +
           '<td class="finance-token">' + fmtInteger(i.balance_tokens) + ' Token</td>' +

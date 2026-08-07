@@ -645,8 +645,10 @@ label input { margin-top: 5px; }
 .instance-table td { padding-left: 5px; padding-right: 5px; vertical-align: middle; }
 .instance-table .instance-region-cell { min-width: 155px; }
 .instance-table .instance-domain {
-  min-width: 178px; white-space: nowrap; overflow-wrap: normal; word-break: normal;
+  width: 178px; min-width: 150px; max-width: 178px;
+  line-height: 1.5; overflow-wrap: normal; word-break: normal;
 }
+.instance-table .instance-domain-line { white-space: nowrap; }
 .instance-table .instance-company { min-width: 137px; }
 .instance-table .instance-company b { display: block; line-height: 1.5; }
 .instance-table .instance-company .hint { margin-top: 4px; white-space: nowrap; }
