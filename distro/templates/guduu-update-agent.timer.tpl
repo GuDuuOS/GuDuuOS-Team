@@ -2,7 +2,7 @@
 Description=Check GuDuu Nexus for OEM version updates
 
 [Timer]
-OnBootSec=2min
+OnActiveSec=30s
 OnUnitActiveSec=5min
 RandomizedDelaySec=45s
 Persistent=true

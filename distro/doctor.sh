@@ -83,6 +83,21 @@ code="$(curl -so /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/cosm
 if [ -n "$code" ] && [ "$code" != "502" ] && [ "$code" != "000" ]; then ok "GuDuu OS 主 AI 服务可达（HTTP $code）"
 else bad "GuDuu OS 主 AI 服务不可达——看日志：docker compose logs bot"; fi
 
+# ---------- 宿主更新代理 ----------
+if command -v systemctl >/dev/null 2>&1 \
+    && systemctl is-enabled --quiet guduu-update-agent.timer \
+    && systemctl is-active --quiet guduu-update-agent.timer; then
+  ok "宿主更新 timer 已启用且运行中"
+else
+  bad "宿主更新 timer 未运行——执行：systemctl enable --now guduu-update-agent.timer"
+fi
+if [ -d data/cosmac ] \
+    && docker compose exec -T bot test -r /var/lib/cosmac -a -w /var/lib/cosmac >/dev/null 2>&1; then
+  ok "更新通知共享目录可由 bot 读写"
+else
+  bad "更新通知共享目录不可写——重跑官网 host-tools.sh 宿主迁移"
+fi
+
 # ---------- P1 预留：GuDuu Nexus 网关连通性检查加在这里 ----------
 
 echo "== 结果：$PASS 项通过，$FAIL 项异常 =="

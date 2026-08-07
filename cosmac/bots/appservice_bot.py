@@ -3846,10 +3846,14 @@ class CosmacBot:
         )
         temp = path + ".tmp"
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
+            parent = os.path.dirname(path) or "."
+            os.makedirs(parent, mode=0o770, exist_ok=True)
+            os.chmod(parent, 0o770)
             with open(temp, "w", encoding="utf-8") as handle:
                 json.dump({"release_id": expected, "approved_by": user_id}, handle)
-            os.chmod(temp, 0o600)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temp, 0o660)
             os.replace(temp, path)
             return 200, {"approved": True, "release_id": expected}
         except Exception:

@@ -80,6 +80,24 @@ class UpdateAgentTest(unittest.TestCase):
             finally:
                 update_agent._APPROVAL_FILE = original
 
+    def test_pending_state_repairs_shared_directory_permissions(self):
+        """历史 0700 目录会在写通知前修复，pending 文件允许同组 bot 读取。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            original_state = update_agent._STATE_DIR
+            state = Path(temp_dir) / "cosmac"
+            state.mkdir(mode=0o700)
+            update_agent._STATE_DIR = state
+            try:
+                target = state / "pending-update.json"
+                update_agent._write_json_atomic(target, {"release_id": 7})
+                self.assertEqual(
+                    target.read_text(encoding="utf-8"), '{"release_id": 7}'
+                )
+                self.assertEqual(target.stat().st_mode & 0o777, 0o660)
+                self.assertEqual(state.stat().st_mode & 0o777, 0o770)
+            finally:
+                update_agent._STATE_DIR = original_state
+
     def test_update_request_has_fixed_product_user_agent(self):
         """节点代理必须带固定产品标识，避免被 Cloudflare 当成 urllib 机器人。"""
         with mock.patch.object(

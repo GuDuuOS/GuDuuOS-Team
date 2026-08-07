@@ -110,6 +110,9 @@ class InstallerHostTests(unittest.TestCase):
                 (distro / "data" / "update" / "host-tools-version").read_text(encoding="utf-8").strip(),
                 "1.24.1",
             )
+            shared_state = distro / "data" / "cosmac"
+            self.assertTrue(shared_state.is_dir())
+            self.assertEqual(stat.S_IMODE(shared_state.stat().st_mode), 0o770)
             backups = list((distro / "data" / "update" / "host-tools-backups").glob("*"))
             self.assertEqual(len(backups), 1)
             self.assertEqual(
@@ -129,6 +132,61 @@ class InstallerHostTests(unittest.TestCase):
             self.assertEqual(second.returncode, 0, second.stdout)
             self.assertEqual(env_file.read_text(encoding="utf-8").count("COSMAC_AUTO_UPDATE=0"), 1)
             self.assertEqual(compose.read_text(encoding="utf-8"), "# customer compose sentinel\n")
+
+    def test_systemd_unit_heals_shared_state_and_runs_promptly(self) -> None:
+        service = (ROOT / "distro" / "templates" / "guduu-update-agent.service.tpl").read_text()
+        timer = (ROOT / "distro" / "templates" / "guduu-update-agent.timer.tpl").read_text()
+        installer = (ROOT / "distro" / "install.sh").read_text()
+        migrator = MIGRATE_HOST.read_text()
+        self.assertIn(
+            "ExecStartPre=/usr/bin/install -d -m 0770 {{DISTRO_DIR}}/data/cosmac",
+            service,
+        )
+        self.assertIn("UMask=0007", service)
+        self.assertIn("OnActiveSec=30s", timer)
+        self.assertIn("systemctl start guduu-update-agent.service", installer)
+        self.assertIn("systemctl start guduu-update-agent.service", migrator)
+        self.assertIn(
+            'install -d -m 0770 "$TARGET_DISTRO/data/cosmac"', migrator
+        )
+        doctor = (ROOT / "distro" / "doctor.sh").read_text()
+        self.assertIn("systemctl is-active --quiet guduu-update-agent.timer", doctor)
+        self.assertIn("docker compose exec -T bot test -r /var/lib/cosmac", doctor)
+
+    def test_migrator_accepts_flat_public_installer_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            fake = self._fake_bin(base)
+            target = base / "flat-node"
+            target.mkdir()
+            (target / ".env").write_text("DOMAIN=oem.example.com\n", encoding="utf-8")
+            (target / "docker-compose.yml").write_text("# flat layout\n", encoding="utf-8")
+            for name in ("update_agent.py", "apply_images.py", "doctor.sh"):
+                (target / name).write_text(f"old-{name}\n", encoding="utf-8")
+            env = dict(os.environ)
+            env.update(
+                {
+                    "PATH": f"{fake}:/usr/bin:/bin",
+                    "GUDUU_UPDATE_LOCK": str(base / "update.lock"),
+                    "GUDUU_HOST_TOOLS_VERSION": "1.29.2",
+                }
+            )
+            completed = subprocess.run(
+                ["bash", str(MIGRATE_HOST), "--install-root", str(target)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout)
+            self.assertTrue((target / "data" / "cosmac").is_dir())
+            self.assertEqual(
+                (target / "data" / "update" / "host-tools-version")
+                .read_text(encoding="utf-8")
+                .strip(),
+                "1.29.2",
+            )
 
 
 if __name__ == "__main__":

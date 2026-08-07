@@ -242,7 +242,8 @@ COSMAC_DB_PASSWORD="$(gen_secret)"
 # 域名转正则：点要转义（appservice 命名空间用，单引号 YAML 单反斜杠即可）
 DOMAIN_REGEX="${DOMAIN//./\\.}"
 
-mkdir -p data/synapse data/caddy
+mkdir -p data/synapse data/caddy data/cosmac
+chmod 0770 data/cosmac
 
 render templates/dotenv.tpl .env \
   "DOMAIN=$DOMAIN" "ADMIN_USER=admin" "ADMIN_EMAIL=$ADMIN_EMAIL" "OEM_KEY=$OEM_KEY" "NODE_ACTIVATION_REQUIRED=$NODE_ACTIVATION_REQUIRED" \
@@ -340,6 +341,10 @@ if [ "$(id -u)" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
     /etc/systemd/system/guduu-update-agent.timer
   systemctl daemon-reload
   systemctl enable --now guduu-update-agent.timer >/dev/null
+  if ! systemctl start guduu-update-agent.service; then
+    warn "更新代理首次检查未成功；timer 已保留，会在 5 分钟内自动重试。"
+    warn "排障：journalctl -u guduu-update-agent.service -n 50 --no-pager"
+  fi
 else
   warn "当前环境没有 root/systemd，未安装自动更新 timer；可继续手动运行 ./update.sh。"
 fi

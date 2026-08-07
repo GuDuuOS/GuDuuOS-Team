@@ -158,13 +158,18 @@ class DashboardSecurityTests(unittest.TestCase):
                 response.headers["Content-Type"],
                 "text/x-shellscript; charset=utf-8",
             )
-        self.assertIn('RELEASE_TAG="v1.29.1"', script)
+        self.assertIn('RELEASE_TAG="v1.29.2"', script)
         self.assertIn("优先拉 Docker Hub", script)
         self.assertIn('exec ./install.sh "${FORWARD_ARGS[@]}"', script)
         self.assertIn('--reinstall', script)
         self.assertIn('mv -- "$INSTALL_ROOT" "$REINSTALL_BACKUP"', script)
         self.assertNotIn("CMK-", script)
         self.assertNotIn("--key", script)
+
+        with urlopen(f"{self.base_url}/portal/host-tools.sh", timeout=3) as response:
+            host_tools = response.read().decode("utf-8")
+        self.assertIn('RELEASE_TAG="v1.29.2"', host_tools)
+        self.assertIn("migrate_host_tools.sh", host_tools)
 
         root = Path(__file__).resolve().parents[2]
         compose = (root / "distro" / "docker-compose.yml").read_text()

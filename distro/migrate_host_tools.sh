@@ -26,8 +26,9 @@ command -v python3 >/dev/null 2>&1 || die "服务器缺少 python3。"
 
 if [ -z "$TARGET_ROOT" ]; then
   candidates=()
-  for candidate in /opt/cosmac /opt/guduu-os; do
-    [ -f "$candidate/distro/.env" ] && candidates+=("$candidate")
+  for candidate in /opt/cosmac/distro /opt/guduu-os /opt/guduu-os/distro; do
+    [ -f "$candidate/.env" ] && [ -f "$candidate/docker-compose.yml" ] \
+      && candidates+=("$candidate")
   done
   [ "${#candidates[@]}" -gt 0 ] || die "没有找到已安装节点；可用 --install-root 指定安装根目录。"
   [ "${#candidates[@]}" -eq 1 ] \
@@ -40,7 +41,11 @@ case "$TARGET_ROOT" in
   *) die "--install-root 必须是绝对路径。" ;;
 esac
 TARGET_ROOT="${TARGET_ROOT%/}"
-TARGET_DISTRO="$TARGET_ROOT/distro"
+if [ -f "$TARGET_ROOT/.env" ] && [ -f "$TARGET_ROOT/docker-compose.yml" ]; then
+  TARGET_DISTRO="$TARGET_ROOT"
+else
+  TARGET_DISTRO="$TARGET_ROOT/distro"
+fi
 [ -f "$TARGET_DISTRO/.env" ] || die "$TARGET_DISTRO/.env 不存在，不是有效的 OEM 节点。"
 [ -f "$TARGET_DISTRO/docker-compose.yml" ] || die "$TARGET_DISTRO/docker-compose.yml 不存在。"
 [ -f "$SCRIPT_DIR/update_agent.py" ] || die "迁移包缺少 update_agent.py。"
@@ -109,6 +114,9 @@ if ! grep -Eq '^COSMAC_AUTO_UPDATE=' "$TARGET_DISTRO/.env"; then
 fi
 chmod 0600 "$TARGET_DISTRO/.env"
 
+# 与 docker-compose.yml 的 /var/lib/cosmac bind mount 完全一致。
+install -d -m 0770 "$TARGET_DISTRO/data/cosmac"
+
 if command -v systemctl >/dev/null 2>&1; then
   sed "s|{{DISTRO_DIR}}|$TARGET_DISTRO|g" \
     "$SCRIPT_DIR/templates/guduu-update-agent.service.tpl" \
@@ -117,6 +125,10 @@ if command -v systemctl >/dev/null 2>&1; then
     /etc/systemd/system/guduu-update-agent.timer
   systemctl daemon-reload
   systemctl enable --now guduu-update-agent.timer >/dev/null
+  if ! systemctl start guduu-update-agent.service; then
+    warn "代理首次检查未成功；timer 已保留，会在 5 分钟内自动重试。"
+    warn "排障：journalctl -u guduu-update-agent.service -n 50 --no-pager"
+  fi
 else
   warn "当前系统没有 systemd；宿主脚本已更新，但需要管理员自行安排定时执行 update_agent.py。"
 fi
@@ -131,4 +143,5 @@ say "宿主更新工具迁移完成 ✅"
 say "  安装目录：$TARGET_DISTRO"
 say "  旧文件备份：$BACKUP_DIR"
 say "  客户节点默认仅接收通知，必须在 OS 后台确认后才安装。"
+say "  timer 已启用，并已立即执行一次更新检查。"
 say "  本次没有重建或切换任何 bot/web 容器。"

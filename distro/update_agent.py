@@ -41,12 +41,18 @@ _PENDING_FILE = _STATE_DIR / "pending-update.json"
 _APPROVAL_FILE = _STATE_DIR / "approved-update.json"
 
 
+def _ensure_state_dir() -> None:
+    """保证宿主代理与 bot 容器共享的状态目录双方都可写。"""
+    _STATE_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(_STATE_DIR, 0o770)
+
+
 def _write_json_atomic(path: Path, value: Dict[str, Any]) -> None:
     """原子写宿主更新状态，避免 bot 正在读取时看见半份 JSON。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_state_dir()
     temp = path.with_suffix(path.suffix + ".tmp")
     temp.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
-    os.chmod(temp, 0o600)
+    os.chmod(temp, 0o660)
     temp.replace(path)
 
 
@@ -245,6 +251,7 @@ def _report(
 
 def run_once() -> int:
     """检查并执行一次更新；返回适合 systemd 记录的进程退出码。"""
+    _ensure_state_dir()
     if not _ENV_FILE.is_file():
         print("[更新代理] 未找到 distro/.env，跳过。")
         return 0
