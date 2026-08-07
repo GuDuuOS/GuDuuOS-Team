@@ -205,6 +205,14 @@ label input { margin-top: 5px; }
 .license-request-form small { display: block; margin-top: 5px; color: var(--muted); }
 .license-date, .license-payment { grid-column: span 6; }
 .license-conditional { grid-column: 1 / -1; }
+.license-token-control {
+  padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--input-bg);
+}
+.license-token-control.is-disabled { color: var(--muted); background: var(--card); }
+.license-token-control.is-disabled input {
+  color: var(--muted); background: var(--panel); cursor: not-allowed; opacity: .72;
+}
 .license-request-form textarea {
   width: 100%; margin-top: 5px; padding: 9px 12px; resize: vertical;
   border: 1px solid var(--line); border-radius: 9px; color: var(--ink);

@@ -1296,14 +1296,27 @@
     var online = method === "online" && !editing;
     $("#license-transfer-fields").hidden = !transfer;
     $("#license-online-channel").hidden = !online;
-    $("#license-manual-tokens").hidden =
-      method !== "manual_review" || !oemTokenGrantRequestVisible;
+    var manualTokenControl = $("#license-manual-tokens");
+    var manualTokenNote = $("#license-manual-token-note");
+    var manualReview = method === "manual_review";
+    // 关闭时所有付款方式都显示灰色 Token 项并固定为 0；
+    // 开启后只有人工授权允许 OEM 填写申请额度。
+    // 避免用户误以为仍可申请赠送，也不依赖 hidden 作为权限边界。
+    manualTokenControl.hidden = oemTokenGrantRequestVisible && !manualReview;
+    var tokenGrantDisabled = !manualReview || !oemTokenGrantRequestVisible;
+    manualTokenControl.classList.toggle("is-disabled", tokenGrantDisabled);
+    if (!oemTokenGrantRequestVisible) {
+      form.requested_tokens.value = "0";
+      manualTokenNote.textContent =
+        "平台当前未开放赠送 Token，本次申请固定为 0，不能填写。";
+    } else {
+      manualTokenNote.textContent = "可填写与商务约定的申请额度，最终以审批结果为准。";
+    }
     form.payer_company.required = transfer;
     form.voucher.required = transfer;
     form.payment_method.disabled = editing;
     // 关闭时不只隐藏，还禁用控件并在提交处强制传 0。
-    form.requested_tokens.disabled = !oemTokenGrantRequestVisible ||
-      (editing && method !== "manual_review");
+    form.requested_tokens.disabled = tokenGrantDisabled;
     var priced = Number(licensePricing.key_price_cents) > 0;
     var summary = $("#license-price-summary");
     if (editing) {

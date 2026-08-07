@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置使用同源外部脚本，既防刷新闪色，也允许 Portal 开启严格脚本 CSP。 -->
 <script src="/portal/theme-init.js?v=1"></script>
-<link rel="stylesheet" href="/portal/portal.css?v=46" />
+<link rel="stylesheet" href="/portal/portal.css?v=47" />
 </head>
 <body>
 <!--
@@ -367,7 +367,11 @@
         <option value="manual_review">合同 / 免费授权（人工审批）</option>
       </select></label>
       <label id="license-online-channel" class="license-conditional" hidden>在线支付渠道<select name="channel" id="license-channel"></select></label>
-      <label id="license-manual-tokens" class="license-conditional" hidden>申请附赠 Token<input name="requested_tokens" type="number" min="0" max="1000000000000" value="0" /></label>
+      <label id="license-manual-tokens" class="license-conditional license-token-control" hidden>
+        <span>申请附赠 Token</span>
+        <input name="requested_tokens" type="number" min="0" max="1000000000000" value="0" />
+        <small id="license-manual-token-note">由平台功能开关控制。</small>
+      </label>
       <div id="license-transfer-fields" class="license-transfer-fields">
         <label>付款企业<input name="payer_company" maxlength="200" required placeholder="银行回单上的付款企业" /></label>
         <label>银行流水号<input name="transaction_id" maxlength="200" placeholder="可留空，以凭证为准" /></label>
@@ -1024,6 +1028,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=55"></script>
+<script src="/portal/portal.js?v=56"></script>
 </body>
 </html>
