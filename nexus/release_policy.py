@@ -1,9 +1,9 @@
 """Nexus 节点发布环境与自动灰度策略。
 
-发布必须明确区分三类节点：开发节点不接收任何自动任务，灰度节点在 CI
-登记不可变镜像后自动试装，生产节点只在灰度成功且超管人工确认后才获得
-任务。策略保存在 ``NexusSetting``，便于以后增加节点时在超管页修改，
-不把客户机器编号硬编码到发布状态机里。
+发布必须明确区分三类节点：开发节点在 CI 登记不可变镜像后最先自动试装；
+开发成功后才给灰度节点创建可选安装任务；生产节点只在灰度成功且超管人工
+确认后才获得任务。策略保存在 ``NexusSetting``，便于以后增加节点时在
+超管页修改，不把客户机器编号硬编码到发布状态机里。
 """
 
 from __future__ import annotations
@@ -22,6 +22,8 @@ _DEFAULTS: Dict[str, Any] = {
     "development_instance_ids": [1],
     "canary_instance_id": 2,
     "production_instance_ids": [3],
+    # True 表示开发节点全部成功后自动通知灰度节点；开发节点本机是否自动安装
+    # 仍由该节点 root-only 的 COSMAC_AUTO_UPDATE 决定，Nexus 不远程改客户配置。
     "auto_canary": True,
     "require_canary_success": True,
     # 新装基线不等于向生产节点发布。0 表示尚未显式指定，

@@ -861,7 +861,7 @@ class NexusRelease(Base):
     notes = Column(Text, nullable=False, default="")
     # 自动更新只接受 vX.Y.Z 形式的 tag，避免后台内容变成任意 git 参数。
     git_ref = Column(String(40), nullable=False, unique=True)
-    # draft / canary / published / rollback / paused / archived
+    # draft / development / canary / published / rollback / paused / archived
     # archived 只表示只读历史基线，不能重新进入发布状态机。
     status = Column(String(16), nullable=False, default="draft", index=True)
     canary_instance_id = Column(Integer, nullable=True, default=None)

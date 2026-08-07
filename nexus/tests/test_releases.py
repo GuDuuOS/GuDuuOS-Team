@@ -333,8 +333,8 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(second["title"], "自动构建已完成")
         self.assertEqual(second["artifact"]["mode"], "container")
 
-    def test_ci_manifest_auto_canaries_and_production_requires_success(self):
-        """CI 完成后只推灰度节点，成功前不得给生产节点建任务。"""
+    def test_ci_manifest_runs_development_before_canary_and_production(self):
+        """CI 先推开发；开发成功自动通知灰度，灰度成功后才能人工发生产。"""
         key_c = fleet.issue_keys(self.s)[0]["key"]
         inst_c = fleet.redeem(self.s, key_c, "production.example.com")[
             "instance_id"
@@ -357,19 +357,42 @@ class ReleaseTest(unittest.TestCase):
             title="自动灰度",
             notes="不可变镜像已固定。",
         )
-        self.assertEqual(release["status"], "canary")
-        self.assertEqual(release["canary_instance_id"], self.inst_b)
+        self.assertEqual(release["status"], "development")
+        self.assertIsNone(release["canary_instance_id"])
         self.assertEqual(
             [item["instance_id"] for item in release["deployments"]],
-            [self.inst_b],
+            [self.inst_a],
         )
-        self.assertIsNone(releases.check_update(self.s, self.key_a, "1.6.32"))
-        self.assertIsNotNone(releases.check_update(self.s, self.key_b, "1.6.32"))
+        self.assertIsNotNone(releases.check_update(self.s, self.key_a, "1.6.32"))
+        self.assertIsNone(releases.check_update(self.s, self.key_b, "1.6.32"))
         self.assertIsNone(releases.check_update(self.s, key_c, "1.6.32"))
 
+        with self.assertRaises(FleetError) as dev_blocked:
+            releases.start_canary(self.s, release["id"], self.inst_b)
+        self.assertEqual(
+            dev_blocked.exception.code, "NEXUS_DEVELOPMENT_NOT_PASSED"
+        )
         with self.assertRaises(FleetError) as blocked:
             releases.publish(self.s, release["id"])
-        self.assertEqual(blocked.exception.code, "NEXUS_CANARY_NOT_PASSED")
+        self.assertEqual(blocked.exception.code, "NEXUS_DEVELOPMENT_NOT_PASSED")
+
+        releases.report_update(
+            self.s,
+            raw_key=self.key_a,
+            release_id=release["id"],
+            status="success",
+            current_version="1.7.0",
+            detail="负责人开发节点自动验证通过",
+        )
+        canary = releases.get_release(self.s, release["id"])
+        self.assertEqual(canary["status"], "canary")
+        self.assertEqual(canary["canary_instance_id"], self.inst_b)
+        self.assertEqual(
+            [item["instance_id"] for item in canary["deployments"]],
+            [self.inst_a, self.inst_b],
+        )
+        self.assertIsNone(releases.check_update(self.s, self.key_a, "1.7.0"))
+        self.assertIsNotNone(releases.check_update(self.s, self.key_b, "1.6.32"))
 
         releases.report_update(
             self.s,
@@ -397,7 +420,7 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(published["status"], "published")
         self.assertEqual(
             {item["instance_id"] for item in published["deployments"]},
-            {self.inst_b, inst_c},
+            {self.inst_a, self.inst_b, inst_c},
         )
         self.assertIsNone(releases.check_update(self.s, self.key_a, "1.6.32"))
         self.assertIsNotNone(releases.check_update(self.s, key_c, "1.6.32"))

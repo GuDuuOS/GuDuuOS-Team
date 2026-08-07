@@ -2190,6 +2190,7 @@
   // ---------- 超管视图 ----------
   var RELEASE_STATUS = {
     draft: ["idle", "未发布"],
+    development: ["warning", "开发验证"],
     canary: ["warning", "灰度监测"],
     published: ["active", "全量发布"],
     rollback: ["warning", "回撤发布中"],
@@ -2405,13 +2406,13 @@
       if (platform && r.status === "published") {
         actions.push('<button class="ghost small" data-release-action="pause" data-release-target="nexus" data-release-id="' + r.id + '">撤下公告</button>');
       }
-      if (!platform && ["draft", "paused", "canary"].indexOf(r.status) >= 0) {
-        actions.push('<button class="ghost small" data-release-action="canary" data-release-id="' + r.id + '">重新通知灰度节点</button>');
+      if (!platform && ["development", "paused", "canary"].indexOf(r.status) >= 0) {
+        actions.push('<button class="ghost small" data-release-action="canary" data-release-id="' + r.id + '">通知灰度节点</button>');
       }
       if (!platform && ["draft", "canary", "paused"].indexOf(r.status) >= 0) {
         actions.push('<button class="primary small" data-release-action="publish" data-release-id="' + r.id + '">通知正式节点</button>');
       }
-      if (!platform && (r.status === "canary" || r.status === "published")) {
+      if (!platform && (["development", "canary", "published"].indexOf(r.status) >= 0)) {
         actions.push('<button class="ghost small" data-release-action="pause" data-release-id="' + r.id + '">暂停发布</button>');
       }
       if (!platform && r.status === "rollback") {
@@ -2481,9 +2482,10 @@
     $("#release-image-field").hidden = platform;
     $("#release-flow-hint").textContent = platform
       ? "Nexus 平台由我们集中部署；发布这里只向全部 OEM 后台展示公告，不更新客户服务器。"
-      : "OEM 节点版本流程：镜像登记 → 自动发布灰度候选通知 #" +
-        adminReleasePolicy.canary_instance_id +
-        " → 技术验证成功 → 人工发布正式节点；开发节点不接收任务。";
+      : "OEM 节点版本流程：镜像登记 → 开发节点 #" +
+        (adminReleasePolicy.development_instance_ids.join("、#") || "未配置") +
+        " 自动安装 → 成功后通知灰度 #" + adminReleasePolicy.canary_instance_id +
+        " → 技术验证成功 → 超管人工发布正式节点。";
   }
 
   $("#form-release").elements.target.addEventListener("change", syncReleaseTargetUi);
@@ -2627,9 +2629,9 @@
       ? "#" + adminReleasePolicy.production_instance_ids.join("、#")
       : "未配置";
     $("#release-policy-summary").textContent =
-      "开发 " + developmentText + "（不自动更新） · 灰度 #" +
+      "开发 " + developmentText + "（最先自动安装） · 灰度 #" +
       (adminReleasePolicy.canary_instance_id || "未配置") +
-      (adminReleasePolicy.auto_canary ? "（镜像完成后自动）" : "（手工）") +
+      (adminReleasePolicy.auto_canary ? "（开发成功后自动通知）" : "（手工通知）") +
       " · 正式 " + productionText +
       " · 新装基线 " +
       (adminReleasePolicy.install_baseline_release_id
@@ -3809,7 +3811,7 @@
         ? "确认把这条 Nexus 平台更新公告展示给全部 OEM 客户？这不会更新或重启客户节点。"
         : action === "publish"
         ? "确认把已通过灰度的同一镜像摘要发布到 " + releaseProductionCount +
-          " 个正式节点？开发节点不会收到任务。"
+          " 个正式节点？不会重复创建开发或灰度任务。"
         : action === "rollback"
           ? "确认把灰度与正式环境共 " + releaseInstanceCount + " 个节点回撤到 v" +
             (t.dataset.releaseVersion || "") + "？开发节点不会收到任务。"

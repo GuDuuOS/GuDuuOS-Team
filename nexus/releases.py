@@ -34,7 +34,7 @@ _DEVLOG_HEADER_RE = re.compile(
     r"(?P<version>\d+\.\d+\.\d+)\s+\([^)]+\)\s*$"
 )
 _REPORT_STATES = {"downloading", "installing", "success", "failed"}
-_ACTIVE_RELEASE_STATES = {"canary", "published", "rollback"}
+_ACTIVE_RELEASE_STATES = {"development", "canary", "published", "rollback"}
 _RELEASE_TARGETS = {"nexus", "node"}
 # 下载/构建被强制中断时，任务不能永久卡在 installing。超过一小时后允许同一节点
 # 再次领取；正常升级一般远低于一小时，这个阈值不会制造并发执行。
@@ -249,6 +249,85 @@ def _active_instances_for_ids(s, instance_ids: List[int], role: str) -> List[Nex
     return sorted(rows, key=lambda row: int(row.id))
 
 
+def _development_passed(s, release_id: int, instance_ids: List[int]) -> bool:
+    """只有全部固定开发节点都真实上报 success，才允许候选进入公司灰度。"""
+    expected = sorted(set(int(item) for item in instance_ids))
+    if not expected:
+        return True
+    rows = s.execute(
+        select(NexusReleaseDeployment).where(
+            NexusReleaseDeployment.release_id == int(release_id),
+            NexusReleaseDeployment.instance_id.in_(expected),
+        )
+    ).scalars().all()
+    states = {int(row.instance_id): str(row.status) for row in rows}
+    return all(states.get(instance_id) == "success" for instance_id in expected)
+
+
+def _development_started(s, release_id: int, instance_ids: List[int]) -> bool:
+    """判断该版本是否已经进入过开发阶段，避免暂停后手工绕过开发门禁。"""
+    expected = sorted(set(int(item) for item in instance_ids))
+    if not expected:
+        return False
+    return s.execute(
+        select(NexusReleaseDeployment.release_id).where(
+            NexusReleaseDeployment.release_id == int(release_id),
+            NexusReleaseDeployment.instance_id.in_(expected),
+        )
+    ).first() is not None
+
+
+def _begin_canary_stage(
+    s, release: NexusRelease, instance: NexusInstance
+) -> Dict[str, Any]:
+    """进入灰度阶段的内部原子操作；调用方必须先完成环境与门禁校验。"""
+    _pause_other_active(s, release.id, preserve_published=True)
+    release.status = "canary"
+    release.canary_instance_id = instance.id
+    release.updated_ts = _now_ms()
+    _ensure_deployment(s, release, instance)
+    s.flush()
+    return get_release(s, release.id)
+
+
+def start_development(s, release_id: int) -> Dict[str, Any]:
+    """把新镜像最先分配给固定开发节点；这些节点可在宿主本机选择自动安装。"""
+    release = _release(s, release_id)
+    _require_node_target(s, release, "开发验证")
+    if release.status not in {"draft", "paused", "development"}:
+        raise FleetError("NEXUS_RELEASE_STATE", "当前版本状态不能开始开发验证")
+    policy = release_policy.get_policy(s)
+    instances = _active_instances_for_ids(
+        s, policy["development_instance_ids"], "开发"
+    )
+    _pause_other_active(s, release.id, preserve_published=True)
+    release.status = "development"
+    release.canary_instance_id = None
+    release.updated_ts = _now_ms()
+    for instance in instances:
+        _ensure_deployment(s, release, instance)
+    s.flush()
+    return get_release(s, release.id)
+
+
+def _advance_development_if_ready(s, release: NexusRelease) -> bool:
+    """开发全部成功后自动通知固定灰度节点；缺机时保留开发状态等待处理。"""
+    if release.status != "development":
+        return False
+    policy = release_policy.get_policy(s)
+    development_ids = list(policy["development_instance_ids"])
+    if not policy["auto_canary"] or not _development_passed(
+        s, int(release.id), development_ids
+    ):
+        return False
+    canary_id = int(policy["canary_instance_id"] or 0)
+    canary = s.get(NexusInstance, canary_id) if canary_id else None
+    if canary is None or canary.status != "active":
+        return False
+    _begin_canary_stage(s, release, canary)
+    return True
+
+
 def _pause_other_active(
     s, keep_id: int, *, preserve_published: bool = False
 ) -> None:
@@ -359,18 +438,21 @@ def ensure_ci_release_draft(
         )
 
     policy = release_policy.get_policy(s)
-    canary_id = int(policy["canary_instance_id"] or 0)
-    if (
-        policy["auto_canary"]
-        and canary_id
-        and result["target"] == "node"
-        and result["status"] == "draft"
-    ):
-        canary = s.get(NexusInstance, canary_id)
-        # CI 镜像登记不能因灰度机临时离线而整体失败。此时保留
-        # draft，超管页会明确显示尚未推送；节点恢复后可手工重试。
-        if canary is not None and canary.status == "active":
-            return start_canary(s, int(result["id"]), canary_id)
+    development_ids = list(policy["development_instance_ids"])
+    if result["target"] == "node" and result["status"] == "draft":
+        if development_ids:
+            # CI webhook 不能因开发机临时离线而失败；缺机时保留 draft，等超管处理。
+            try:
+                _active_instances_for_ids(s, development_ids, "开发")
+            except FleetError:
+                return result
+            return start_development(s, int(result["id"]))
+        canary_id = int(policy["canary_instance_id"] or 0)
+        # 兼容没有开发环境的旧/测试配置：仍可直接进入原灰度流程。
+        if policy["auto_canary"] and canary_id:
+            canary = s.get(NexusInstance, canary_id)
+            if canary is not None and canary.status == "active":
+                return start_canary(s, int(result["id"]), canary_id)
     return result
 
 
@@ -378,9 +460,21 @@ def start_canary(s, release_id: int, instance_id: int) -> Dict[str, Any]:
     """把草稿推送给一个灰度节点，开始真实环境监测。"""
     release = _release(s, release_id)
     _require_node_target(s, release, "节点灰度")
-    if release.status not in {"draft", "paused", "canary"}:
+    if release.status not in {"draft", "paused", "development", "canary"}:
         raise FleetError("NEXUS_RELEASE_STATE", "当前版本状态不能重新开始灰度")
     policy = release_policy.get_policy(s)
+    development_ids = list(policy["development_instance_ids"])
+    if (
+        (release.status == "development" or _development_started(
+            s, int(release.id), development_ids
+        ))
+        and not _development_passed(s, int(release.id), development_ids)
+    ):
+        raise FleetError(
+            "NEXUS_DEVELOPMENT_NOT_PASSED",
+            "开发节点尚未全部安装成功，不能通知灰度节点",
+            409,
+        )
     configured_canary = int(policy["canary_instance_id"] or 0)
     # 浏览器下拉框不是安全边界。服务端再次比对固定灰度编号，阻止有人
     # 直接构造 API 请求，把未经验证的镜像先推给开发机或正式生产机。
@@ -396,13 +490,7 @@ def start_canary(s, release_id: int, instance_id: int) -> Dict[str, Any]:
     if instance.status != "active":
         raise FleetError("NEXUS_INSTANCE_INACTIVE", "灰度实例当前已停用")
 
-    _pause_other_active(s, release.id, preserve_published=True)
-    release.status = "canary"
-    release.canary_instance_id = instance.id
-    release.updated_ts = _now_ms()
-    _ensure_deployment(s, release, instance)
-    s.flush()
-    return get_release(s, release.id)
+    return _begin_canary_stage(s, release, instance)
 
 
 def publish(s, release_id: int) -> Dict[str, Any]:
@@ -420,6 +508,12 @@ def publish(s, release_id: int) -> Dict[str, Any]:
         s.flush()
         return get_release(s, release.id)
 
+    if release.status == "development":
+        raise FleetError(
+            "NEXUS_DEVELOPMENT_NOT_PASSED",
+            "开发节点尚未完成，不能跳过开发与灰度直接发布生产",
+            409,
+        )
     if release.status not in {"draft", "canary", "paused", "published"}:
         raise FleetError("NEXUS_RELEASE_STATE", "当前版本状态不能全量发布")
     policy = release_policy.get_policy(s)
@@ -449,8 +543,8 @@ def publish(s, release_id: int) -> Dict[str, Any]:
     if release.published_ts is None:
         release.published_ts = now
 
-    # 开发节点和灰度节点都不在正式目标列表中。灰度节点已有原任务，
-    # 开发节点则由研发人员自行控制，两者都不能被“正式发布”意外改写。
+    # 开发节点和灰度节点都不在正式目标列表中，已有的分阶段任务不会被
+    # “正式发布”重新创建或改写。
     for instance in production_instances:
         deployment = _ensure_deployment(s, release, instance)
         # 人工提前升级到目标或更高版本的节点直接记成功，不再重复构建。
@@ -803,6 +897,10 @@ def check_update(s, raw_key: str, current_version: str) -> Optional[Dict[str, An
             continue
         if _release_target(s, release) != "node":
             continue
+        if release.status == "development":
+            policy = release_policy.get_policy(s)
+            if int(instance.id) not in policy["development_instance_ids"]:
+                continue
         if release.status == "canary" and release.canary_instance_id != instance.id:
             continue
         if deployment.status in {"success", "failed", "skipped"}:
@@ -827,6 +925,7 @@ def check_update(s, raw_key: str, current_version: str) -> Optional[Dict[str, An
             deployment.updated_ts = now
             deployment.finished_ts = now
             instance.version = current_version[:64]
+            _advance_development_if_ready(s, release)
             continue
         return {
             "release_id": release.id,
@@ -913,6 +1012,14 @@ def install_artifact(s, raw_key: str, domain: str) -> Dict[str, Any]:
         ).all()
         for _deployment, release in assigned:
             if _release_target(s, release) != "node":
+                continue
+            if release.status == "development":
+                policy = release_policy.get_policy(s)
+                if int(key.instance_id) not in policy["development_instance_ids"]:
+                    continue
+            if release.status == "canary" and int(
+                release.canary_instance_id or 0
+            ) != int(key.instance_id):
                 continue
             artifact = s.get(NexusReleaseArtifact, int(release.id))
             payload = release_artifacts.artifact_dict(artifact)
@@ -1012,4 +1119,5 @@ def report_update(
         instance = s.get(NexusInstance, key.instance_id)
         if instance is not None:
             instance.version = (current_version or release.version)[:64]
+        _advance_development_if_ready(s, release)
     return {"ok": True, "status": deployment.status}
