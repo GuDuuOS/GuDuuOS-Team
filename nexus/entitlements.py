@@ -71,7 +71,13 @@ def _looks_like_code(raw: str) -> bool:
 
 
 def _owned_instance(s, oem_id: int, instance_id: int) -> NexusInstance:
-    instance = s.get(NexusInstance, int(instance_id))
+    # 同一节点的申请先锁实例行：PostgreSQL 下可把并发双击串行化，避免两条
+    # “待审核”工单同时越过查询。SQLite 测试会安全忽略 FOR UPDATE。
+    instance = s.execute(
+        select(NexusInstance)
+        .where(NexusInstance.id == int(instance_id))
+        .with_for_update()
+    ).scalar_one_or_none()
     if instance is None:
         raise FleetError("NEXUS_INSTANCE_MISSING", "节点不存在", 404)
     claim = s.get(NexusKeyClaim, int(instance.key_id))
@@ -167,7 +173,11 @@ def list_lifetime_requests(s) -> List[Dict[str, Any]]:
 
 
 def cancel_lifetime_request(s, oem_id: int, request_id: int) -> Dict[str, Any]:
-    row = s.get(NexusLifetimeActivationRequest, int(request_id))
+    row = s.execute(
+        select(NexusLifetimeActivationRequest)
+        .where(NexusLifetimeActivationRequest.id == int(request_id))
+        .with_for_update()
+    ).scalar_one_or_none()
     if row is None or int(row.oem_id) != int(oem_id):
         raise FleetError("NEXUS_LIFETIME_REQUEST_NOT_FOUND", "申请不存在", 404)
     if row.status != "pending":
@@ -180,7 +190,11 @@ def cancel_lifetime_request(s, oem_id: int, request_id: int) -> Dict[str, Any]:
 def decide_lifetime_request(
     s, request_id: int, approve: bool, decide_note: str = ""
 ) -> Dict[str, Any]:
-    row = s.get(NexusLifetimeActivationRequest, int(request_id))
+    row = s.execute(
+        select(NexusLifetimeActivationRequest)
+        .where(NexusLifetimeActivationRequest.id == int(request_id))
+        .with_for_update()
+    ).scalar_one_or_none()
     if row is None:
         raise FleetError("NEXUS_LIFETIME_REQUEST_NOT_FOUND", "申请不存在", 404)
     if row.status != "pending":
@@ -261,7 +275,7 @@ def activate_lifetime_code(
     code = s.execute(
         select(NexusLifetimeActivationCode).where(
             NexusLifetimeActivationCode.code_hash == _hash_code(activation_code)
-        )
+        ).with_for_update()
     ).scalar_one_or_none()
     if code is None:
         raise FleetError("NEXUS_LIFETIME_CODE_NOT_FOUND", "终身激活码不存在", 404)
@@ -354,7 +368,11 @@ def list_token_purchase_requests(s) -> List[Dict[str, Any]]:
 
 
 def cancel_token_purchase_request(s, oem_id: int, request_id: int) -> Dict[str, Any]:
-    row = s.get(NexusTokenPurchaseRequest, int(request_id))
+    row = s.execute(
+        select(NexusTokenPurchaseRequest)
+        .where(NexusTokenPurchaseRequest.id == int(request_id))
+        .with_for_update()
+    ).scalar_one_or_none()
     if row is None or int(row.oem_id) != int(oem_id):
         raise FleetError("NEXUS_TOKEN_REQUEST_NOT_FOUND", "Token 购买申请不存在", 404)
     if row.status != "pending":
@@ -372,7 +390,11 @@ def decide_token_purchase_request(
     amount_cents: int = 0,
     decide_note: str = "",
 ) -> Dict[str, Any]:
-    row = s.get(NexusTokenPurchaseRequest, int(request_id))
+    row = s.execute(
+        select(NexusTokenPurchaseRequest)
+        .where(NexusTokenPurchaseRequest.id == int(request_id))
+        .with_for_update()
+    ).scalar_one_or_none()
     if row is None:
         raise FleetError("NEXUS_TOKEN_REQUEST_NOT_FOUND", "Token 购买申请不存在", 404)
     if row.status != "pending":
