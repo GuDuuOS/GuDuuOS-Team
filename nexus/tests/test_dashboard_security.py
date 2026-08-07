@@ -158,7 +158,7 @@ class DashboardSecurityTests(unittest.TestCase):
                 response.headers["Content-Type"],
                 "text/x-shellscript; charset=utf-8",
             )
-        self.assertIn('RELEASE_TAG="v1.30.3"', script)
+        self.assertIn('RELEASE_TAG="v1.31.0"', script)
         self.assertIn("优先拉 Docker Hub", script)
         self.assertIn('exec ./install.sh "${FORWARD_ARGS[@]}"', script)
         self.assertIn('--reinstall', script)
@@ -168,7 +168,7 @@ class DashboardSecurityTests(unittest.TestCase):
 
         with urlopen(f"{self.base_url}/portal/host-tools.sh", timeout=3) as response:
             host_tools = response.read().decode("utf-8")
-        self.assertIn('RELEASE_TAG="v1.30.3"', host_tools)
+        self.assertIn('RELEASE_TAG="v1.31.0"', host_tools)
         self.assertIn("migrate_host_tools.sh", host_tools)
 
         root = Path(__file__).resolve().parents[2]

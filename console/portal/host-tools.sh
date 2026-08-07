@@ -3,8 +3,8 @@
 # 仅从严格发行 Tag 下载迁移工具；不携带 OEM KEY，不切换应用镜像。
 set -euo pipefail
 
-# v1.30.3 修复网页批准未传入当前管理员身份、并按真实异常类型返回错误的问题。
-RELEASE_TAG="v1.30.3"
+# v1.31.0 与官网同镜像版本保持一致；宿主工具迁移仍独立于应用镜像切换。
+RELEASE_TAG="v1.31.0"
 ARCHIVE_URL="https://github.com/GuDuuOS/GuDuuOS-Team/archive/refs/tags/${RELEASE_TAG}.tar.gz"
 
 say() { printf '\033[1;36m[GuDuu OS]\033[0m %s\n' "$*"; }

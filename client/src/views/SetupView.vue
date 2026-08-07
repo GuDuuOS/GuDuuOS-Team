@@ -24,6 +24,10 @@ const brandPolicy = reactive({
 
 const form = reactive({
   brand: { product_name: '', company_name: '', logo_data_url: '' },
+  website: {
+    headline: '', description: '', contact_email: '', contact_phone: '',
+    contact_address: '', support_url: '', privacy_url: '', footer_text: '',
+  },
   email: { host: '', port: 465, user: '', password: '', from_address: '', from_name: '', security: 'ssl', password_configured: false },
   ai: { connection_mode: 'nexus', provider: 'deepseek', model: '', base_url: '', api_key: '', api_key_configured: false },
   payment: {
@@ -32,7 +36,7 @@ const form = reactive({
   },
 })
 
-const steps = ['品牌', '发信邮箱', '主 AI', '支付', '确认']
+const steps = ['品牌', '官网', '发信邮箱', '主 AI', '支付', '确认']
 const paymentConfigured = computed(() => ({
   alipay: Boolean(form.payment.alipay.app_id && (form.payment.alipay.private_key_configured || form.payment.alipay.private_key)),
   wechat: Boolean(form.payment.wechat.mch_id && (form.payment.wechat.api_v3_key_configured || form.payment.wechat.api_v3_key)),
@@ -63,6 +67,7 @@ onMounted(async () => {
     const value = await getNodeAdminSettings()
     Object.assign(brandPolicy, value.brand_policy || {})
     Object.assign(form.brand, value.brand || {})
+    Object.assign(form.website, value.website || {})
     Object.assign(form.email, value.email || {})
     Object.assign(form.ai, value.ai || {})
     Object.assign(form.payment.alipay, value.payment?.alipay || {})
@@ -104,6 +109,22 @@ function next() {
     error.value = '当前 OEM 节点必须使用自有品牌，不得使用 GuDuu OS 保留字样。'
     return
   }
+  if (step.value === 1 && !form.website.headline.trim()) {
+    error.value = '请先填写官网主标题'
+    return
+  }
+  if (step.value === 1 && brandPolicy.requires_custom_brand && [
+    form.website.headline,
+    form.website.description,
+    form.website.contact_email,
+    form.website.contact_address,
+    form.website.support_url,
+    form.website.privacy_url,
+    form.website.footer_text,
+  ].some(containsReservedBrand)) {
+    error.value = '当前 OEM 官网不得使用 GuDuu OS 保留字样。'
+    return
+  }
   step.value = Math.min(steps.length - 1, step.value + 1)
 }
 
@@ -113,7 +134,7 @@ async function save() {
   try {
     await saveNodeAdminSettings({ ...form, setup_completed: true })
     await loadInstanceConfig(true)
-    await router.replace('/')
+    await router.replace('/app')
   } catch (e: any) {
     error.value = e?.message || '保存失败'
   } finally {
@@ -152,7 +173,7 @@ async function approveUpdate() {
       </div>
       <div v-else class="body">
         <p v-if="error" class="error">{{ error }}</p>
-        <p v-if="route.query.activated === '1'" class="success">授权激活已完成。下面继续配置品牌、邮箱、主 AI 与支付渠道。</p>
+        <p v-if="route.query.activated === '1'" class="success">授权激活已完成。下面继续配置品牌官网、邮箱、主 AI 与支付渠道。</p>
         <div v-if="pendingUpdate" class="update-notice">
           <div><b>发现可选更新 {{ pendingUpdate.current_version }} → {{ pendingUpdate.version }}</b><small>{{ pendingUpdate.title }}</small></div>
           <button :disabled="updateBusy" @click="approveUpdate">{{ updateBusy ? '确认中…' : '确认安装' }}</button>
@@ -168,6 +189,17 @@ async function approveUpdate() {
         </template>
 
         <template v-else-if="step === 1">
+          <h2>官网内容与联系方式</h2><p class="hint">官网已包含在同一个 Web 镜像中，访问部署域名根路径即可看到。名称与 Logo 直接使用上一步的品牌配置。</p>
+          <p v-if="brandPolicy.requires_custom_brand" class="warn">官网主标题、介绍和页脚文案同样不得使用 GuDuu OS 保留品牌。</p>
+          <label>官网主标题<input v-model.trim="form.website.headline" placeholder="例如：让团队协作更简单" /></label>
+          <label>官网介绍<textarea v-model.trim="form.website.description" rows="3" placeholder="简要介绍产品定位与服务能力" /></label>
+          <div class="grid"><label>联系邮箱<input v-model.trim="form.website.contact_email" type="email" placeholder="service@example.com" /></label><label>联系电话<input v-model.trim="form.website.contact_phone" placeholder="+86 10 8888 8888" /></label></div>
+          <label>联系地址<input v-model.trim="form.website.contact_address" placeholder="企业办公或服务地址" /></label>
+          <div class="grid"><label>帮助中心链接<input v-model.trim="form.website.support_url" placeholder="https://support.example.com" /></label><label>隐私政策链接<input v-model.trim="form.website.privacy_url" placeholder="https://example.com/privacy" /></label></div>
+          <label>页脚版权文案<input v-model.trim="form.website.footer_text" :placeholder="`留空则自动显示 © 年份 ${form.brand.company_name || form.brand.product_name}`" /></label>
+        </template>
+
+        <template v-else-if="step === 2">
           <h2>发信邮箱</h2><p class="hint">用于注册、登录验证和找回密码。暂时不启用可以留空。</p>
           <div class="grid"><label>SMTP 主机<input v-model.trim="form.email.host" placeholder="smtp.example.com" /></label><label>端口<input v-model.number="form.email.port" type="number" /></label></div>
           <div class="grid"><label>SMTP 用户<input v-model.trim="form.email.user" /></label><label>发件地址<input v-model.trim="form.email.from_address" placeholder="noreply@example.com" /></label></div>
@@ -175,7 +207,7 @@ async function approveUpdate() {
           <div class="grid"><label>发件人名称<input v-model.trim="form.email.from_name" /></label><label>连接安全<select v-model="form.email.security"><option value="ssl">SSL/TLS</option><option value="starttls">STARTTLS</option></select></label></div>
         </template>
 
-        <template v-else-if="step === 2">
+        <template v-else-if="step === 3">
           <h2>主 AI 与 API</h2><p class="hint">可直接使用我们提供的官方 AI，也可接入您自己购买的模型 API；以后可随时切换。</p>
           <div class="ai-mode-grid">
             <label class="ai-mode-card" :class="{ selected: form.ai.connection_mode === 'nexus' }">
@@ -195,7 +227,7 @@ async function approveUpdate() {
           <label v-if="form.ai.connection_mode === 'direct'">API Key<input v-model="form.ai.api_key" type="password" :placeholder="form.ai.api_key_configured ? '已配置；留空保持不变' : 'sk-…'" /></label>
         </template>
 
-        <template v-else-if="step === 3">
+        <template v-else-if="step === 4">
           <h2>支付 API 对接</h2>
           <p class="hint">填写 OEM 企业自己的支付宝与微信支付凭据。密钥只加密保存在当前节点，页面不会回显原文。</p>
           <p class="warn">当前页面用于提前完成凭据配置。各渠道在适配器完成、回调验签与沙箱交易验收前，不会被标记为正式收款上线。</p>
@@ -230,11 +262,11 @@ async function approveUpdate() {
 
         <template v-else>
           <h2>确认配置</h2>
-          <div class="summary"><b>{{ form.brand.product_name }}</b><span>邮箱：{{ form.email.host ? '已填写' : '稍后配置' }}</span><span>主 AI：{{ form.ai.connection_mode === 'nexus' ? '平台官方 AI' : '企业自有 API' }} · {{ form.ai.provider }}</span><span>支付 API：支付宝 {{ paymentConfigured.alipay ? '已配置' : '稍后配置' }} · 微信支付 {{ paymentConfigured.wechat ? '已配置' : '稍后配置' }}</span></div>
+          <div class="summary"><b>{{ form.brand.product_name }}</b><span>官网：已包含 · {{ form.website.contact_email || form.website.contact_phone || '联系方式稍后补充' }}</span><span>邮箱：{{ form.email.host ? '已填写' : '稍后配置' }}</span><span>主 AI：{{ form.ai.connection_mode === 'nexus' ? '平台官方 AI' : '企业自有 API' }} · {{ form.ai.provider }}</span><span>支付 API：支付宝 {{ paymentConfigured.alipay ? '已配置' : '稍后配置' }} · 微信支付 {{ paymentConfigured.wechat ? '已配置' : '稍后配置' }}</span></div>
           <p class="hint">保存后进入工作台。以后可从管理后台“系统设置”再次修改。</p>
         </template>
 
-        <footer><button v-if="step > 0" class="ghost" @click="step--">上一步</button><span /><button v-if="editing" class="ghost" @click="router.push('/')">取消</button><button v-if="step < steps.length - 1" @click="next">下一步</button><button v-else :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存并进入系统' }}</button></footer>
+        <footer><button v-if="step > 0" class="ghost" @click="step--">上一步</button><span /><button v-if="editing" class="ghost" @click="router.push('/app')">取消</button><button v-if="step < steps.length - 1" @click="next">下一步</button><button v-else :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存并进入系统' }}</button></footer>
       </div>
     </section>
   </main>

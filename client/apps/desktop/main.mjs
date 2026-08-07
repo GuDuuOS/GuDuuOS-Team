@@ -337,7 +337,11 @@ function createMainWindow() {
   })
 
   const developmentUrl = getDevelopmentUrl()
-  void mainWindow.loadURL(developmentUrl?.toString() ?? `${APP_PROTOCOL}://${APP_HOST}/index.html`)
+  // 域名根路径现在是 OEM 公开官网；桌面壳不是官网浏览器，仍直接进入应用路由，
+  // 再由 Vue 守卫根据安全会话决定显示登录页或工作台。
+  const rendererUrl = developmentUrl ?? new URL(`${APP_PROTOCOL}://${APP_HOST}/index.html`)
+  rendererUrl.hash = '/app'
+  void mainWindow.loadURL(rendererUrl.toString())
 }
 
 const singleInstanceLock = !squirrelStartup && app.requestSingleInstanceLock()

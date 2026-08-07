@@ -1617,7 +1617,7 @@ async function doJoinSpace(spaceId: string) {
   const ok = await joinSpaceByLink(spaceId)
   if (!ok) {
     toast('加入失败', '这个服务器可能未开放加入或链接失效')
-    router.replace('/').catch(() => {})
+    router.replace('/app').catch(() => {})
     return
   }
   setTimeout(() => {
@@ -2161,7 +2161,7 @@ function computePath(): string {
   if (adminOpen.value) return `/admin/${adminTab.value}`
   if (profileVisible.value) return '/me'
   const s = activeSpace.value
-  if (!s) return '/'
+  if (!s) return '/app'
   if (currentRoom.value) return `/s/${encodeURIComponent(s)}/c/${encodeURIComponent(currentRoom.value)}`
   if (tasks.value) return `/s/${encodeURIComponent(s)}/tasks`
   if (docs.value) return `/s/${encodeURIComponent(s)}/docs`

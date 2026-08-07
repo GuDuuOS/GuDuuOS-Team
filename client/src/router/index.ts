@@ -1,4 +1,4 @@
-// 路由：/login 独立登录页（AuthView），其余全部指向主应用 LiveView。
+// 路由：/ 是随节点品牌配置交付的公开官网；/app 与业务深链进入主应用 LiveView。
 // LiveView 仍靠内部 computePath/applyFromRoute 解析 window.location 决定显示什么
 // （频道/看板/后台/个人主页），故这些路由都用同一个 LiveView 组件；换页由 LiveView 内部状态驱动。
 // 两个视图都懒加载：登录页因此不再被 199KB 的 LiveView 拖累，可独立秒开。
@@ -11,12 +11,14 @@ const LiveView = () => import('@/views/LiveView.vue')
 const AuthView = () => import('@/views/AuthView.vue')
 const ActivationView = () => import('@/views/ActivationView.vue')
 const SetupView = () => import('@/views/SetupView.vue')
+const WebsiteView = () => import('@/views/WebsiteView.vue')
 
 const routes = [
   { path: '/login', component: AuthView },
   { path: '/activate', component: ActivationView },
   { path: '/setup', component: SetupView },
-  { path: '/', component: LiveView },
+  { path: '/', component: WebsiteView },
+  { path: '/app', component: LiveView },
   { path: '/s/:space/board', component: LiveView },
   { path: '/s/:space/tasks', component: LiveView },
   { path: '/s/:space/org', component: LiveView },
@@ -43,7 +45,7 @@ export const router = createRouter({
 router.beforeEach(async (to) => {
   // 仅 Vite 开发态允许无会话预览向导布局；生产构建会编译掉此分支，保存接口仍有管理员鉴权。
   if (import.meta.env.DEV && to.path === '/setup' && to.query.preview === '1') return true
-  if (to.path === '/login') return true
+  if (to.path === '/' || to.path === '/login') return true
   let userId = ''
   try {
     userId = await storedCurrentUserId()

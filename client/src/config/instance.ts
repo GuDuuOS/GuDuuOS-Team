@@ -13,10 +13,47 @@ export const instanceBrand = reactive({
   loaded: false,
 })
 
+/** 公开官网字段；仅文本与安全链接，绝不接收远程 HTML/CSS/脚本。 */
+export const instanceWebsite = reactive({
+  headline: '让沟通、协作与智能助手在一个地方完成',
+  description: '面向团队的一体化沟通与智能协作平台。',
+  contactEmail: '',
+  contactPhone: '',
+  contactAddress: '',
+  supportUrl: '',
+  privacyUrl: '',
+  footerText: '',
+})
+
 export interface PublicInstanceConfig {
   setup_completed: boolean
   brand?: { product_name?: string; company_name?: string; logo_data_url?: string }
+  website?: {
+    headline?: string
+    description?: string
+    contact_email?: string
+    contact_phone?: string
+    contact_address?: string
+    support_url?: string
+    privacy_url?: string
+    footer_text?: string
+  }
   brand_policy?: { reserved_brand_allowed?: boolean }
+}
+
+function text(value: unknown, limit: number): string {
+  return typeof value === 'string' ? value.trim().slice(0, limit) : ''
+}
+
+function publicUrl(value: unknown): string {
+  const clean = text(value, 500)
+  if (/^\/(?!\/)/.test(clean)) return clean
+  try {
+    const parsed = new URL(clean)
+    return parsed.protocol === 'https:' && !parsed.username && !parsed.password ? clean : ''
+  } catch {
+    return ''
+  }
 }
 
 /**
@@ -63,13 +100,44 @@ export function applyInstanceConfig(payload: PublicInstanceConfig): PublicInstan
   instanceBrand.reservedBrandAllowed = reservedBrandAllowed
   instanceBrand.setupCompleted = Boolean(payload?.setup_completed)
   instanceBrand.loaded = true
+  instanceWebsite.headline = text(payload?.website?.headline, 120)
+    || '让沟通、协作与智能助手在一个地方完成'
+  instanceWebsite.description = text(payload?.website?.description, 500)
+    || '面向团队的一体化沟通与智能协作平台。'
+  instanceWebsite.contactEmail = text(payload?.website?.contact_email, 320)
+  instanceWebsite.contactPhone = text(payload?.website?.contact_phone, 80)
+  instanceWebsite.contactAddress = text(payload?.website?.contact_address, 300)
+  instanceWebsite.supportUrl = publicUrl(payload?.website?.support_url)
+  instanceWebsite.privacyUrl = publicUrl(payload?.website?.privacy_url)
+  instanceWebsite.footerText = text(payload?.website?.footer_text, 240)
   document.title = instanceBrand.productName
+  let favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]')
+  if (instanceBrand.logoUrl) {
+    if (!favicon) {
+      favicon = document.createElement('link')
+      favicon.rel = 'icon'
+      document.head.appendChild(favicon)
+    }
+    favicon.href = instanceBrand.logoUrl
+  } else {
+    favicon?.remove()
+  }
   return {
     setup_completed: instanceBrand.setupCompleted,
     brand: {
       product_name: instanceBrand.productName,
       company_name: instanceBrand.companyName,
       logo_data_url: safeLogo,
+    },
+    website: {
+      headline: instanceWebsite.headline,
+      description: instanceWebsite.description,
+      contact_email: instanceWebsite.contactEmail,
+      contact_phone: instanceWebsite.contactPhone,
+      contact_address: instanceWebsite.contactAddress,
+      support_url: instanceWebsite.supportUrl,
+      privacy_url: instanceWebsite.privacyUrl,
+      footer_text: instanceWebsite.footerText,
     },
     brand_policy: { reserved_brand_allowed: reservedBrandAllowed },
   }

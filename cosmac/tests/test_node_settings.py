@@ -32,6 +32,16 @@ class NodeSettingsTest(unittest.TestCase):
     def test_secret_never_returns_from_public_or_admin_response(self) -> None:
         saved = save_admin_config({
             "brand": {"product_name": "测试 OS", "company_name": "测试企业"},
+            "website": {
+                "headline": "让团队协作更简单",
+                "description": "测试官网介绍",
+                "contact_email": "service@test.invalid",
+                "contact_phone": "+86 10 8888 8888",
+                "contact_address": "测试地址",
+                "support_url": "https://support.test.invalid",
+                "privacy_url": "/privacy",
+                "footer_text": "测试企业 版权所有",
+            },
             "email": {
                 "host": "smtp.test.invalid", "port": 587, "user": "mailer",
                 "from_address": "mailer@test.invalid", "security": "starttls",
@@ -52,6 +62,8 @@ class NodeSettingsTest(unittest.TestCase):
         self.assertFalse(saved["payment"]["adapter_ready"])
         self.assertNotIn("ai-secret", str(saved))
         self.assertNotIn("smtp-secret", str(public_config()))
+        self.assertEqual(public_config()["website"]["headline"], "让团队协作更简单")
+        self.assertEqual(public_config()["website"]["privacy_url"], "/privacy")
         self.assertEqual(runtime_ai()["api_key"], "ai-secret")
         self.assertEqual(runtime_email()["password"], "smtp-secret")
 
@@ -158,6 +170,36 @@ class NodeSettingsTest(unittest.TestCase):
             self.assertTrue(admin["brand_policy"]["requires_custom_brand"])
             self.assertEqual(public["brand"]["product_name"], "OEM 协作平台")
             self.assertFalse(public["setup_completed"])
+
+    def test_external_oem_cannot_use_reserved_brand_in_website_copy(self) -> None:
+        """官网公开文案与产品名称执行同一保留品牌门禁。"""
+        with mock.patch.dict(
+            os.environ, {"COSMAC_OEM_KEY": "CMK-external"}, clear=False
+        ), mock.patch(
+            "cosmac.node_settings.activated_instance_id", return_value=9
+        ):
+            for field in ("headline", "description", "footer_text"):
+                website = {"headline": "企业智能协作", "description": "团队平台"}
+                website[field] = "由 GuDuu-OS 提供"
+                with self.subTest(field=field), self.assertRaisesRegex(
+                    Exception, "GuDuu OS 保留品牌"
+                ):
+                    save_admin_config({
+                        "brand": {"product_name": "星海协作"},
+                        "website": website,
+                        "email": {}, "ai": {}, "payment": {},
+                    })
+
+    def test_website_links_reject_unsafe_schemes(self) -> None:
+        with self.assertRaisesRegex(Exception, "HTTPS"):
+            save_admin_config({
+                "brand": {"product_name": "测试 OS"},
+                "website": {
+                    "headline": "测试官网",
+                    "support_url": "javascript:alert(1)",
+                },
+                "email": {}, "ai": {}, "payment": {},
+            })
 
     def test_oem_without_saved_settings_ignores_legacy_business_env(self) -> None:
         """官方节点首次进向导前，旧 SMTP/模型 env 不得成为隐形第二真值源。"""

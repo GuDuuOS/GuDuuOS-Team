@@ -27,6 +27,12 @@ OFFICIAL_BRAND_INSTANCE_IDS = frozenset({1, 2, 3})
 
 DEFAULT_PUBLIC: Dict[str, Any] = {
     "brand": {"product_name": "GuDuu OS", "company_name": "", "logo_data_url": ""},
+    "website": {
+        "headline": "让沟通、协作与智能助手在一个地方完成",
+        "description": "面向团队的一体化沟通与智能协作平台。",
+        "contact_email": "", "contact_phone": "", "contact_address": "",
+        "support_url": "", "privacy_url": "", "footer_text": "",
+    },
     "email": {
         "host": "", "port": 465, "user": "", "from_address": "",
         "from_name": "GuDuu OS", "security": "ssl",
@@ -117,6 +123,19 @@ def _notify_url(value: Any, label: str) -> str:
     return clean
 
 
+def _public_url(value: Any, label: str) -> str:
+    """官网链接仅允许站内绝对路径或无凭据 HTTPS URL。"""
+    clean = _bounded(value, 500, label)
+    if not clean:
+        return ""
+    if clean.startswith("/") and not clean.startswith("//"):
+        return clean
+    parsed = urlparse(clean)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+        raise NodeSettingsError(f"{label}必须是站内路径或无账号密码的 HTTPS 地址")
+    return clean
+
+
 def _fernet() -> Fernet:
     """从节点独立主密钥派生 Fernet key；缺失时拒绝明文降级。"""
     secret = os.environ.get("COSMAC_NODE_SETTINGS_SECRET", "").strip()
@@ -172,10 +191,11 @@ def public_config() -> Dict[str, Any]:
         row = session.get(NodeSetting, 1)
         public = _merge_public(row.public_config if row else {})
         policy = _brand_policy()
-        protected = any(
-            _contains_protected_brand(public["brand"].get(field))
-            for field in ("product_name", "company_name")
-        )
+        protected = any(_contains_protected_brand(value) for value in (
+            public["brand"].get("product_name"),
+            public["brand"].get("company_name"),
+            *public["website"].values(),
+        ))
         if not policy["reserved_brand_allowed"] and protected:
             # 存量外部 OEM 即使数据库里留有旧默认值，也不能再对外
             # 呈现官方品牌；同时重新打开向导要求客户填写自有品牌。
@@ -184,11 +204,13 @@ def public_config() -> Dict[str, Any]:
                 "company_name": "",
                 "logo_data_url": "",
             }
+            public["website"] = dict(DEFAULT_PUBLIC["website"])
         return {
             "setup_completed": bool(row and row.setup_completed and not (
                 not policy["reserved_brand_allowed"] and protected
             )),
             "brand": public["brand"],
+            "website": public["website"],
             "brand_policy": policy,
         }
 
@@ -237,6 +259,13 @@ def admin_config() -> Dict[str, Any]:
                 ("brand", "product_name"),
                 ("brand", "company_name"),
                 ("email", "from_name"),
+                ("website", "headline"),
+                ("website", "description"),
+                ("website", "contact_email"),
+                ("website", "contact_address"),
+                ("website", "support_url"),
+                ("website", "privacy_url"),
+                ("website", "footer_text"),
             ):
                 if _contains_protected_brand(public[section].get(field)):
                     public[section][field] = ""
@@ -281,6 +310,7 @@ def admin_config() -> Dict[str, Any]:
 def save_admin_config(body: Dict[str, Any]) -> Dict[str, Any]:
     """校验并保存向导内容；空白密钥保留旧值，显式 ``clear_*`` 才清除。"""
     brand = body.get("brand") if isinstance(body.get("brand"), dict) else {}
+    website = body.get("website") if isinstance(body.get("website"), dict) else None
     email = body.get("email") if isinstance(body.get("email"), dict) else {}
     ai = body.get("ai") if isinstance(body.get("ai"), dict) else {}
     payment = body.get("payment") if isinstance(body.get("payment"), dict) else {}
@@ -322,6 +352,44 @@ def save_admin_config(body: Dict[str, Any]) -> Dict[str, Any]:
             row = NodeSetting(id=1)
             session.add(row)
         current_public = _merge_public(row.public_config if row else {})
+        website_input = website if website is not None else current_public["website"]
+        website_public = {
+            "headline": _bounded(
+                website_input.get("headline"), 120, "官网主标题"
+            ) or DEFAULT_PUBLIC["website"]["headline"],
+            "description": _bounded(
+                website_input.get("description"), 500, "官网介绍"
+            ) or DEFAULT_PUBLIC["website"]["description"],
+            "contact_email": _bounded(
+                website_input.get("contact_email"), 320, "联系邮箱"
+            ),
+            "contact_phone": _bounded(
+                website_input.get("contact_phone"), 80, "联系电话"
+            ),
+            "contact_address": _bounded(
+                website_input.get("contact_address"), 300, "联系地址"
+            ),
+            "support_url": _public_url(
+                website_input.get("support_url"), "帮助中心链接"
+            ),
+            "privacy_url": _public_url(
+                website_input.get("privacy_url"), "隐私政策链接"
+            ),
+            "footer_text": _bounded(
+                website_input.get("footer_text"), 240, "页脚版权文案"
+            ),
+        }
+        for field, label in (
+            ("headline", "官网主标题"),
+            ("description", "官网介绍"),
+            ("contact_email", "官网联系邮箱"),
+            ("contact_address", "官网联系地址"),
+            ("support_url", "帮助中心链接"),
+            ("privacy_url", "隐私政策链接"),
+            ("footer_text", "页脚版权文案"),
+        ):
+            value = website_public[field]
+            _validate_customer_brand(value, label)
         alipay_input = (
             payment.get("alipay")
             if isinstance(payment.get("alipay"), dict)
@@ -400,6 +468,7 @@ def save_admin_config(body: Dict[str, Any]) -> Dict[str, Any]:
                 "company_name": company_name,
                 "logo_data_url": logo,
             },
+            "website": website_public,
             "email": {
                 "host": str(email.get("host") or "").strip()[:255],
                 "port": smtp_port,

@@ -126,6 +126,16 @@ export async function activateNode(baseUrl: string): Promise<void> {
 export interface NodeAdminSettings {
   setup_completed: boolean
   brand: { product_name: string; company_name: string; logo_data_url: string }
+  website: {
+    headline: string
+    description: string
+    contact_email: string
+    contact_phone: string
+    contact_address: string
+    support_url: string
+    privacy_url: string
+    footer_text: string
+  }
   brand_policy?: {
     instance_id: number | null
     reserved_brand_allowed: boolean

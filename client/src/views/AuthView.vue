@@ -8,7 +8,7 @@ import Icon from '@/components/Icon.vue'
  *     且已登录用户刷新会「闪一下登录框」。抽成独立路由后：登录页秒开、不闪、有自己的地址。
  * 交接机制（关键）：
  *   - 用「只认证不启动客户端」的 loginNoStart/loginWithEmailNoStart：认证成功写入跨端
- *     会话仓库（Electron 为 safeStorage），然后 `router.push('/')` 进主应用，由 LiveView
+ *     会话仓库（Electron 为 safeStorage），然后 `router.push('/app')` 进主应用，由 LiveView
  *     挂载时 restoreSession 做**唯一一次**同步。既不双同步、也无需整页 reload。
  *   - 视觉与原登录块保持一致（同一套 class + 样式），只改架构不改观感。
  */
@@ -281,7 +281,7 @@ async function proceed() {
   } catch { /* 激活状态接口不可达时不阻塞既有/独立节点登录。 */ }
   const to = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/')
     ? route.query.redirect
-    : '/'
+    : '/app'
   router.push(to)
 }
 
@@ -495,7 +495,7 @@ function switchAuthMode(m: 'login' | 'register' | 'reset') {
   <div class="login">
     <div class="login-card">
       <!-- 添加账号：给个「返回当前账号」（当前会话仍在，直接回主应用）-->
-      <button v-if="isAdd" class="add-acct-back" @click="router.push('/')">← 返回当前账号</button>
+      <button v-if="isAdd" class="add-acct-back" @click="router.push('/app')">← 返回当前账号</button>
       <!-- 顶部：品牌 + tab/标题 -->
       <div class="auth-top">
         <div class="auth-brand-row">
