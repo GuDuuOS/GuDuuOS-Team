@@ -1,7 +1,7 @@
 """管理后台「AI 配置」运行时下发的单元测试。
 
 不依赖运行中的 Synapse、不需要 key：用假 MatrixClient 模拟"控制室里读到的配置"，
-验证 bot 会按下发的人设/模型/工具开关热应用，且**读不到时完全回退启动配置**。
+验证 bot 只按控制室下发的人设/工具开关热应用，模型字段必须被忽略。
 
 运行：.venv/bin/python -m unittest cosmac.tests.test_runtime_config
 """
@@ -66,27 +66,23 @@ class TestRuntimeConfig(unittest.TestCase):
         self.assertIsNot(bot.agent, old_agent)
         self.assertEqual(bot.agent.system_prompt, "你是测试版人设")
 
-    def test_provider_switch_via_control_room(self) -> None:
-        # 控制室下发 provider+model → bot 热切到对应后端（不再只能改人设）。
-        # key 只走服务端环境变量：这里临时设 ARK_API_KEY 模拟服务器已配好密钥。
-        from unittest import mock
-
-        from cosmac.ai.openai_compat import OpenAICompatProvider
+    def test_legacy_provider_fields_in_control_room_are_ignored(self) -> None:
+        # 历史 Matrix state 即使仍含 provider/model/key，也不能形成第二套主 AI 配置。
         bot = _bot(
             "!ctrl:host",
-            {"provider": "deepseek", "model": "deepseek-v3.2"},
+            {"provider": "deepseek", "model": "deepseek-v3.2", "api_key": "leaked"},
         )
-        with mock.patch.dict(os.environ, {"ARK_API_KEY": "env-key"}):
-            bot._apply_runtime_config()
-        self.assertEqual(bot._applied_sig[0], "deepseek")
-        self.assertIsInstance(bot.llm, OpenAICompatProvider)
+        bot._apply_runtime_config()
+        self.assertEqual(bot._applied_sig[0], "echo")
+        self.assertNotIn("provider", bot._read_overrides())
+        self.assertNotIn("model", bot._read_overrides())
 
     def test_api_key_from_control_room_is_ignored(self) -> None:
         # 安全回归：即便控制室事件里塞了 api_key，bot 也绝不采用它——
         # 控制室事件中的密钥永远被忽略；未配置节点加密设置时签名 key 段仍为空。
         bot = _bot(
             "!ctrl:host",
-            {"provider": "deepseek", "api_key": "leaked-key", "model": "x"},
+            {"api_key": "leaked-key"},
         )
         bot._apply_runtime_config()
         self.assertEqual(bot._applied_sig[3], "")  # 网页/事件传的 key 不进签名、不被使用

@@ -2,7 +2,7 @@
 """发行版默认配置落地单测(负责人:人设/配额/门控作为系统默认基础,出厂即有)。
 
 seed_default_control_config 把代码内置默认写进控制室 state event,让后台可见可改:
-- system_prompt 空 → 补默认人设(保留已有 provider/model);
+- system_prompt 空 → 补默认人设，并清理历史 provider/model/key 当前态；
 - gating/quotas 缺 → 写目录默认;
 - **幂等**:已配的值绝不覆盖;bot 无写权限时静默跳过。
 
@@ -63,10 +63,10 @@ class TestSeedDefaultConfig(unittest.TestCase):
         bot = _bot(c)
         n = bot.seed_default_control_config()
         self.assertEqual(n, 3)  # 人设 + 门控 + 配额
-        # 人设落地且非空,provider 保留 deepseek
+        # 人设落地且非空，模型选择不再写入 Matrix 控制室
         ai = c.state[AI_CONFIG_EVENT_TYPE]
         self.assertTrue(ai["system_prompt"].strip())
-        self.assertEqual(ai["provider"], "deepseek")
+        self.assertNotIn("provider", ai)
         # 门控/配额落地成后台读得懂的格式
         self.assertIn("gates", c.state[GATING_EVENT_TYPE])
         self.assertIn("limits", c.state[QUOTAS_EVENT_TYPE])
@@ -83,7 +83,7 @@ class TestSeedDefaultConfig(unittest.TestCase):
     def test_never_overwrites_configured_values(self) -> None:
         # 管理员已配的人设/门控/配额,seed 绝不覆盖
         c = _C({
-            AI_CONFIG_EVENT_TYPE: {"provider": "claude", "system_prompt": "我的自定义人设"},
+            AI_CONFIG_EVENT_TYPE: {"system_prompt": "我的自定义人设"},
             GATING_EVENT_TYPE: {"gates": {"ai_chat": "paid"}},
             QUOTAS_EVENT_TYPE: {"limits": {"teams": {"free": 9}}},
         })
@@ -93,13 +93,13 @@ class TestSeedDefaultConfig(unittest.TestCase):
         self.assertEqual(c.state[GATING_EVENT_TYPE]["gates"], {"ai_chat": "paid"})
 
     def test_fills_only_missing_persona(self) -> None:
-        # provider 配了但人设空 → 只补人设,不动 provider
+        # 旧 provider 配了但人设空 → 补人设并清除第二套模型配置
         c = _C({AI_CONFIG_EVENT_TYPE: {"provider": "deepseek", "system_prompt": ""}})
         bot = _bot(c)
         bot.seed_default_control_config()
         ai = c.state[AI_CONFIG_EVENT_TYPE]
         self.assertTrue(ai["system_prompt"].strip())     # 补了默认人设
-        self.assertEqual(ai["provider"], "deepseek")      # provider 原样保留
+        self.assertNotIn("provider", ai)
 
     def test_no_control_room_skips(self) -> None:
         c = _C()

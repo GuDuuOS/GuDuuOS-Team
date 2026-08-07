@@ -1721,28 +1721,8 @@ export const AI_TOOL_CATALOG: { name: string; label: string }[] = [
   { name: 'run_workflow', label: '跑外部工作流(n8n/Make 等)' },
 ]
 
-/** 可选的模型后端目录（管理后台「AI 配置」的 provider 下拉用）。
- *  value '' = 用服务器环境变量启动配置（不在网页改 provider）。
- *  其余四家：填对应 API Key + 模型 id 即可在网页切换、热生效。 */
-export const AI_PROVIDERS: {
-  value: string
-  label: string
-  keyLabel: string
-  modelPlaceholder: string
-}[] = [
-  { value: '', label: '默认（用服务器配置）', keyLabel: '', modelPlaceholder: '留空＝服务器默认' },
-  { value: 'deepseek', label: 'DeepSeek（火山方舟）', keyLabel: '方舟 API Key', modelPlaceholder: '如 deepseek-v3.2 或 ep-… 接入点' },
-  { value: 'claude', label: 'Claude（Anthropic）', keyLabel: 'Anthropic API Key', modelPlaceholder: '默认 claude-opus-4-8' },
-  { value: 'openai', label: 'ChatGPT（OpenAI）', keyLabel: 'OpenAI API Key', modelPlaceholder: '默认 gpt-4o' },
-  { value: 'gemini', label: 'Gemini（Google）', keyLabel: 'Google API Key', modelPlaceholder: '默认 gemini-2.0-flash' },
-]
-
-/** 管理后台编辑的 AI 配置。provider='' 表示用服务器环境变量；enabled_tools=null=全部启用。
- *  注意：**不含 API Key**——密钥只在服务端配（环境变量/Secret Manager），绝不写进
- *  Matrix 事件（state event 无法加密，会明文进 DB/历史/被全员可读）。 */
+/** 控制室只编辑非敏感的人设和工具；模型/API 统一在节点“系统设置”中配置。 */
 export interface AiConfig {
-  provider: string
-  model: string
   system_prompt: string
   enabled_tools: string[] | null
 }
@@ -1913,8 +1893,6 @@ export async function getAiConfig(): Promise<AiConfig | null> {
   try {
     const ev = await (mx as any).getStateEvent(rid, AI_CONFIG_EVENT_TYPE, '')
     return {
-      provider: ev?.provider || '',
-      model: ev?.model || '',
       system_prompt: ev?.system_prompt || '',
       enabled_tools: Array.isArray(ev?.enabled_tools) ? ev.enabled_tools : null,
     }
@@ -1926,8 +1904,8 @@ export async function getAiConfig(): Promise<AiConfig | null> {
 /**
  * 写入 AI 配置（必要时先建控制室）。bot 会在 ~20s 内读到并热应用。
  *
- * 安全：**不写 api_key**——密钥只在服务端配（环境变量/Secret Manager）。这里用不含
- * api_key 的内容**整体覆盖**旧事件，顺带抹掉历史上可能存过的明文 key（注：Matrix
+ * 安全：这里用只含人设/工具的内容**整体覆盖**旧事件，顺带抹掉当前态中历史的
+ * provider/model/api_key（注：Matrix
  * 旧版本事件仍留在房间历史里，曾经存过的 key 仍需在服务端轮换才算彻底作废）。
  */
 export async function setAiConfig(cfg: AiConfig): Promise<void> {
@@ -1937,8 +1915,6 @@ export async function setAiConfig(cfg: AiConfig): Promise<void> {
     rid,
     AI_CONFIG_EVENT_TYPE,
     {
-      provider: cfg.provider,
-      model: cfg.model,
       system_prompt: cfg.system_prompt,
       enabled_tools: cfg.enabled_tools,
     },

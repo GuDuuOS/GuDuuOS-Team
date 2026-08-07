@@ -43,7 +43,7 @@
       <div v-if="loading && !articles.length" class="dr-hint">加载中…</div>
       <div v-else-if="locked" class="dr-hint">
         <Icon name="lock" :size="14" /> 图文教程是<b>付费会员</b>专享内容。<br>
-        <span class="dr-hint-sub">升级会员后即可查看（在「升级会员」里开通）。</span>
+        <span class="dr-hint-sub">升级会员后即可查看；当前请联系管理员开通。</span>
       </div>
       <div v-else-if="!articles.length" class="dr-hint">
         这里还没有内容。<br><span class="dr-hint-sub">内容由管理员在「管理后台 → 图文教程」里编辑发布。</span>

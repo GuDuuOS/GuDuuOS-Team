@@ -1696,7 +1696,10 @@ class CosmacBot:
             llm = build_provider(
                 provider, api_key=str(secure.get("api_key") or ""), model=model,
                 system_prompt=applied_sys, base_url=str(secure.get("base_url") or ""),
-                allow_env_fallback=not bool(secure),
+                allow_env_fallback=(
+                    not bool(secure)
+                    and not bool(os.environ.get("COSMAC_OEM_KEY", "").strip())
+                ),
             )
             ag = Agent(llm=llm, toolbox=self.toolbox, system_prompt=applied_sys)
             self._model_agents[model] = ag
@@ -2980,12 +2983,9 @@ class CosmacBot:
             if room:
                 ev = self.client.get_state_event(room, AI_CONFIG_EVENT_TYPE)
                 if isinstance(ev, dict):
-                    # 只取我们认识的字段，避免脏数据。
-                    # 安全：**绝不**从控制室事件读 api_key——state event 无法加密、会明文
-                    # 进 DB/历史/被全员可读。密钥只走节点加密设置或服务端环境变量。
-                    for k in (
-                        "provider", "model", "system_prompt", "enabled_tools"
-                    ):
+                    # 控制室只保存人设和工具开关。provider/model/API key 全部由
+                    # “系统设置”中的节点加密数据库负责，历史字段也明确忽略。
+                    for k in ("system_prompt", "enabled_tools"):
                         if k in ev:
                             overrides[k] = ev[k]
             # 读成功（含"控制室/配置不存在"这种正常的空）→ 更新缓存
@@ -3000,9 +3000,8 @@ class CosmacBot:
     def _apply_runtime_config(self) -> None:
         """把控制室下发的配置应用到 llm/agent/toolbox（按需热重建，幂等）。
 
-        管理后台可下发 provider / model / 人设 / 工具开关。任一缺省时用启动配置兜底。
-        **api_key 永远不从 Matrix 控制室事件来**：密钥只走节点加密设置；旧节点在
-        尚未配置向导时继续回退服务端环境变量。
+        控制室只下发人设/工具开关；provider/model/API key 统一来自节点系统设置。
+        非 OEM 本地开发仍可使用启动环境变量，官方 OEM 节点绝不回退旧 .env。
         """
         ov = self._read_overrides()
         secure: Dict[str, Any] = {}
@@ -3012,10 +3011,10 @@ class CosmacBot:
             secure = runtime_ai()
         except Exception:
             logger.debug("节点 AI 设置暂不可读，回退启动配置", exc_info=True)
-        # provider/model 与 API key 必须来自同一份节点设置，避免“Matrix 选了 A 厂商、
-        # 加密库却保存 B 厂商 key”的错配。旧节点没有设置行时才兼容控制室/启动配置。
-        provider = secure.get("provider") or ov.get("provider") or self.config.llm_provider
-        model = secure.get("model") or ov.get("model") or self.config.llm_model
+        oem_node = bool(os.environ.get("COSMAC_OEM_KEY", "").strip())
+        # provider/model 与 API key 必须来自同一份节点设置。
+        provider = secure.get("provider") or ("echo" if oem_node else self.config.llm_provider)
+        model = secure.get("model") or ("" if oem_node else self.config.llm_model)
         system_prompt = ov.get("system_prompt") or self.config.system_prompt
         api_key = str(secure.get("api_key") or "")
         base_url = str(secure.get("base_url") or "")
@@ -3029,7 +3028,7 @@ class CosmacBot:
                 self.llm = build_provider(
                     provider, api_key=api_key, model=model,
                     system_prompt=system_prompt, base_url=base_url,
-                    allow_env_fallback=not bool(secure),
+                    allow_env_fallback=not bool(secure) and not oem_node,
                 )
                 self.agent = Agent(
                     llm=self.llm, toolbox=self.toolbox, system_prompt=system_prompt
@@ -7895,17 +7894,23 @@ class CosmacBot:
             room = None
         if not room:
             return 0
-        # 1) AI 配置:system_prompt 为空 → 补默认人设(保留已有 provider/model,不动模型选择)
+        # 1) AI 控制室只保留人设/工具。顺手清除旧 provider/model/key 当前态，避免
+        # 后台继续出现第二套模型配置（历史事件不可删除，已暴露 key 仍需轮换）。
         try:
             cfg = self.client.get_state_event(room, AI_CONFIG_EVENT_TYPE) or {}
-            if not str(cfg.get("system_prompt") or "").strip():
-                new = dict(cfg)
+            new = dict(cfg)
+            changed = False
+            for obsolete in ("provider", "model", "api_key", "base_url"):
+                if obsolete in new:
+                    new.pop(obsolete, None)
+                    changed = True
+            if not str(new.get("system_prompt") or "").strip():
                 new["system_prompt"] = self.config.system_prompt
-                new.setdefault("provider", self.config.llm_provider)
-                new.setdefault("model", self.config.llm_model)
+                changed = True
+            if changed:
                 if self.client.set_state_event(room, AI_CONFIG_EVENT_TYPE, new):
                     n += 1
-                    logger.info("已把默认人设落地到控制室(后台 AI 配置可见可改)")
+                    logger.info("已规范控制室 AI 配置：仅保留人设与工具开关")
         except Exception:
             logger.debug("落地默认人设失败(忽略)", exc_info=True)
         # 2) 门控策略:gates 缺/空 → 写目录默认门槛(能力→最低等级)

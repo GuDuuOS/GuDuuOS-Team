@@ -37,7 +37,7 @@ async function activate() {
       <h1>第 1 步：激活此节点</h1>
       <p class="domain">当前部署域名：<b>{{ deploymentDomain }}</b></p>
       <p>系统会由服务器安全地向 GuDuu Nexus 验证授权、域名与来源 IP；长期授权码不会显示或发送到浏览器。</p>
-      <p class="phase">本页只完成授权。成功后会自动进入第 2 步，配置品牌、邮箱、主 AI 与支付。</p>
+      <p class="phase">本页只完成授权。成功后会自动进入第 2 步，配置品牌、邮箱与主 AI。</p>
       <p v-if="error" class="error">{{ error }}</p>
       <button :disabled="busy" @click="activate">{{ busy ? '正在激活…' : '重新验证并激活' }}</button>
       <div class="divider"><span>还没有可用授权？</span></div>

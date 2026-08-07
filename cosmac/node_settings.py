@@ -43,6 +43,23 @@ DEFAULT_PUBLIC: Dict[str, Any] = {
 }
 
 
+def _is_oem_node() -> bool:
+    """官方 OEM 发行版只把授权/基础设施信息放在环境变量。"""
+    return bool(os.environ.get("COSMAC_OEM_KEY", "").strip())
+
+
+def _nexus_ai_base_url(provider: str) -> str:
+    """由唯一的 Nexus 地址推导网关地址，避免在 .env 再维护三套业务配置。"""
+    root = os.environ.get("COSMAC_NEXUS_URL", "").strip().rstrip("/")
+    path = {
+        "claude": "/gw/anthropic",
+        "openai": "/gw/openai",
+        "deepseek": "/gw/ark",
+        "ark": "/gw/ark",
+    }.get(provider, "")
+    return root + path if root and path else ""
+
+
 class NodeSettingsError(ValueError):
     """节点设置缺失、格式不合法或主密钥错误。"""
 
@@ -131,9 +148,9 @@ def admin_config() -> Dict[str, Any]:
     with session_scope() as session:
         row = session.get(NodeSetting, 1)
         public = _merge_public(row.public_config if row else {})
-        if row is None:
-            # 存量节点升级后首次打开向导时回显既有非敏感 env，避免保存默认 Echo 后
-            # 意外覆盖正在使用的模型/SMTP。密钥仍只显示“已配置”，绝不回填原文。
+        if row is None and not _is_oem_node():
+            # 非 OEM 本地开发继续兼容旧环境变量。官方 OEM 节点以网页数据库为唯一
+            # 业务配置源，旧 .env 即使残留也不得回显或继续生效。
             try:
                 legacy_port = int(os.environ.get("COSMAC_SMTP_PORT", "465") or 465)
             except ValueError:
@@ -152,27 +169,32 @@ def admin_config() -> Dict[str, Any]:
                 "deepseek": "ARK_BASE_URL", "ark": "ARK_BASE_URL",
             }.get(provider, "")
             public["ai"].update({
-                # 官方安装器把 OEM KEY 作为 Nexus 网关凭据；存量节点
-                # 首次打开向导时必须如实显示这一模式，不能误写成自有 API。
-                "connection_mode": (
-                    "nexus" if os.environ.get("COSMAC_OEM_KEY", "").strip()
-                    else "direct"
-                ),
+                "connection_mode": "direct",
                 "provider": provider,
                 "model": os.environ.get("COSMAC_LLM_MODEL", ""),
                 "base_url": os.environ.get(base_var, "") if base_var else "",
             })
+        elif row is None:
+            public["ai"].update({
+                "connection_mode": "nexus",
+                "provider": "deepseek",
+                "model": "",
+                "base_url": "",
+            })
         secrets = _decrypt(row.encrypted_secrets) if row else {}
         public["setup_completed"] = bool(row and row.setup_completed)
+        allow_env = not _is_oem_node()
         public["email"]["password_configured"] = bool(
-            secrets.get("smtp_password") or os.environ.get("COSMAC_SMTP_PASSWORD")
+            secrets.get("smtp_password")
+            or (allow_env and os.environ.get("COSMAC_SMTP_PASSWORD"))
         )
         provider_key = {
             "claude": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY",
             "deepseek": "ARK_API_KEY", "ark": "ARK_API_KEY", "gemini": "GEMINI_API_KEY",
         }.get(str(public["ai"].get("provider") or ""), "")
         public["ai"]["api_key_configured"] = bool(
-            secrets.get("ai_api_key") or (provider_key and os.environ.get(provider_key))
+            secrets.get("ai_api_key")
+            or (allow_env and provider_key and os.environ.get(provider_key))
         )
         alipay = public["payment"]["alipay"]
         alipay["private_key_configured"] = bool(secrets.get("alipay_private_key"))
@@ -347,11 +369,11 @@ def save_admin_config(body: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def runtime_email() -> Dict[str, Any]:
-    """供注册发信路径热读取 SMTP；数据库未配置时返回空字典让调用方回退 env。"""
+    """供注册发信路径热读取 SMTP；OEM 节点绝不回退旧 .env。"""
     with session_scope() as session:
         row = session.get(NodeSetting, 1)
         if not row:
-            return {}
+            return {"_source": "node_settings"} if _is_oem_node() else {}
         public = _merge_public(row.public_config)["email"]
         public["password"] = _decrypt(row.encrypted_secrets).get("smtp_password", "")
         # 设置行存在后，网页就是唯一真值源。即使管理员留空，
@@ -365,18 +387,19 @@ def runtime_ai() -> Dict[str, Any]:
     with session_scope() as session:
         row = session.get(NodeSetting, 1)
         if not row:
-            return {}
+            # OEM 授权已存在但向导未保存时保持 Echo，不能让遗留 .env 绕过网页配置。
+            return (
+                {
+                    "connection_mode": "nexus", "provider": "echo", "model": "",
+                    "base_url": "", "api_key": "", "_source": "node_settings",
+                }
+                if _is_oem_node() else {}
+            )
         public = _merge_public(row.public_config)["ai"]
         mode = str(public.get("connection_mode") or "direct")
         provider = str(public.get("provider") or "echo")
         if mode == "nexus":
-            base_var = {
-                "claude": "ANTHROPIC_BASE_URL",
-                "openai": "OPENAI_BASE_URL",
-                "deepseek": "ARK_BASE_URL",
-                "ark": "ARK_BASE_URL",
-            }.get(provider, "")
-            public["base_url"] = os.environ.get(base_var, "") if base_var else ""
+            public["base_url"] = _nexus_ai_base_url(provider)
             public["api_key"] = os.environ.get("COSMAC_OEM_KEY", "")
         else:
             public["api_key"] = _decrypt(row.encrypted_secrets).get("ai_api_key", "")

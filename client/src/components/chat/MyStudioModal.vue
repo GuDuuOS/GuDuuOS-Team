@@ -121,9 +121,9 @@
 
         <!-- ═══ 上架·收益（创作者商城 P2/P3）═══ -->
         <template v-else-if="tab === 'publish'">
-          <!-- 非创作者：认证申请流程（P3 类公众号：提交资料→付认证费→平台审核） -->
+          <!-- 非创作者：支付暂停期间只收资料，后续由平台主管处理。 -->
           <template v-if="!pubData?.is_creator">
-            <div class="cam-help cam-help-top">把你的自建智能体上架到商城、按次收 token，需要先<b>申请成为创作者</b>：提交资料 → 支付认证费{{ certFeeText }} → 平台审核通过即获得创作者资格。审核不通过不退费，但可免费修改资料重新提交。</div>
+            <div class="cam-help cam-help-top">把你的自建智能体上架到商城、按次收 token，需要先<b>申请成为创作者</b>：提交资料后由平台主管审核。在线认证付费开放前不会在这里要求付款。</div>
 
             <!-- 审核中 -->
             <div v-if="certApp?.status === 'pending_review'" class="ms-cert-status">
@@ -136,11 +136,10 @@
               </div>
               <div class="ms-actions"><button class="cam-add-btn" @click="startCertEdit">修改资料重新提交（免费）</button></div>
             </template>
-            <!-- 待付费：已提交资料、还没付 -->
-            <template v-else-if="certApp?.status === 'pending_payment' && !certOrder && !certEditing">
-              <div class="ms-cert-status">资料已提交，还差最后一步：支付认证费{{ certFeeText }}。</div>
+            <!-- 支付适配器上线前不暴露测试下单入口。 -->
+            <template v-else-if="certApp?.status === 'pending_payment' && !certEditing">
+              <div class="ms-cert-status">资料已提交。在线认证付费暂未开放，请联系管理员处理。</div>
               <div class="ms-actions">
-                <button class="cam-add-btn" :disabled="busy" @click="certPay">{{ busy ? '下单中…' : `支付认证费${certFeeText}` }}</button>
                 <button class="cam-mini" @click="startCertEdit">修改资料</button>
               </div>
             </template>
@@ -157,14 +156,6 @@
                     {{ busy ? '提交中…' : '提交申请' }}
                   </button>
                 </div>
-              </div>
-            </template>
-            <!-- 认证费订单：测试通道确认 -->
-            <template v-if="certOrder">
-              <div class="ms-cert-status">订单 <code>{{ certOrder.order_no }}</code> 已创建（测试通道，不收款）</div>
-              <div class="ms-actions">
-                <button class="cam-add-btn" :disabled="busy" @click="certConfirmPay">{{ busy ? '确认中…' : '模拟支付成功（测试）' }}</button>
-                <button class="cam-mini" @click="certOrder = null">取消</button>
               </div>
             </template>
           </template>
@@ -336,7 +327,7 @@ import {
   mySkillsList, mySkillSave, mySkillDelete,
   fetchMarketAcquired, setMarketItemAcquired, getMyUsage,
   creatorListings, creatorPublish, creatorSetStatus, creatorEarnings,
-  creatorApplyGet, creatorApplySubmit, payManualConfirm,
+  creatorApplyGet, creatorApplySubmit,
   type MyAgent, type MySkill, type AcquiredItem,
   type CreatorListingsResp, type CreatorEarningItem, type CreatorApplication,
   type CreatorListing,
@@ -456,11 +447,8 @@ async function load() {
 
 /* —— 创作者认证申请（P3）—— */
 const certApp = ref<CreatorApplication | null>(null)
-const certFee = ref(0)                     // 认证费（分）
 const certEditing = ref(false)             // 是否在编辑申请表单
 const certForm = reactive({ name: '', contact: '', intro: '', portfolio: '' })
-const certOrder = ref<{ order_no: string; checkout?: any } | null>(null)
-const certFeeText = computed(() => certFee.value > 0 ? `（¥${(certFee.value / 100).toFixed(2)}）` : '（当前免费）')
 
 /** 切到「上架·收益」时顺带拉最近收益明细 + 认证申请状态（懒加载）。 */
 async function switchPublish() {
@@ -469,7 +457,6 @@ async function switchPublish() {
   earnItems.value = e?.items || []
   if (ap) {
     certApp.value = ap.application
-    certFee.value = ap.cert_fee_cents || 0
     if (ap.application) Object.assign(certForm, {
       name: ap.application.name, contact: ap.application.contact,
       intro: ap.application.intro, portfolio: ap.application.portfolio,
@@ -483,36 +470,8 @@ function startCertEdit() { certEditing.value = true }
 async function certSubmit() {
   busy.value = true; errText.value = ''
   try {
-    const r = await creatorApplySubmit({ ...certForm })
+    await creatorApplySubmit({ ...certForm })
     certEditing.value = false
-    if (r.status === 'pending_payment' && r.order_no) {
-      certOrder.value = { order_no: r.order_no, checkout: r.checkout }
-    }
-    const ap = await creatorApplyGet()
-    if (ap) certApp.value = ap.application
-  } catch (e: any) { errText.value = e?.message || String(e) }
-  finally { busy.value = false }
-}
-
-/** 已提交待付费：单独点「支付认证费」（重进页面时表单不重填）。 */
-async function certPay() {
-  busy.value = true; errText.value = ''
-  try {
-    const r = await creatorApplySubmit({ ...certForm })
-    if (r.status === 'pending_payment' && r.order_no) {
-      certOrder.value = { order_no: r.order_no, checkout: r.checkout }
-    }
-  } catch (e: any) { errText.value = e?.message || String(e) }
-  finally { busy.value = false }
-}
-
-/** 认证费测试通道确认 → 申请进入待审核。 */
-async function certConfirmPay() {
-  if (!certOrder.value) return
-  busy.value = true; errText.value = ''
-  try {
-    await payManualConfirm(certOrder.value.order_no, certOrder.value.checkout?.extra?.confirm_token || '')
-    certOrder.value = null
     const ap = await creatorApplyGet()
     if (ap) certApp.value = ap.application
   } catch (e: any) { errText.value = e?.message || String(e) }

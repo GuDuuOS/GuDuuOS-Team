@@ -1,4 +1,4 @@
-import{O as s,d as m,K as v,P as g,j as x,k as w}from"./index-Cr3lf2oC.js";import{_ as f}from"./_plugin-vue_export-helper-B7jT6Y06.js";/**
+import{O as s,d as m,K as v,P as g,l as x,b as w}from"./index-C4eAZMd7.js";import{_ as f}from"./_plugin-vue_export-helper-DroPfzjU.js";/**
  * @license lucide-vue-next v0.577.0 - ISC
  *
  * This source code is licensed under the ISC license.
@@ -48,12 +48,12 @@ import{O as s,d as m,K as v,P as g,j as x,k as w}from"./index-Cr3lf2oC.js";impor
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const j=e("archive",[["rect",{width:"20",height:"5",x:"2",y:"3",rx:"1",key:"1wp1u1"}],["path",{d:"M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8",key:"1s80jp"}],["path",{d:"M10 12h4",key:"a56b0p"}]]);/**
+ */const H=e("archive",[["rect",{width:"20",height:"5",x:"2",y:"3",rx:"1",key:"1wp1u1"}],["path",{d:"M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8",key:"1s80jp"}],["path",{d:"M10 12h4",key:"a56b0p"}]]);/**
  * @license lucide-vue-next v0.577.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const H=e("bell",[["path",{d:"M10.268 21a2 2 0 0 0 3.464 0",key:"vwvbt9"}],["path",{d:"M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326",key:"11g9vi"}]]);/**
+ */const j=e("bell",[["path",{d:"M10.268 21a2 2 0 0 0 3.464 0",key:"vwvbt9"}],["path",{d:"M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326",key:"11g9vi"}]]);/**
  * @license lucide-vue-next v0.577.0 - ISC
  *
  * This source code is licensed under the ISC license.
@@ -323,12 +323,12 @@ import{O as s,d as m,K as v,P as g,j as x,k as w}from"./index-Cr3lf2oC.js";impor
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const j1=e("trash-2",[["path",{d:"M10 11v6",key:"nco0om"}],["path",{d:"M14 11v6",key:"outv1u"}],["path",{d:"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6",key:"miytrc"}],["path",{d:"M3 6h18",key:"d0wm0j"}],["path",{d:"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",key:"e791ji"}]]);/**
+ */const H1=e("trash-2",[["path",{d:"M10 11v6",key:"nco0om"}],["path",{d:"M14 11v6",key:"outv1u"}],["path",{d:"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6",key:"miytrc"}],["path",{d:"M3 6h18",key:"d0wm0j"}],["path",{d:"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",key:"e791ji"}]]);/**
  * @license lucide-vue-next v0.577.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const H1=e("trending-up",[["path",{d:"M16 7h6v6",key:"box55l"}],["path",{d:"m22 7-8.5 8.5-5-5L2 17",key:"1t1m79"}]]);/**
+ */const j1=e("trending-up",[["path",{d:"M16 7h6v6",key:"box55l"}],["path",{d:"m22 7-8.5 8.5-5-5L2 17",key:"1t1m79"}]]);/**
  * @license lucide-vue-next v0.577.0 - ISC
  *
  * This source code is licensed under the ISC license.
@@ -368,4 +368,4 @@ import{O as s,d as m,K as v,P as g,j as x,k as w}from"./index-Cr3lf2oC.js";impor
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const U1=e("zap",[["path",{d:"M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z",key:"1xq2db"}]]),D1=m({__name:"Icon",props:{name:{},size:{default:18},strokeWidth:{default:2}},setup(a){const t={dashboard:c1,tasks:$,tutorial:p1,org:B1,people:P1,star:q1,film:T,search:x1,settings:w1,profile:R,studio:G,usage:H1,lock:o1,gating:f1,bell:H,logout:k1,plus:u1,bot:A,archive:j,skills:I1,rules:g1,workflow:S1,templates:r1,knowledge:y1,pages:W,plug:M1,puzzle:i,plan:N,wallet:F,members:O,marketplace:V1,web:Q,edit:C1,close:_1,pin:i1,memory:L,clock:Z,flame:X,zap:U1,music:s1,image:a1,video:A1,phone:b1,camera:S,sparkle:z1,check:_,refresh:m1,"chevron-right":D,"chevron-down":U,upload:L1,download:E,trash:j1,link:d1,folder:J,message:l1,data:I,key:h1,rocket:v1,hash:Y,building:P,palette:n1,eye:K,home:e1,calendar:B,inbox:t1},c=a,h=x(()=>t[c.name]||i);return(r,d)=>(w(),v(g(h.value),{size:Number(a.size),"stroke-width":Number(a.strokeWidth),class:"app-icon"},null,8,["size","stroke-width"]))}}),$1=f(D1,[["__scopeId","data-v-d266f328"]]);export{$1 as I};
+ */const U1=e("zap",[["path",{d:"M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z",key:"1xq2db"}]]),D1=m({__name:"Icon",props:{name:{},size:{default:18},strokeWidth:{default:2}},setup(a){const t={dashboard:c1,tasks:$,tutorial:p1,org:B1,people:P1,star:q1,film:T,search:x1,settings:w1,profile:R,studio:G,usage:j1,lock:o1,gating:f1,bell:j,logout:k1,plus:u1,bot:A,archive:H,skills:I1,rules:g1,workflow:S1,templates:r1,knowledge:y1,pages:W,plug:M1,puzzle:i,plan:N,wallet:F,members:O,marketplace:V1,web:Q,edit:C1,close:_1,pin:i1,memory:L,clock:Z,flame:X,zap:U1,music:s1,image:a1,video:A1,phone:b1,camera:S,sparkle:z1,check:_,refresh:m1,"chevron-right":D,"chevron-down":U,upload:L1,download:E,trash:H1,link:d1,folder:J,message:l1,data:I,key:h1,rocket:v1,hash:Y,building:P,palette:n1,eye:K,home:e1,calendar:B,inbox:t1},c=a,h=x(()=>t[c.name]||i);return(r,d)=>(w(),v(g(h.value),{size:Number(a.size),"stroke-width":Number(a.strokeWidth),class:"app-icon"},null,8,["size","stroke-width"]))}}),$1=f(D1,[["__scopeId","data-v-d266f328"]]);export{$1 as I};

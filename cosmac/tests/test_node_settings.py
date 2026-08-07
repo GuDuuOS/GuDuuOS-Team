@@ -75,7 +75,8 @@ class NodeSettingsTest(unittest.TestCase):
             os.environ,
             {
                 "COSMAC_OEM_KEY": "CMK-server-only",
-                "ARK_BASE_URL": "https://nexus.invalid/gw/ark",
+                "COSMAC_NEXUS_URL": "https://nexus.invalid",
+                "ARK_BASE_URL": "https://legacy.invalid/should-not-win",
             },
             clear=False,
         ):
@@ -93,6 +94,32 @@ class NodeSettingsTest(unittest.TestCase):
             self.assertEqual(runtime["api_key"], "CMK-server-only")
             self.assertEqual(runtime["base_url"], "https://nexus.invalid/gw/ark")
             self.assertNotIn("CMK-server-only", str(saved))
+
+    def test_oem_without_saved_settings_ignores_legacy_business_env(self) -> None:
+        """官方节点首次进向导前，旧 SMTP/模型 env 不得成为隐形第二真值源。"""
+        from cosmac.registration import _smtp_conf
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "COSMAC_OEM_KEY": "CMK-server-only",
+                "COSMAC_NEXUS_URL": "https://nexus.invalid",
+                "COSMAC_LLM_PROVIDER": "openai",
+                "OPENAI_API_KEY": "legacy-ai-key",
+                "COSMAC_SMTP_HOST": "legacy.invalid",
+                "COSMAC_SMTP_USER": "legacy-user",
+                "COSMAC_SMTP_PASSWORD": "legacy-password",
+                "COSMAC_SMTP_FROM": "legacy@example.com",
+            },
+            clear=False,
+        ):
+            admin = admin_config()
+            self.assertEqual(admin["ai"]["connection_mode"], "nexus")
+            self.assertEqual(admin["ai"]["provider"], "deepseek")
+            self.assertFalse(admin["ai"]["api_key_configured"])
+            self.assertFalse(admin["email"]["password_configured"])
+            self.assertEqual(runtime_ai()["provider"], "echo")
+            self.assertIsNone(_smtp_conf())
 
     def test_saved_blank_smtp_does_not_fall_back_to_old_environment(self) -> None:
         """管理员网页明确留空 SMTP 后，旧 .env 不得悄悄重新启用。"""

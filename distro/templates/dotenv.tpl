@@ -41,13 +41,8 @@ COSMAC_REGISTRATION_SHARED_SECRET={{REGISTRATION_SHARED_SECRET}}
 # 首次配置向导的密钥加密主密钥；丢失后数据库里的 SMTP/API/支付密钥无法解密。
 COSMAC_NODE_SETTINGS_SECRET={{NODE_SETTINGS_SECRET}}
 
-# —— OEM 自己的发信邮箱（注册验证码从这里发出；留空则邮箱注册不可用）——
-COSMAC_SMTP_HOST={{SMTP_HOST}}
-COSMAC_SMTP_PORT={{SMTP_PORT}}
-COSMAC_SMTP_USER={{SMTP_USER}}
-COSMAC_SMTP_PASSWORD={{SMTP_PASSWORD}}
-COSMAC_SMTP_FROM={{SMTP_FROM}}
-COSMAC_SMTP_FROM_NAME={{SMTP_FROM_NAME}}
+# 品牌、发信邮箱、主 AI 与后续支付凭据只在网页“系统设置”中维护，
+# 加密写入节点数据库；.env 故意不再保存这些业务配置。
 
 # —— Cloudflare Turnstile 人机验证（可选；防机器人恶意刷验证码/注册）——
 # 两个值都填才生效:去 Cloudflare 控制台 → Turnstile 新建一个小组件,
@@ -59,25 +54,3 @@ COSMAC_TURNSTILE_SECRET=
 # —— 单端在线（可选）——
 # 留空=多设备可同时在线（标准 Matrix 行为，默认）。填 1=同一账号后登录的踢掉先登录的。
 COSMAC_SINGLE_SESSION=
-
-# —— AI 模型（OEM 模式：全部经 GuDuu Nexus 网关，API key 就是你的授权码）——
-# 网页发行版强制 OEM 授权，install.sh 会统一填入 Nexus 网关。
-# 可选 provider：echo(占位)/claude/openai/deepseek(方舟)/gemini
-COSMAC_LLM_PROVIDER={{LLM_PROVIDER}}
-COSMAC_LLM_MODEL={{LLM_MODEL}}
-# 经网关的通道地址与凭证（凭证=OEM 授权码；原厂 key 永远不在实例侧出现）
-ARK_BASE_URL={{ARK_BASE_URL}}
-ARK_API_KEY={{ARK_API_KEY}}
-ANTHROPIC_BASE_URL={{ANTHROPIC_BASE_URL}}
-ANTHROPIC_API_KEY={{ANTHROPIC_API_KEY}}
-OPENAI_BASE_URL={{OPENAI_BASE_URL}}
-OPENAI_API_KEY={{OPENAI_API_KEY}}
-
-# —— Claude Agent SDK 执行引擎（可选，默认关）——
-# 开启后主 AI 用 Claude Code 同款 harness 跑工具循环（更强的多步执行/自动重试），
-# 模型可插拔：Anthropic 官方 或 任何 Anthropic 协议兼容端点（如 DeepSeek /anthropic）。
-# 引擎任何失败自动回退内置循环，不影响基础问答。镜像已带 CLI 依赖。
-#COSMAC_AGENT_ENGINE=claude_sdk
-#COSMAC_SDK_BASE_URL=https://api.deepseek.com/anthropic
-#COSMAC_SDK_API_KEY=
-#COSMAC_SDK_MODEL=deepseek-chat

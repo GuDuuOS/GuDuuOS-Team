@@ -12,8 +12,8 @@
 安全 / 健壮（单实例「够用即止」，与 wf 同口径）：
   · 验证码存**内存**（带 TTL + 线程锁）——单 bot 实例足够；将来多实例再迁 DB。
   · 限频：同邮箱发码有冷却 + 每小时上限；验码有尝试次数上限（防爆破）。
-  · 真密钥（SMTP 密码 / registration_shared_secret）只从节点加密设置或服务端 env 读，
-    绝不进代码、Matrix state 或浏览器响应。
+  · OEM 节点的 SMTP 只从网页节点设置读取；环境变量仅兼容非 OEM 本地开发。
+    真密钥绝不进代码、Matrix state 或浏览器响应。
 
 涉及的 env（生产用 systemd Environment / Secret Manager 注入；本地不配则注册不可用、优雅报错）：
   COSMAC_SMTP_HOST / COSMAC_SMTP_PORT(默认465) / COSMAC_SMTP_USER / COSMAC_SMTP_PASSWORD /
@@ -197,15 +197,17 @@ def _verify_turnstile(token: str, client_ip: str = "") -> bool:
 
 
 def _smtp_conf() -> Optional[Dict[str, Any]]:
-    """读 SMTP 配置；向导数据库优先，旧节点环境变量继续兼容。"""
+    """读 SMTP 配置；OEM 节点以网页数据库为唯一真值源。"""
     runtime: Dict[str, Any] = {}
     try:
         from cosmac.node_settings import runtime_email
 
         runtime = runtime_email()
     except Exception:
-        # 首次建表前、旧节点还没生成设置主密钥时继续走既有 env，不能让注册服务崩掉。
-        logger.debug("节点 SMTP 设置暂不可读，回退环境变量", exc_info=True)
+        logger.debug("节点 SMTP 设置暂不可读", exc_info=True)
+    if _env("OEM_KEY") and runtime.get("_source") != "node_settings":
+        # 官方发行版绝不因数据库暂时不可读而重新启用旧 .env 中的业务凭据。
+        return None
     configured = runtime.get("_source") == "node_settings"
     host = str(runtime.get("host") if configured else _env("SMTP_HOST"))
     user = str(runtime.get("user") if configured else _env("SMTP_USER"))

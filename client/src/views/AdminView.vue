@@ -1229,7 +1229,7 @@
           <div>
             <h1 class="adm-h1">会员套餐</h1>
             <p class="adm-hint">
-              配置用户「升级会员」时可买的套餐 · 价格按货币填(留空=该货币不售) · 保存后下单即用
+              维护会员权益套餐；在线支付未开放前仅供管理员规划和人工授予等级，不向客户展示购买入口
             </p>
           </div>
           <div class="adm-actions">
@@ -2504,13 +2504,9 @@ const aiSaving = ref(false)
 const aiLoaded = ref(false)
 // enabled_tools=null 表示全开；UI 里用一个集合表示"当前开启的工具"
 const aiForm = reactive<{
-  provider: string
-  model: string
   system_prompt: string
   tools: Set<string>
 }>({
-  provider: '',
-  model: '',
   system_prompt: '',
   tools: new Set(AI_TOOL_CATALOG.map((t) => t.name)), // 默认全开
 })
@@ -2532,8 +2528,6 @@ async function loadAi() {
   aiLoading.value = true
   try {
     const cfg = await getAiConfig()
-    aiForm.provider = cfg?.provider || ''
-    aiForm.model = cfg?.model || ''
     aiForm.system_prompt = cfg?.system_prompt || ''
     const all = AI_TOOL_CATALOG.map((t) => t.name)
     aiForm.tools = new Set(cfg?.enabled_tools ?? all)
@@ -2552,9 +2546,6 @@ async function saveAi() {
     // 全开 → 存 null（表示不限制）；否则存当前集合
     const enabled = all.every((n) => aiForm.tools.has(n)) ? null : [...aiForm.tools]
     await setAiConfig({
-      // provider/model/key 统一由节点系统设置负责；控制室只保存非敏感的人设/工具。
-      provider: '',
-      model: '',
       system_prompt: aiForm.system_prompt,
       enabled_tools: enabled,
     })

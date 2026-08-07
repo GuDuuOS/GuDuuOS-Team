@@ -11,7 +11,7 @@
 #
 # 干了什么（顺序即依赖）：
 #   1. 自动准备宿主依赖（基础工具 / Docker / Compose）
-#   2. 收集配置（域名/管理员邮箱/SMTP/OEM 授权码；网页版不提供免授权模式）
+#   2. 收集基础设施配置（域名/管理员邮箱/OEM 授权码；业务配置安装后进网页填写）
 #   3. 生成全部密钥 + 渲染配置（.env / homeserver.yaml / appservice / Caddyfile）
 #   4. synapse generate（产出签名密钥、日志配置），再覆盖为我们的主配置
 #   5. 从 Nexus 取得 CI 冻结摘要并拉取镜像（四个容器全起，不在客户机编译）
@@ -190,10 +190,8 @@ else
   fi
 fi
 
-# SMTP、主 AI、支付与品牌统一移到安装后的网页首次配置向导。安装器只负责把 OS
-# 安全地拉起，避免客户在终端和网页各填一遍，也不让渠道密钥留在 shell history。
-SMTP_HOST=""
-SMTP_PORT="465"; SMTP_USER=""; SMTP_PASSWORD=""; SMTP_FROM=""; SMTP_FROM_NAME=""
+# SMTP、主 AI、支付与品牌统一由安装后的网页设置管理。安装器只负责把 OS
+# 安全地拉起，避免客户在终端和网页各填一遍，也不让业务密钥留在 shell history。
 
 # ---------- 2. DNS / 端口体检（只警告不拦截：可能在 LB/NAT 后面）----------
 PUB_IP="$(curl -4fsS --max-time 8 https://ifconfig.me 2>/dev/null || true)"
@@ -246,14 +244,6 @@ DOMAIN_REGEX="${DOMAIN//./\\.}"
 
 mkdir -p data/synapse data/caddy
 
-# —— AI 通道统一走母舰网关（凭证即 OEM 授权码）——
-LLM_PROVIDER="deepseek"
-LLM_MODEL="deepseek-v3.2"          # 以 GuDuu 网关实际开通的模型为准
-GW_ARK_BASE="$NEXUS_URL/gw/ark"
-GW_ANTH_BASE="$NEXUS_URL/gw/anthropic"
-GW_OPENAI_BASE="$NEXUS_URL/gw/openai"
-GW_KEY="$OEM_KEY"
-
 render templates/dotenv.tpl .env \
   "DOMAIN=$DOMAIN" "ADMIN_USER=admin" "ADMIN_EMAIL=$ADMIN_EMAIL" "OEM_KEY=$OEM_KEY" "NODE_ACTIVATION_REQUIRED=$NODE_ACTIVATION_REQUIRED" \
   "INSTALL_VERSION=$INSTALL_VERSION" "BOT_IMAGE=$BOT_IMAGE" "WEB_IMAGE=$WEB_IMAGE" \
@@ -261,13 +251,7 @@ render templates/dotenv.tpl .env \
   "PG_SYNAPSE_PASSWORD=$PG_SYNAPSE_PASSWORD" "COSMAC_DB_PASSWORD=$COSMAC_DB_PASSWORD" \
   "AS_TOKEN=$AS_TOKEN" "HS_TOKEN=$HS_TOKEN" \
   "ADMIN_TOKEN=$ADMIN_TOKEN" "REGISTRATION_SHARED_SECRET=$REGISTRATION_SHARED_SECRET" \
-  "NODE_SETTINGS_SECRET=$NODE_SETTINGS_SECRET" \
-  "SMTP_HOST=$SMTP_HOST" "SMTP_PORT=$SMTP_PORT" "SMTP_USER=$SMTP_USER" \
-  "SMTP_PASSWORD=$SMTP_PASSWORD" "SMTP_FROM=$SMTP_FROM" "SMTP_FROM_NAME=$SMTP_FROM_NAME" \
-  "LLM_PROVIDER=$LLM_PROVIDER" "LLM_MODEL=$LLM_MODEL" \
-  "ARK_BASE_URL=$GW_ARK_BASE" "ARK_API_KEY=$GW_KEY" \
-  "ANTHROPIC_BASE_URL=$GW_ANTH_BASE" "ANTHROPIC_API_KEY=$GW_KEY" \
-  "OPENAI_BASE_URL=$GW_OPENAI_BASE" "OPENAI_API_KEY=$GW_KEY"
+  "NODE_SETTINGS_SECRET=$NODE_SETTINGS_SECRET"
 chmod 600 .env
 
 render templates/appservice.yaml.tpl data/synapse/appservice-cosmac.yaml \

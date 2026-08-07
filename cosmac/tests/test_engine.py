@@ -22,6 +22,7 @@ class EngineConfigTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         os.environ.pop("COSMAC_AGENT_ENGINE", None)
+        os.environ.pop("COSMAC_OEM_KEY", None)
 
     def test_disabled_by_default(self) -> None:
         os.environ.pop("COSMAC_AGENT_ENGINE", None)
@@ -35,6 +36,11 @@ class EngineConfigTest(unittest.TestCase):
 
     def test_other_value_disabled(self) -> None:
         os.environ["COSMAC_AGENT_ENGINE"] = "legacy"
+        self.assertFalse(sdk_engine_enabled())
+
+    def test_oem_node_ignores_legacy_sdk_env_switch(self) -> None:
+        os.environ["COSMAC_AGENT_ENGINE"] = "claude_sdk"
+        os.environ["COSMAC_OEM_KEY"] = "CMK-test"
         self.assertFalse(sdk_engine_enabled())
 
 
@@ -111,4 +117,3 @@ class ModelOverrideTest(unittest.TestCase):
     def test_default_when_nothing_set(self) -> None:
         os.environ.pop("COSMAC_SDK_MODEL", None)
         self.assertEqual(self._eng("  ")._resolve_model(), "deepseek-chat")
-

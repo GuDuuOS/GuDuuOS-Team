@@ -100,7 +100,9 @@ def _env(key: str, default: str = "") -> str:
 
 
 def sdk_engine_enabled() -> bool:
-    """总开关:COSMAC_AGENT_ENGINE=claude_sdk 才启用(默认关,行为与部署零变化)。"""
+    """仅非 OEM 开发环境可用旧 env 开关；OEM 主 AI 统一由网页节点设置管理。"""
+    if _env("OEM_KEY").strip():
+        return False
     return _env("AGENT_ENGINE").strip().lower() == "claude_sdk"
 
 

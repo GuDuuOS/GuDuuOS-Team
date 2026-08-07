@@ -84,13 +84,6 @@ services:
       COSMAC_ADMIN_TOKEN: ${COSMAC_ADMIN_TOKEN}
       COSMAC_REGISTRATION_SHARED_SECRET: ${COSMAC_REGISTRATION_SHARED_SECRET}
       COSMAC_NODE_SETTINGS_SECRET: ${COSMAC_NODE_SETTINGS_SECRET:-}
-      # —— OEM 自己的发信邮箱（注册验证码从这里发出）——
-      COSMAC_SMTP_HOST: ${COSMAC_SMTP_HOST:-}
-      COSMAC_SMTP_PORT: ${COSMAC_SMTP_PORT:-465}
-      COSMAC_SMTP_USER: ${COSMAC_SMTP_USER:-}
-      COSMAC_SMTP_PASSWORD: ${COSMAC_SMTP_PASSWORD:-}
-      COSMAC_SMTP_FROM: ${COSMAC_SMTP_FROM:-}
-      COSMAC_SMTP_FROM_NAME: ${COSMAC_SMTP_FROM_NAME:-}
       # —— Cloudflare Turnstile 人机验证（可选，防恶意刷验证码/注册）——
       # compose 的 environment 是白名单式:这两个不在此列出,.env 配了也传不进容器、
       # 后端就当没启用、前端不渲染验证组件(线上实报:新域名下人机验证消失)。
@@ -99,27 +92,8 @@ services:
       COSMAC_TURNSTILE_SECRET: ${COSMAC_TURNSTILE_SECRET:-}
       # 单端在线(后登录踢先登录):默认空=多设备同时在线;置 1 才启用互踢。
       COSMAC_SINGLE_SESSION: ${COSMAC_SINGLE_SESSION:-}
-      # —— AI 模型（OEM 模式：BASE_URL 指向母舰网关、API key=OEM 授权码；
-      #    原厂 key 永不出现在实例侧，见 CLAUDE.md §4 模块6）——
-      COSMAC_LLM_PROVIDER: ${COSMAC_LLM_PROVIDER:-echo}
-      COSMAC_LLM_MODEL: ${COSMAC_LLM_MODEL:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      ARK_API_KEY: ${ARK_API_KEY:-}
-      ARK_BASE_URL: ${ARK_BASE_URL:-}
-      # Claude Agent SDK 引擎(1.4.0):compose 的 environment 是白名单式,新变量必须
-      # 在此列出才会传进容器——.env 配了不列等于没配(线上踩过:引擎开关静默失效)。
-      COSMAC_AGENT_ENGINE: ${COSMAC_AGENT_ENGINE:-}
-      COSMAC_SDK_BASE_URL: ${COSMAC_SDK_BASE_URL:-}
-      COSMAC_SDK_API_KEY: ${COSMAC_SDK_API_KEY:-}
-      COSMAC_SDK_MODEL: ${COSMAC_SDK_MODEL:-}
-      COSMAC_SDK_MAX_TURNS: ${COSMAC_SDK_MAX_TURNS:-}
-      # 防卡死超时(负责人实报"推进 AI 执行卡死很久"):SDK 引擎整轮上限秒数、单次 LLM 调用上限秒数。
-      # 不配用代码默认(240s / 120s)。
-      COSMAC_SDK_TIMEOUT: ${COSMAC_SDK_TIMEOUT:-}
-      COSMAC_LLM_TIMEOUT: ${COSMAC_LLM_TIMEOUT:-}
+      # SMTP、主 AI provider/model/API key 均由网页节点设置热读取；这里不再
+      # 透传旧 .env，避免出现“网页一套、环境变量又一套”的隐形覆盖。
       # 流式回复(边生成边显示)总开关:默认开,置 0 一键关掉回落"一次性发送"。
       # compose 的 environment 是白名单式,不在此列出则 .env 里配了也传不进容器。
       COSMAC_STREAM_REPLY: ${COSMAC_STREAM_REPLY:-}

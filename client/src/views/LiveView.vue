@@ -111,7 +111,6 @@ import CliConsole from '@/components/layout/CliConsole.vue'
 // 平台管理后台（覆盖层；仅服务器管理员可入）
 import AdminView from '@/views/AdminView.vue'
 import Icon from '@/components/Icon.vue'
-import MembershipModal from '@/components/membership/MembershipModal.vue'
 import ChannelAdminModal from '@/components/channel/ChannelAdminModal.vue'
 import KnowledgeModal from '@/components/layout/KnowledgeModal.vue'
 import ChoiceCard from '@/components/chat/ChoiceCard.vue'
@@ -2123,9 +2122,7 @@ function onComposerKeydown(e: KeyboardEvent) {
 }
 
 // ── 顶栏按钮 / 应用切换 / 工作区工具 ──────────────────
-// 升级会员弹窗（模块4 交易系统 · 用户侧）
-const showMembership = ref(false)
-function onUpgrade() { showMembership.value = true }
+function onUpgrade() { toast('在线购买暂未开放', '请联系管理员调整会员等级。') }
 // 打开对应弹窗/面板（真实功能）
 function onSettings(tab?: UserSettingsTab) { openSettings(tab); userMenuOpen.value = false }
 function onMarket() { openMarket(); appMenuOpen.value = false }
@@ -2317,7 +2314,6 @@ onBeforeUnmount(() => {
 
       <!-- 右：升级 / 设置 / 中枢AI开关 / 用户菜单 -->
       <div class="top-right">
-        <button class="top-upgrade" @click="onUpgrade"><Icon name="sparkle" :size="14" /> 升级会员</button>
         <button class="ic-btn" title="设置" @click="onSettings()">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
         </button>
@@ -3109,7 +3105,7 @@ onBeforeUnmount(() => {
 
     <!-- 弹窗/面板（常驻挂载，内部按各自 composable 的 visible 控制显隐）-->
     <!-- AI Agent 商城已接真数据（bot /cosmac/market/catalog）；等级不够点「升级解锁」→ 会员弹窗 -->
-    <MarketplaceModal @upgrade="showMembership = true" />
+    <MarketplaceModal @upgrade="onUpgrade" />
     <PluginStoreModal />
     <CustomAssetsModal />
     <UserSettingsModal />
@@ -3125,10 +3121,6 @@ onBeforeUnmount(() => {
 
     <!-- 平台管理后台（全屏覆盖层；仅管理员可从用户菜单进入）-->
     <AdminView v-if="adminOpen" v-model:tab="adminTab" @close="adminOpen = false" />
-
-    <!-- 升级会员弹窗（模块4 交易系统）-->
-    <MembershipModal v-if="showMembership" @close="showMembership = false" />
-
 
     <!-- 新建工作区（完整表单 · 真建 Matrix Space + 默认频道）-->
     <div v-if="newWsOpen" class="nw-overlay" @click.self="newWsOpen = false">

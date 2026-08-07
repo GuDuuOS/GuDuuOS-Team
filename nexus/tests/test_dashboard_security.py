@@ -12,6 +12,7 @@ import tempfile
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 from typing import Optional
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -157,13 +158,24 @@ class DashboardSecurityTests(unittest.TestCase):
                 response.headers["Content-Type"],
                 "text/x-shellscript; charset=utf-8",
             )
-        self.assertIn('RELEASE_TAG="v1.29.0"', script)
+        self.assertIn('RELEASE_TAG="v1.29.1"', script)
         self.assertIn("优先拉 Docker Hub", script)
         self.assertIn('exec ./install.sh "${FORWARD_ARGS[@]}"', script)
         self.assertIn('--reinstall', script)
         self.assertIn('mv -- "$INSTALL_ROOT" "$REINSTALL_BACKUP"', script)
         self.assertNotIn("CMK-", script)
         self.assertNotIn("--key", script)
+
+        root = Path(__file__).resolve().parents[2]
+        compose = (root / "distro" / "docker-compose.yml").read_text()
+        dotenv = (root / "distro" / "templates" / "dotenv.tpl").read_text()
+        for obsolete in (
+            "COSMAC_SMTP_PASSWORD", "COSMAC_LLM_PROVIDER", "COSMAC_LLM_MODEL",
+            "ARK_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+            "COSMAC_AGENT_ENGINE", "COSMAC_SDK_API_KEY",
+        ):
+            self.assertNotIn(obsolete, compose)
+            self.assertNotIn(obsolete, dotenv)
 
         # 门户只用审批域名组装命令；KEY 继续走 SSH 交互输入。
         with urlopen(f"{self.base_url}/portal/portal.js", timeout=3) as response:

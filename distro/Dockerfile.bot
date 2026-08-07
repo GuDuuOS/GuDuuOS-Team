@@ -18,7 +18,8 @@ COPY cosmac/requirements.txt /app/cosmac/requirements.txt
 RUN pip install --no-cache-dir -r /app/cosmac/requirements.txt PyYAML
 
 # Claude Agent SDK 引擎（P1，负责人要求上）：SDK 要拉起 Claude Code CLI 子进程，
-# 需要 node + 全局 CLI。引擎开关在 .env（COSMAC_AGENT_ENGINE=claude_sdk，默认关），
+# 需要 node + 全局 CLI。旧 SDK 引擎只保留给非 OEM 开发环境；官方 OEM 发行版
+# 的主 AI 统一由网页节点设置管理，不再接受 .env 引擎开关。
 # 引擎任何失败自动回退 legacy 循环（cosmac/ai/engine.py），绝不影响基础问答。
 RUN apt-get update \
     && apt-get install -y --no-install-recommends nodejs npm \
