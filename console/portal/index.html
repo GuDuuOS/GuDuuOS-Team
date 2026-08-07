@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置使用同源外部脚本，既防刷新闪色，也允许 Portal 开启严格脚本 CSP。 -->
 <script src="/portal/theme-init.js?v=1"></script>
-<link rel="stylesheet" href="/portal/portal.css?v=47" />
+<link rel="stylesheet" href="/portal/portal.css?v=48" />
 </head>
 <body>
 <!--
@@ -707,7 +707,19 @@
           <button class="tab" type="button" data-customer-stage="disabled">已停用 <em>0</em></button>
         </div>
         <div class="table-scroll">
-          <table class="tbl" id="admin-oems">
+          <table class="tbl admin-oem-table" id="admin-oems">
+            <colgroup>
+              <col class="admin-oem-col-id" />
+              <col class="admin-oem-col-email" />
+              <col class="admin-oem-col-company" />
+              <col class="admin-oem-col-hierarchy" />
+              <col class="admin-oem-col-users" />
+              <col class="admin-oem-col-downline" />
+              <col class="admin-oem-col-status" />
+              <col class="admin-oem-col-license" />
+              <col class="admin-oem-col-created" />
+              <col class="admin-oem-col-actions" />
+            </colgroup>
             <thead><tr><th>#</th><th>邮箱</th><th>称呼</th><th>层级 / 直属上级</th><th>用户</th><th>下级 OEM</th><th>进度状态</th><th>授权 / 部署</th><th>注册时间</th><th>操作</th></tr></thead>
             <tbody></tbody>
           </table>
@@ -1028,6 +1040,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=56"></script>
+<script src="/portal/portal.js?v=57"></script>
 </body>
 </html>

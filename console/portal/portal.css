@@ -293,7 +293,7 @@ label input { margin-top: 5px; }
 
 /* —— 超级管理员工作台：桌面左侧导航 + 独立功能页 —— */
 .admin-shell {
-  width: min(1440px, 100%); margin: 0 auto; padding: 24px;
+  width: min(1600px, 100%); margin: 0 auto; padding: 24px;
   display: grid; grid-template-columns: 224px minmax(0, 1fr); gap: 24px;
   align-items: start;
 }
@@ -959,6 +959,32 @@ label input { margin-top: 5px; }
 .tbl td { padding: 8px 10px; border-bottom: 1px solid var(--line); font-family: var(--mono); }
 .tbl td.zh { font-family: inherit; }
 .tbl tr:hover td { background: var(--hover-row); }
+.admin-oem-table { min-width: 1240px !important; table-layout: fixed; }
+.admin-oem-table .admin-oem-col-id { width: 44px; }
+.admin-oem-table .admin-oem-col-email { width: 180px; }
+.admin-oem-table .admin-oem-col-company { width: 185px; }
+.admin-oem-table .admin-oem-col-hierarchy { width: 190px; }
+.admin-oem-table .admin-oem-col-users { width: 82px; }
+.admin-oem-table .admin-oem-col-downline { width: 92px; }
+.admin-oem-table .admin-oem-col-status { width: 96px; }
+.admin-oem-table .admin-oem-col-license { width: 108px; }
+.admin-oem-table .admin-oem-col-created { width: 126px; }
+.admin-oem-table .admin-oem-col-actions { width: 86px; }
+.admin-oem-table tbody tr { height: 78px; }
+.admin-oem-table td { vertical-align: middle; overflow: hidden; }
+.admin-oem-table .admin-oem-primary,
+.admin-oem-table .admin-oem-subline { display: block; min-width: 0; line-height: 1.45; }
+.admin-oem-table .admin-oem-primary { font-weight: 600; white-space: nowrap; }
+.admin-oem-table .admin-oem-subline { margin-top: 5px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.admin-oem-table .admin-oem-ellipsis { overflow: hidden; text-overflow: ellipsis; }
+.admin-oem-table .admin-oem-company {
+  display: -webkit-box; overflow: hidden; line-height: 1.45;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+.admin-oem-table .admin-oem-status,
+.admin-oem-table .admin-oem-license { white-space: nowrap; }
+.admin-oem-table .admin-oem-actions { display: grid; justify-items: start; gap: 5px; }
+.admin-oem-table .admin-oem-actions .small { width: 54px; margin: 0; }
 .badge { padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-family: inherit; }
 .badge.active { color: var(--green); background: var(--badge-green-bg); }
 .badge.warning { color: var(--orange); background: var(--badge-orange-bg); }

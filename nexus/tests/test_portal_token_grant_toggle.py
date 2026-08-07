@@ -16,8 +16,8 @@ class PortalTokenGrantToggleTests(unittest.TestCase):
         self.assertIn('id="license-manual-tokens"', html)
         self.assertIn('id="license-manual-token-note"', html)
         self.assertIn('name="requested_tokens"', html)
-        self.assertIn('/portal/portal.css?v=47', html)
-        self.assertIn('/portal/portal.js?v=56', html)
+        self.assertIn('/portal/portal.css?v=48', html)
+        self.assertIn('/portal/portal.js?v=57', html)
 
     def test_disabled_switch_greys_field_and_forces_zero(self) -> None:
         javascript = (ROOT / "console" / "portal" / "portal.js").read_text()

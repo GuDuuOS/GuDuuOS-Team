@@ -48,6 +48,21 @@ class PortalCustomerLifecycleTests(unittest.TestCase):
         )
         self.assertIn("button.dataset.customerStage", javascript)
 
+    def test_customer_table_uses_fixed_columns_and_consistent_rows(self) -> None:
+        """客户数据列不再因内容长短互相挤压。"""
+        html = (ROOT / "console" / "portal" / "index.html").read_text()
+        stylesheet = (ROOT / "console" / "portal" / "portal.css").read_text()
+        javascript = (ROOT / "console" / "portal" / "portal.js").read_text()
+
+        self.assertIn('class="tbl admin-oem-table"', html)
+        self.assertIn('class="admin-oem-col-email"', html)
+        self.assertIn('class="admin-oem-col-actions"', html)
+        self.assertIn("table-layout: fixed", stylesheet)
+        self.assertIn(".admin-oem-table tbody tr { height: 78px; }", stylesheet)
+        self.assertIn(".admin-oem-ellipsis", stylesheet)
+        self.assertIn('class="admin-oem-actions"', javascript)
+        self.assertIn('var createdAt = fmtTime(oem.created_ts).split(" ")', javascript)
+
 
 if __name__ == "__main__":
     unittest.main()

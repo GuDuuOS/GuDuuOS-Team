@@ -2391,26 +2391,36 @@
     $("#admin-oems tbody").innerHTML = rows.map(function (oem) {
       var lifecycle = customerLifecycle(oem);
       var enabled = oem.status === "active";
+      var createdAt = fmtTime(oem.created_ts).split(" ");
       var inviter = oem.inviter === "GuDuu"
         ? '<span style="color:var(--orange)">GuDuu</span>'
-        : esc(oem.inviter || "—");
-      return "<tr><td>#" + oem.id + "</td><td>" + esc(oem.email) +
-        '</td><td class="zh">' + esc(oem.name || "—") +
-        '</td><td class="zh"><b>第 ' + (oem.level || 1) +
-        ' 层</b><div class="hint">直属：' + inviter +
-        '</div></td><td class="zh">直属 ' + (oem.direct_users || 0) +
-        '<div class="hint">网络 ' + (oem.network_users || 0) +
-        '</div></td><td class="zh">直属 ' + (oem.direct_oems || 0) +
-        '<div class="hint">全部 ' + (oem.total_downline_oems || 0) +
-        '</div></td><td class="zh"><span class="badge ' + lifecycle.badge + '">' +
-        lifecycle.label + '</span></td><td class="zh"><b>KEY ' +
-        Number(oem.keys_claimed || 0) + '</b><div class="hint">节点 ' +
-        Number(oem.instances_deployed || 0) + "</div></td><td>" +
-        fmtTime(oem.created_ts) + '</td><td class="zh"><button class="ghost small" data-detail="' +
-        oem.id + '">详情</button> <button class="ghost small" data-oemstatus="' +
+        : '<span class="admin-oem-ellipsis" title="' + esc(oem.inviter || "—") + '">' +
+          esc(oem.inviter || "—") + "</span>";
+      return '<tr><td class="admin-oem-id">#' + oem.id +
+        '</td><td class="admin-oem-email" title="' + esc(oem.email) +
+        '"><span class="admin-oem-primary admin-oem-ellipsis">' + esc(oem.email) +
+        '</span></td><td class="zh" title="' + esc(oem.name || "—") +
+        '"><span class="admin-oem-company">' + esc(oem.name || "—") +
+        '</span></td><td class="zh"><span class="admin-oem-primary">第 ' +
+        (oem.level || 1) + ' 层</span><span class="admin-oem-subline">直属：' + inviter +
+        '</span></td><td class="zh"><span class="admin-oem-primary">直属 ' +
+        (oem.direct_users || 0) + '</span><span class="admin-oem-subline">网络 ' +
+        (oem.network_users || 0) +
+        '</span></td><td class="zh"><span class="admin-oem-primary">直属 ' +
+        (oem.direct_oems || 0) + '</span><span class="admin-oem-subline">全部 ' +
+        (oem.total_downline_oems || 0) +
+        '</span></td><td class="zh admin-oem-status"><span class="badge ' +
+        lifecycle.badge + '">' + lifecycle.label +
+        '</span></td><td class="zh admin-oem-license"><span class="admin-oem-primary">KEY ' +
+        Number(oem.keys_claimed || 0) + '</span><span class="admin-oem-subline">节点 ' +
+        Number(oem.instances_deployed || 0) +
+        '</span></td><td><span class="admin-oem-primary">' + esc(createdAt[0] || "—") +
+        '</span><span class="admin-oem-subline">' + esc(createdAt[1] || "") +
+        '</span></td><td class="zh"><div class="admin-oem-actions"><button class="ghost small" data-detail="' +
+        oem.id + '">详情</button><button class="ghost small" data-oemstatus="' +
         oem.id + '" data-tostatus="' + (enabled ? "disabled" : "active") +
         '" data-email="' + esc(oem.email) + '">' + (enabled ? "停用" : "启用") +
-        "</button></td></tr>";
+        "</button></div></td></tr>";
     }).join("") || '<tr><td colspan="10" class="zh empty">' +
       (query ? "没有符合搜索条件的 OEM 客户" : "当前分类下没有 OEM 客户") +
       "</td></tr>";
