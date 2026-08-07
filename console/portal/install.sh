@@ -6,9 +6,10 @@
 # 仍由客户在服务器终端交互输入，避免泄露到 Shell history 或反向代理日志。
 set -euo pipefail
 
-# v1.31.0 的 Web 镜像同时交付可配置 OEM 官网与协作应用；安装器继续按
+# v1.31.1 的 Web 镜像同时交付可配置 OEM 官网与协作应用；安装器同时
+# 持久化 Nexus 实例身份，存量节点也会在心跳时自动修复。
 # 不可变 digest 优先拉 Docker Hub，失败后再整组回退平台自建仓与 GHCR。
-RELEASE_TAG="v1.31.0"
+RELEASE_TAG="v1.31.1"
 ARCHIVE_URL="https://github.com/GuDuuOS/GuDuuOS-Team/archive/refs/tags/${RELEASE_TAG}.tar.gz"
 INSTALL_ROOT="${GUDUU_INSTALL_ROOT:-/opt/guduu-os}"
 REINSTALL=0

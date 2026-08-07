@@ -359,6 +359,14 @@ def beat(
         if r.ok:
             data = r.json()
             _last_balance = int(data.get("balance_tokens", 0))
+            # Nexus 心跳已用 OEM KEY 确认了实例身份。持久化返回的
+            # instance_id，同时自动修复旧安装器未写激活文件的节点。
+            try:
+                from cosmac import node_activation
+
+                node_activation.record_instance_id(data.get("instance_id"))
+            except (OSError, ValueError):
+                logger.warning("Nexus 心跳成功，但节点身份持久化失败", exc_info=True)
             return True
         logger.warning("Nexus 心跳被拒：HTTP %s %s", r.status_code, r.text[:120])
     except requests.RequestException as e:

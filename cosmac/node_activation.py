@@ -68,6 +68,36 @@ def allows_public_access() -> bool:
     return bool(status()["activated"])
 
 
+def record_instance_id(value: Any) -> int:
+    """把 Nexus 已确认的节点编号原子写入持久化状态。
+
+    首次安装和后续心跳都会调用这个入口，从而让没有留下旧版
+    激活文件的存量节点自动修复身份。只接受正整数，不会持久化 KEY。
+    """
+    if isinstance(value, bool):
+        raise ValueError("Nexus 实例编号不合法")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("Nexus 实例编号不合法") from error
+    if parsed <= 0:
+        raise ValueError("Nexus 实例编号不合法")
+
+    target = _path()
+    directory = os.path.dirname(target) or "."
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".activation-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump({"activated": True, "instance_id": parsed}, handle)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return parsed
+
+
 def activate(config: CosmacConfig) -> Dict[str, Any]:
     """由节点服务器携带环境中的 KEY 兑换授权并原子保存成功状态。"""
     current = status()
@@ -96,15 +126,5 @@ def activate(config: CosmacConfig) -> Dict[str, Any]:
         raise RuntimeError("暂时无法连接 Nexus，请检查网络后重试") from error
     if not response.ok or not isinstance(payload, dict) or not payload.get("instance_id"):
         raise RuntimeError(str(payload.get("error") or "Nexus 拒绝激活请求"))
-    target = _path()
-    os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=".activation-", dir=os.path.dirname(target))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump({"activated": True, "instance_id": int(payload["instance_id"])}, handle)
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, target)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-    return {"required": True, "activated": True, "instance_id": int(payload["instance_id"])}
+    parsed = record_instance_id(payload["instance_id"])
+    return {"required": True, "activated": True, "instance_id": parsed}

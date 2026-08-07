@@ -158,7 +158,7 @@ class DashboardSecurityTests(unittest.TestCase):
                 response.headers["Content-Type"],
                 "text/x-shellscript; charset=utf-8",
             )
-        self.assertIn('RELEASE_TAG="v1.31.0"', script)
+        self.assertIn('RELEASE_TAG="v1.31.1"', script)
         self.assertIn("优先拉 Docker Hub", script)
         self.assertIn('exec ./install.sh "${FORWARD_ARGS[@]}"', script)
         self.assertIn('--reinstall', script)
@@ -168,12 +168,16 @@ class DashboardSecurityTests(unittest.TestCase):
 
         with urlopen(f"{self.base_url}/portal/host-tools.sh", timeout=3) as response:
             host_tools = response.read().decode("utf-8")
-        self.assertIn('RELEASE_TAG="v1.31.0"', host_tools)
+        self.assertIn('RELEASE_TAG="v1.31.1"', host_tools)
         self.assertIn("migrate_host_tools.sh", host_tools)
 
         root = Path(__file__).resolve().parents[2]
         compose = (root / "distro" / "docker-compose.yml").read_text()
         dotenv = (root / "distro" / "templates" / "dotenv.tpl").read_text()
+        distro_installer = (root / "distro" / "install.sh").read_text()
+        self.assertIn('REDEEM_INSTANCE_ID=""', distro_installer)
+        self.assertIn("data/cosmac/node-activation.json", distro_installer)
+        self.assertIn("chmod 0600", distro_installer)
         for obsolete in (
             "COSMAC_SMTP_PASSWORD", "COSMAC_LLM_PROVIDER", "COSMAC_LLM_MODEL",
             "ARK_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",

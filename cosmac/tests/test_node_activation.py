@@ -36,6 +36,17 @@ class NodeActivationTests(unittest.TestCase):
         """不存在成功状态文件时，注册守卫必须保持关闭。"""
         self.assertFalse(node_activation.allows_public_access())
 
+    def test_heartbeat_identity_can_repair_missing_activation_file(self) -> None:
+        """心跳返回的受信实例号可修复旧安装器遗留的缺失状态。"""
+        self.assertIsNone(node_activation.instance_id())
+        self.assertEqual(node_activation.record_instance_id("2"), 2)
+        self.assertEqual(node_activation.instance_id(), 2)
+        mode = os.stat(os.environ["COSMAC_NODE_ACTIVATION_STATE_PATH"]).st_mode & 0o777
+        self.assertEqual(mode, 0o600)
+
+        with self.assertRaisesRegex(ValueError, "不合法"):
+            node_activation.record_instance_id(True)
+
     @patch("cosmac.node_activation.requests.post")
     def test_activation_never_returns_or_persists_raw_key(self, post) -> None:
         """服务器代办兑换成功后只保存实例号，授权码不落盘也不回浏览器。"""

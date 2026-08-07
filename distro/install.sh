@@ -94,6 +94,7 @@ printf '%s' "$OEM_KEY" | grep -Eq '^CMK-[A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+$
 
 # —— 兑换授权（P1③：有授权码就向 GuDuu Nexus 真兑换，失败即终止）——
 NODE_ACTIVATION_REQUIRED="0"
+REDEEM_INSTANCE_ID=""
 if [ -n "$OEM_KEY" ]; then
   # 机房地域：用于 GuDuu 运营大屏在地图上标出实例位置。云服务器 IP 的注册地
   # 经常不等于真实机房，所以必须由部署人选择，不能留空后再让系统猜。
@@ -120,7 +121,17 @@ print(requested)
     -H "Content-Type: application/json" \
     -d "{\"key\":\"$OEM_KEY\",\"domain\":\"$DOMAIN\",\"admin_email\":\"$ADMIN_EMAIL\",\"region\":\"$REGION\"}") \
     || REDEEM_RESP=""
-  if echo "$REDEEM_RESP" | grep -q '"instance_id"'; then
+  REDEEM_INSTANCE_ID=$(printf '%s' "$REDEEM_RESP" | python3 -c '
+import json,sys
+try:
+    value=int(json.load(sys.stdin).get("instance_id", 0))
+    if value <= 0:
+        raise ValueError
+    print(value)
+except Exception:
+    raise SystemExit(1)
+' 2>/dev/null || true)
+  if [ -n "$REDEEM_INSTANCE_ID" ]; then
     say "兑换成功：$REDEEM_RESP"
   else
     # 继续安装但绝不开放业务入口：bot 会仅允许 bootstrap 管理员登录激活页，并由
@@ -244,6 +255,12 @@ DOMAIN_REGEX="${DOMAIN//./\\.}"
 
 mkdir -p data/synapse data/caddy data/cosmac
 chmod 0770 data/cosmac
+if [ -n "$REDEEM_INSTANCE_ID" ]; then
+  ACTIVATION_TMP="data/cosmac/.node-activation.$$"
+  printf '{"activated":true,"instance_id":%s}\n' "$REDEEM_INSTANCE_ID" > "$ACTIVATION_TMP"
+  chmod 0600 "$ACTIVATION_TMP"
+  mv -f "$ACTIVATION_TMP" data/cosmac/node-activation.json
+fi
 
 render templates/dotenv.tpl .env \
   "DOMAIN=$DOMAIN" "ADMIN_USER=admin" "ADMIN_EMAIL=$ADMIN_EMAIL" "OEM_KEY=$OEM_KEY" "NODE_ACTIVATION_REQUIRED=$NODE_ACTIVATION_REQUIRED" \
