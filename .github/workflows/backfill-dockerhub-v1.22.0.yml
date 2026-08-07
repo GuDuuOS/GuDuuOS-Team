@@ -1,0 +1,60 @@
+name: Backfill v1.22.0 to Docker Hub
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/backfill-dockerhub-v1.22.0.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backfill-dockerhub-v1.22.0
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BOT_DIGEST: sha256:e321ec2a120903f5b8f4401cb2b4b94b75d1d830c3a580455efa8cce93beb21d
+      WEB_DIGEST: sha256:391d7ca3e13b4ebb96a98b97512846542712daba376f2ec271f5f30e4442ac0d
+    steps:
+      - name: Install registry copy tool
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes skopeo
+
+      - name: Log in to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${DOCKERHUB_TOKEN}" \
+            | skopeo login --username "${DOCKERHUB_USERNAME}" --password-stdin docker.io
+
+      - name: Copy existing immutable manifests without rebuilding
+        run: |
+          set -euo pipefail
+
+          copy_and_verify() {
+            local service="$1"
+            local expected="$2"
+            local source="docker://ghcr.io/guduuos/guduu-os-${service}@${expected}"
+            local destination="docker://docker.io/guduu/guduu-os-${service}"
+
+            for tag in v1.22.0 1.22.0; do
+              skopeo copy --all --preserve-digests \
+                "${source}" "${destination}:${tag}"
+              actual="sha256:$(skopeo inspect --raw "${destination}:${tag}" | sha256sum | cut -d ' ' -f 1)"
+              test "${actual}" = "${expected}"
+            done
+          }
+
+          copy_and_verify bot "${BOT_DIGEST}"
+          copy_and_verify web "${WEB_DIGEST}"
