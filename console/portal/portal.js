@@ -2201,6 +2201,13 @@
     requestSearchTimer = setTimeout(loadAdmin, 280);
   });
   $("#key-search").addEventListener("input", renderAdminKeys);
+  $("#customer-search").addEventListener("input", renderAdminCustomers);
+  $all("[data-customer-stage]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      adminCustomerStage = button.dataset.customerStage;
+      renderAdminCustomers();
+    });
+  });
 
   $("#form-claim").addEventListener("submit", function (e) {
     e.preventDefault();
@@ -2255,6 +2262,10 @@
   // KEY 列表只保存服务端已经脱敏的记录，用于当前页面即时搜索。
   // 搜索不重新请求接口，也不接触任何 KEY 明文。
   var adminKeys = [];
+  // OEM 客户列表需要同时按账号、授权和部署三个阶段判断状态；保留当前快照
+  // 可让搜索与分类即时切换，不必每次输入都重新请求数据库。
+  var adminOems = [];
+  var adminCustomerStage = "all";
   // OEM 实例列表只用于点击前快速确认卡片仍属于当前页面；
   // 真正的归属校验仍在服务端做，不信任这个前端数组。
   var oemInstances = [];
@@ -2309,6 +2320,87 @@
         (statusAction + revokeAction || "—") + "</td></tr>";
     }).join("") || '<tr><td colspan="8" class="zh empty">' +
       (query ? "没有符合搜索条件的授权码" : "尚未签发授权码") + "</td></tr>";
+  }
+
+  function customerLifecycle(oem) {
+    // 账号停用优先级最高；其余状态严格按“注册 → 获得 KEY → 兑换成实例”推进。
+    if (oem.status !== "active") {
+      return { code: "disabled", label: "已停用", badge: "disabled" };
+    }
+    if (Number(oem.instances_deployed) > 0) {
+      return { code: "deployed", label: "已部署", badge: "active" };
+    }
+    if (Number(oem.keys_claimed) > 0) {
+      return { code: "pending_deploy", label: "待部署", badge: "warning" };
+    }
+    return { code: "unlicensed", label: "未获授权", badge: "idle" };
+  }
+
+  function renderAdminCustomers() {
+    var search = $("#customer-search");
+    var query = search ? search.value.trim().toLowerCase() : "";
+    var counts = {
+      all: adminOems.length,
+      unlicensed: 0,
+      pending_deploy: 0,
+      deployed: 0,
+      disabled: 0,
+    };
+    adminOems.forEach(function (oem) {
+      counts[customerLifecycle(oem).code] += 1;
+    });
+    $all("[data-customer-stage]").forEach(function (button) {
+      var stage = button.dataset.customerStage;
+      var count = button.querySelector("em");
+      if (count) count.textContent = String(counts[stage] || 0);
+      button.classList.toggle("on", stage === adminCustomerStage);
+    });
+
+    var rows = adminOems.filter(function (oem) {
+      var lifecycle = customerLifecycle(oem);
+      if (adminCustomerStage !== "all" && lifecycle.code !== adminCustomerStage) {
+        return false;
+      }
+      if (!query) return true;
+      var searchable = [
+        oem.id,
+        oem.email,
+        oem.name,
+        oem.inviter,
+        oem.level,
+        lifecycle.label,
+      ].map(function (value) {
+        return value === null || value === undefined ? "" : String(value);
+      }).join(" ").toLowerCase();
+      return searchable.indexOf(query) >= 0;
+    });
+
+    $("#admin-oems tbody").innerHTML = rows.map(function (oem) {
+      var lifecycle = customerLifecycle(oem);
+      var enabled = oem.status === "active";
+      var inviter = oem.inviter === "GuDuu"
+        ? '<span style="color:var(--orange)">GuDuu</span>'
+        : esc(oem.inviter || "—");
+      return "<tr><td>#" + oem.id + "</td><td>" + esc(oem.email) +
+        '</td><td class="zh">' + esc(oem.name || "—") +
+        '</td><td class="zh"><b>第 ' + (oem.level || 1) +
+        ' 层</b><div class="hint">直属：' + inviter +
+        '</div></td><td class="zh">直属 ' + (oem.direct_users || 0) +
+        '<div class="hint">网络 ' + (oem.network_users || 0) +
+        '</div></td><td class="zh">直属 ' + (oem.direct_oems || 0) +
+        '<div class="hint">全部 ' + (oem.total_downline_oems || 0) +
+        '</div></td><td class="zh"><span class="badge ' + lifecycle.badge + '">' +
+        lifecycle.label + '</span></td><td class="zh"><b>KEY ' +
+        Number(oem.keys_claimed || 0) + '</b><div class="hint">节点 ' +
+        Number(oem.instances_deployed || 0) + "</div></td><td>" +
+        fmtTime(oem.created_ts) + '</td><td class="zh"><button class="ghost small" data-detail="' +
+        oem.id + '">详情</button> <button class="ghost small" data-oemstatus="' +
+        oem.id + '" data-tostatus="' + (enabled ? "disabled" : "active") +
+        '" data-email="' + esc(oem.email) + '">' + (enabled ? "停用" : "启用") +
+        "</button></td></tr>";
+    }).join("") || '<tr><td colspan="10" class="zh empty">' +
+      (query ? "没有符合搜索条件的 OEM 客户" : "当前分类下没有 OEM 客户") +
+      "</td></tr>";
   }
 
   function renderFinanceLedger() {
@@ -2959,6 +3051,7 @@
       adminRegions = regions.slice();
       adminFinanceEntries = financeEntries.slice();
       adminKeys = keys.slice();
+      adminOems = oems.slice();
       manualTransferOems = oems.slice();
       renderFinanceOverview(finance, configs);
       renderFinanceLedger();
@@ -3284,22 +3377,8 @@
 
       renderAdminKeys();
 
-      // OEM 客户表（自助注册模式：超管唯一管控 = 停用/启用；账号状态用"正常/停用"措辞）
-      $("#admin-oems tbody").innerHTML = oems.map(function (o) {
-        var on = o.status === "active";
-        // 邀请人列：平台直属显示 GuDuu(橙),下线显示上线邮箱——分销层级一眼可辨
-        var inviter = o.inviter === "GuDuu"
-          ? '<span style="color:var(--orange)">GuDuu</span>'
-          : esc(o.inviter || "—");
-        return "<tr><td>#" + o.id + "</td><td>" + esc(o.email) + "</td><td class=\"zh\">" + esc(o.name || "—") + "</td>" +
-          '<td class="zh"><b>第 ' + (o.level || 1) + ' 层</b><div class="hint">直属：' + inviter + "</div></td>" +
-          '<td class="zh">直属 ' + (o.direct_users || 0) + '<div class="hint">网络 ' + (o.network_users || 0) + "</div></td>" +
-          '<td class="zh">直属 ' + (o.direct_oems || 0) + '<div class="hint">全部 ' + (o.total_downline_oems || 0) + "</div></td>" +
-          '<td class="zh"><span class="badge ' + (on ? "active" : "disabled") + '">' + (on ? "正常" : "停用") + "</span></td>" +
-          "<td>" + o.keys_claimed + "</td><td>" + fmtTime(o.created_ts) + "</td>" +
-          '<td class="zh"><button class="ghost small" data-detail="' + o.id + '">详情</button> ' +
-          '<button class="ghost small" data-oemstatus="' + o.id + '" data-tostatus="' + (on ? "disabled" : "active") + '" data-email="' + esc(o.email) + '">' + (on ? "停用" : "启用") + "</button></td></tr>";
-      }).join("") || '<tr><td colspan="10" class="zh empty">暂无注册客户</td></tr>';
+      // OEM 客户状态按注册、授权、部署和停用四个阶段统一渲染。
+      renderAdminCustomers();
       // 首次进入后台时自动回填，之后刷新数据不覆盖管理员正在编辑的内容。
       if (adminCan("release.read")) loadReleaseDraft(false);
     }).catch(function (err) { toast(err.message, true); });

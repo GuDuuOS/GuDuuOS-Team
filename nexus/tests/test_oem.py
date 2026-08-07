@@ -321,11 +321,14 @@ class OemScopingTest(unittest.TestCase):
         k2 = self._issue()
         oem.claim_key(self.s, self.a, k1)
         oem.claim_key(self.s, self.a, k2)
+        fleet.redeem(self.s, k1, "a-oem.example.com")
         rows = oem.list_oems(self.s)
         self.assertEqual(len(rows), 2)
         by_id = {r["id"]: r for r in rows}
         self.assertEqual(by_id[self.a]["keys_claimed"], 2)
+        self.assertEqual(by_id[self.a]["instances_deployed"], 1)
         self.assertEqual(by_id[self.b]["keys_claimed"], 0)
+        self.assertEqual(by_id[self.b]["instances_deployed"], 0)
         self.assertNotIn("password_hash", rows[0])
 
 

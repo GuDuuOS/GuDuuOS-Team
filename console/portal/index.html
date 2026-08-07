@@ -16,7 +16,7 @@
     · /portal/：OEM 邮箱登录/注册
     · /portal/admin/：独立平台超管登录（SSH 单次码仅作恢复）
     · OEM 门户：我的实例 / 认领授权码 / 我的授权码
-    · 超管视图：舰队实例 / KEY 签发与吊销 / 手动充值 / OEM 客户列表
+    · 超管视图：舰队实例 / KEY 查询与吊销 / 手动充值 / OEM 客户列表
   权限全部由服务端强制（/nexus/admin/* 走管理员会话、/nexus/oem/* 走 OEM 会话），
   本页只是展示层。
 -->
@@ -691,11 +691,23 @@
 
     <div class="admin-page" data-admin-view="customers" hidden>
       <section class="panel">
-        <div class="panel-head"><h2>OEM 客户</h2></div>
-        <table class="tbl" id="admin-oems">
-          <thead><tr><th>#</th><th>邮箱</th><th>称呼</th><th>层级 / 直属上级</th><th>用户</th><th>下级 OEM</th><th>状态</th><th>认领 KEY</th><th>注册时间</th><th>操作</th></tr></thead>
-          <tbody></tbody>
-        </table>
+        <div class="panel-head license-admin-head">
+          <div><h2>OEM 客户</h2><p class="hint">按授权与部署进度分类，账号停用状态优先显示。</p></div>
+          <input id="customer-search" class="request-search" type="search" placeholder="搜索企业、邮箱、上级或编号" />
+        </div>
+        <div id="customer-filters" class="request-filters">
+          <button class="tab on" type="button" data-customer-stage="all">全部 <em>0</em></button>
+          <button class="tab" type="button" data-customer-stage="unlicensed">未获授权 <em>0</em></button>
+          <button class="tab" type="button" data-customer-stage="pending_deploy">待部署 <em>0</em></button>
+          <button class="tab" type="button" data-customer-stage="deployed">已部署 <em>0</em></button>
+          <button class="tab" type="button" data-customer-stage="disabled">已停用 <em>0</em></button>
+        </div>
+        <div class="table-scroll">
+          <table class="tbl" id="admin-oems">
+            <thead><tr><th>#</th><th>邮箱</th><th>称呼</th><th>层级 / 直属上级</th><th>用户</th><th>下级 OEM</th><th>进度状态</th><th>授权 / 部署</th><th>注册时间</th><th>操作</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </section>
     </div>
 
@@ -1012,6 +1024,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=54"></script>
+<script src="/portal/portal.js?v=55"></script>
 </body>
 </html>

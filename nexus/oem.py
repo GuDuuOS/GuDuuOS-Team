@@ -779,7 +779,7 @@ def my_instance_detail(s, oem_id: int, instance_id: int) -> Dict[str, Any]:
 
 
 def list_oems(s) -> List[Dict[str, Any]]:
-    """全部 OEM 账号 + 认领的 KEY 数（**超管**控制台"客户列表"数据源）。
+    """全部 OEM 账号 + KEY/部署进度（**超管**控制台"客户列表"数据源）。
 
     只给超管端点用（service.py 里挂在 /nexus/admin/ 下、走具名短会话鉴权），
     OEM 自己永远看不到别人。
@@ -789,6 +789,15 @@ def list_oems(s) -> List[Dict[str, Any]]:
     counts: Dict[int, int] = {}
     for (oid,) in s.execute(select(NexusKeyClaim.oem_id)).all():
         counts[int(oid)] = counts.get(int(oid), 0) + 1
+    # “已经认领 KEY”和“已经部署节点”是两个不同阶段。实例必须沿
+    # ``instance.key_id → key_claim.oem_id`` 计算真实归属，不能用企业名称或邮箱猜测。
+    deployed_counts: Dict[int, int] = {}
+    for oid, count in s.execute(
+        select(NexusKeyClaim.oem_id, func.count(NexusInstance.id))
+        .join(NexusInstance, NexusInstance.key_id == NexusKeyClaim.key_id)
+        .group_by(NexusKeyClaim.oem_id)
+    ).all():
+        deployed_counts[int(oid)] = int(count)
     # 邀请边一次拉全：oem_id → inviter_id（None=平台直属；无边=旧账号,视同直属）
     invites, children, _accounts = _hierarchy_maps(s)
     user_counts: Dict[int, int] = {}
@@ -808,6 +817,7 @@ def list_oems(s) -> List[Dict[str, Any]]:
             {
                 **public_oem(r),
                 "keys_claimed": counts.get(r.id, 0),
+                "instances_deployed": deployed_counts.get(r.id, 0),
                 "inviter_id": iid,
                 # 展示名：上线邮箱 / GuDuu(平台直属或历史账号)
                 "inviter": emails.get(iid, f"#{iid}") if iid is not None else "GuDuu",
