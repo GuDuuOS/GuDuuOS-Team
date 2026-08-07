@@ -1,5 +1,16 @@
 # GuDuu OS — 开发日志 (Dev Log)
 
+## 2026-08-08 — GuDuu OS 1.31.2 (patch)
+
+- 安装：官方一键脚本明确支持没有预装 Docker 的 Ubuntu 22.04+ /
+  Debian 12+ 干净服务器，自动补齐 Docker Engine、Buildx、Compose 并启动体检。
+- 优化：中国大陆节点自动把 `https://docker.1ms.run` 合并到 Docker Hub
+  加速列表首位，定位、镜像拉取和后续 Compose 依赖都使用同一加速策略。
+- 安全：原 `daemon.json` 会先校验、备份并保留所有其他字段；配置非法时
+  拒绝覆盖，Docker 重启失败时自动恢复原配置。
+- 回退：镜像逻辑引用仍是公开 `docker.io/guduu/...@sha256` 精确摘要；
+  加速端点或 Docker Hub 不可用时，继续整组回退平台仓和 GHCR。
+
 ## 2026-08-07 — GuDuu OS 1.31.1 (patch)
 
 - 修复：旧一键安装器兑换 OEM KEY 后没有落盘 Nexus `instance_id`，导致已有的

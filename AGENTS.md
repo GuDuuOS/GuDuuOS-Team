@@ -377,14 +377,23 @@ client/
 > 由宿主 systemd 任务执行；Nexus Web 进程、bot 容器与 OEM 容器都不得获得
 > Docker socket 或镜像仓写凭据。Nexus 以受信 GHCR 摘要为唯一清单事实源，并由同一
 > 摘要推导 Docker Hub 与自建仓精确引用；新安装器和宿主更新代理默认优先拉 Docker
-> Hub，以便国内服务器使用标准 Docker 镜像加速器，失败后整组回退自建仓，最后回退
-> GHCR。三条路径都必须校验相同 manifest digest，bot/web 也不得混用不同来源。
+> Hub。中国大陆新节点必须在不覆盖客户既有 Docker daemon 配置的前提下，把
+> ``https://docker.1ms.run`` 作为 Docker Hub 优先加速端点；镜像逻辑名称仍保持
+> ``docker.io/...@sha256:digest``，不得改用可移动 tag。加速端点或 Docker Hub 失败后
+> 整组回退自建仓，最后回退 GHCR。三条路径都必须校验相同 manifest digest，
+> bot/web 也不得混用不同来源。
 > Docker Hub 两个仓库、自建仓与 GHCR 都必须允许匿名只读，并同时提供严格
 > ``vX.Y.Z`` 与 ``X.Y.Z`` 两个版本 Tag，方便
 > 人工排查和标准工具拉取；自动更新和回撤仍必须使用清单冻结的 ``@sha256:digest``，
 > 禁止依赖可移动 Tag，也禁止发布 ``latest``。Docker Hub 写入 Token 只允许保存在
 > GitHub Actions Secrets；自建仓同步写入账号只留在 Nexus 宿主 root 权限文件，安装器、
 > Nexus API 与 OEM 节点不得保存任何仓库写凭据。任一单仓故障都不得阻断已批准发布。
+
+> **OEM 干净宿主引导（2026-08）**：官方一键安装支持没有预装 Docker 的
+> Ubuntu 22.04+ / Debian 12+ 服务器。安装器先补齐基础工具，再从 Docker 官方
+> 受支持渠道安装 Engine、Buildx 与 Compose 插件，启动并体检 daemon 后才继续。
+> 已有 Docker 时不重复安装；中国大陆宿主配置加速器前必须校验并备份既有
+> ``daemon.json``，只合并 ``registry-mirrors`` 且保留其他字段；配置非法时拒绝覆盖。
 
 > **OEM 节点首次配置向导（2026-08）**：新节点安装并由初始管理员首次进入后台时，
 > 必须先完成服务器级配置向导，再进入日常管理界面。向导统一覆盖产品名称、Logo、

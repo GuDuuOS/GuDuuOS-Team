@@ -143,11 +143,14 @@ class UpdateAgentTest(unittest.TestCase):
     def test_installer_prefers_dockerhub_before_other_registries(self):
         """新节点先用可配置加速器的 Docker Hub，再按固定顺序回退。"""
         installer = (_APPLY_PATH.parent / "install.sh").read_text(encoding="utf-8")
+        accelerator = installer.index('guduu_configure_dockerhub_acceleration "$REGION"')
         dockerhub_pull = installer.index('docker pull "$BOT_DOCKERHUB_IMAGE"')
         mirror_pull = installer.index('docker pull "$BOT_MIRROR_IMAGE"')
         ghcr_pull = installer.index('docker pull "$BOT_GHCR_IMAGE"')
+        self.assertLess(accelerator, dockerhub_pull)
         self.assertLess(dockerhub_pull, mirror_pull)
         self.assertLess(mirror_pull, ghcr_pull)
+        self.assertIn("docker.1ms.run 优先加速", installer)
         self.assertIn('artifact["bot_dockerhub_image"]', installer)
 
     def test_mirror_digest_must_equal_ghcr_digest(self):

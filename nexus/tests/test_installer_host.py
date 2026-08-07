@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import subprocess
@@ -70,6 +71,153 @@ class InstallerHostTests(unittest.TestCase):
         unknown = self._host_check("ID=centos\nVERSION_ID=9\n")
         self.assertNotEqual(unknown.returncode, 0)
         self.assertIn("仅支持 Ubuntu", unknown.stdout)
+
+    def test_clean_supported_host_installs_missing_docker(self) -> None:
+        """干净宿主缺 Docker 时必须进入官方安装路径，不只是打印提示。"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            release = base / "os-release"
+            release.write_text('ID=ubuntu\nVERSION_ID="24.04"\n', encoding="utf-8")
+            fake = self._fake_bin(base)
+            marker = base / "docker-installed"
+            for name in ("curl", "gzip", "getent", "openssl", "python3", "ss", "tar", "uname"):
+                content = "#!/bin/sh\n"
+                if name == "uname":
+                    content += "echo x86_64\n"
+                else:
+                    content += "exit 0\n"
+                path = fake / name
+                path.write_text(content, encoding="utf-8")
+                path.chmod(path.stat().st_mode | stat.S_IXUSR)
+            env = dict(os.environ)
+            env.update(
+                {
+                    "GUDUU_OS_RELEASE_FILE": str(release),
+                    "FAKE_BIN": str(fake),
+                    "INSTALL_MARKER": str(marker),
+                    "PATH": f"{fake}:/usr/bin:/bin",
+                }
+            )
+            command = f'''
+source "{ENSURE_HOST}"
+guduu_install_docker() {{
+  printf installed > "$INSTALL_MARKER"
+  printf '#!/bin/sh\nexit 0\n' > "$FAKE_BIN/docker"
+  chmod 0755 "$FAKE_BIN/docker"
+}}
+guduu_start_docker() {{ docker info >/dev/null 2>&1; }}
+guduu_ensure_host
+'''
+            completed = subprocess.run(
+                ["bash", "-c", command],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout)
+            self.assertEqual(marker.read_text(encoding="utf-8"), "installed")
+            self.assertIn("https://get.docker.com", ENSURE_HOST.read_text())
+
+    def test_mainland_docker_mirror_merge_preserves_existing_config(self) -> None:
+        """大陆加速只合并 registry-mirrors，原有 daemon 字段不能被覆盖。"""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = base / "daemon.json"
+            target = base / "rendered.json"
+            source.write_text(
+                json.dumps(
+                    {
+                        "log-level": "warn",
+                        "registry-mirrors": ["https://mirror.example.com"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            command = (
+                f'source "{ENSURE_HOST}"; '
+                f'guduu_render_docker_mirror_config "{source}" "{target}" '
+                '"https://docker.1ms.run"; '
+                'guduu_is_mainland_region CN-BJ; '
+                '! guduu_is_mainland_region CN-HK'
+            )
+            completed = subprocess.run(
+                ["bash", "-c", command],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout)
+            value = json.loads(target.read_text(encoding="utf-8"))
+            self.assertEqual(value["log-level"], "warn")
+            self.assertEqual(
+                value["registry-mirrors"],
+                ["https://docker.1ms.run", "https://mirror.example.com"],
+            )
+
+    def test_invalid_daemon_json_is_never_overwritten(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            source = base / "daemon.json"
+            target = base / "rendered.json"
+            source.write_text("{broken", encoding="utf-8")
+            completed = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f'source "{ENSURE_HOST}"; guduu_render_docker_mirror_config '
+                    f'"{source}" "{target}" "https://docker.1ms.run"',
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertEqual(source.read_text(encoding="utf-8"), "{broken")
+            self.assertFalse(target.exists())
+
+    def test_mainland_acceleration_backs_up_and_restarts_docker(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            fake = self._fake_bin(base)
+            docker = fake / "docker"
+            docker.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
+            config = base / "docker" / "daemon.json"
+            config.parent.mkdir()
+            config.write_text('{"log-driver":"local"}\n', encoding="utf-8")
+            env = dict(os.environ)
+            env.update(
+                {
+                    "GUDUU_DOCKER_DAEMON_CONFIG": str(config),
+                    "PATH": f"{fake}:/usr/bin:/bin",
+                }
+            )
+            completed = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f'source "{ENSURE_HOST}"; '
+                    "guduu_configure_dockerhub_acceleration CN-SH",
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout)
+            value = json.loads(config.read_text(encoding="utf-8"))
+            self.assertEqual(value["log-driver"], "local")
+            self.assertEqual(
+                value["registry-mirrors"], ["https://docker.1ms.run"]
+            )
+            backups = list(config.parent.glob("daemon.json.guduu-backup-*"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_text(encoding="utf-8"), '{"log-driver":"local"}\n')
 
     def test_existing_node_migration_preserves_customer_state(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -147,6 +295,7 @@ class InstallerHostTests(unittest.TestCase):
         self.assertIn("UMask=0007", service)
         self.assertIn("OnActiveSec=30s", timer)
         self.assertIn("systemctl start guduu-update-agent.service", installer)
+        self.assertIn('guduu_configure_dockerhub_acceleration "$REGION"', installer)
         self.assertIn("systemctl start guduu-update-agent.service", migrator)
         self.assertIn(
             'install -d -m 0770 "$TARGET_DISTRO/data/cosmac"', migrator
@@ -170,7 +319,7 @@ class InstallerHostTests(unittest.TestCase):
                 {
                     "PATH": f"{fake}:/usr/bin:/bin",
                     "GUDUU_UPDATE_LOCK": str(base / "update.lock"),
-                    "GUDUU_HOST_TOOLS_VERSION": "1.31.1",
+                    "GUDUU_HOST_TOOLS_VERSION": "1.31.2",
                     "GUDUU_SYSTEMD_DIR": str(base / "systemd"),
                 }
             )
@@ -188,7 +337,7 @@ class InstallerHostTests(unittest.TestCase):
                 (target / "data" / "update" / "host-tools-version")
                 .read_text(encoding="utf-8")
                 .strip(),
-                "1.31.1",
+                "1.31.2",
             )
 
     def test_migrator_can_explicitly_approve_cached_release(self) -> None:
@@ -212,7 +361,7 @@ class InstallerHostTests(unittest.TestCase):
                 {
                     "PATH": f"{fake}:/usr/bin:/bin",
                     "GUDUU_UPDATE_LOCK": str(base / "update.lock"),
-                    "GUDUU_HOST_TOOLS_VERSION": "1.31.1",
+                    "GUDUU_HOST_TOOLS_VERSION": "1.31.2",
                     "GUDUU_SYSTEMD_DIR": str(base / "systemd"),
                 }
             )

@@ -115,6 +115,11 @@ if requested not in codes:
     raise SystemExit(2)
 print(requested)
 ' "$REGION") || die "不支持的机房地域代码：$REGION"
+  if guduu_is_mainland_region "$REGION"; then
+    say "配置中国大陆 Docker Hub 加速器……"
+    guduu_configure_dockerhub_acceleration "$REGION" \
+      || die "Docker Hub 加速配置失败；原 Docker 配置已保留或回滚。"
+  fi
   say "向 GuDuu Nexus（$NEXUS_URL）兑换授权……"
   REDEEM_RESP=$(curl -sS --max-time 20 -X POST "$NEXUS_URL/nexus/redeem" \
     -A "GuDuu-Node-Installer/1.0" \
@@ -181,12 +186,18 @@ if [ "$INSTALLER_VERSION" != "未知" ] && [ "$INSTALLER_VERSION" != "$INSTALL_V
   warn "安装工具为 $INSTALLER_VERSION，Nexus 新装基线为 $INSTALL_VERSION；将按平台已验收基线安装。"
 fi
 
-# Docker Hub 优先，方便国内服务器使用标准 Docker 镜像加速器；任一镜像失败就
-# 整组回退自建仓，最后回退 GHCR，避免 bot/web 来自两套不一致来源。
-say "拉取 GuDuu OS $INSTALL_VERSION 镜像（优先 Docker Hub）……"
+# Docker Hub 优先；中国大陆宿主的 daemon 已把 docker.1ms.run 放在
+# registry-mirrors 首位，但逻辑镜像名仍是 docker.io/...@sha256。加速端点
+# 不可用时 Docker 可回退官方 Hub；任一镜像失败则整组回退自建仓，
+# 最后回退 GHCR，避免 bot/web 来自两套不一致来源。
+DOCKERHUB_PULL_LABEL="Docker Hub"
+if guduu_is_mainland_region "$REGION"; then
+  DOCKERHUB_PULL_LABEL="Docker Hub（docker.1ms.run 优先加速）"
+fi
+say "拉取 GuDuu OS $INSTALL_VERSION 镜像（优先 $DOCKERHUB_PULL_LABEL）……"
 if docker pull "$BOT_DOCKERHUB_IMAGE" && docker pull "$WEB_DOCKERHUB_IMAGE"; then
   BOT_IMAGE="$BOT_DOCKERHUB_IMAGE"; WEB_IMAGE="$WEB_DOCKERHUB_IMAGE"
-  INSTALL_IMAGE_SOURCE="Docker Hub（首选）"; INSTALL_IMAGE_FALLBACK="否"
+  INSTALL_IMAGE_SOURCE="$DOCKERHUB_PULL_LABEL（首选）"; INSTALL_IMAGE_FALLBACK="否"
 else
   warn "Docker Hub 拉取失败，回退平台镜像仓同摘要镜像……"
   if docker pull "$BOT_MIRROR_IMAGE" && docker pull "$WEB_MIRROR_IMAGE"; then

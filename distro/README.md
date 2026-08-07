@@ -24,9 +24,12 @@ curl -fsSL https://dev-nexus.guduu.co/portal/install.sh | sudo bash -s -- --doma
 避免授权码留在 shell history。
 
 干净 Ubuntu 22.04+ / Debian 12+ 上不需要预装 Docker：安装器会自动准备
-基础工具、Docker Engine 和 Compose 插件。节点镜像默认从
-Docker Hub `guduu/` 按不可变 digest 匿名拉取，便于使用标准镜像加速器；失败时
-依次回退 `registry.guduu.co` 和同摘要 GHCR；
+基础工具，安装并启动 Docker Engine、Buildx 和 Compose 插件。已有 Docker
+则不重复安装。节点镜像默认从 Docker Hub `guduu/` 按不可变 digest
+匿名拉取；地域选择中国大陆时，安装器会保留并备份已有 Docker daemon 配置，
+只把 `https://docker.1ms.run` 合并到 `registry-mirrors` 首位。加速端点不可用时
+Docker 可继续尝试官方 Hub；整组拉取失败时再依次回退 `registry.guduu.co`
+和同摘要 GHCR。镜像引用始终保持 `@sha256:digest`，
 客户不需要 GitHub 账号或镜像仓 Token。
 
 装完后：
