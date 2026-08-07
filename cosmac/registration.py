@@ -209,17 +209,21 @@ def _smtp_conf() -> Optional[Dict[str, Any]]:
         # 官方发行版绝不因数据库暂时不可读而重新启用旧 .env 中的业务凭据。
         return None
     configured = runtime.get("_source") == "node_settings"
-    host = str(runtime.get("host") if configured else _env("SMTP_HOST"))
-    user = str(runtime.get("user") if configured else _env("SMTP_USER"))
-    password = str(runtime.get("password") if configured else _env("SMTP_PASSWORD"))
+    host = str((runtime.get("host") if configured else _env("SMTP_HOST")) or "")
+    user = str((runtime.get("user") if configured else _env("SMTP_USER")) or "")
+    password = str(
+        (runtime.get("password") if configured else _env("SMTP_PASSWORD")) or ""
+    )
     sender = str(
-        runtime.get("from_address") if configured else _env("SMTP_FROM") or user
+        (runtime.get("from_address") if configured else _env("SMTP_FROM")) or user
     )
     if not (host and user and password and sender):
         return None
     try:
-        port = int(runtime.get("port") if configured else _env("SMTP_PORT", "465"))
-    except ValueError:
+        port = int(
+            (runtime.get("port") if configured else _env("SMTP_PORT", "465")) or 465
+        )
+    except (TypeError, ValueError):
         port = 465
     return {
         "host": host,
@@ -228,8 +232,11 @@ def _smtp_conf() -> Optional[Dict[str, Any]]:
         "password": password,
         "from": sender,
         "from_name": str(
-            runtime.get("from_name")
-            if configured else _env("SMTP_FROM_NAME", "GuDuu OS")
+            (
+                runtime.get("from_name")
+                if configured else _env("SMTP_FROM_NAME", "GuDuu OS")
+            )
+            or "GuDuu OS"
         ),
         "security": str(runtime.get("security") or "ssl"),
     }
