@@ -362,6 +362,7 @@
     network: "邀请与层级",
     announcements: "版本公告",
     commerce: "购买与充值",
+    lifetime: "终身激活码",
     licenses: "授权申请",
     keys: "我的 KEY",
   };
@@ -1120,7 +1121,8 @@
   // ---------- OEM 门户 ----------
   var CH_ZH = {
     alipay: "支付宝", wechat: "微信支付", stripe: "Stripe", paypal: "PayPal",
-    usdt: "USDT", mock: "模拟支付(开发)", corporate_transfer: "企业转账（人工）"
+    usdt: "USDT", mock: "模拟支付(开发)", corporate_transfer: "企业转账（人工）",
+    manual_request: "财务确认入账"
   };
   var licensePricing = { key_price_cents: 0, key_token_grant: 0 };
   var licenseChannels = {};
@@ -1362,6 +1364,52 @@
         '<td class="zh">' + (CH_ZH[o.channel] || o.channel) + '</td><td class="zh"><span class="badge ' + st[0] + '">' + st[1] + "</span></td>" +
         "<td>" + keyCell + "</td><td>" + fmtTime(o.created_ts) + "</td></tr>";
     }).join("");
+  }
+
+  var ENTITLEMENT_ST = {
+    pending: ["warning", "待处理"], approved: ["active", "已批准"],
+    paid: ["active", "已入账"], rejected: ["revoked", "已拒绝"],
+    cancelled: ["idle", "已撤回"], active: ["active", "待激活"],
+    activated: ["active", "已激活"], revoked: ["revoked", "已停用"]
+  };
+  function entitlementBadge(status) {
+    var st = ENTITLEMENT_ST[status] || ["idle", status || "—"];
+    return '<span class="badge ' + st[0] + '">' + esc(st[1]) + "</span>";
+  }
+  function instanceOptions(instances) {
+    return (instances || []).map(function (item) {
+      return '<option value="' + item.id + '">#' + item.id + " · " + esc(item.domain) + "</option>";
+    }).join("") || '<option value="">暂无可用节点</option>';
+  }
+  function renderLifetimeRequests(requests, instances) {
+    var options = instanceOptions(instances);
+    $("#form-lifetime-request").instance_id.innerHTML = options;
+    $("#form-lifetime-request").querySelector('button[type="submit"]').disabled = !instances.length;
+    $("#nav-oem-lifetime").textContent = String((requests || []).length);
+    $("#oem-lifetime-requests tbody").innerHTML = (requests || []).map(function (item) {
+      var code = item.code || {};
+      var codeCell = code.tail ? "···" + esc(code.tail) + " " + entitlementBadge(code.status) : "—";
+      var action = item.status === "pending"
+        ? '<button class="ghost small" data-lifetime-cancel="' + item.id + '">撤回</button>'
+        : (item.status === "approved" && code.status === "active"
+          ? '<button class="primary small" data-lifetime-reveal="' + item.id + '">查看激活码</button>' : "—");
+      return "<tr><td>#" + item.id + "</td><td>" + esc(item.domain || ("#" + item.instance_id)) +
+        '</td><td class="zh">' + entitlementBadge(item.status) + '</td><td class="zh">' + codeCell +
+        '</td><td>' + esc(code.member_user_id || "—") + '</td><td>' + fmtTime(item.created_ts) +
+        '</td><td class="zh">' + action + "</td></tr>";
+    }).join("") || '<tr><td colspan="7" class="empty">暂无终身激活码申请</td></tr>';
+  }
+  function renderTokenPurchaseRequests(requests, instances) {
+    $("#form-token-purchase-request").instance_id.innerHTML = instanceOptions(instances);
+    $("#form-token-purchase-request").querySelector('button[type="submit"]').disabled = !instances.length;
+    $("#oem-token-purchase-requests tbody").innerHTML = (requests || []).map(function (item) {
+      var action = item.status === "pending"
+        ? '<button class="ghost small" data-token-request-cancel="' + item.id + '">撤回</button>' : "—";
+      return "<tr><td>#" + item.id + "</td><td>" + esc(item.domain || ("#" + item.instance_id)) +
+        '</td><td><b>' + fmtInteger(item.requested_tokens) + '</b></td><td class="zh">' + entitlementBadge(item.status) +
+        '</td><td>' + (item.amount_cents == null ? "—" : fmtYuan(item.amount_cents)) +
+        '</td><td>' + fmtTime(item.created_ts) + '</td><td class="zh">' + action + "</td></tr>";
+    }).join("") || '<tr><td colspan="7" class="empty">暂无 Token 购买申请</td></tr>';
   }
 
   var WITHDRAW_ST = {
@@ -1844,6 +1892,56 @@
       .catch(function (err) { toast(err.message, true); });
   });
 
+  $("#form-lifetime-request").addEventListener("submit", function (event) {
+    event.preventDefault();
+    var form = event.currentTarget;
+    api("/nexus/oem/lifetime_request", { body: {
+      instance_id: Number(form.instance_id.value || 0), note: form.note.value,
+    }}).then(function () {
+      form.note.value = ""; toast("终身激活码申请已提交"); loadOem();
+    }).catch(function (err) { toast(err.message, true); });
+  });
+  $("#form-token-purchase-request").requested_tokens.addEventListener("input", function () {
+    var digits = String(this.value || "").replace(/[^0-9]/g, "").slice(0, 12);
+    this.value = digits ? Number(digits).toLocaleString("en-US") : "";
+  });
+  $("#form-token-purchase-request").addEventListener("submit", function (event) {
+    event.preventDefault();
+    var form = event.currentTarget;
+    var tokens = Number(String(form.requested_tokens.value).replace(/,/g, ""));
+    api("/nexus/oem/token_purchase_request", { body: {
+      instance_id: Number(form.instance_id.value || 0), requested_tokens: tokens,
+      note: form.note.value,
+    }}).then(function () {
+      form.requested_tokens.value = ""; form.note.value = "";
+      toast("Token 购买申请已提交，待财务确认到账"); loadOem();
+    }).catch(function (err) { toast(err.message, true); });
+  });
+  $("#oem-lifetime-requests").addEventListener("click", function (event) {
+    var cancel = event.target.closest("[data-lifetime-cancel]");
+    var reveal = event.target.closest("[data-lifetime-reveal]");
+    if (cancel) api("/nexus/oem/lifetime_action", { body: {
+      action: "cancel", request_id: Number(cancel.dataset.lifetimeCancel),
+    }}).then(function () { toast("申请已撤回"); loadOem(); }).catch(function (err) { toast(err.message, true); });
+    if (reveal) api("/nexus/oem/lifetime_action", { body: {
+      action: "reveal", request_id: Number(reveal.dataset.lifetimeReveal),
+    }}).then(function (result) {
+      var copied = navigator.clipboard && navigator.clipboard.writeText
+        ? navigator.clipboard.writeText(result.activation_code).then(function () { return true; }).catch(function () { return false; })
+        : Promise.resolve(false);
+      return copied.then(function (didCopy) {
+        return uiDialog({ text: (didCopy ? "激活码已复制：\n" : "请手动复制激活码：\n") + result.activation_code + "\n\n" + result.warning, okText: "我已安全保存" });
+      });
+    }).catch(function (err) { toast(err.message, true); });
+  });
+  $("#oem-token-purchase-requests").addEventListener("click", function (event) {
+    var button = event.target.closest("[data-token-request-cancel]");
+    if (!button) return;
+    api("/nexus/oem/token_purchase_action", { body: {
+      action: "cancel", request_id: Number(button.dataset.tokenRequestCancel),
+    }}).then(function () { toast("申请已撤回"); loadOem(); }).catch(function (err) { toast(err.message, true); });
+  });
+
   function loadOem() {
     Promise.all([
       api("/nexus/oem/me"),
@@ -1869,6 +1967,8 @@
       renderShop(rs[1], r.instances);
       renderOemFinance(rs[2]);
       renderOrders(orders);
+      renderLifetimeRequests(r.lifetime_requests || [], r.instances || []);
+      renderTokenPurchaseRequests(r.token_purchase_requests || [], r.instances || []);
       renderAnnouncements(announcements);
       renderReferral(r.referral || {});
       if (oemNetworkVisible) {
@@ -2278,6 +2378,8 @@
   // OEM 客户列表需要同时按账号、授权和部署三个阶段判断状态；保留当前快照
   // 可让搜索与分类即时切换，不必每次输入都重新请求数据库。
   var adminOems = [];
+  var adminLifetimeRequests = [];
+  var adminTokenPurchaseRequests = [];
   var adminCustomerStage = "all";
   // OEM 实例列表只用于点击前快速确认卡片仍属于当前页面；
   // 真正的归属校验仍在服务端做，不信任这个前端数组。
@@ -2291,6 +2393,76 @@
   var editingRequestId = 0;
   var adminRequestStatus = "pending";
   var requestSearchTimer = null;
+
+  function renderAdminLifetimeRequests() {
+    $("#admin-lifetime-requests tbody").innerHTML = adminLifetimeRequests.map(function (item) {
+      var action = item.status === "pending"
+        ? '<button class="primary small" data-admin-lifetime-approve="' + item.id + '">批准</button> ' +
+          '<button class="ghost small" data-admin-lifetime-reject="' + item.id + '">拒绝</button>' : "—";
+      return "<tr><td>#" + item.id + '</td><td class="zh"><b>' + esc(item.company || "—") +
+        '</b><div class="hint">' + esc(item.oem_email || "") + '</div></td><td>' +
+        esc(item.domain || ("#" + item.instance_id)) + '</td><td class="zh">' + entitlementBadge(item.status) +
+        '</td><td class="zh">' + esc(item.note || "—") + '</td><td>' + fmtTime(item.created_ts) +
+        '</td><td class="zh">' + action + "</td></tr>";
+    }).join("") || '<tr><td colspan="7" class="empty">暂无终身激活码申请</td></tr>';
+  }
+  function renderAdminTokenPurchaseRequests() {
+    $("#admin-token-purchase-requests tbody").innerHTML = adminTokenPurchaseRequests.map(function (item) {
+      var action = item.status === "pending"
+        ? '<button class="primary small" data-admin-token-paid="' + item.id + '">确认到账并充值</button> ' +
+          '<button class="ghost small" data-admin-token-reject="' + item.id + '">拒绝</button>' : "—";
+      return "<tr><td>#" + item.id + '</td><td class="zh"><b>' + esc(item.company || "—") +
+        '</b><div class="hint">' + esc(item.oem_email || "") + '</div></td><td>' +
+        esc(item.domain || ("#" + item.instance_id)) + '</td><td><b>' + fmtInteger(item.requested_tokens) +
+        '</b></td><td class="zh">' + entitlementBadge(item.status) + '</td><td>' +
+        (item.amount_cents == null ? "—" : fmtYuan(item.amount_cents)) + '</td><td>' +
+        fmtTime(item.created_ts) + '</td><td class="zh">' + action + "</td></tr>";
+    }).join("") || '<tr><td colspan="8" class="empty">暂无 Token 购买申请</td></tr>';
+  }
+
+  $("#admin-lifetime-requests").addEventListener("click", function (event) {
+    var approve = event.target.closest("[data-admin-lifetime-approve]");
+    var reject = event.target.closest("[data-admin-lifetime-reject]");
+    var button = approve || reject;
+    if (!button) return;
+    var id = Number(approve ? button.dataset.adminLifetimeApprove : button.dataset.adminLifetimeReject);
+    uiPrompt(approve ? "批准后将生成一枚限定当前节点的终身激活码（备注可选）" : "请填写拒绝原因", "处理备注", "").then(function (note) {
+      if (note === null) return;
+      return api("/nexus/admin/lifetime_request_decide", { body: {
+        request_id: id, approve: !!approve, decide_note: note,
+      }}).then(function () { toast(approve ? "激活码已批准并安全交付" : "申请已拒绝"); loadAdmin(); });
+    }).catch(function (err) { toast(err.message, true); });
+  });
+  $("#admin-token-purchase-requests").addEventListener("click", function (event) {
+    var paid = event.target.closest("[data-admin-token-paid]");
+    var reject = event.target.closest("[data-admin-token-reject]");
+    var button = paid || reject;
+    if (!button) return;
+    var id = Number(paid ? button.dataset.adminTokenPaid : button.dataset.adminTokenReject);
+    var request = adminTokenPurchaseRequests.find(function (item) { return Number(item.id) === id; });
+    if (paid) {
+      uiPrompt("请填写已核对的实际到账金额（元）；确认后会立即充值 " + fmtInteger(request ? request.requested_tokens : 0) + " Token", "例如 880.00", "").then(function (yuan) {
+        if (yuan === null) return null;
+        var cents = Math.round(Number(yuan) * 100);
+        if (!Number.isFinite(cents) || cents <= 0) throw new Error("实收金额必须大于 0");
+        return uiPrompt("填写到账渠道或流水备注（可选）", "例如银行转账 123456", "").then(function (note) {
+          if (note === null) return null;
+          return api("/nexus/admin/token_purchase_decide", { body: {
+            request_id: id, approve: true, amount_cents: cents, decide_note: note,
+          }});
+        });
+      }).then(function (result) {
+        if (!result) return; toast("实收已入账，Token 已充入节点"); loadAdmin();
+      }).catch(function (err) { toast(err.message, true); });
+    } else {
+      uiPrompt("请填写拒绝原因", "拒绝原因", "").then(function (note) {
+        if (note === null) return;
+        return api("/nexus/admin/token_purchase_decide", { body: {
+          request_id: id, approve: false, decide_note: note,
+        }}).then(function () { toast("申请已拒绝"); loadAdmin(); });
+      }).catch(function (err) { toast(err.message, true); });
+    }
+  });
 
   function renderAdminKeys() {
     var search = $("#key-search");
@@ -3057,6 +3229,8 @@
       api("/nexus/admin/regions"),
       optionalAdminApi("finance.read", "/nexus/admin/withdrawals", { withdrawals: [] }),
       optionalAdminApi("finance.read", "/nexus/admin/oem_commercial_terms", { terms: [] }),
+      optionalAdminApi("operations.read", "/nexus/admin/lifetime_requests", { requests: [] }),
+      optionalAdminApi("finance.read", "/nexus/admin/token_purchase_requests", { requests: [] }),
     ]).then(function (rs) {
       var insts = rs[0].instances, keys = rs[1].keys, oems = rs[2].oems;
       var reqs = rs[3].requests || [], requestCounts = rs[3].counts || {};
@@ -3070,14 +3244,20 @@
       var regions = rs[12].regions || [];
       var withdrawals = rs[13].withdrawals || [];
       var commercialTerms = rs[14].terms || [];
+      var lifetimeRequests = rs[15].requests || [];
+      var tokenPurchaseRequests = rs[16].requests || [];
       adminInstances = insts.slice();
       adminRegions = regions.slice();
       adminFinanceEntries = financeEntries.slice();
       adminKeys = keys.slice();
       adminOems = oems.slice();
+      adminLifetimeRequests = lifetimeRequests.slice();
+      adminTokenPurchaseRequests = tokenPurchaseRequests.slice();
       manualTransferOems = oems.slice();
       renderFinanceOverview(finance, configs);
       renderFinanceLedger();
+      renderAdminLifetimeRequests();
+      renderAdminTokenPurchaseRequests();
       renderPlatformFeatures(featureFlags);
       renderReleasePolicy(releasePolicy);
 
@@ -3100,9 +3280,14 @@
       // 被埋在授权列表里。这里只展示已有接口返回的计数，不额外增加轮询请求。
       $("#nav-count-releases").textContent = String(releases.length);
       $("#nav-count-instances").textContent = String(insts.length);
-      $("#nav-count-requests").textContent = String((requestCounts.pending || 0) + (requestCounts.needs_info || 0));
+      $("#nav-count-requests").textContent = String(
+        (requestCounts.pending || 0) + (requestCounts.needs_info || 0) +
+        lifetimeRequests.filter(function (item) { return item.status === "pending"; }).length
+      );
       $("#nav-count-customers").textContent = String(oems.length);
-      $("#nav-count-orders").textContent = String(orders.length);
+      $("#nav-count-orders").textContent = String(
+        orders.length + tokenPurchaseRequests.filter(function (item) { return item.status === "pending"; }).length
+      );
 
       // 定价表单回填（仅在超管未编辑时覆盖,避免打字被刷新冲掉）
       var pf = $("#form-pricing");

@@ -64,6 +64,7 @@ from nexus import (
     admin_auth,
     audit,
     db,
+    entitlements,
     features,
     fleet,
     geo,
@@ -263,6 +264,8 @@ class NexusHandler(BaseHTTPRequestHandler):
             "/nexus/admin/topup_transfer_decide",
             "/nexus/admin/withdrawal_decide",
             "/nexus/admin/payment_config",
+            "/nexus/admin/token_purchase_requests",
+            "/nexus/admin/token_purchase_decide",
         ) or path.startswith("/nexus/admin/manual_transfer_voucher/"):
             return "finance.write" if write else "finance.read"
         if path in (
@@ -696,6 +699,12 @@ class NexusHandler(BaseHTTPRequestHandler):
                         "keys": oem_svc.my_keys(s, oem.id),
                         "requests": oem_svc.my_requests(s, oem.id),
                         "orders": pay.my_orders(s, oem.id),
+                        "lifetime_requests": entitlements.my_lifetime_requests(
+                            s, oem.id
+                        ),
+                        "token_purchase_requests": (
+                            entitlements.my_token_purchase_requests(s, oem.id)
+                        ),
                         # 只返回该 OEM 名下节点已经成功安装的版本；它与上方 instances
                         # 使用同一归属边，但在业务层再次强制过滤，避免依赖前端隐藏。
                         "announcements": releases.list_oem_announcements(s, oem.id),
@@ -909,6 +918,28 @@ class NexusHandler(BaseHTTPRequestHandler):
                                 s, status=status, query=query
                             ),
                             "counts": oem_svc.request_counts(s),
+                        },
+                    )
+                )
+            return
+        if path == "/nexus/admin/lifetime_requests":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "requests": entitlements.list_lifetime_requests(s)
+                        },
+                    )
+                )
+            return
+        if path == "/nexus/admin/token_purchase_requests":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "requests": entitlements.list_token_purchase_requests(s)
                         },
                     )
                 )
@@ -1321,6 +1352,24 @@ class NexusHandler(BaseHTTPRequestHandler):
             return
 
         body = self._read_body()
+
+        # 终身会员激活由节点服务端代理：用户不接触 OEM 部署 KEY，
+        # Nexus 同时校验“节点授权 + 激活码归属 + 一人一码”。
+        if path == "/nexus/lifetime/activate":
+            self._with_session(
+                lambda s: self._json(
+                    200,
+                    entitlements.activate_lifetime_code(
+                        s,
+                        raw_node_key=str(body.get("key", "")),
+                        activation_code=str(body.get("activation_code", "")),
+                        user_id=str(body.get("user_id", "")),
+                        device_kind=str(body.get("device_kind", "node")),
+                        device_id=str(body.get("device_id", "")),
+                    ),
+                )
+            )
+            return
 
         # —— GitHub Actions 镜像构建回调：不走浏览器管理员会话，只认独立 HMAC ——
         # 签名覆盖时间戳与规范化 JSON；五分钟窗口可阻断截获后的长期重放。清单本身只含
@@ -1912,6 +1961,97 @@ class NexusHandler(BaseHTTPRequestHandler):
             self._with_session(_request_action)
             return
 
+        if path == "/nexus/oem/lifetime_request":
+
+            def _lifetime_request(s):
+                account = self._oem(s)
+                if account is None:
+                    return
+                self._json(
+                    201,
+                    {
+                        "request": entitlements.request_lifetime_code(
+                            s,
+                            account.id,
+                            int(body.get("instance_id") or 0),
+                            str(body.get("note", "")),
+                        )
+                    },
+                )
+
+            self._with_session(_lifetime_request)
+            return
+
+        if path == "/nexus/oem/lifetime_action":
+
+            def _lifetime_action(s):
+                account = self._oem(s)
+                if account is None:
+                    return
+                action = str(body.get("action", ""))
+                request_id = int(body.get("request_id") or 0)
+                if action == "cancel":
+                    result = entitlements.cancel_lifetime_request(
+                        s, account.id, request_id
+                    )
+                    self._json(200, {"request": result})
+                elif action == "reveal":
+                    self._json(
+                        200,
+                        entitlements.reveal_lifetime_code(
+                            s, account.id, request_id
+                        ),
+                    )
+                else:
+                    raise FleetError("NEXUS_BAD_ACTION", "不支持的激活码操作")
+
+            self._with_session(_lifetime_action)
+            return
+
+        if path == "/nexus/oem/token_purchase_request":
+
+            def _token_purchase_request(s):
+                account = self._oem(s)
+                if account is None:
+                    return
+                self._json(
+                    201,
+                    {
+                        "request": entitlements.request_token_purchase(
+                            s,
+                            account.id,
+                            int(body.get("instance_id") or 0),
+                            int(body.get("requested_tokens") or 0),
+                            str(body.get("note", "")),
+                        )
+                    },
+                )
+
+            self._with_session(_token_purchase_request)
+            return
+
+        if path == "/nexus/oem/token_purchase_action":
+
+            def _token_purchase_action(s):
+                account = self._oem(s)
+                if account is None:
+                    return
+                if str(body.get("action", "")) != "cancel":
+                    raise FleetError("NEXUS_BAD_ACTION", "不支持的 Token 申请操作")
+                self._json(
+                    200,
+                    {
+                        "request": entitlements.cancel_token_purchase_request(
+                            s,
+                            account.id,
+                            int(body.get("request_id") or 0),
+                        )
+                    },
+                )
+
+            self._with_session(_token_purchase_action)
+            return
+
         # —— Token 充值订单（KEY 必须走上方 license_checkout）——
         if path == "/nexus/oem/withdrawals":
 
@@ -2209,6 +2349,41 @@ class NexusHandler(BaseHTTPRequestHandler):
                                 action=str(body.get("action", "")),
                                 actor_label=self._admin_actor(),
                                 source_ip=self._client_ip(),
+                            )
+                        },
+                    )
+                )
+            return
+
+        if path == "/nexus/admin/lifetime_request_decide":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "request": entitlements.decide_lifetime_request(
+                                s,
+                                int(body.get("request_id") or 0),
+                                bool(body.get("approve")),
+                                str(body.get("decide_note", "")),
+                            )
+                        },
+                    )
+                )
+            return
+
+        if path == "/nexus/admin/token_purchase_decide":
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "request": entitlements.decide_token_purchase_request(
+                                s,
+                                int(body.get("request_id") or 0),
+                                approve=bool(body.get("approve")),
+                                amount_cents=int(body.get("amount_cents") or 0),
+                                decide_note=str(body.get("decide_note", "")),
                             )
                         },
                     )

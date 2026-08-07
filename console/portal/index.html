@@ -6,7 +6,7 @@
 <title>GuDuu Nexus · 控制台</title>
 <!-- 主题预置使用同源外部脚本，既防刷新闪色，也允许 Portal 开启严格脚本 CSP。 -->
 <script src="/portal/theme-init.js?v=1"></script>
-<link rel="stylesheet" href="/portal/portal.css?v=48" />
+<link rel="stylesheet" href="/portal/portal.css?v=49" />
 </head>
 <body>
 <!--
@@ -136,6 +136,9 @@
       </button>
       <button class="admin-menu-item" data-oem-page="commerce">
         <span class="admin-menu-icon">¥</span><span>购买与充值</span><em id="nav-oem-orders">0</em>
+      </button>
+      <button class="admin-menu-item" data-oem-page="lifetime">
+        <span class="admin-menu-icon">∞</span><span>终身激活码</span><em id="nav-oem-lifetime">0</em>
       </button>
       <button class="admin-menu-item" data-oem-page="licenses">
         <span class="admin-menu-icon">⌁</span><span>授权申请</span><em id="nav-oem-requests">0</em>
@@ -300,6 +303,16 @@
       <b>订单已创建：</b><span id="pay-pending-msg"></span>
       <div style="margin-top:8px"><button id="btn-mock-pay" class="primary" hidden>模拟支付成功（开发环境）</button></div>
     </div>
+    <div class="request-box token-request-box">
+      <div class="panel-head"><div><h3>申请购买 Token</h3><p class="hint">没有合适套餐时，可提交自定义量；财务确认实际到账后才会充入节点。</p></div></div>
+      <form id="form-token-purchase-request" class="entitlement-form">
+        <label>充值节点<select name="instance_id" required></select></label>
+        <label>购买数量（Token）<input name="requested_tokens" inputmode="numeric" required placeholder="10,000,000" /></label>
+        <label class="entitlement-note">用途 / 商务备注<input name="note" maxlength="500" placeholder="例如合同编号、预计付款时间" /></label>
+        <button class="primary" type="submit">提交购买申请</button>
+      </form>
+      <div class="table-scroll"><table class="tbl" id="oem-token-purchase-requests"><thead><tr><th>#</th><th>节点</th><th>申请数量</th><th>状态</th><th>实收</th><th>申请时间</th><th>操作</th></tr></thead><tbody></tbody></table></div>
+    </div>
   </section>
 
   <section class="panel oem-income-panel" id="panel-oem-income">
@@ -347,6 +360,18 @@
       </table>
     </div>
   </section>
+    </div>
+
+    <div class="admin-page" data-oem-view="lifetime" hidden>
+      <section class="panel">
+        <div class="panel-head"><div><h2>终身会员激活码</h2><p class="hint">每份申请对应一个自有节点、一个最终用户。审批后在节点内兑换可获得长期会员；桌面端本地部署类型已预留，将在桌面版正式发布后开放。</p></div></div>
+        <form id="form-lifetime-request" class="entitlement-form">
+          <label>使用节点<select name="instance_id" required></select></label>
+          <label class="entitlement-note">申请备注<input name="note" maxlength="500" placeholder="例如员工福利、客户合同编号" /></label>
+          <button class="primary" type="submit">申请 1 个终身激活码</button>
+        </form>
+        <div class="table-scroll"><table class="tbl" id="oem-lifetime-requests"><thead><tr><th>#</th><th>节点</th><th>状态</th><th>激活码</th><th>绑定账号</th><th>申请时间</th><th>操作</th></tr></thead><tbody></tbody></table></div>
+      </section>
     </div>
 
     <div class="admin-page" data-oem-view="licenses" hidden>
@@ -652,6 +677,10 @@
           </table>
         </div>
       </section>
+      <section class="panel">
+        <div class="panel-head"><div><h2>终身会员激活码申请</h2><p class="hint">通过后生成一人一码，明文只向申请 OEM 限时交付，运营后台不回显明文。</p></div></div>
+        <div class="table-scroll"><table class="tbl" id="admin-lifetime-requests"><thead><tr><th>#</th><th>OEM 企业</th><th>节点</th><th>状态</th><th>申请备注</th><th>申请时间</th><th>操作</th></tr></thead><tbody></tbody></table></div>
+      </section>
     </div>
 
     <div class="admin-page" data-admin-view="licenses" hidden>
@@ -728,6 +757,10 @@
     </div>
 
     <div class="admin-page" data-admin-view="billing" hidden>
+      <section class="panel">
+        <div class="panel-head"><div><h2>OEM Token 购买申请</h2><p class="hint">财务必须核对真实到账，填入实收金额后才会同时生成已支付订单和 Token 钱包流水。</p></div></div>
+        <div class="table-scroll"><table class="tbl" id="admin-token-purchase-requests"><thead><tr><th>#</th><th>OEM 企业</th><th>节点</th><th>申请数量</th><th>状态</th><th>实收</th><th>申请时间</th><th>操作</th></tr></thead><tbody></tbody></table></div>
+      </section>
       <section class="panel finance-ledger-panel">
         <div class="panel-head finance-ledger-head">
           <div><h2>节点充值财务清单</h2><p class="hint">人工充值与支付成功入账统一展示；人工充值没有支付单，不计作实收金额。</p></div>
@@ -1040,6 +1073,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- ?v= 缓存指纹：portal.js 有行为级改动时 +1（静态托管无构建指纹，靠这个防缓存死锁） -->
-<script src="/portal/portal.js?v=57"></script>
+<script src="/portal/portal.js?v=58"></script>
 </body>
 </html>

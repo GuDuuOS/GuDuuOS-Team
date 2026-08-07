@@ -781,6 +781,73 @@ class NexusKeyClaim(Base):
     claimed_ts = Column(BigInteger, nullable=False, default=_now_ms)
 
 
+class NexusLifetimeActivationRequest(Base):
+    """OEM 为自有节点申请的终身会员激活码工单。
+
+    它与 ``NexusKey`` 的节点部署授权完全分离：一个部署 KEY 可以对应
+    多个最终用户激活码，但每个激活码只能在申请时选定的节点兑换一次。
+    """
+
+    __tablename__ = "nexus_lifetime_activation_request"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    oem_id = Column(Integer, nullable=False, index=True)
+    instance_id = Column(Integer, nullable=False, index=True)
+    note = Column(Text, nullable=False, default="")
+    status = Column(String(16), nullable=False, default="pending", index=True)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    decided_ts = Column(BigInteger, nullable=True, default=None)
+    decide_note = Column(Text, nullable=False, default="")
+
+
+class NexusLifetimeActivationCode(Base):
+    """一人一码的终身会员凭证。
+
+    明文只加密保存于交付窗口；节点兑换时仅用哈希查找。``device_kind``
+    预留 ``desktop`` 但在桌面版正式发布前，领域层只接受 ``node``。
+    """
+
+    __tablename__ = "nexus_lifetime_activation_code"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    request_id = Column(Integer, nullable=False, unique=True, index=True)
+    oem_id = Column(Integer, nullable=False, index=True)
+    instance_id = Column(Integer, nullable=False, index=True)
+    code_hash = Column(String(64), nullable=False, unique=True, index=True)
+    code_tail = Column(String(8), nullable=False, default="")
+    encrypted_code = Column(LargeBinary, nullable=True, default=None)
+    status = Column(String(16), nullable=False, default="active", index=True)
+    member_user_id = Column(String(255), nullable=False, default="")
+    device_kind = Column(String(16), nullable=False, default="")
+    device_id = Column(String(255), nullable=False, default="")
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    first_revealed_ts = Column(BigInteger, nullable=True, default=None)
+    reveal_until_ts = Column(BigInteger, nullable=True, default=None)
+    activated_ts = Column(BigInteger, nullable=True, default=None)
+
+
+class NexusTokenPurchaseRequest(Base):
+    """OEM 不依赖预设套餐的 Token 购买申请。
+
+    申请本身不改钱包。只有财务核对真实到账金额后，才会生成已支付订单、
+    写入钱包流水并把工单标记为 ``paid``。
+    """
+
+    __tablename__ = "nexus_token_purchase_request"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    oem_id = Column(Integer, nullable=False, index=True)
+    instance_id = Column(Integer, nullable=False, index=True)
+    requested_tokens = Column(BigInteger, nullable=False)
+    note = Column(Text, nullable=False, default="")
+    status = Column(String(16), nullable=False, default="pending", index=True)
+    amount_cents = Column(BigInteger, nullable=True, default=None)
+    order_id = Column(Integer, nullable=True, default=None, unique=True)
+    created_ts = Column(BigInteger, nullable=False, default=_now_ms)
+    decided_ts = Column(BigInteger, nullable=True, default=None)
+    decide_note = Column(Text, nullable=False, default="")
+
+
 class NexusRequestStat(Base):
     """网关请求的**分钟级聚合**（大屏的成功率 / 平均延迟 / 峰值 req 的数据源）。
 

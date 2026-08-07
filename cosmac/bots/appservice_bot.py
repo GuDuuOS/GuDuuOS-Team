@@ -4902,6 +4902,48 @@ class CosmacBot:
         exp = int(rec.get("expires_ts") or 0) if (rec and tier != "free") else 0
         return 200, {"tier": tier, "tier_label": tier_label(tier), "expires_ts": exp}
 
+    def handle_lifetime_activate(
+        self, access_token: str, body: Dict[str, Any]
+    ) -> Tuple[int, Dict[str, Any]]:
+        """兑换当前 OEM 节点的终身会员激活码。
+
+        Nexus 先原子冻结“码 → 用户”；若 Matrix state 短暂写失败，
+        同一用户重试是幂等的，不会把码转给其他账号。
+        """
+        user_id = self.client.whoami(access_token)
+        if not user_id:
+            return 401, {"error": "登录已失效，请重新登录"}
+        activation_code = str((body or {}).get("activation_code", "")).strip()
+        if not activation_code:
+            return 400, {"error": "请输入终身会员激活码"}
+        try:
+            from cosmac import nexus_link
+
+            result = nexus_link.activate_lifetime_membership(
+                activation_code,
+                user_id,
+                str((body or {}).get("device_id", "")),
+            )
+        except nexus_link.LifetimeActivationError as exc:
+            return 400, {"error": str(exc)}
+        except Exception:
+            logger.exception("终身会员激活请求失败 user=%s", user_id)
+            return 503, {"error": "激活服务暂时不可用，请稍后重试"}
+        if not self.members.grant(
+            user_id, "paid", source="oem_lifetime_code", expires_ts=0
+        ):
+            return 503, {
+                "error": "激活码已绑定当前账号，但会员状态写入失败；请重试即可补写",
+                "retryable": True,
+            }
+        return 200, {
+            "ok": True,
+            "tier": "paid",
+            "tier_label": "付费会员",
+            "expires_ts": 0,
+            "already_activated": bool(result.get("already_activated")),
+        }
+
     # —— Token 钱包端点（模块4 Token 经济 1c/1d：前端够不到 cosmac DB，经 bot 读写）——
 
     def handle_wallet_me(self, access_token: str) -> Tuple[int, Dict[str, Any]]:
@@ -8408,7 +8450,8 @@ class _Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self) -> None:  # noqa: N802
         # 给浏览器调的端点回 CORS 预检（带 Authorization 头的请求会先发 OPTIONS）
         p = self.path.split("?", 1)[0]
-        if (p.startswith("/cosmac/pay/") or p == "/cosmac/stats"
+        if (p.startswith("/cosmac/pay/") or p.startswith("/cosmac/member/")
+                or p == "/cosmac/stats"
                 or p.startswith("/cosmac/tasks")
                 or p.startswith("/cosmac/doc/")
                 or p.startswith("/cosmac/register/")
@@ -9223,6 +9266,15 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         # 模块4：下单（前端「升级会员」调）。用用户自己的 access token 验明身份再建单。
+        if path == "/cosmac/member/lifetime-activate":
+            body = self._read_json_body(_MAX_CALLBACK_BODY)
+            if body is None:
+                self._send_json(400, {"error": "请求无效"}, cors=True)
+                return
+            code, payload = self.bot.handle_lifetime_activate(self._bearer(), body)
+            self._send_json(code, payload, cors=True)
+            return
+
         if path == "/cosmac/pay/checkout":
             auth = self.headers.get("Authorization", "")
             token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""

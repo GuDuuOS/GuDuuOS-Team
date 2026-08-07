@@ -11,6 +11,7 @@ import { computed, onMounted, ref } from 'vue'
 import { formatServerDateTime } from '@/utils/dateTime'
 import {
   payGetPlans, payCheckout, payManualConfirm, payGetMe,
+  activateLifetimeMembership,
   walletGetMe, walletGetLedger, walletCheckout,
   type PayPlan, type CheckoutResp, type PayMe,
   type WalletMe, type WalletLedgerItem, type WalletCheckoutResp,
@@ -41,6 +42,10 @@ const busy = ref(false)
 const errMsg = ref('')
 const order = ref<CheckoutResp | null>(null)   // 下单后拿到的订单/支付方式
 const doneMsg = ref('')                          // 开通成功提示
+const lifetimeCode = ref('')
+const lifetimeBusy = ref(false)
+const lifetimeErr = ref('')
+const lifetimeDone = ref('')
 
 /* —— Token 钱包状态 —— */
 const wallet = ref<WalletMe | null>(null)
@@ -152,6 +157,20 @@ async function confirmTest() {
 
 function reset() { order.value = null; doneMsg.value = ''; errMsg.value = '' }
 
+async function activateLifetime() {
+  if (!lifetimeCode.value.trim() || lifetimeBusy.value) return
+  lifetimeBusy.value = true; lifetimeErr.value = ''; lifetimeDone.value = ''
+  try {
+    me.value = await activateLifetimeMembership(lifetimeCode.value)
+    lifetimeCode.value = ''
+    lifetimeDone.value = '终身会员已激活，当前账号长期有效。'
+  } catch (e: any) {
+    lifetimeErr.value = e?.message || '激活失败'
+  } finally {
+    lifetimeBusy.value = false
+  }
+}
+
 /* —— Token 充值流程（与会员同一测试通道；回调复用 /cosmac/pay/callback/manual）—— */
 async function wBuy() {
   const pkg = wallet.value?.packages?.find((p) => p.slug === wSelected.value)
@@ -207,6 +226,21 @@ onMounted(load)
 
       <!-- ====== 会员套餐页签 ====== -->
       <template v-if="tab === 'member'">
+        <section class="mm-lifetime">
+          <div>
+            <b>终身会员激活码</b>
+            <p>使用当前 OEM 企业交付的 GLM 激活码，一码只能绑定一个账号。</p>
+          </div>
+          <div class="mm-lifetime-form">
+            <input v-model="lifetimeCode" maxlength="24" autocomplete="off"
+              placeholder="GLM-XXXX-XXXX-XXXX-XXXX" @input="lifetimeErr = ''; lifetimeDone = ''" />
+            <button :disabled="!lifetimeCode.trim() || lifetimeBusy" @click="activateLifetime">
+              {{ lifetimeBusy ? '激活中…' : '立即激活' }}
+            </button>
+          </div>
+          <p v-if="lifetimeErr" class="mm-err">{{ lifetimeErr }}</p>
+          <p v-if="lifetimeDone" class="mm-lifetime-done">{{ lifetimeDone }}</p>
+        </section>
         <div v-if="loading" class="mm-center">加载套餐…</div>
         <div v-else-if="loadErr" class="mm-center mm-err">{{ loadErr }} <button class="mm-link" @click="load">重试</button></div>
         <div v-else-if="!plans.length" class="mm-center">暂未开放套餐，请稍后再来。</div>
@@ -346,6 +380,15 @@ onMounted(load)
 .mm-tab.on { color: var(--accent, #c96442); border-bottom-color: var(--accent, #c96442); font-weight: 700; }
 .mm-center { text-align: center; padding: 30px 10px; color: var(--text-2, #666); }
 .mm-me { font-size: 13px; color: var(--text-2, #555); background: var(--accent-soft, #fdf3ef); border: 1px solid var(--accent, #c96442); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; }
+.mm-lifetime { border: 1px solid var(--border, #e6e0da); border-radius: 12px; padding: 12px; margin-bottom: 14px; background: var(--surface-2, #faf8f5); }
+.mm-lifetime b { font-size: 13px; color: var(--text-1, #222); }
+.mm-lifetime p { margin: 4px 0 10px; font-size: 11.5px; line-height: 1.5; color: var(--text-3, #888); }
+.mm-lifetime-form { display: flex; gap: 8px; }
+.mm-lifetime-form input { min-width: 0; flex: 1; border: 1px solid var(--border, #ddd); border-radius: 8px; padding: 9px 10px; background: var(--surface-1, #fff); color: var(--text-1, #222); text-transform: uppercase; }
+.mm-lifetime-form button { flex: 0 0 auto; border: 0; border-radius: 8px; padding: 0 12px; background: var(--accent, #c96442); color: #fff; font-weight: 700; cursor: pointer; }
+.mm-lifetime-form button:disabled { opacity: .55; cursor: default; }
+.mm-lifetime .mm-err { margin: 8px 0 0; text-align: left; }
+.mm-lifetime .mm-lifetime-done { margin: 8px 0 0; color: #248653; font-weight: 700; }
 .mm-cur { display: flex; gap: 6px; margin-bottom: 12px; }
 .mm-cur-b { border: 1px solid var(--border, #e3e3e3); background: var(--surface-2, #f7f7f7); border-radius: 999px; padding: 4px 14px; cursor: pointer; font-size: 13px; }
 .mm-cur-b.on { background: var(--accent, #c96442); color: #fff; border-color: transparent; }

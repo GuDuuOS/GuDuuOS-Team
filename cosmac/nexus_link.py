@@ -81,6 +81,10 @@ class ReferralError(Exception):
     """邀请链接无法由 Nexus 确认时的用户可读错误。"""
 
 
+class LifetimeActivationError(Exception):
+    """终身会员激活无法由 Nexus 确认时的用户可读错误。"""
+
+
 def _today() -> str:
     return time.strftime("%Y-%m-%d")
 
@@ -129,6 +133,41 @@ def referral_info(code: str) -> Dict[str, Any]:
         payload = {}
     if not response.ok:
         raise ReferralError(str(payload.get("error") or "邀请链接已失效"))
+    return dict(payload)
+
+
+def activate_lifetime_membership(
+    activation_code: str, user_id: str, device_id: str = ""
+) -> Dict[str, Any]:
+    """用宿主注入的 OEM KEY 代理兑换终身会员。
+
+    前端只会提交终身码和自己的 Matrix 会话；节点 KEY 不进入浏览器。
+    """
+    code = (activation_code or "").strip().upper()
+    if not code:
+        raise LifetimeActivationError("请输入终身会员激活码")
+    if not enabled():
+        raise LifetimeActivationError("当前节点尚未接入 OEM 授权体系")
+    try:
+        response = requests.post(
+            f"{_env('NEXUS_URL').rstrip('/')}/nexus/lifetime/activate",
+            json={
+                "key": _env("OEM_KEY"),
+                "activation_code": code,
+                "user_id": user_id,
+                "device_kind": "node",
+                "device_id": (device_id or "").strip()[:255],
+            },
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        raise LifetimeActivationError("激活服务暂时不可用，请稍后重试") from exc
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if not response.ok:
+        raise LifetimeActivationError(str(payload.get("error") or "终身会员激活失败"))
     return dict(payload)
 
 

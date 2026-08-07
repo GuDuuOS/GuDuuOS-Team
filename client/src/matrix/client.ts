@@ -3319,6 +3319,27 @@ export async function payGetMe(): Promise<PayMe | null> {
   } catch { return null }
 }
 
+/** 兑换当前 OEM 节点的终身会员激活码。 */
+export async function activateLifetimeMembership(activationCode: string): Promise<PayMe> {
+  const token = (mx as any)?.getAccessToken?.() || ''
+  if (!token) throw new Error('请先登录')
+  const r = await fetch(`${payBase()}/cosmac/member/lifetime-activate`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ activation_code: activationCode.trim() }),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j?.error || '终身会员激活失败')
+  return {
+    tier: String(j?.tier || 'paid'),
+    tier_label: String(j?.tier_label || '付费会员'),
+    expires_ts: Number(j?.expires_ts || 0),
+  }
+}
+
 /** 平台真实运营指标（数据看板用；GuDuu OS 真正拥有的数据）。 */
 export interface PlatformStats {
   members_paid: number; members_creator: number
