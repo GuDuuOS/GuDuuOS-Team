@@ -22,8 +22,8 @@ _DEFAULTS: Dict[str, Any] = {
     "development_instance_ids": [1],
     "canary_instance_id": 2,
     "production_instance_ids": [3],
-    # True 表示开发节点全部成功后自动通知灰度节点；开发节点本机是否自动安装
-    # 仍由该节点 root-only 的 COSMAC_AUTO_UPDATE 决定，Nexus 不远程改客户配置。
+    # True 表示开发节点全部成功后自动分配给灰度节点；固定节点 #2 的宿主代理
+    # 根据本机持久化实例身份自动安装，Nexus 仍不远程改客户配置或执行命令。
     "auto_canary": True,
     "require_canary_success": True,
     # 新装基线不等于向生产节点发布。0 表示尚未显式指定，

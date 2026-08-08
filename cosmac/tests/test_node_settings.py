@@ -107,55 +107,56 @@ class NodeSettingsTest(unittest.TestCase):
             self.assertEqual(runtime["base_url"], "https://nexus.invalid/gw/ark")
             self.assertNotIn("CMK-server-only", str(saved))
 
-    def test_only_instances_one_two_three_may_use_reserved_brand(self) -> None:
-        """官方三个节点可使用保留品牌，其他 OEM 必须改用自有品牌。"""
-        for node_id in (1, 2, 3):
+    def test_only_instance_three_may_use_reserved_brand(self) -> None:
+        """仅官网正式节点 #3 可使用保留品牌，其他节点必须改用自有品牌。"""
+        with mock.patch.dict(
+            os.environ, {"COSMAC_OEM_KEY": "CMK-official"}, clear=False
+        ), mock.patch(
+            "cosmac.node_settings.activated_instance_id", return_value=3
+        ):
+            saved = save_admin_config({
+                "brand": {
+                    "product_name": "GuDuu OS",
+                    "company_name": "中富通集团股份有限公司",
+                },
+                "email": {"from_name": "GuDuu OS"},
+                "ai": {}, "payment": {},
+            })
+            self.assertTrue(saved["brand_policy"]["reserved_brand_allowed"])
+
+        for node_id in (1, 2, 4):
             with self.subTest(node_id=node_id), mock.patch.dict(
-                os.environ, {"COSMAC_OEM_KEY": "CMK-official"}, clear=False
+                os.environ, {"COSMAC_OEM_KEY": "CMK-external"}, clear=False
             ), mock.patch(
                 "cosmac.node_settings.activated_instance_id", return_value=node_id
             ):
-                saved = save_admin_config({
-                    "brand": {
-                        "product_name": "GuDuu OS",
-                        "company_name": "GuDuu OS 官方",
-                    },
-                    "email": {"from_name": "GuDuu OS"},
-                    "ai": {}, "payment": {},
-                })
-                self.assertTrue(saved["brand_policy"]["reserved_brand_allowed"])
+                for field, value in (
+                    ("product_name", "GuDuu-OS"),
+                    ("company_name", "GUDUU_OS 联合实验室"),
+                    ("company_name", "中富通集团股份有限公司"),
+                    ("from_name", "guduu os 通知"),
+                ):
+                    body = {
+                        "brand": {"product_name": "星海协作", "company_name": "星海科技"},
+                        "email": {"from_name": "星海协作"},
+                        "ai": {}, "payment": {},
+                    }
+                    if field == "from_name":
+                        body["email"][field] = value
+                    else:
+                        body["brand"][field] = value
+                    with self.subTest(field=field), self.assertRaisesRegex(
+                        Exception, "GuDuu OS 保留品牌"
+                    ):
+                        save_admin_config(body)
 
-        with mock.patch.dict(
-            os.environ, {"COSMAC_OEM_KEY": "CMK-external"}, clear=False
-        ), mock.patch(
-            "cosmac.node_settings.activated_instance_id", return_value=4
-        ):
-            for field, value in (
-                ("product_name", "GuDuu-OS"),
-                ("company_name", "GUDUU_OS 联合实验室"),
-                ("from_name", "guduu os 通知"),
-            ):
-                body = {
-                    "brand": {"product_name": "星海协作", "company_name": "星海科技"},
+                saved = save_admin_config({
+                    "brand": {"product_name": "星海协作 OS", "company_name": "星海科技"},
                     "email": {"from_name": "星海协作"},
                     "ai": {}, "payment": {},
-                }
-                if field == "from_name":
-                    body["email"][field] = value
-                else:
-                    body["brand"][field] = value
-                with self.subTest(field=field), self.assertRaisesRegex(
-                    Exception, "GuDuu OS 保留品牌"
-                ):
-                    save_admin_config(body)
-
-            saved = save_admin_config({
-                "brand": {"product_name": "星海协作 OS", "company_name": "星海科技"},
-                "email": {"from_name": "星海协作"},
-                "ai": {}, "payment": {},
-            })
-            self.assertFalse(saved["brand_policy"]["reserved_brand_allowed"])
-            self.assertEqual(saved["brand"]["product_name"], "星海协作 OS")
+                })
+                self.assertFalse(saved["brand_policy"]["reserved_brand_allowed"])
+                self.assertEqual(saved["brand"]["product_name"], "星海协作 OS")
 
     def test_external_oem_legacy_default_brand_is_neutralized(self) -> None:
         """外部 OEM 未配置或留有历史默认值时，不得对外显示官方品牌。"""
@@ -189,6 +190,43 @@ class NodeSettingsTest(unittest.TestCase):
                         "website": website,
                         "email": {}, "ai": {}, "payment": {},
                     })
+
+    def test_oem_completed_setup_requires_footer_intro_and_contacts(self) -> None:
+        """OEM 完成首次部署前必须提供官网底部介绍与企业联系方式。"""
+        with mock.patch.dict(
+            os.environ, {"COSMAC_OEM_KEY": "CMK-external"}, clear=False
+        ), mock.patch(
+            "cosmac.node_settings.activated_instance_id", return_value=9
+        ):
+            with self.assertRaisesRegex(
+                Exception, "企业/组织名称.*官网介绍.*联系邮箱.*联系电话.*联系地址"
+            ):
+                save_admin_config({
+                    "brand": {"product_name": "星海协作"},
+                    "website": {"headline": "企业智能协作"},
+                    "email": {}, "ai": {}, "payment": {},
+                    "setup_completed": True,
+                })
+
+            saved = save_admin_config({
+                "brand": {
+                    "product_name": "星海协作",
+                    "company_name": "星海科技有限公司",
+                },
+                "website": {
+                    "headline": "企业智能协作",
+                    "description": "星海协作产品与服务介绍。",
+                    "contact_email": "service@xinghai.example",
+                    "contact_phone": "+86 10 8888 8888",
+                    "contact_address": "北京市测试地址 1 号",
+                },
+                "email": {}, "ai": {}, "payment": {},
+                "setup_completed": True,
+            })
+            self.assertTrue(saved["setup_completed"])
+            self.assertEqual(
+                saved["website"]["contact_email"], "service@xinghai.example"
+            )
 
     def test_website_links_reject_unsafe_schemes(self) -> None:
         with self.assertRaisesRegex(Exception, "HTTPS"):

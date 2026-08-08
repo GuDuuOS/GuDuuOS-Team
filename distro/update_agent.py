@@ -57,8 +57,20 @@ def _write_json_atomic(path: Path, value: Dict[str, Any]) -> None:
 
 
 def _approved(release_id: int, env: Dict[str, str]) -> bool:
-    """客户节点默认手动；只有显式审批或内部灰度 opt-in 才执行。"""
-    if str(env.get("COSMAC_AUTO_UPDATE") or "").strip() == "1":
+    """客户节点默认手动；固定内部灰度节点 #2 自动执行已分配任务。"""
+    instance_id = 0
+    try:
+        identity = json.loads(
+            (_STATE_DIR / "node-activation.json").read_text(encoding="utf-8")
+        )
+        if identity.get("activated") is True:
+            instance_id = int(identity.get("instance_id") or 0)
+        if instance_id == 2:
+            return True
+    except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
+        pass
+    # 官网正式节点 #3 始终保留人工确认，即使历史 .env 曾误开自动更新。
+    if instance_id != 3 and str(env.get("COSMAC_AUTO_UPDATE") or "").strip() == "1":
         return True
     try:
         value = json.loads(_APPROVAL_FILE.read_text(encoding="utf-8"))

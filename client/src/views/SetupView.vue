@@ -41,6 +41,7 @@ const paymentConfigured = computed(() => ({
   alipay: Boolean(form.payment.alipay.app_id && (form.payment.alipay.private_key_configured || form.payment.alipay.private_key)),
   wechat: Boolean(form.payment.wechat.mch_id && (form.payment.wechat.api_v3_key_configured || form.payment.wechat.api_v3_key)),
 }))
+const isOemDeployment = computed(() => brandPolicy.instance_id !== null)
 
 function containsReservedBrand(value: string) {
   return value.normalize('NFKC').toLowerCase().replace(/[^a-z0-9]+/g, '').includes('guduuos')
@@ -102,6 +103,10 @@ function next() {
     error.value = '请先填写产品名称'
     return
   }
+  if (step.value === 0 && isOemDeployment.value && !form.brand.company_name.trim()) {
+    error.value = 'OEM 部署必须填写企业/组织名称'
+    return
+  }
   if (step.value === 0 && brandPolicy.requires_custom_brand && [
     form.brand.product_name,
     form.brand.company_name,
@@ -112,6 +117,19 @@ function next() {
   if (step.value === 1 && !form.website.headline.trim()) {
     error.value = '请先填写官网主标题'
     return
+  }
+  if (step.value === 1 && isOemDeployment.value) {
+    const requiredFields = [
+      [form.website.description, '官网介绍'],
+      [form.website.contact_email, '联系邮箱'],
+      [form.website.contact_phone, '联系电话'],
+      [form.website.contact_address, '联系地址'],
+    ]
+    const missing = requiredFields.find(([value]) => !value.trim())
+    if (missing) {
+      error.value = `OEM 部署必须填写${missing[1]}`
+      return
+    }
   }
   if (step.value === 1 && brandPolicy.requires_custom_brand && [
     form.website.headline,
@@ -181,9 +199,9 @@ async function approveUpdate() {
 
         <template v-if="step === 0">
           <h2>品牌名称与 Logo</h2><p class="hint">登录页、工作台和管理后台会使用这里的品牌。</p>
-          <p v-if="brandPolicy.requires_custom_brand" class="warn">当前为外部 OEM 节点，必须填写您自己的产品名称。“GuDuu OS”及空格、连字符等变体为保留品牌，仅节点 #1、#2、#3 可使用。</p>
+          <p v-if="brandPolicy.requires_custom_brand" class="warn">当前节点必须填写自己的产品名称。“GuDuu OS”及其变体、中富通官方标识均为保留品牌，仅官网正式节点 #3 可使用。</p>
           <label>产品名称<input v-model.trim="form.brand.product_name" placeholder="例如：星海协作 OS" /></label>
-          <label>企业/组织名称<input v-model.trim="form.brand.company_name" placeholder="例如：星海科技有限公司" /></label>
+          <label><span>企业/组织名称 <em v-if="isOemDeployment">* OEM 必填</em></span><input v-model.trim="form.brand.company_name" :required="isOemDeployment" placeholder="例如：星海科技有限公司" /></label>
           <label>Logo（最大 512KB）<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" @change="chooseLogo" /></label>
           <img v-if="form.brand.logo_data_url" class="preview" :src="form.brand.logo_data_url" alt="Logo 预览" />
         </template>
@@ -191,10 +209,10 @@ async function approveUpdate() {
         <template v-else-if="step === 1">
           <h2>官网内容与联系方式</h2><p class="hint">官网已包含在同一个 Web 镜像中，访问部署域名根路径即可看到。名称与 Logo 直接使用上一步的品牌配置。</p>
           <p v-if="brandPolicy.requires_custom_brand" class="warn">官网主标题、介绍和页脚文案同样不得使用 GuDuu OS 保留品牌。</p>
-          <label>官网主标题<input v-model.trim="form.website.headline" placeholder="例如：让团队协作更简单" /></label>
-          <label>官网介绍<textarea v-model.trim="form.website.description" rows="3" placeholder="简要介绍产品定位与服务能力" /></label>
-          <div class="grid"><label>联系邮箱<input v-model.trim="form.website.contact_email" type="email" placeholder="service@example.com" /></label><label>联系电话<input v-model.trim="form.website.contact_phone" placeholder="+86 10 8888 8888" /></label></div>
-          <label>联系地址<input v-model.trim="form.website.contact_address" placeholder="企业办公或服务地址" /></label>
+          <label>官网主标题<input v-model.trim="form.website.headline" required placeholder="例如：让团队协作更简单" /></label>
+          <label><span>官网介绍 <em v-if="isOemDeployment">* OEM 必填</em></span><textarea v-model.trim="form.website.description" :required="isOemDeployment" rows="3" placeholder="用于首页底部的产品或企业介绍" /></label>
+          <div class="grid"><label><span>联系邮箱 <em v-if="isOemDeployment">* OEM 必填</em></span><input v-model.trim="form.website.contact_email" :required="isOemDeployment" type="email" placeholder="service@example.com" /></label><label><span>联系电话 <em v-if="isOemDeployment">* OEM 必填</em></span><input v-model.trim="form.website.contact_phone" :required="isOemDeployment" placeholder="+86 10 8888 8888" /></label></div>
+          <label><span>联系地址 <em v-if="isOemDeployment">* OEM 必填</em></span><input v-model.trim="form.website.contact_address" :required="isOemDeployment" placeholder="企业办公或服务地址" /></label>
           <div class="grid"><label>帮助中心链接<input v-model.trim="form.website.support_url" placeholder="https://support.example.com" /></label><label>隐私政策链接<input v-model.trim="form.website.privacy_url" placeholder="https://example.com/privacy" /></label></div>
           <label>页脚版权文案<input v-model.trim="form.website.footer_text" :placeholder="`留空则自动显示 © 年份 ${form.brand.company_name || form.brand.product_name}`" /></label>
         </template>
@@ -273,7 +291,7 @@ async function approveUpdate() {
 </template>
 
 <style scoped>
-.setup-shell{min-height:100vh;padding:28px;background:linear-gradient(145deg,#fffaf2,#f6eadc);color:#2d2925;display:grid;place-items:center}.setup-card{width:min(820px,100%);min-height:620px;background:#fffdf9;border:1px solid #e7d9c9;border-radius:20px;box-shadow:0 20px 60px #68401b1c;overflow:hidden}.setup-head{display:flex;align-items:center;gap:14px;padding:24px 30px 18px}.setup-head img{width:48px;height:48px;object-fit:contain;border-radius:12px}.setup-head small{color:#a06b3d}.setup-head h1{font-size:24px;margin:3px 0 0}.steps{display:flex;gap:8px;padding:0 30px 18px;border-bottom:1px solid #eee1d3;overflow:auto}.steps span{white-space:nowrap;font-size:13px;color:#9b8e82;padding:7px 10px;border-radius:999px}.steps .active{background:#ef7d25;color:#fff}.steps .done{color:#c3611b}.body{padding:28px 30px}.body h2{font-size:20px;margin:0 0 6px}.hint{color:#8b7d70;font-size:14px;margin:0 0 22px}.body label{display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:650;margin:0 0 16px}.body input,.body select,.body textarea{width:100%;box-sizing:border-box;border:1px solid #d9cabb;border-radius:9px;background:#fff;padding:11px 12px;font:inherit;color:inherit}.body textarea{resize:vertical;line-height:1.45}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.preview{width:72px;height:72px;object-fit:contain;border:1px solid #e3d5c7;border-radius:14px;padding:6px}.warn,.error,.success{border-radius:10px;padding:11px 13px;font-size:13px;line-height:1.55}.warn{background:#fff3df;color:#9a551c}.error{background:#fff0ed;color:#b63f2e}.success{background:#edf9f1;color:#237444}.load-failed{max-width:620px}.update-notice{display:flex;align-items:center;gap:16px;margin:0 0 20px;padding:13px;border:1px solid #e8c69f;background:#fff7eb;border-radius:11px}.update-notice div{display:grid;gap:3px;flex:1}.update-notice small{color:#8b6b4d}.payment-card{margin:16px 0;padding:18px;border:1px solid #e7d8c9;border-radius:13px;background:#fffaf4}.payment-title{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:15px}.payment-title>div{display:grid;gap:4px}.payment-title small,.credential-state{color:#8b7d70;font-size:12px}.switch-row{flex-direction:row!important;align-items:center;white-space:nowrap;margin:0!important}.switch-row input{width:auto}.credential-state{margin:2px 0 0}.summary{display:grid;gap:12px;padding:20px;border:1px solid #e7d8c9;border-radius:12px}.summary span{color:#75695e}footer{display:flex;gap:10px;align-items:center;margin-top:26px}footer span{flex:1}button{border:0;border-radius:9px;background:#e97822;color:#fff;padding:10px 17px;font-weight:700;cursor:pointer}button.ghost{background:#f2e8de;color:#6f6257}button:disabled{opacity:.55}.state{padding:40px 30px;color:#8b7d70}@media(max-width:640px){.setup-shell{padding:0}.setup-card{min-height:100vh;border-radius:0;border:0}.setup-head,.steps,.body{padding-left:18px;padding-right:18px}.grid{grid-template-columns:1fr}.steps{gap:2px}.steps span{font-size:12px;padding:6px}.update-notice,.payment-title{align-items:flex-start;flex-direction:column}}
+.setup-shell{min-height:100vh;padding:28px;background:linear-gradient(145deg,#fffaf2,#f6eadc);color:#2d2925;display:grid;place-items:center}.setup-card{width:min(820px,100%);min-height:620px;background:#fffdf9;border:1px solid #e7d9c9;border-radius:20px;box-shadow:0 20px 60px #68401b1c;overflow:hidden}.setup-head{display:flex;align-items:center;gap:14px;padding:24px 30px 18px}.setup-head img{width:48px;height:48px;object-fit:contain;border-radius:12px}.setup-head small{color:#a06b3d}.setup-head h1{font-size:24px;margin:3px 0 0}.steps{display:flex;gap:8px;padding:0 30px 18px;border-bottom:1px solid #eee1d3;overflow:auto}.steps span{white-space:nowrap;font-size:13px;color:#9b8e82;padding:7px 10px;border-radius:999px}.steps .active{background:#ef7d25;color:#fff}.steps .done{color:#c3611b}.body{padding:28px 30px}.body h2{font-size:20px;margin:0 0 6px}.hint{color:#8b7d70;font-size:14px;margin:0 0 22px}.body label{display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:650;margin:0 0 16px}.body label em{margin-left:5px;color:#c45f1c;font-size:10px;font-style:normal;font-weight:750}.body input,.body select,.body textarea{width:100%;box-sizing:border-box;border:1px solid #d9cabb;border-radius:9px;background:#fff;padding:11px 12px;font:inherit;color:inherit}.body textarea{resize:vertical;line-height:1.45}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.preview{width:72px;height:72px;object-fit:contain;border:1px solid #e3d5c7;border-radius:14px;padding:6px}.warn,.error,.success{border-radius:10px;padding:11px 13px;font-size:13px;line-height:1.55}.warn{background:#fff3df;color:#9a551c}.error{background:#fff0ed;color:#b63f2e}.success{background:#edf9f1;color:#237444}.load-failed{max-width:620px}.update-notice{display:flex;align-items:center;gap:16px;margin:0 0 20px;padding:13px;border:1px solid #e8c69f;background:#fff7eb;border-radius:11px}.update-notice div{display:grid;gap:3px;flex:1}.update-notice small{color:#8b6b4d}.payment-card{margin:16px 0;padding:18px;border:1px solid #e7d8c9;border-radius:13px;background:#fffaf4}.payment-title{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:15px}.payment-title>div{display:grid;gap:4px}.payment-title small,.credential-state{color:#8b7d70;font-size:12px}.switch-row{flex-direction:row!important;align-items:center;white-space:nowrap;margin:0!important}.switch-row input{width:auto}.credential-state{margin:2px 0 0}.summary{display:grid;gap:12px;padding:20px;border:1px solid #e7d8c9;border-radius:12px}.summary span{color:#75695e}footer{display:flex;gap:10px;align-items:center;margin-top:26px}footer span{flex:1}button{border:0;border-radius:9px;background:#e97822;color:#fff;padding:10px 17px;font-weight:700;cursor:pointer}button.ghost{background:#f2e8de;color:#6f6257}button:disabled{opacity:.55}.state{padding:40px 30px;color:#8b7d70}@media(max-width:640px){.setup-shell{padding:0}.setup-card{min-height:100vh;border-radius:0;border:0}.setup-head,.steps,.body{padding-left:18px;padding-right:18px}.grid{grid-template-columns:1fr}.steps{gap:2px}.steps span{font-size:12px;padding:6px}.update-notice,.payment-title{align-items:flex-start;flex-direction:column}}
 .mode-note{margin:-8px 0 18px;padding:10px 12px;border-left:3px solid #dc8a3c;background:#fff8ef;color:#765332;font-size:13px;line-height:1.55}
 .ai-mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:0 0 18px}.body .ai-mode-card{display:flex;flex-direction:row;align-items:flex-start;gap:11px;margin:0;padding:15px;border:1px solid #decdbc;border-radius:12px;background:#fff;cursor:pointer}.body .ai-mode-card.selected{border-color:#e97822;background:#fff7ed;box-shadow:0 0 0 2px #e978221c}.body .ai-mode-card input{width:auto;margin:3px 0 0}.ai-mode-card span{display:grid;gap:5px}.ai-mode-card small{color:#7f7165;font-weight:400;line-height:1.45}@media(max-width:640px){.ai-mode-grid{grid-template-columns:1fr}.payment-card{padding:14px}}
 </style>

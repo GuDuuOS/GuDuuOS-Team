@@ -8,6 +8,7 @@ export const instanceBrand = reactive({
   productName: 'GuDuu OS',
   companyName: '',
   logoUrl: defaultLogo,
+  instanceId: null as number | null,
   reservedBrandAllowed: true,
   setupCompleted: true,
   loaded: false,
@@ -38,7 +39,7 @@ export interface PublicInstanceConfig {
     privacy_url?: string
     footer_text?: string
   }
-  brand_policy?: { reserved_brand_allowed?: boolean }
+  brand_policy?: { instance_id?: number | null; reserved_brand_allowed?: boolean }
 }
 
 function text(value: unknown, limit: number): string {
@@ -94,9 +95,14 @@ export function applyInstanceConfig(payload: PublicInstanceConfig): PublicInstan
     ? logo
     : ''
   const reservedBrandAllowed = payload?.brand_policy?.reserved_brand_allowed !== false
+  const rawInstanceId = Number(payload?.brand_policy?.instance_id)
+  const instanceId = Number.isSafeInteger(rawInstanceId) && rawInstanceId > 0
+    ? rawInstanceId
+    : null
   instanceBrand.productName = productName || (reservedBrandAllowed ? 'GuDuu OS' : 'OEM 协作平台')
   instanceBrand.companyName = companyName
   instanceBrand.logoUrl = safeLogo || (reservedBrandAllowed ? defaultLogo : '')
+  instanceBrand.instanceId = instanceId
   instanceBrand.reservedBrandAllowed = reservedBrandAllowed
   instanceBrand.setupCompleted = Boolean(payload?.setup_completed)
   instanceBrand.loaded = true
@@ -139,7 +145,7 @@ export function applyInstanceConfig(payload: PublicInstanceConfig): PublicInstan
       privacy_url: instanceWebsite.privacyUrl,
       footer_text: instanceWebsite.footerText,
     },
-    brand_policy: { reserved_brand_allowed: reservedBrandAllowed },
+    brand_policy: { instance_id: instanceId, reserved_brand_allowed: reservedBrandAllowed },
   }
 }
 
@@ -155,6 +161,10 @@ export async function loadInstanceConfig(
         company_name: instanceBrand.companyName,
         logo_data_url: instanceBrand.logoUrl === defaultLogo ? '' : instanceBrand.logoUrl,
       },
+      brand_policy: {
+        instance_id: instanceBrand.instanceId,
+        reserved_brand_allowed: instanceBrand.reservedBrandAllowed,
+      },
     }
   }
   try {
@@ -164,7 +174,24 @@ export async function loadInstanceConfig(
   } catch {
     // 本地开发或旧后端没有端点时保持历史品牌，并且不强制跳向导。
     instanceBrand.setupCompleted = true
-    return { setup_completed: true, brand: { product_name: 'GuDuu OS' } }
+    if (!import.meta.env.DEV) {
+      // 生产节点读取不到服务器持久化实例号时必须安全降级，不能把“未知身份”
+      // 当成官网节点 #3 并直接显示 GuDuu OS / 中富通官方标识。
+      instanceBrand.productName = 'OEM 协作平台'
+      instanceBrand.companyName = ''
+      instanceBrand.logoUrl = ''
+      instanceBrand.instanceId = null
+      instanceBrand.reservedBrandAllowed = false
+      document.title = instanceBrand.productName
+    }
+    return {
+      setup_completed: true,
+      brand: { product_name: instanceBrand.productName },
+      brand_policy: {
+        instance_id: instanceBrand.instanceId,
+        reserved_brand_allowed: instanceBrand.reservedBrandAllowed,
+      },
+    }
   } finally {
     instanceBrand.loaded = true
   }

@@ -12,12 +12,16 @@ const AuthView = () => import('@/views/AuthView.vue')
 const ActivationView = () => import('@/views/ActivationView.vue')
 const SetupView = () => import('@/views/SetupView.vue')
 const WebsiteView = () => import('@/views/WebsiteView.vue')
+const OemGuideView = () => import('@/views/OemGuideView.vue')
 
 const routes = [
   { path: '/login', component: AuthView },
   { path: '/activate', component: ActivationView },
   { path: '/setup', component: SetupView },
   { path: '/', component: WebsiteView },
+  { path: '/personal', redirect: '/' },
+  { path: '/guides/oem-console', component: OemGuideView, props: { guide: 'console' } },
+  { path: '/guides/oem-install', component: OemGuideView, props: { guide: 'install' } },
   { path: '/app', component: LiveView },
   { path: '/s/:space/board', component: LiveView },
   { path: '/s/:space/tasks', component: LiveView },
@@ -45,7 +49,13 @@ export const router = createRouter({
 router.beforeEach(async (to) => {
   // 仅 Vite 开发态允许无会话预览向导布局；生产构建会编译掉此分支，保存接口仍有管理员鉴权。
   if (import.meta.env.DEV && to.path === '/setup' && to.query.preview === '1') return true
-  if (to.path === '/' || to.path === '/login') return true
+  if (
+    to.path === '/'
+    || to.path === '/personal'
+    || to.path === '/login'
+    || to.path === '/guides/oem-console'
+    || to.path === '/guides/oem-install'
+  ) return true
   let userId = ''
   try {
     userId = await storedCurrentUserId()

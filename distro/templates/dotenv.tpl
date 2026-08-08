@@ -24,7 +24,8 @@ COSMAC_VERSION={{INSTALL_VERSION}}
 COSMAC_BOT_IMAGE={{BOT_IMAGE}}
 COSMAC_WEB_IMAGE={{WEB_IMAGE}}
 # 客户节点默认 0：只接收更新通知，管理员在 OS 后台确认后才安装。
-# 公司内部灰度节点 #2 可由技术人员明确改成 1。
+# 固定内部灰度节点 #2 由宿主代理按持久化实例身份自动安装，无需修改本项；
+# 官网正式节点 #3 即使历史配置误设为 1 也仍强制人工确认。
 COSMAC_AUTO_UPDATE=0
 
 # —— 数据库口令（install.sh 随机生成；首次初始化后改这里不会自动改库，别乱动）——

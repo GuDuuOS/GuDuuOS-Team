@@ -65,13 +65,24 @@ class UpdateAgentTest(unittest.TestCase):
             update_agent._validate_endpoint("http://nexus.example.com")
 
     def test_customer_update_requires_explicit_approval(self):
-        """客户节点缺省不能因收到任务就安装；灰度 opt-in 或当前任务批准才放行。"""
+        """客户与官网节点保持手动；固定内部灰度节点 #2 自动安装。"""
         with tempfile.TemporaryDirectory() as temp_dir:
             original = update_agent._APPROVAL_FILE
+            original_state = update_agent._STATE_DIR
+            update_agent._STATE_DIR = Path(temp_dir)
             update_agent._APPROVAL_FILE = Path(temp_dir) / "approved.json"
             try:
                 self.assertFalse(update_agent._approved(23, {}))
                 self.assertTrue(update_agent._approved(23, {"COSMAC_AUTO_UPDATE": "1"}))
+                (Path(temp_dir) / "node-activation.json").write_text(
+                    '{"activated":true,"instance_id":2}', encoding="utf-8"
+                )
+                self.assertTrue(update_agent._approved(23, {}))
+                (Path(temp_dir) / "node-activation.json").write_text(
+                    '{"activated":true,"instance_id":3}', encoding="utf-8"
+                )
+                self.assertFalse(update_agent._approved(23, {}))
+                self.assertFalse(update_agent._approved(23, {"COSMAC_AUTO_UPDATE": "1"}))
                 update_agent._APPROVAL_FILE.write_text(
                     '{"release_id":23}', encoding="utf-8"
                 )
@@ -79,6 +90,7 @@ class UpdateAgentTest(unittest.TestCase):
                 self.assertFalse(update_agent._approved(24, {}))
             finally:
                 update_agent._APPROVAL_FILE = original
+                update_agent._STATE_DIR = original_state
 
     def test_pending_state_repairs_shared_directory_permissions(self):
         """历史 0700 目录会在写通知前修复，pending 文件允许同组 bot 读取。"""

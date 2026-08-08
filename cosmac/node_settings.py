@@ -23,7 +23,7 @@ from cosmac.db.models import NodeSetting
 from cosmac.node_activation import instance_id as activated_instance_id
 
 
-OFFICIAL_BRAND_INSTANCE_IDS = frozenset({1, 2, 3})
+OFFICIAL_BRAND_INSTANCE_IDS = frozenset({3})
 
 DEFAULT_PUBLIC: Dict[str, Any] = {
     "brand": {"product_name": "GuDuu OS", "company_name": "", "logo_data_url": ""},
@@ -61,14 +61,14 @@ def _is_oem_node() -> bool:
 
 
 def _contains_protected_brand(value: Any) -> bool:
-    """识别品牌的常见空格、连字符和大小写变体。"""
+    """识别 GuDuu OS 变体与中富通官方标识。"""
     normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
     compact = re.sub(r"[^a-z0-9]+", "", normalized)
-    return "guduuos" in compact
+    return "guduuos" in compact or "中富通" in normalized
 
 
 def _brand_policy() -> Dict[str, Any]:
-    """只有内部 #1/#2/#3 节点可把 GuDuu OS 作为客户产品品牌。"""
+    """只有官网正式节点 #3 可把 GuDuu OS 作为客户产品品牌。"""
     node_id = activated_instance_id() if _is_oem_node() else None
     allowed = not _is_oem_node() or node_id in OFFICIAL_BRAND_INSTANCE_IDS
     return {
@@ -83,8 +83,8 @@ def _validate_customer_brand(value: Any, label: str) -> None:
     policy = _brand_policy()
     if not policy["reserved_brand_allowed"] and _contains_protected_brand(value):
         raise NodeSettingsError(
-            f"{label}不得使用 GuDuu OS 保留品牌；"
-            "仅内部节点 #1、#2、#3 可使用"
+            f"{label}不得使用 GuDuu OS 保留品牌或中富通官方标识；"
+            "仅官网正式节点 #3 可使用"
         )
 
 
@@ -379,6 +379,23 @@ def save_admin_config(body: Dict[str, Any]) -> Dict[str, Any]:
                 website_input.get("footer_text"), 240, "页脚版权文案"
             ),
         }
+        if bool(body.get("setup_completed")) and _is_oem_node():
+            required_oem_fields = (
+                (company_name, "企业/组织名称"),
+                (str(website_input.get("description") or "").strip(), "官网介绍"),
+                (website_public["contact_email"], "联系邮箱"),
+                (website_public["contact_phone"], "联系电话"),
+                (website_public["contact_address"], "联系地址"),
+            )
+            missing = [label for value, label in required_oem_fields if not value]
+            if missing:
+                raise NodeSettingsError(
+                    "OEM 首次部署必须填写：" + "、".join(missing)
+                )
+        if website_public["contact_email"] and not re.fullmatch(
+            r"[^\s@]+@[^\s@]+\.[^\s@]+", website_public["contact_email"]
+        ):
+            raise NodeSettingsError("联系邮箱格式不正确")
         for field, label in (
             ("headline", "官网主标题"),
             ("description", "官网介绍"),

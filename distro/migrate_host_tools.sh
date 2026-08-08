@@ -113,10 +113,10 @@ install -m 0755 "$SCRIPT_DIR/update_agent.py" "$TARGET_DISTRO/update_agent.py"
 install -m 0755 "$SCRIPT_DIR/apply_images.py" "$TARGET_DISTRO/apply_images.py"
 install -m 0755 "$SCRIPT_DIR/doctor.sh" "$TARGET_DISTRO/doctor.sh"
 
-# 客户节点缺省必须人工确认。只在旧 .env 没有该键时追加，绝不覆盖公司灰度节点
-# 已经显式设置的 COSMAC_AUTO_UPDATE=1。
+# 客户节点缺省必须人工确认。固定内部灰度节点 #2 由代理读取持久化实例身份后
+# 自动放行；这里仅为旧 .env 补安全默认值，不改任何已有配置。
 if ! grep -Eq '^COSMAC_AUTO_UPDATE=' "$TARGET_DISTRO/.env"; then
-  printf '\n# 客户节点默认只接收更新通知；1 仅供公司内部灰度节点显式启用。\nCOSMAC_AUTO_UPDATE=0\n' \
+  printf '\n# 客户节点默认只接收更新通知；固定内部灰度节点 #2 由代理自动识别。\nCOSMAC_AUTO_UPDATE=0\n' \
     >> "$TARGET_DISTRO/.env"
 fi
 chmod 0600 "$TARGET_DISTRO/.env"
@@ -164,6 +164,6 @@ trap - ERR
 say "宿主更新工具迁移完成 ✅"
 say "  安装目录：$TARGET_DISTRO"
 say "  旧文件备份：$BACKUP_DIR"
-say "  客户节点默认仅接收通知，必须在 OS 后台确认后才安装。"
+say "  客户与官网节点默认仅接收通知；固定内部灰度节点 #2 自动安装。"
 say "  timer 已启用，并已立即执行一次更新检查。"
 say "  本次没有重建或切换任何 bot/web 容器。"
