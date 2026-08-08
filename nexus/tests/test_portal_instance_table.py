@@ -24,6 +24,7 @@ class PortalInstanceTableTests(unittest.TestCase):
             "instance-version",
             "instance-people",
             "instance-seen",
+            "instance-member-policy",
             "instance-actions",
         ):
             self.assertIn(class_name, javascript)
@@ -35,12 +36,13 @@ class PortalInstanceTableTests(unittest.TestCase):
     def test_compact_values_do_not_break_in_the_middle(self) -> None:
         css = (ROOT / "console" / "portal" / "portal.css").read_text()
 
-        self.assertIn(".table-scroll .instance-table { min-width: 1090px; }", css)
+        self.assertIn(".table-scroll .instance-table { min-width: 1190px; }", css)
         self.assertIn(".instance-table .instance-region-cell { min-width: 155px; }", css)
         self.assertIn("width: 178px; min-width: 150px; max-width: 178px", css)
         self.assertIn(".instance-table .instance-domain-line { white-space: nowrap; }", css)
         self.assertIn("white-space: nowrap; word-break: keep-all", css)
         self.assertIn(".instance-table .instance-status .badge", css)
+        self.assertIn(".instance-table .instance-member-policy button.active", css)
 
 
 if __name__ == "__main__":

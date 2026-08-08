@@ -3252,6 +3252,13 @@ class CosmacBot:
             if not tier:
                 tiers = "/".join(t["label"] for t in MEMBER_TIERS)
                 return f"未知等级「{tier_word}」。可选：{tiers}（或 slug）。"
+            from cosmac.members import lifetime_approval_required
+
+            if tier != TIER_FREE and lifetime_approval_required():
+                return (
+                    "当前节点已开启终身会员审批制；请从 OEM 后台申请激活码，"
+                    "经 Nexus 审批后由用户兑换。"
+                )
             if self.members.grant(target, tier, source="admin"):
                 return f"✅ 已把 {target} 设为「{tier_label(tier)}」。"
             return "⚠️ 设置失败（控制室不存在或写入失败），请稍后再试。"

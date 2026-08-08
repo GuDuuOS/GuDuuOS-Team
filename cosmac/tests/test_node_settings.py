@@ -81,6 +81,13 @@ class NodeSettingsTest(unittest.TestCase):
         self.assertEqual(runtime_email()["password"], "keep-me")
         self.assertEqual(admin_config()["brand"]["product_name"], "测试 OS 2")
 
+    def test_public_config_exposes_only_membership_policy_boolean(self) -> None:
+        with mock.patch(
+            "cosmac.node_activation.lifetime_approval_required", return_value=True
+        ):
+            policy = public_config()["member_policy"]
+        self.assertEqual(policy, {"lifetime_approval_required": True})
+
     def test_nexus_gateway_uses_server_oem_credential_without_exposing_it(self) -> None:
         """Nexus 模式不让浏览器填 KEY，运行时才从服务器环境组装。"""
         with mock.patch.dict(

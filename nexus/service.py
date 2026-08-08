@@ -22,6 +22,7 @@
         POST /nexus/admin/revoke     {key_id}                  吊销 KEY
         GET  /nexus/admin/keys                                 KEY 列表
         GET  /nexus/admin/instances                            实例列表（含余额）
+        POST /nexus/admin/instance_member_policy               逐节点终身会员审批策略
         POST /nexus/admin/topup      {instance_id,tokens,note} 手动充值
         GET  /nexus/admin/finance_summary                      资金经营汇总
         GET  /nexus/admin/finance_ledger                       节点充值财务清单
@@ -69,6 +70,7 @@ from nexus import (
     fleet,
     geo,
     manual_transfer,
+    member_policy,
     oem as oem_svc,
     oem_email,
     oem_finance,
@@ -280,6 +282,7 @@ class NexusHandler(BaseHTTPRequestHandler):
             "/nexus/admin/admin_status",
             "/nexus/admin/admin_password",
             "/nexus/admin/admin_role",
+            "/nexus/admin/instance_member_policy",
         ):
             return "security.write" if write else "security.read"
         if path.startswith("/nexus/admin/"):
@@ -2322,6 +2325,23 @@ class NexusHandler(BaseHTTPRequestHandler):
                             int(body.get("instance_id") or 0),
                             str(body.get("region", "")),
                         ),
+                    )
+                )
+            return
+
+        if path == "/nexus/admin/instance_member_policy":
+            # 永久权益是否必须经母舰审批属于商业安全策略，只允许超管调整。
+            if self._check_admin():
+                self._with_session(
+                    lambda s: self._json(
+                        200,
+                        {
+                            "member_policy": member_policy.set_policy(
+                                s,
+                                int(body.get("instance_id") or 0),
+                                body.get("lifetime_approval_required"),
+                            )
+                        },
                     )
                 )
             return

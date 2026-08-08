@@ -648,7 +648,7 @@ label input { margin-top: 5px; }
 }
 .instance-region-cell { min-width: 190px; }
 .instance-region-select { width: 128px; margin: 0 6px 0 0; padding: 6px 8px; }
-.table-scroll .instance-table { min-width: 1090px; }
+.table-scroll .instance-table { min-width: 1190px; }
 .instance-table th,
 .instance-table td { padding-left: 5px; padding-right: 5px; vertical-align: middle; }
 .instance-table .instance-region-cell { min-width: 155px; }
@@ -664,11 +664,17 @@ label input { margin-top: 5px; }
 .instance-table .instance-version,
 .instance-table .instance-people,
 .instance-table .instance-seen,
+.instance-table .instance-member-policy,
 .instance-table .instance-actions { white-space: nowrap; word-break: keep-all; }
 .instance-table .instance-status .badge { display: inline-block; white-space: nowrap; }
 .instance-table .instance-version { min-width: 68px; }
 .instance-table .instance-people { min-width: 88px; }
 .instance-table .instance-seen { min-width: 132px; }
+.instance-table .instance-member-policy { min-width: 86px; }
+.instance-table .instance-member-policy button { width: 100%; }
+.instance-table .instance-member-policy button.active {
+  color: var(--green); border-color: var(--green); background: var(--badge-green-bg);
+}
 .instance-table .instance-actions { min-width: 72px; }
 .instance-table .instance-actions button { display: block; width: 100%; }
 .instance-table .instance-actions button + button { margin-top: 5px; }

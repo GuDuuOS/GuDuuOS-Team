@@ -404,8 +404,10 @@ def beat(
                 from cosmac import node_activation
 
                 node_activation.record_instance_id(data.get("instance_id"))
+                if isinstance(data.get("member_policy"), dict):
+                    node_activation.record_member_policy(data["member_policy"])
             except (OSError, ValueError):
-                logger.warning("Nexus 心跳成功，但节点身份持久化失败", exc_info=True)
+                logger.warning("Nexus 心跳成功，但节点身份或策略持久化失败", exc_info=True)
             return True
         logger.warning("Nexus 心跳被拒：HTTP %s %s", r.status_code, r.text[:120])
     except requests.RequestException as e:

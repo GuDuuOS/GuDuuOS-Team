@@ -126,6 +126,26 @@ class EntitlementHttpTests(unittest.TestCase):
         self.assertEqual(activated["membership"], "paid")
         self.assertEqual(activated["expires_ts"], 0)
 
+    def test_superadmin_can_toggle_one_instance_membership_policy(self) -> None:
+        changed = self._json_request(
+            "/nexus/admin/instance_member_policy",
+            self.admin_token,
+            {
+                "instance_id": self.instance_id,
+                "lifetime_approval_required": True,
+            },
+        )
+        self.assertTrue(
+            changed["member_policy"]["lifetime_approval_required"]
+        )
+        instances = self._json_request(
+            "/nexus/admin/instances", self.admin_token
+        )["instances"]
+        current = next(row for row in instances if row["id"] == self.instance_id)
+        self.assertTrue(
+            current["member_policy"]["lifetime_approval_required"]
+        )
+
     def test_token_request_is_visible_and_credits_only_after_confirmation(self) -> None:
         created = self._json_request(
             "/nexus/oem/token_purchase_request",

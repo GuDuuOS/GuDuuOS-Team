@@ -47,6 +47,23 @@ class NodeActivationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "不合法"):
             node_activation.record_instance_id(True)
 
+    def test_heartbeat_policy_is_persisted_without_losing_identity(self) -> None:
+        """逐节点会员策略与实例身份共用原子状态文件且互不覆盖。"""
+        node_activation.record_instance_id(7)
+        self.assertFalse(node_activation.lifetime_approval_required())
+        saved = node_activation.record_member_policy(
+            {"lifetime_approval_required": True}
+        )
+        self.assertTrue(saved["lifetime_approval_required"])
+        self.assertTrue(node_activation.lifetime_approval_required())
+        self.assertEqual(node_activation.instance_id(), 7)
+
+        # 后续每次心跳都会重写实例号，但不能把已收到的策略擦掉。
+        node_activation.record_instance_id(7)
+        self.assertTrue(node_activation.lifetime_approval_required())
+        with self.assertRaisesRegex(ValueError, "不合法"):
+            node_activation.record_member_policy({"lifetime_approval_required": 1})
+
     @patch("cosmac.node_activation.requests.post")
     def test_activation_never_returns_or_persists_raw_key(self, post) -> None:
         """服务器代办兑换成功后只保存实例号，授权码不落盘也不回浏览器。"""

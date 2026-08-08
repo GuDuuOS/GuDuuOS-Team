@@ -105,6 +105,29 @@ def active_tier(rec: Optional[Dict[str, Any]], now_ts: Optional[int] = None) -> 
     return tier
 
 
+def lifetime_approval_required() -> bool:
+    """Read the last Nexus policy persisted by the OEM-key heartbeat."""
+    try:
+        from cosmac import node_activation
+
+        return node_activation.lifetime_approval_required()
+    except Exception:
+        # 未接 Nexus 或旧节点没有策略时保持历史行为；只有母舰明确下发 true 才收紧。
+        return False
+
+
+def _policy_allows_record(rec: Optional[Dict[str, Any]]) -> bool:
+    """Reject direct, permanent admin grants when this node is approval-only."""
+    if not isinstance(rec, dict) or not lifetime_approval_required():
+        return True
+    if normalize_tier(rec.get("tier")) == DEFAULT_TIER:
+        return True
+    return not (
+        str(rec.get("source") or "admin") == "admin"
+        and _as_int(rec.get("expires_ts")) == 0
+    )
+
+
 def member_state_key(user_id: str) -> str:
     """单用户会员事件 ``cosmac.member`` 的 state_key。
 
@@ -190,6 +213,9 @@ class MembersStore:
             legacy = parse_members(
                 self._client.get_state_event(room, MEMBERS_EVENT_TYPE)
             )
+            legacy = {
+                uid: rec for uid, rec in legacy.items() if _policy_allows_record(rec)
+            }
             for ev in self._client.get_room_state(room):
                 if not isinstance(ev, dict) or ev.get("type") != MEMBER_EVENT_TYPE:
                     continue
@@ -203,7 +229,11 @@ class MembersStore:
                 if not uid.startswith("@") or ":" not in uid:
                     continue
                 # 到期的按免费处理(回落)→ 与 free tombstone 一样从 map 里移除
-                tier = active_tier(content)
+                tier = (
+                    active_tier(content)
+                    if _policy_allows_record(content)
+                    else DEFAULT_TIER
+                )
                 if tier == DEFAULT_TIER:
                     legacy.pop(uid, None)
                 else:
@@ -232,12 +262,12 @@ class MembersStore:
         """
         cached = self._rec_cache.get(user_id)
         if cached and time.monotonic() - cached[1] < 60:
-            return cached[0]
+            return cached[0] if _policy_allows_record(cached[0]) else None
         rec = self._get_record_uncached(user_id)
         self._rec_cache[user_id] = (rec, time.monotonic())
         if len(self._rec_cache) > 10000:
             self._rec_cache.clear()
-        return rec
+        return rec if _policy_allows_record(rec) else None
 
     def _get_record_uncached(self, user_id: str) -> Optional[Dict[str, Any]]:
         """get_record 的真实读取体(缓存壳见上)。"""
@@ -284,6 +314,18 @@ class MembersStore:
         """
         if not is_valid_tier(tier):
             logger.warning("授予会员失败：未知等级 %r", tier)
+            return False
+        if (
+            tier != DEFAULT_TIER
+            and str(source or "admin") == "admin"
+            and not expires_ts
+            and lifetime_approval_required()
+        ):
+            logger.warning(
+                "节点已开启终身会员审批制，拒绝管理员永久直授 user=%s tier=%s",
+                user_id,
+                tier,
+            )
             return False
         room = self._ctrl_room()
         if not room:

@@ -26,6 +26,11 @@ export const instanceWebsite = reactive({
   footerText: '',
 })
 
+/** Nexus 按节点下发的会员授予策略。 */
+export const instanceMembershipPolicy = reactive({
+  lifetimeApprovalRequired: false,
+})
+
 export interface PublicInstanceConfig {
   setup_completed: boolean
   brand?: { product_name?: string; company_name?: string; logo_data_url?: string }
@@ -40,6 +45,7 @@ export interface PublicInstanceConfig {
     footer_text?: string
   }
   brand_policy?: { instance_id?: number | null; reserved_brand_allowed?: boolean }
+  member_policy?: { lifetime_approval_required?: boolean }
 }
 
 function text(value: unknown, limit: number): string {
@@ -106,6 +112,9 @@ export function applyInstanceConfig(payload: PublicInstanceConfig): PublicInstan
   instanceBrand.reservedBrandAllowed = reservedBrandAllowed
   instanceBrand.setupCompleted = Boolean(payload?.setup_completed)
   instanceBrand.loaded = true
+  instanceMembershipPolicy.lifetimeApprovalRequired = Boolean(
+    payload?.member_policy?.lifetime_approval_required,
+  )
   instanceWebsite.headline = text(payload?.website?.headline, 120)
     || '让沟通、协作与智能助手在一个地方完成'
   instanceWebsite.description = text(payload?.website?.description, 500)
@@ -146,6 +155,9 @@ export function applyInstanceConfig(payload: PublicInstanceConfig): PublicInstan
       footer_text: instanceWebsite.footerText,
     },
     brand_policy: { instance_id: instanceId, reserved_brand_allowed: reservedBrandAllowed },
+    member_policy: {
+      lifetime_approval_required: instanceMembershipPolicy.lifetimeApprovalRequired,
+    },
   }
 }
 
@@ -165,6 +177,9 @@ export async function loadInstanceConfig(
         instance_id: instanceBrand.instanceId,
         reserved_brand_allowed: instanceBrand.reservedBrandAllowed,
       },
+      member_policy: {
+        lifetime_approval_required: instanceMembershipPolicy.lifetimeApprovalRequired,
+      },
     }
   }
   try {
@@ -174,6 +189,7 @@ export async function loadInstanceConfig(
   } catch {
     // 本地开发或旧后端没有端点时保持历史品牌，并且不强制跳向导。
     instanceBrand.setupCompleted = true
+    instanceMembershipPolicy.lifetimeApprovalRequired = false
     if (!import.meta.env.DEV) {
       // 生产节点读取不到服务器持久化实例号时必须安全降级，不能把“未知身份”
       // 当成官网节点 #3 并直接显示 GuDuu OS / 中富通官方标识。
@@ -191,6 +207,7 @@ export async function loadInstanceConfig(
         instance_id: instanceBrand.instanceId,
         reserved_brand_allowed: instanceBrand.reservedBrandAllowed,
       },
+      member_policy: { lifetime_approval_required: false },
     }
   } finally {
     instanceBrand.loaded = true

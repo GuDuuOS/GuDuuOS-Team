@@ -6,7 +6,7 @@
 
 import { createClient, type MatrixClient } from 'matrix-js-sdk'
 import { isSafeHomeserverUrl } from '@/config/hs'
-import { instanceBrand } from '@/config/instance'
+import { instanceBrand, instanceMembershipPolicy } from '@/config/instance'
 import {
   cachedAccountSummaries,
   cachedActiveAccountSession,
@@ -1979,6 +1979,10 @@ export async function getMembers(): Promise<MemberMap> {
     if (type === MEMBERS_EVENT_TYPE && stateKey === '') {
       for (const [uid, rec] of Object.entries(content?.members || {})) {
         const tier = (rec as any)?.tier
+        const directPermanentAdmin = instanceMembershipPolicy.lifetimeApprovalRequired
+          && String((rec as any)?.source || 'admin') === 'admin'
+          && !Number((rec as any)?.expires_ts || 0)
+        if (directPermanentAdmin) continue
         if (tier !== 'free' && MEMBER_TIERS.some((t) => t.slug === tier)) out[uid] = tier
       }
     }
@@ -1993,6 +1997,13 @@ export async function getMembers(): Promise<MemberMap> {
     if (typeof uid !== 'string' || !uid) uid = sk.startsWith('@') ? sk : (sk ? '@' + sk : '')
     if (typeof uid !== 'string' || !uid.startsWith('@') || !uid.includes(':')) continue
     const tier = content?.tier
+    const directPermanentAdmin = instanceMembershipPolicy.lifetimeApprovalRequired
+      && String(content?.source || 'admin') === 'admin'
+      && !Number(content?.expires_ts || 0)
+    if (directPermanentAdmin) {
+      delete out[uid]
+      continue
+    }
     if (tier === 'free') delete out[uid]
     else if (MEMBER_TIERS.some((t) => t.slug === tier)) out[uid] = tier
   }
@@ -2015,6 +2026,9 @@ function memberStateKey(userId: string): string {
 export async function setMemberTier(userId: string, tier: string): Promise<void> {
   if (!mx) throw new Error('未登录')
   if (!MEMBER_TIERS.some((t) => t.slug === tier)) throw new Error('未知会员等级')
+  if (instanceMembershipPolicy.lifetimeApprovalRequired && tier !== 'free') {
+    throw new Error('当前节点的永久会员必须从 OEM 后台申请并经 Nexus 审批')
+  }
   const rid = await ensureControlRoom()
   const content = { uid: userId, tier, source: 'admin', updated_ts: Math.floor(Date.now() / 1000) }
   // state_key 去掉 @（见 memberStateKey）——否则管理员给别人设等级会被 Matrix 403 拦

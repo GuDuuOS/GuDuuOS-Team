@@ -205,6 +205,8 @@ def public_config() -> Dict[str, Any]:
                 "logo_data_url": "",
             }
             public["website"] = dict(DEFAULT_PUBLIC["website"])
+        from cosmac import node_activation
+
         return {
             "setup_completed": bool(row and row.setup_completed and not (
                 not policy["reserved_brand_allowed"] and protected
@@ -212,6 +214,11 @@ def public_config() -> Dict[str, Any]:
             "brand": public["brand"],
             "website": public["website"],
             "brand_policy": policy,
+            "member_policy": {
+                "lifetime_approval_required": (
+                    node_activation.lifetime_approval_required()
+                )
+            },
         }
 
 

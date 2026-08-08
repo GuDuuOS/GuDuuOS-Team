@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import unittest
 
-from nexus import db, entitlements, fleet, oem, pay
+from nexus import db, entitlements, fleet, member_policy, oem, pay
 from nexus.fleet import FleetError
 
 
@@ -79,6 +79,31 @@ class EntitlementTests(unittest.TestCase):
                 user_id="@bob:lifetime.example.com",
             )
         self.assertEqual(raised.exception.code, "NEXUS_LIFETIME_CODE_USED")
+
+    def test_superadmin_policy_is_per_instance_and_sent_by_heartbeat(self) -> None:
+        self.assertFalse(
+            member_policy.get_policy(self.s, self.instance_id)[
+                "lifetime_approval_required"
+            ]
+        )
+        enabled = member_policy.set_policy(self.s, self.instance_id, True)
+        self.assertTrue(enabled["lifetime_approval_required"])
+        listed = fleet.list_instances(self.s)
+        current = next(row for row in listed if row["id"] == self.instance_id)
+        self.assertTrue(
+            current["member_policy"]["lifetime_approval_required"]
+        )
+        heartbeat = fleet.heartbeat(self.s, self.node_key, "1.0.0")
+        self.assertTrue(
+            heartbeat["member_policy"]["lifetime_approval_required"]
+        )
+
+        member_policy.set_policy(self.s, self.instance_id, False)
+        self.assertFalse(
+            member_policy.get_policy(self.s, self.instance_id)[
+                "lifetime_approval_required"
+            ]
+        )
 
     def test_token_request_only_credits_after_finance_confirms_payment(self) -> None:
         request = entitlements.request_token_purchase(

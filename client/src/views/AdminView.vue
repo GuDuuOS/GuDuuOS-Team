@@ -177,6 +177,10 @@
             ⚠️ 会员等级暂时读取失败（通常是你刚被设为管理员、还没加入控制室）。用户列表正常，
             但“会员等级”列不准确、已暂时禁用修改。请点上方「刷新」重试一次即可恢复。
           </div>
+          <div v-if="instanceMembershipPolicy.lifetimeApprovalRequired" class="adm-warnbar">
+            当前节点已由 Nexus 超管开启终身会员审批制。这里仍可撤销会员或调整管理员身份，
+            但不能直接授予永久付费/创作者会员；请从 OEM 后台申请激活码。
+          </div>
 
         <table class="adm-table">
           <thead>
@@ -220,7 +224,12 @@
                   :disabled="tierBusy === u.id || busy === u.id || membersLoadFailed"
                   @change="onLevelChange(u, ($event.target as HTMLSelectElement).value)"
                 >
-                  <option v-for="t in MEMBER_TIERS" :key="t.slug" :value="t.slug">
+                  <option
+                    v-for="t in MEMBER_TIERS"
+                    :key="t.slug"
+                    :value="t.slug"
+                    :disabled="instanceMembershipPolicy.lifetimeApprovalRequired && t.slug !== 'free'"
+                  >
                     {{ t.label }}
                   </option>
                   <option value="admin">管理员</option>
@@ -1827,7 +1836,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { instanceBrand } from '@/config/instance'
+import { instanceBrand, instanceMembershipPolicy } from '@/config/instance'
 import { formatServerDateTime } from '@/utils/dateTime'
 import { rowKey } from '@/utils/rowKey'
 import {
@@ -2199,6 +2208,14 @@ async function onTierChange(u: AdminUser, tier: string) {
 async function onLevelChange(u: AdminUser, level: string) {
   const cur = u.admin ? 'admin' : memberTier(u.id)
   if (level === cur) return
+  if (
+    instanceMembershipPolicy.lifetimeApprovalRequired
+    && level !== 'free'
+    && level !== 'admin'
+  ) {
+    warn('需要终身会员审批', '请从 OEM 后台申请激活码，经 Nexus 审批后由用户兑换。')
+    return
+  }
   if (level === 'admin') {
     // 升为管理员（会员档保留在 cosmac.members，管理员本就不受会员门控）
     if (!confirm(`确认把 ${u.name} 设为管理员？`)) return

@@ -10,11 +10,14 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 from typing import Any, Dict, Optional
 
 import requests
 
 from cosmac.config import CosmacConfig, _env
+
+_STATE_LOCK = threading.Lock()
 
 
 def required() -> bool:
@@ -27,6 +30,30 @@ def _path() -> str:
     return _env("NODE_ACTIVATION_STATE_PATH", "/var/lib/cosmac/node-activation.json")
 
 
+def _read_state() -> Dict[str, Any]:
+    try:
+        with open(_path(), "r", encoding="utf-8") as handle:
+            value = json.load(handle)
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def _write_state(value: Dict[str, Any]) -> None:
+    target = _path()
+    directory = os.path.dirname(target) or "."
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".activation-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(value, handle)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def instance_id() -> Optional[int]:
     """读取已兑换的节点编号。
 
@@ -36,8 +63,7 @@ def instance_id() -> Optional[int]:
     必须按未授权处理。
     """
     try:
-        with open(_path(), "r", encoding="utf-8") as handle:
-            value = json.load(handle)
+        value = _read_state()
         if not isinstance(value, dict):
             return None
         raw = value.get("instance_id")
@@ -54,8 +80,7 @@ def status() -> Dict[str, Any]:
     if not required():
         return {"required": False, "activated": True}
     try:
-        with open(_path(), "r", encoding="utf-8") as handle:
-            value = json.load(handle)
+        value = _read_state()
         if isinstance(value, dict) and value.get("activated") is True:
             return {"required": True, "activated": True, "instance_id": value.get("instance_id")}
     except (OSError, ValueError, TypeError):
@@ -83,19 +108,35 @@ def record_instance_id(value: Any) -> int:
     if parsed <= 0:
         raise ValueError("Nexus 实例编号不合法")
 
-    target = _path()
-    directory = os.path.dirname(target) or "."
-    os.makedirs(directory, mode=0o700, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=".activation-", dir=directory)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump({"activated": True, "instance_id": parsed}, handle)
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, target)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    with _STATE_LOCK:
+        state = _read_state()
+        state.update({"activated": True, "instance_id": parsed})
+        _write_state(state)
     return parsed
+
+
+def record_member_policy(value: Any) -> Dict[str, bool]:
+    """Persist the Nexus-signed policy returned through the OEM-key heartbeat."""
+    if not isinstance(value, dict):
+        raise ValueError("节点会员策略不合法")
+    required = value.get("lifetime_approval_required")
+    if not isinstance(required, bool):
+        raise ValueError("节点会员策略不合法")
+    policy = {"lifetime_approval_required": required}
+    with _STATE_LOCK:
+        state = _read_state()
+        state["member_policy"] = policy
+        _write_state(state)
+    return policy
+
+
+def lifetime_approval_required() -> bool:
+    """Whether manual permanent membership grants must be rejected on this node."""
+    policy = _read_state().get("member_policy")
+    return bool(
+        isinstance(policy, dict)
+        and policy.get("lifetime_approval_required") is True
+    )
 
 
 def activate(config: CosmacConfig) -> Dict[str, Any]:

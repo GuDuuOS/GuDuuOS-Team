@@ -3575,13 +3575,25 @@
         var regionEditor = '<select class="instance-region-select" data-instance-region="' + i.id + '">' +
           regionOptions + '</select><button class="ghost small" data-save-instance-region="' +
           i.id + '">保存</button>';
+        var approvalRequired = !!(
+          i.member_policy && i.member_policy.lifetime_approval_required
+        );
+        var lifetimePolicy = '<button class="ghost small' +
+          (approvalRequired ? ' active' : '') + '" data-instance-member-policy="' + i.id +
+          '" data-policy-enabled="' + (approvalRequired ? '1' : '0') + '"' +
+          (adminCan("security.write") ? '' : ' disabled') + ' title="' +
+          (approvalRequired
+            ? '当前节点的永久会员必须走 OEM 申请和 Nexus 审批'
+            : '当前节点允许管理员直接授予永久会员') + '">' +
+          (approvalRequired ? '必须审批' : '允许直授') + '</button>';
         return "<tr><td>#" + i.id + "</td><td class=\"instance-domain\" title=\"" + esc(i.domain) + "\">" + instanceDomainHtml(i.domain) + "</td><td class=\"zh instance-company\">" + company + "</td><td class=\"zh instance-status\">" + badge(hbStatus(i)) + "</td>" +
           "<td class=\"instance-version\">" + esc(i.version || "—") + "</td><td class=\"zh instance-region-cell\">" + regionEditor +
           "</td><td class=\"zh instance-people\">" + people + "</td><td class=\"instance-seen\">" + fmtTime(i.last_seen_ts) + "</td>" +
           '<td class="finance-token">' + fmtInteger(i.balance_tokens) + ' Token</td>' +
+          '<td class="zh instance-member-policy">' + lifetimePolicy + '</td>' +
           '<td class="zh instance-actions"><button class="ghost small" data-instance-detail="' + i.id + '">详情</button>' +
           '<button class="ghost small" data-topup="' + i.id + '" data-domain="' + esc(i.domain) + '">充值</button></td></tr>';
-      }).join("") || '<tr><td colspan="10" class="zh empty">暂无实例</td></tr>';
+      }).join("") || '<tr><td colspan="11" class="zh empty">暂无实例</td></tr>';
 
       renderAdminKeys();
 
@@ -4187,6 +4199,31 @@
         toast("节点地域已保存，大屏地图会自动更新");
         loadAdmin();
       }).catch(function (err) { toast(err.message, true); });
+      return;
+    }
+    if (t.dataset && t.dataset.instanceMemberPolicy) {
+      if (!adminCan("security.write")) return toast("只有超级管理员可以调整此策略", true);
+      var memberPolicyInstanceId = Number(t.dataset.instanceMemberPolicy);
+      var nextRequired = t.dataset.policyEnabled !== "1";
+      var promptText = nextRequired
+        ? "开启后，该节点管理员不能直接授予永久会员，必须从 OEM 后台申请并由 Nexus 审批。确认开启？"
+        : "关闭后，该节点管理员可以恢复直接授予永久会员。确认关闭？";
+      if (!confirm(promptText)) return;
+      t.disabled = true;
+      api("/nexus/admin/instance_member_policy", {
+        body: {
+          instance_id: memberPolicyInstanceId,
+          lifetime_approval_required: nextRequired,
+        },
+      }).then(function () {
+        toast(nextRequired
+          ? "已开启终身会员审批制，节点将在下一次心跳后生效"
+          : "已允许该节点管理员直接授予永久会员");
+        loadAdmin();
+      }).catch(function (err) {
+        t.disabled = false;
+        toast(err.message, true);
+      });
       return;
     }
     var oemInstanceTarget = t.closest ? t.closest("[data-oem-instance-detail]") : null;

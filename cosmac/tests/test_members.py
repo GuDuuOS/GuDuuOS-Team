@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import unittest
 from typing import Any, Dict, Optional
+from unittest.mock import patch
 
 from cosmac.bots.appservice_bot import CosmacBot
 from cosmac.config import CosmacConfig
@@ -201,6 +202,43 @@ class MembersStoreTests(unittest.TestCase):
         self.assertTrue(s.grant(ALICE, TIER_PAID))
         self.assertEqual(s.get_tier(ALICE), TIER_PAID)
 
+    @patch("cosmac.node_activation.lifetime_approval_required", return_value=True)
+    def test_approval_only_node_rejects_direct_permanent_grants(self, _policy):
+        fake = FakeClient(CTRL)
+        store = MembersStore(fake, "#cosmac-ctrl:guduu.local")
+
+        # 标准服务端入口拒绝管理员永久直授。
+        self.assertFalse(store.grant(ALICE, TIER_PAID, source="admin"))
+        # 即使管理员绕过 UI 直接写 Matrix state，业务读取也按免费处理。
+        fake._state[("cosmac.member", "alice:guduu.local")] = {
+            "uid": ALICE,
+            "tier": TIER_PAID,
+            "source": "admin",
+            "expires_ts": 0,
+        }
+        self.assertEqual(store.get_tier(ALICE), TIER_FREE)
+        self.assertNotIn(ALICE, store.get_all())
+
+        # Nexus 激活码与有期限订阅仍可正常履约。
+        self.assertTrue(
+            store.grant(
+                ALICE,
+                TIER_PAID,
+                source="oem_lifetime_code",
+                expires_ts=0,
+            )
+        )
+        self.assertEqual(store.get_tier(ALICE), TIER_PAID)
+        self.assertTrue(
+            store.grant(
+                BOB,
+                TIER_PAID,
+                source="purchase",
+                expires_ts=4_102_444_800,
+            )
+        )
+        self.assertEqual(store.get_tier(BOB), TIER_PAID)
+
 
 class BotCommandTests(unittest.TestCase):
     def test_self_check_default_free(self):
@@ -230,6 +268,15 @@ class BotCommandTests(unittest.TestCase):
         bot = _bot()
         out = bot._run_member_command(ADMIN, "会员 设置 @alice:guduu.local 钻石")
         self.assertIn("未知等级", out)
+
+    @patch("cosmac.node_activation.lifetime_approval_required", return_value=True)
+    def test_admin_set_requires_nexus_approval_when_policy_enabled(self, _policy):
+        bot = _bot()
+        out = bot._run_member_command(
+            ADMIN, "会员 设置 @alice:guduu.local 付费"
+        )
+        self.assertIn("OEM 后台申请", out)
+        self.assertEqual(bot.members.get_tier(ALICE), TIER_FREE)
 
     def test_admin_list(self):
         bot = _bot()

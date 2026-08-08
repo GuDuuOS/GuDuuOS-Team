@@ -351,10 +351,13 @@ def heartbeat(
             row.updated_ts = _now_ms()
 
     wallet = s.get(NexusWallet, inst.id)
+    from nexus import member_policy
+
     return {
         "instance_id": inst.id,
         "status": inst.status,
         "balance_tokens": int(wallet.balance_tokens) if wallet else 0,
+        "member_policy": member_policy.get_policy(s, inst.id),
     }
 
 
@@ -816,6 +819,8 @@ def list_instances(s) -> List[Dict[str, Any]]:
                 "company_name": (company or name or email or "").strip(),
                 "oem_email": email or "",
             }
+    from nexus import member_policy
+
     out = []
     for r in rows:
         wallet = s.get(NexusWallet, r.id)
@@ -842,6 +847,7 @@ def list_instances(s) -> List[Dict[str, Any]]:
                 "tokens_today": today_usage.get(r.id, {}).get("tokens", 0),
                 "requests_total": all_usage.get(r.id, {}).get("requests", 0),
                 "requests_today": today_usage.get(r.id, {}).get("requests", 0),
+                "member_policy": member_policy.get_policy(s, r.id),
                 # 地域（大屏地图打点）；历史缺失记录仍在 totals.unlocated 中显式告警，
                 # 新部署由 HTTP 兑换入口强制选择，不能再静默漏点。
                 **_geo_of(s, r.id),
