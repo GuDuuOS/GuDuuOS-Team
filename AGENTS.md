@@ -349,7 +349,9 @@ client/
 > 请求桶计算；CPU、磁盘、数据库容量、可用率等未接遥测的数据继续显示 `—`。
 > 分钟桶与延迟直方图保留 180 天后由维护任务同步清理，不得影响审计、账务与流水。
 
-> **Nexus Docker 镜像发布（2026-08）**：OEM 节点应用采用两阶段发布。
+> **Nexus Docker 镜像发布（2026-08）**：本节只在负责人于当前任务明确通知“做镜像”
+> 或“发布节点版本”后启动；普通代码提交不得自行打发行 Tag、触发镜像构建或创建节点任务。
+> OEM 节点应用采用两阶段发布。
 > 第一阶段由 GitHub Actions 在严格 ``vX.Y.Z`` tag 上构建 bot/web 镜像并推送 GHCR，
 > Nexus 只接受带独立 HMAC 签名、五分钟时效的构建清单；发布记录冻结
 > ``仓库@sha256:digest``、源码 commit 与平台信息，禁止只下发可移动 tag。
@@ -589,22 +591,37 @@ client/
 4. 改动后：跑 lint + 相关测试；动了 `synapse/` 就补 changelog。
 5. **保持本文件最新**：架构/路线图/核心改动一旦变化，先更新 AGENTS.md。
 6. 不确定的产品决策，问负责人，不要自己拍板大方向。
-7. **每完成一个可用版本就自动「提交 → 推送 → 给部署命令」，不用等催。** 客户端（`client/`）功能做好且本地 preview 验证通过后，依次：
-   - ⓪ **按版本规则升号并写笔记**（详见 `docs/VERSIONING.md`、`.cursor/rules/versioning.mdc`）：SemVer 语义——**PATCH** 有交付就勤涨、**MINOR** 本周有可对外增量再涨（争取每周打包一次）、**MAJOR** 仅破坏性/代际（不强制每月涨）；对齐 `cosmac.__version__` 与 `client/package.json`；`DEVLOG.md` 顶条必须为 `## YYYY-MM-DD — GuDuu OS X.Y.Z (patch|minor|major)`，正文用「新增/修复/优化/变更」分类；不记敏感信息（key/IP 进 `DEPLOY.md`）。
-   - ① 重建产物：`cd client && npm run build`（`client/dist` 被 .gitignore，提交用 `git add -f client/dist`）；
-   - ② `git commit` + `git push origin main`：发版 commit 第一行必须为 `release: GuDuu OS X.Y.Z (patch|minor|major)`，正文与 DEVLOG 用户可见条目对齐；推荐打 tag `vX.Y.Z`。
-   - ③ **直接 SSH 部署 Google Cloud 生产实例**（负责人 2026-08-01 拍板：停止维护旧云环境，只维护当前 Google Cloud 实例）：中央 Nexus 与 OEM 节点分别按本机 `DEPLOY.md` 中已确认的主机、用户和目录执行更新；先验证 Nexus 管理/API，再按版本范围更新 OEM 节点，最后运行各自体检。AI 直接执行，不再给负责人贴命令。IP、密钥、数据库连接和服务器路径只保留在被忽略的 `DEPLOY.md`，不得写进提交或更新说明。
+7. **每完成一次可用改动就自动提交并推送 GitHub，不用等催。** 相关测试与客户端 build
+   通过后，把本次范围内的代码/文档 `git commit` 并 `git push origin main`。普通提交不升
+   产品版本、不写发布总账、不打 `vX.Y.Z` Tag、不构建镜像，也不创建或推进 OEM 节点任务；
+   提交信息按实际类型使用 `feat:` / `fix:` / `docs:` / `chore:` 等前缀。不得夹带工作区中
+   其他会话或负责人尚未要求提交的改动。
+   - 只有负责人在**当前任务明确通知**“做镜像”“构建镜像”或“发布节点版本”时，才按
+     `docs/VERSIONING.md` 和 `.cursor/rules/versioning.mdc` 聚合上次节点 Tag 之后的待发布
+     变更，升 SemVer、写 `DEVLOG.md` 与 `docs/RELEASE_LEDGER.md`、创建严格 Tag，并启动
+     镜像和三环境流转。
+   - 仅修改中央 `nexus/`、Nexus 门户/大屏或中央平台运维配置时，仍在提交并推送 GitHub
+     后按已授权的生产流程直接部署中央 Nexus；这不等于节点镜像发布，不得顺带打节点 Tag、
+     构建镜像或投放 OEM 节点。
    - 纯后端操作（真建 / 整理 Matrix 频道等，只改服务器数据、不动 `client/` 代码）不必走部署，但要说明"无需部署"。
 7.5 **「拉取本周/本月变更说明」**：从区间内 `release:` commit + `DEVLOG.md` 归并，按新增/修复/优化/变更输出可直接对外用的更新文案并标明版本跨度（见 `docs/VERSIONING.md` §7）。**维护感靠勤 PATCH + 周报/月报**，月报不要求伴随 MAJOR。
-7.6 **发布类型与版本真值源（强制）**：BUG 修复只发 **PATCH**，功能开发发 **MINOR**（破坏性才 MAJOR），不得再把新功能混进 PATCH。每个发布除 `DEVLOG.md` 外必须同步登记 `docs/RELEASE_LEDGER.md`，写明 `bugfix|feature|maintenance`。任何会话升号前必须先 `git fetch origin main --tags`，再重读 `origin/main` 的 `cosmac.__version__` / `client/package.json` / `DEVLOG.md` / 发布总账；**禁止使用当前会话记忆里的版本号直接升号**。如果发现其他会话已抢先发版，必须基于最新 `origin/main` 重算版本，不得覆盖、跳过或重用已存在版本。
-7.7 **节点镜像判定与三环境流转（强制）**：每次提交前先判断改动是否进入 OEM 节点
-运行包。`cosmac/`、`client/`、节点安装/更新器或节点运行配置发生变化时，按版本规则
-创建严格 tag，CI 构建并登记不可变镜像，登记成功后先由节点 #1 自动安装开发验证；
+7.6 **发布类型与版本真值源（仅在负责人明确通知发版/做镜像时强制）**：BUG 修复只发
+**PATCH**，功能开发发 **MINOR**（破坏性才 MAJOR），不得把新功能混进 PATCH。每个正式
+发布除 `DEVLOG.md` 外必须同步登记 `docs/RELEASE_LEDGER.md`，写明
+`bugfix|feature|maintenance`。升号前必须先 `git fetch origin main --tags`，再重读
+`origin/main` 的 `cosmac.__version__` / `client/package.json` / `DEVLOG.md` / 发布总账；
+**禁止使用当前会话记忆里的版本号直接升号**。如果发现其他会话已抢先发版，必须基于最新
+`origin/main` 重算版本，不得覆盖、跳过或重用已存在版本。普通 GitHub 提交不执行升号。
+7.7 **节点镜像判定与三环境流转（仅在负责人明确通知做镜像时启动）**：收到明确通知后，
+先判断上次节点 Tag 之后的变更是否进入 OEM 节点运行包。`cosmac/`、`client/`、节点安装/
+更新器或节点运行配置发生变化时，按版本规则创建严格 Tag，CI 构建并登记不可变镜像，
+登记成功后先由节点 #1 自动安装开发验证；
 节点 #1 成功后再把同一摘要自动交给节点 #2 并自动安装，节点 #2 成功后才允许超管人工
 发布唯一官网正式节点 #3；其他生产 OEM 继续按各自的人工更新策略处理。仅修改 `nexus/`、Nexus 门户/大屏或中央平台运维配置时，
 提交并推送 `main` 后直接部署中央 Nexus，**不升节点版本、不打节点 tag、不构建镜像、
-不推送任何节点**。每次交付必须分别报告 GitHub、Docker Hub、GHCR、自建镜像仓与
-节点任务五项真实状态。
+不推送任何节点**。每次普通交付必须报告 GitHub 推送状态，并明确说明“本次未收到镜像
+通知，因此未构建镜像/未投放节点”；收到镜像通知的交付才分别报告 GitHub、Docker Hub、
+GHCR、自建镜像仓与节点任务五项真实状态。
 7.8 **桌面/手机 App 发布门禁（强制，优先于本节通用自动发布规则）**：现阶段只设计、
 开发和本地验证 Electron/Capacitor 客户端。除非负责人在当前任务中明确说“开始发布/上架
 桌面和手机 App”，否则不得创建或操作应用商城正式条目、生产签名、公开安装包、官网

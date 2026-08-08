@@ -13,12 +13,17 @@ alwaysApply: true
   `docs/RELEASE_LEDGER.md`；禁止依赖单次对话记忆。每版把 feature/bugfix/maintenance/breaking
   之一写入发布台账。
 - **有发版才涨号**;禁止无交付硬凑;禁止日期当版本号;Synapse/SDK 版本不是产品版本。
+- **每次可用改动都提交并推送 GitHub，但普通提交不等于发版**：未收到负责人当前任务中
+  明确的“做镜像/构建镜像/发布节点版本”通知时，不升号、不写发布总账、不打版本 Tag、
+  不构建镜像、不创建节点任务；普通提交使用 `feat:` / `fix:` / `docs:` / `chore:`。
+- 收到上述明确通知后，才聚合上次节点 Tag 之后的待发布改动，执行完整 SemVer、DEVLOG、
+  发布总账、严格 `vX.Y.Z` Tag、镜像与节点灰度流程。
 - **整栈一个号**:`cosmac/__init__.py __version__` = `client/package.json version`
   = distro 发行说明 = Nexus 心跳 version。
 - DEVLOG 顶条(强制):`## YYYY-MM-DD — GuDuu OS X.Y.Z (patch|minor|major)`,
   正文用「新增/修复/优化/变更/决策」分类,不写 key/IP 等敏感信息。
 - 发版 commit 第一行(强制):`release: GuDuu OS X.Y.Z (patch|minor|major)`,
-  正文与 DEVLOG 用户可见部分对齐;推荐打 tag `vX.Y.Z`。
+  正文与 DEVLOG 用户可见部分对齐；做节点镜像时必须打严格 tag `vX.Y.Z`。
 - 周报/月报:负责人说「拉取本周/本月变更说明」时,从区间内 `release:` commit +
   DEVLOG 归并成「新增/修复/优化/注意事项」对外文案(见 docs/VERSIONING.md §7)。
 - 维护感靠**勤 PATCH + 周报/月报**,不靠涨 MAJOR;MAJOR 仅破坏性(保 OEM 升级信任)。
